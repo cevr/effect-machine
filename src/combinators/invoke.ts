@@ -1,8 +1,8 @@
 import { Effect, Fiber } from "effect";
 
-import type { MachineBuilder, StateEffect } from "../Machine.js";
-import { addOnEnter, addOnExit } from "../Machine.js";
-import { getTag } from "../internal/getTag.js";
+import type { MachineBuilder, StateEffect } from "../machine.js";
+import { addOnEnter, addOnExit } from "../machine.js";
+import { getTag } from "../internal/get-tag.js";
 import type { StateEffectContext } from "../internal/types.js";
 
 /**

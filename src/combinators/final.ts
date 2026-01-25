@@ -1,6 +1,6 @@
-import type { MachineBuilder } from "../Machine.js";
-import { addFinal } from "../Machine.js";
-import { getTag } from "../internal/getTag.js";
+import type { MachineBuilder } from "../machine.js";
+import { addFinal } from "../machine.js";
+import { getTag } from "../internal/get-tag.js";
 
 /**
  * Mark a state as final (stops the actor when entered).

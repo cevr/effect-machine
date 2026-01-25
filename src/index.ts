@@ -7,7 +7,7 @@ export type {
   OnOptions,
   StateEffect,
   Transition,
-} from "./Machine.js";
+} from "./machine.js";
 export {
   addAlwaysTransition,
   addFinal,
@@ -16,14 +16,14 @@ export {
   addTransition,
   build,
   make,
-} from "./Machine.js";
+} from "./machine.js";
 
 // Actor types
-export type { ActorRef } from "./ActorRef.js";
+export type { ActorRef } from "./actor-ref.js";
 
 // Actor system
-export type { ActorSystem } from "./ActorSystem.js";
-export { ActorSystem as ActorSystemService, Default as ActorSystemDefault } from "./ActorSystem.js";
+export type { ActorSystem } from "./actor-system.js";
+export { ActorSystem as ActorSystemService, Default as ActorSystemDefault } from "./actor-system.js";
 
 // Combinators
 export { always } from "./combinators/always.js";
@@ -36,8 +36,8 @@ export type { DelayOptions } from "./combinators/delay.js";
 export { final } from "./combinators/final.js";
 export { invoke } from "./combinators/invoke.js";
 export { on } from "./combinators/on.js";
-export { onEnter } from "./combinators/onEnter.js";
-export { onExit } from "./combinators/onExit.js";
+export { onEnter } from "./combinators/on-enter.js";
+export { onExit } from "./combinators/on-exit.js";
 
 // Testing utilities
 export {
@@ -46,8 +46,8 @@ export {
   createTestHarness,
   simulate,
   yieldFibers,
-} from "./Testing.js";
-export type { SimulationResult, TestHarness } from "./Testing.js";
+} from "./testing.js";
+export type { SimulationResult, TestHarness } from "./testing.js";
 
 // Re-export internal types that users might need
 export type {

@@ -1,6 +1,6 @@
 import { Effect, SubscriptionRef } from "effect";
 
-import type { Machine } from "./Machine.js";
+import type { Machine } from "./machine.js";
 import { applyAlways, resolveTransition } from "./internal/loop.js";
 
 /**

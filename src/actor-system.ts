@@ -1,8 +1,8 @@
 import { Context, Effect, Layer, Option, SynchronizedRef } from "effect";
 import type { Scope } from "effect";
 
-import type { ActorRef } from "./ActorRef.js";
-import type { Machine } from "./Machine.js";
+import type { ActorRef } from "./actor-ref.js";
+import type { Machine } from "./machine.js";
 import { createActor } from "./internal/loop.js";
 
 /**

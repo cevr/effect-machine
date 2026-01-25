@@ -1,5 +1,5 @@
-import type { AlwaysTransition, MachineBuilder } from "../Machine.js";
-import { getTag } from "../internal/getTag.js";
+import type { AlwaysTransition, MachineBuilder } from "../machine.js";
+import { getTag } from "../internal/get-tag.js";
 import type { TransitionResult } from "../internal/types.js";
 
 /**

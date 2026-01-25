@@ -1,7 +1,7 @@
 import { Effect, Fiber, Queue, SubscriptionRef } from "effect";
 
-import type { ActorRef } from "../ActorRef.js";
-import type { Machine, MachineRef } from "../Machine.js";
+import type { ActorRef } from "../actor-ref.js";
+import type { Machine, MachineRef } from "../machine.js";
 
 /** Maximum steps for always transitions to prevent infinite loops */
 const MAX_ALWAYS_STEPS = 100;

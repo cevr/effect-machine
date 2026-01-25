@@ -1,8 +1,8 @@
 import type { Effect } from "effect";
 
-import type { MachineBuilder, Transition } from "../Machine.js";
-import { addTransition } from "../Machine.js";
-import { getTag } from "../internal/getTag.js";
+import type { MachineBuilder, Transition } from "../machine.js";
+import { addTransition } from "../machine.js";
+import { getTag } from "../internal/get-tag.js";
 import type { TransitionContext, TransitionResult } from "../internal/types.js";
 
 /**

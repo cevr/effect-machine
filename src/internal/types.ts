@@ -1,6 +1,6 @@
 import type { Effect } from "effect";
 
-import type { MachineRef } from "../Machine.js";
+import type { MachineRef } from "../machine.js";
 
 /**
  * Extracts _tag from a tagged union member

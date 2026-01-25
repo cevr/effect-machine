@@ -1,8 +1,8 @@
 import type { Effect } from "effect";
 
-import type { MachineBuilder, OnOptions, Transition } from "../Machine.js";
-import { addTransition, normalizeOnOptions } from "../Machine.js";
-import { getTag } from "../internal/getTag.js";
+import type { MachineBuilder, OnOptions, Transition } from "../machine.js";
+import { addTransition, normalizeOnOptions } from "../machine.js";
+import { getTag } from "../internal/get-tag.js";
 import type { TransitionContext, TransitionResult } from "../internal/types.js";
 
 /**

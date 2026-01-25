@@ -1,31 +1,25 @@
 import type { Effect } from "effect";
 
-import type { MachineBuilder, StateEffect } from "../Machine.js";
-import { addOnEnter } from "../Machine.js";
-import { getTag } from "../internal/getTag.js";
+import type { MachineBuilder, StateEffect } from "../machine.js";
+import { addOnExit } from "../machine.js";
+import { getTag } from "../internal/get-tag.js";
 import type { StateEffectContext } from "../internal/types.js";
 
 /**
- * Define an effect to run when entering a state.
+ * Define an effect to run when exiting a state.
  * Handler receives a context object with { state, self }.
  *
  * @example
  * ```ts
  * pipe(
  *   Machine.make<FetcherState, FetcherEvent>(State.Idle({})),
- *   onEnter(State.Loading, ({ state, self }) =>
- *     pipe(
- *       fetch(state.url),
- *       Effect.map((data) => Event._Done({ data })),
- *       Effect.flatMap(self.send),
- *       Effect.fork,
- *       Effect.asVoid
- *     )
+ *   onExit(State.Loading, ({ state, self }) =>
+ *     Effect.log(`Leaving loading state for ${state.url}`)
  *   )
  * )
  * ```
  */
-export function onEnter<
+export function onExit<
   NarrowedState extends { readonly _tag: string },
   EventType extends { readonly _tag: string },
   R2 = never,
@@ -45,6 +39,6 @@ export function onEnter<
       ) => Effect.Effect<void, never, R2>,
     };
 
-    return addOnEnter(effect)(builder) as MachineBuilder<State, Event, R | R2>;
+    return addOnExit(effect)(builder) as MachineBuilder<State, Event, R | R2>;
   };
 }
