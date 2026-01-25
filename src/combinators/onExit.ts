@@ -1,0 +1,44 @@
+import type { Effect } from "effect";
+
+import type { MachineBuilder, StateEffect } from "../Machine.js";
+import { addOnExit } from "../Machine.js";
+import { getTag } from "../internal/getTag.js";
+import type { StateEffectContext } from "../internal/types.js";
+
+/**
+ * Define an effect to run when exiting a state.
+ * Handler receives a context object with { state, self }.
+ *
+ * @example
+ * ```ts
+ * pipe(
+ *   Machine.make<FetcherState, FetcherEvent>(State.Idle({})),
+ *   onExit(State.Loading, ({ state, self }) =>
+ *     Effect.log(`Leaving loading state for ${state.url}`)
+ *   )
+ * )
+ * ```
+ */
+export function onExit<
+  NarrowedState extends { readonly _tag: string },
+  EventType extends { readonly _tag: string },
+  R2 = never,
+>(
+  stateConstructor: { (...args: never[]): NarrowedState },
+  handler: (ctx: StateEffectContext<NarrowedState, EventType>) => Effect.Effect<void, never, R2>,
+) {
+  const stateTag = getTag(stateConstructor);
+
+  return <State extends { readonly _tag: string }, Event extends { readonly _tag: string }, R>(
+    builder: MachineBuilder<State, Event, R>,
+  ): MachineBuilder<State, Event, R | R2> => {
+    const effect: StateEffect<State, Event, R2> = {
+      stateTag,
+      handler: handler as unknown as (
+        ctx: StateEffectContext<State, Event>,
+      ) => Effect.Effect<void, never, R2>,
+    };
+
+    return addOnExit(effect)(builder) as MachineBuilder<State, Event, R | R2>;
+  };
+}
