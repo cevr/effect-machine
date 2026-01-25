@@ -16,6 +16,7 @@ bun run fmt           # oxfmt
 - Files: kebab-case (`actor-system.ts`, `on-enter.ts`)
 - States/Events: `Data.taggedEnum` from Effect
 - Exports: all public API via `src/index.ts`
+- Strict Effect config: see `tsconfig.json` for `@effect/language-service` rules
 
 ## Gotchas
 
@@ -25,6 +26,16 @@ bun run fmt           # oxfmt
 - TestClock: use `Layer.merge(ActorSystemDefault, TestContext.TestContext)`
 - `simulate`/`createTestHarness` are pure - no onEnter/onExit effects
 - Actor testing needs `yieldFibers` after `send()` to let effects run
+- `internal: true` skips exit/enter even if handler returns same-state - use for context-only updates
+- `reenter: true` forces exit/enter on same state tag - use to restart timers/invoke
+- Dynamic delay: duration fn evaluated at state entry, not registration time
+
+## Effect Language Service
+
+- Maximally strict config in `tsconfig.json`
+- `strictBooleanExpressions`: use `=== undefined` not truthy checks
+- Disable per-file: `// @effect-diagnostics ruleName:off`
+- Tests use `// @effect-diagnostics strictEffectProvide:off` (tests are entry points)
 
 ## Documentation
 

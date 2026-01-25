@@ -5,16 +5,16 @@
 ```
 src/
 ├── index.ts              # Public exports
-├── machine.ts            # Core types (Machine, MachineBuilder, Transition)
+├── machine.ts            # Core types (Machine, MachineBuilder, Transition, OnOptions)
 ├── actor-ref.ts          # Actor reference interface
 ├── actor-system.ts       # Actor system service + layer
 ├── testing.ts            # Test utilities (simulate, harness, assertions)
 ├── combinators/
-│   ├── on.ts             # State/event transitions
+│   ├── on.ts             # State/event transitions (supports internal/reenter)
 │   ├── final.ts          # Final state marker
 │   ├── always.ts         # Eventless transitions
 │   ├── choose.ts         # Guard cascade for events
-│   ├── delay.ts          # Delayed event scheduling
+│   ├── delay.ts          # Delayed events (static or dynamic duration)
 │   ├── assign.ts         # Partial state updates (assign, update)
 │   ├── invoke.ts         # Async effect with auto-cancel
 │   ├── on-enter.ts       # State entry effects
@@ -25,15 +25,23 @@ src/
     └── get-tag.ts        # Tag extraction from constructors
 
 test/
-├── Machine.test.ts
-├── ActorSystem.test.ts
-├── Testing.test.ts
-└── features/
-    ├── always-transitions.test.ts
-    ├── assign-update.test.ts
-    ├── choose.test.ts
-    ├── delay.test.ts
-    └── guard-composition.test.ts
+├── Machine.test.ts       # Core machine tests
+├── ActorSystem.test.ts   # Actor spawning/lifecycle
+├── Testing.test.ts       # Test utilities (assertPath, assertNeverReaches, onTransition)
+├── features/             # Feature-specific tests
+│   ├── always-transitions.test.ts
+│   ├── assign-update.test.ts
+│   ├── choose.test.ts
+│   ├── delay.test.ts
+│   ├── dynamic-delay.test.ts
+│   ├── guard-composition.test.ts
+│   ├── internal-transitions.test.ts
+│   └── reenter.test.ts
+└── patterns/             # Real-world pattern tests (from bite analysis)
+    ├── payment-flow.test.ts      # Guard cascade, retry, cancellation
+    ├── session-lifecycle.test.ts # Always transitions, timeout
+    ├── keyboard-input.test.ts    # Mode switching, internal transitions
+    └── menu-navigation.test.ts   # Guard-based routing
 ```
 
 ## Key Files
@@ -42,34 +50,45 @@ test/
 | ------------------- | ------------------------------------------------------------------------ |
 | `internal/loop.ts`  | Event processing, `resolveTransition`, `applyAlways`, `createActor`      |
 | `internal/types.ts` | `TransitionContext`, `StateEffectContext`, `Guard` module                |
-| `machine.ts`        | `Machine`, `MachineBuilder`, `Transition`, `AlwaysTransition` interfaces |
-| `testing.ts`        | Pure testing: `simulate`, `createTestHarness`, `assertReaches`           |
+| `machine.ts`        | `Machine`, `MachineBuilder`, `Transition`, `OnOptions` interfaces        |
+| `testing.ts`        | `simulate`, `createTestHarness`, `assertPath`, `assertNeverReaches`      |
+| `delay.ts`          | `DurationOrFn`, WeakMap fiber storage pattern                            |
+| `invoke.ts`         | WeakMap fiber storage pattern (same as delay)                            |
 
 ## Event Flow
 
 ```
-Event → resolveTransition (guard cascade) → onExit → handler → applyAlways → onEnter → update state
+Event → resolveTransition (guard cascade) → [if !internal] onExit → handler → applyAlways → onEnter → update state
 ```
 
 - Guard cascade: first passing guard wins (registration order)
+- `internal: true`: skip onExit/onEnter even if same state tag
+- `reenter: true`: force onExit/onEnter even if same state tag
 - `applyAlways`: loops until no match or final state (max 100 iterations)
 - Final states stop the actor
 
-## Actor Lifecycle
+## Fiber Storage Pattern
 
-```
-spawn → createActor → SubscriptionRef + Queue + fiber → process events → final state or stop()
+`delay.ts` and `invoke.ts` use WeakMap for per-actor, per-combinator fiber storage:
+
+```ts
+const actorFibers = new WeakMap<MachineRef<unknown>, Map<symbol, Fiber>>()
+const instanceKey = Symbol("delay") // unique per combinator instance
 ```
 
-- Scope finalization interrupts fibers
-- `ActorSystemDefault` layer required
+- Prevents closure-based fiber leaks across actor instances
+- Symbol key allows multiple delays/invokes per state
 
 ## Testing
 
-| Function              | Effects | Always |
-| --------------------- | ------- | ------ |
-| `simulate`            | No      | Yes    |
-| `createTestHarness`   | No      | Yes    |
-| Actor + `yieldFibers` | Yes     | Yes    |
+| Function              | Effects | Always | Observer |
+| --------------------- | ------- | ------ | -------- |
+| `simulate`            | No      | Yes    | No       |
+| `createTestHarness`   | No      | Yes    | Yes      |
+| Actor + `yieldFibers` | Yes     | Yes    | No       |
+
+- `assertPath(machine, events, ["S1", "S2", ...])` - verify exact state sequence
+- `assertNeverReaches(machine, events, "Forbidden")` - verify state never visited
+- `onTransition: (from, event, to) => void` - spy on transitions
 
 Use `Layer.merge(ActorSystemDefault, TestContext.TestContext)` for TestClock.
