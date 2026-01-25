@@ -5,6 +5,7 @@ Running machines as actors with lifecycle management.
 ## Overview
 
 Actors are running instances of machines with:
+
 - Unique ID
 - Event queue
 - Observable state
@@ -18,13 +19,7 @@ The `ActorSystem` service manages actor lifecycles.
 
 ```typescript
 import { Effect } from "effect";
-import {
-  ActorSystemDefault,
-  ActorSystemService,
-  build,
-  make,
-  on,
-} from "effect-machine";
+import { ActorSystemDefault, ActorSystemService, build, make, on } from "effect-machine";
 
 const program = Effect.gen(function* () {
   const system = yield* ActorSystemService;
@@ -33,10 +28,7 @@ const program = Effect.gen(function* () {
   const actor = yield* system.spawn("my-actor", machine);
 
   // Use the actor...
-}).pipe(
-  Effect.scoped,
-  Effect.provide(ActorSystemDefault),
-);
+}).pipe(Effect.scoped, Effect.provide(ActorSystemDefault));
 
 Effect.runPromise(program);
 ```
@@ -46,7 +38,7 @@ Effect.runPromise(program);
 ## Spawning Actors
 
 ```typescript
-const actor = yield* system.spawn(id, machine);
+const actor = yield * system.spawn(id, machine);
 ```
 
 - `id` - Unique identifier (throws if duplicate)
@@ -74,7 +66,7 @@ interface ActorRef<State, Event> {
 ### Sending Events
 
 ```typescript
-yield* actor.send(Event.Start());
+yield * actor.send(Event.Start());
 ```
 
 Events are queued and processed sequentially.
@@ -83,49 +75,51 @@ Events are queued and processed sequentially.
 
 ```typescript
 // Current state
-const current = yield* actor.state.get;
+const current = yield * actor.state.get;
 
 // Subscribe to changes
-yield* actor.state.changes.pipe(
-  Stream.tap((state) => Effect.log(`State: ${state._tag}`)),
-  Stream.runDrain,
-);
+yield *
+  actor.state.changes.pipe(
+    Stream.tap((state) => Effect.log(`State: ${state._tag}`)),
+    Stream.runDrain,
+  );
 ```
 
 ### Stopping
 
 ```typescript
 // Explicit stop
-yield* actor.stop;
+yield * actor.stop;
 
 // Or via system
-yield* system.stop("my-actor");
+yield * system.stop("my-actor");
 ```
 
 Actors also stop automatically when:
+
 - Reaching a final state
 - Scope is closed
 
 ## Multiple Actors
 
 ```typescript
-const system = yield* ActorSystemService;
+const system = yield * ActorSystemService;
 
 // Spawn multiple actors
-const actor1 = yield* system.spawn("player-1", playerMachine);
-const actor2 = yield* system.spawn("player-2", playerMachine);
+const actor1 = yield * system.spawn("player-1", playerMachine);
+const actor2 = yield * system.spawn("player-2", playerMachine);
 
 // Communicate between actors
-yield* actor1.send(Event.Attack({ target: actor2.id }));
+yield * actor1.send(Event.Attack({ target: actor2.id }));
 ```
 
 ## Looking Up Actors
 
 ```typescript
-const maybeActor = yield* system.get("player-1");
+const maybeActor = yield * system.get("player-1");
 
 if (Option.isSome(maybeActor)) {
-  yield* maybeActor.value.send(Event.Heal());
+  yield * maybeActor.value.send(Event.Heal());
 }
 ```
 
@@ -217,10 +211,7 @@ test("actor processes events", async () => {
 
       const state = yield* actor.state.get;
       expect(state._tag).toBe("Running");
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(ActorSystemDefault),
-    ),
+    }).pipe(Effect.scoped, Effect.provide(ActorSystemDefault)),
   );
 });
 ```
@@ -243,9 +234,7 @@ test("delayed transition", async () => {
       expect(state._tag).toBe("TimedOut");
     }).pipe(
       Effect.scoped,
-      Effect.provide(
-        Layer.merge(ActorSystemDefault, TestContext.TestContext),
-      ),
+      Effect.provide(Layer.merge(ActorSystemDefault, TestContext.TestContext)),
     ),
   );
 });
@@ -259,9 +248,7 @@ Unhandled errors in effects will cause the fiber to fail. Use Effect error handl
 onEnter(State.Loading, ({ state, self }) =>
   Effect.gen(function* () {
     const result = yield* fetchData(state.url).pipe(
-      Effect.catchAll((error) =>
-        self.send(Event.Error({ message: String(error) })),
-      ),
+      Effect.catchAll((error) => self.send(Event.Error({ message: String(error) }))),
     );
     yield* self.send(Event.Done({ data: result }));
   }),

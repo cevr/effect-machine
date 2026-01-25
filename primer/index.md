@@ -24,13 +24,13 @@ What are you doing?
 
 ## Topic Index
 
-| Topic | File | When to Read |
-|-------|------|--------------|
-| Core concepts | `basics.md` | New to effect-machine |
-| All combinators | `combinators.md` | Building machines |
-| Guard composition | `guards.md` | Complex conditions |
-| Testing patterns | `testing.md` | Writing tests |
-| Actor system | `actors.md` | Running machines |
+| Topic             | File             | When to Read          |
+| ----------------- | ---------------- | --------------------- |
+| Core concepts     | `basics.md`      | New to effect-machine |
+| All combinators   | `combinators.md` | Building machines     |
+| Guard composition | `guards.md`      | Complex conditions    |
+| Testing patterns  | `testing.md`     | Writing tests         |
+| Actor system      | `actors.md`      | Running machines      |
 
 ## Quick Example
 
@@ -69,63 +69,63 @@ console.log(result.finalState._tag); // "Done"
 
 ## Key Concepts
 
-| Concept | Description |
-|---------|-------------|
-| **State** | Tagged enum representing machine state |
-| **Event** | Tagged enum representing inputs |
-| **Transition** | State + Event → New State |
-| **Guard** | Boolean predicate that enables/disables transitions |
-| **Effect** | Side effect run on transition or state entry/exit |
-| **Final** | Terminal state - no transitions out |
+| Concept        | Description                                         |
+| -------------- | --------------------------------------------------- |
+| **State**      | Tagged enum representing machine state              |
+| **Event**      | Tagged enum representing inputs                     |
+| **Transition** | State + Event → New State                           |
+| **Guard**      | Boolean predicate that enables/disables transitions |
+| **Effect**     | Side effect run on transition or state entry/exit   |
+| **Final**      | Terminal state - no transitions out                 |
 
 ## API Quick Reference
 
 ### Building
 
-| Function | Purpose |
-|----------|---------|
-| `make(initial)` | Start builder with initial state |
-| `build(builder)` | Finalize machine definition |
-| `on(state, event, handler, options?)` | Add transition |
-| `final(state)` | Mark state as final |
+| Function                              | Purpose                          |
+| ------------------------------------- | -------------------------------- |
+| `make(initial)`                       | Start builder with initial state |
+| `build(builder)`                      | Finalize machine definition      |
+| `on(state, event, handler, options?)` | Add transition                   |
+| `final(state)`                        | Mark state as final              |
 
 ### Combinators
 
-| Function | Purpose |
-|----------|---------|
-| `always(state, branches)` | Eventless transitions |
-| `choose(state, event, branches)` | Guard cascade |
-| `delay(state, duration, event)` | Auto-send event after delay |
-| `assign(updater)` | Partial state update helper |
-| `update(state, event, updater)` | Shorthand for on + assign |
-| `invoke(state, handler)` | Run effect, cancel on exit |
-| `onEnter(state, handler)` | Effect on state entry |
-| `onExit(state, handler)` | Effect on state exit |
+| Function                         | Purpose                     |
+| -------------------------------- | --------------------------- |
+| `always(state, branches)`        | Eventless transitions       |
+| `choose(state, event, branches)` | Guard cascade               |
+| `delay(state, duration, event)`  | Auto-send event after delay |
+| `assign(updater)`                | Partial state update helper |
+| `update(state, event, updater)`  | Shorthand for on + assign   |
+| `invoke(state, handler)`         | Run effect, cancel on exit  |
+| `onEnter(state, handler)`        | Effect on state entry       |
+| `onExit(state, handler)`         | Effect on state exit        |
 
 ### Guards
 
-| Function | Purpose |
-|----------|---------|
-| `Guard.make(fn)` | Create reusable guard |
-| `Guard.and(a, b)` | Both must pass |
-| `Guard.or(a, b)` | Either can pass |
-| `Guard.not(g)` | Negate guard |
+| Function          | Purpose               |
+| ----------------- | --------------------- |
+| `Guard.make(fn)`  | Create reusable guard |
+| `Guard.and(a, b)` | Both must pass        |
+| `Guard.or(a, b)`  | Either can pass       |
+| `Guard.not(g)`    | Negate guard          |
 
 ### Testing
 
-| Function | Purpose |
-|----------|---------|
-| `simulate(machine, events)` | Run events, get all states |
-| `createTestHarness(machine)` | Step-by-step testing |
-| `assertReaches(machine, events, state)` | Assert final state |
-| `yieldFibers` | Yield to background fibers |
+| Function                                | Purpose                    |
+| --------------------------------------- | -------------------------- |
+| `simulate(machine, events)`             | Run events, get all states |
+| `createTestHarness(machine)`            | Step-by-step testing       |
+| `assertReaches(machine, events, state)` | Assert final state         |
+| `yieldFibers`                           | Yield to background fibers |
 
 ### Actors
 
-| Export | Purpose |
-|--------|---------|
+| Export               | Purpose                      |
+| -------------------- | ---------------------------- |
 | `ActorSystemService` | Service tag for actor system |
-| `ActorSystemDefault` | Default layer |
+| `ActorSystemDefault` | Default layer                |
 
 ## See Also
 

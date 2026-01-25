@@ -79,49 +79,49 @@ See the [primer](./primer/) for comprehensive documentation:
 
 ### Core
 
-| Export | Description |
-|--------|-------------|
-| `make` | Create machine builder with initial state |
-| `build` | Finalize machine definition |
-| `on` | Add state/event transition |
-| `final` | Mark state as final |
+| Export  | Description                               |
+| ------- | ----------------------------------------- |
+| `make`  | Create machine builder with initial state |
+| `build` | Finalize machine definition               |
+| `on`    | Add state/event transition                |
+| `final` | Mark state as final                       |
 
 ### Combinators
 
-| Export | Description |
-|--------|-------------|
-| `always` | Eventless transitions with guard cascade |
-| `choose` | Guard cascade for event transitions |
-| `delay` | Schedule event after duration |
-| `assign` | Helper for partial state updates |
-| `update` | Shorthand for `on` + `assign` |
-| `invoke` | Run effect on state entry, cancel on exit |
-| `onEnter` | Run effect on state entry |
-| `onExit` | Run effect on state exit |
+| Export    | Description                               |
+| --------- | ----------------------------------------- |
+| `always`  | Eventless transitions with guard cascade  |
+| `choose`  | Guard cascade for event transitions       |
+| `delay`   | Schedule event after duration             |
+| `assign`  | Helper for partial state updates          |
+| `update`  | Shorthand for `on` + `assign`             |
+| `invoke`  | Run effect on state entry, cancel on exit |
+| `onEnter` | Run effect on state entry                 |
+| `onExit`  | Run effect on state exit                  |
 
 ### Guards
 
-| Export | Description |
-|--------|-------------|
-| `Guard.make` | Create reusable guard |
-| `Guard.and` | Combine guards with AND |
-| `Guard.or` | Combine guards with OR |
-| `Guard.not` | Negate a guard |
+| Export       | Description             |
+| ------------ | ----------------------- |
+| `Guard.make` | Create reusable guard   |
+| `Guard.and`  | Combine guards with AND |
+| `Guard.or`   | Combine guards with OR  |
+| `Guard.not`  | Negate a guard          |
 
 ### Testing
 
-| Export | Description |
-|--------|-------------|
-| `simulate` | Run events and get all states |
-| `createTestHarness` | Step-by-step testing |
-| `assertReaches` | Assert machine reaches state |
-| `yieldFibers` | Yield to background fibers |
+| Export              | Description                   |
+| ------------------- | ----------------------------- |
+| `simulate`          | Run events and get all states |
+| `createTestHarness` | Step-by-step testing          |
+| `assertReaches`     | Assert machine reaches state  |
+| `yieldFibers`       | Yield to background fibers    |
 
 ### Actors
 
-| Export | Description |
-|--------|-------------|
-| `ActorSystemService` | Actor system service tag |
+| Export               | Description                |
+| -------------------- | -------------------------- |
+| `ActorSystemService` | Actor system service tag   |
 | `ActorSystemDefault` | Default actor system layer |
 
 ## License

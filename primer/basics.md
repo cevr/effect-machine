@@ -28,6 +28,7 @@ const Event = Data.taggedEnum<Event>();
 ```
 
 **Why tagged enums?**
+
 - Exhaustive pattern matching
 - Type narrowing in handlers
 - Structural equality for testing
@@ -100,8 +101,7 @@ Run side effects on transitions:
 
 ```typescript
 on(State.Idle, Event.Start, () => State.Running(), {
-  effect: ({ state, event }) =>
-    Effect.log(`Starting from ${state._tag} with ${event._tag}`),
+  effect: ({ state, event }) => Effect.log(`Starting from ${state._tag} with ${event._tag}`),
 });
 ```
 
@@ -117,6 +117,7 @@ final(State.Error),
 ```
 
 Once in a final state:
+
 - No transitions are processed
 - Actor stops automatically
 

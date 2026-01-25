@@ -38,12 +38,12 @@ test/
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `internal/loop.ts` | Event processing, `resolveTransition`, `applyAlways`, `createActor` |
-| `internal/types.ts` | `TransitionContext`, `StateEffectContext`, `Guard` module |
-| `machine.ts` | `Machine`, `MachineBuilder`, `Transition`, `AlwaysTransition` interfaces |
-| `testing.ts` | Pure testing: `simulate`, `createTestHarness`, `assertReaches` |
+| File                | Purpose                                                                  |
+| ------------------- | ------------------------------------------------------------------------ |
+| `internal/loop.ts`  | Event processing, `resolveTransition`, `applyAlways`, `createActor`      |
+| `internal/types.ts` | `TransitionContext`, `StateEffectContext`, `Guard` module                |
+| `machine.ts`        | `Machine`, `MachineBuilder`, `Transition`, `AlwaysTransition` interfaces |
+| `testing.ts`        | Pure testing: `simulate`, `createTestHarness`, `assertReaches`           |
 
 ## Event Flow
 
@@ -66,10 +66,10 @@ spawn → createActor → SubscriptionRef + Queue + fiber → process events →
 
 ## Testing
 
-| Function | Effects | Always |
-|----------|---------|--------|
-| `simulate` | No | Yes |
-| `createTestHarness` | No | Yes |
-| Actor + `yieldFibers` | Yes | Yes |
+| Function              | Effects | Always |
+| --------------------- | ------- | ------ |
+| `simulate`            | No      | Yes    |
+| `createTestHarness`   | No      | Yes    |
+| Actor + `yieldFibers` | Yes     | Yes    |
 
 Use `Layer.merge(ActorSystemDefault, TestContext.TestContext)` for TestClock.

@@ -21,13 +21,9 @@ Create named guards with `Guard.make`:
 ```typescript
 import { GuardModule as Guard } from "effect-machine";
 
-const isValid = Guard.make<FormState, SubmitEvent>(
-  ({ state }) => state.isValid,
-);
+const isValid = Guard.make<FormState, SubmitEvent>(({ state }) => state.isValid);
 
-const hasEmail = Guard.make<FormState, SubmitEvent>(
-  ({ state }) => state.email.length > 0,
-);
+const hasEmail = Guard.make<FormState, SubmitEvent>(({ state }) => state.email.length > 0);
 
 on(State.Form, Event.Submit, () => State.Submitting(), {
   guard: isValid,
@@ -86,10 +82,7 @@ const isActive = Guard.make(({ state }) => state.active);
 const isNotBanned = Guard.not(Guard.make(({ state }) => state.banned));
 
 // Admin AND active AND not banned
-const canAccessAdmin = Guard.and(
-  Guard.and(isAdmin, isActive),
-  isNotBanned,
-);
+const canAccessAdmin = Guard.and(Guard.and(isAdmin, isActive), isNotBanned);
 ```
 
 ## Type Narrowing
@@ -100,13 +93,11 @@ Guards can be typed to specific state/event combinations:
 type IdleState = State & { readonly _tag: "Idle" };
 type StartEvent = Event & { readonly _tag: "Start" };
 
-const canStart = Guard.make<IdleState, StartEvent>(
-  ({ state, event }) => {
-    // state is narrowed to IdleState
-    // event is narrowed to StartEvent
-    return state.ready && event.force;
-  },
-);
+const canStart = Guard.make<IdleState, StartEvent>(({ state, event }) => {
+  // state is narrowed to IdleState
+  // event is narrowed to StartEvent
+  return state.ready && event.force;
+});
 ```
 
 ## Guard Cascade Order
@@ -153,9 +144,7 @@ Test guards in isolation:
 ```typescript
 import { GuardModule as Guard } from "effect-machine";
 
-const isValid = Guard.make<FormState, SubmitEvent>(
-  ({ state }) => state.email.includes("@"),
-);
+const isValid = Guard.make<FormState, SubmitEvent>(({ state }) => state.email.includes("@"));
 
 test("isValid passes for valid email", () => {
   const ctx = {

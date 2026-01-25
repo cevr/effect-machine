@@ -4,12 +4,12 @@ Testing patterns for effect-machine.
 
 ## Testing Approaches
 
-| Approach | Use When |
-|----------|----------|
-| `simulate` | Testing state transitions (no side effects) |
-| `createTestHarness` | Step-by-step state inspection |
-| `assertReaches` | Quick assertions on final state |
-| Actor testing | Testing with real effects, delays |
+| Approach            | Use When                                    |
+| ------------------- | ------------------------------------------- |
+| `simulate`          | Testing state transitions (no side effects) |
+| `createTestHarness` | Step-by-step state inspection               |
+| `assertReaches`     | Quick assertions on final state             |
+| Actor testing       | Testing with real effects, delays           |
 
 ## simulate
 
@@ -28,11 +28,7 @@ test("transitions through states", async () => {
       ]);
 
       // All states visited
-      expect(result.states.map((s) => s._tag)).toEqual([
-        "Idle",
-        "Loading",
-        "Success",
-      ]);
+      expect(result.states.map((s) => s._tag)).toEqual(["Idle", "Loading", "Success"]);
 
       // Final state
       expect(result.finalState._tag).toBe("Success");
@@ -45,6 +41,7 @@ test("transitions through states", async () => {
 ```
 
 **Characteristics:**
+
 - Pure - no side effects executed
 - No actor system needed
 - Includes `always` transitions
@@ -83,6 +80,7 @@ test("step-by-step testing", async () => {
 ```
 
 **Characteristics:**
+
 - Pure - no side effects
 - Inspect state between events
 - Good for complex flows
@@ -142,10 +140,7 @@ test("actor with effects", async () => {
       // Check state
       const state = yield* actor.state.get;
       expect(state._tag).toBe("Running");
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(ActorSystemDefault),
-    ),
+    }).pipe(Effect.scoped, Effect.provide(ActorSystemDefault)),
   );
 });
 ```
@@ -172,9 +167,7 @@ test("auto-dismiss after delay", async () => {
       expect(state._tag).toBe("Dismissed");
     }).pipe(
       Effect.scoped,
-      Effect.provide(
-        Layer.merge(ActorSystemDefault, TestContext.TestContext),
-      ),
+      Effect.provide(Layer.merge(ActorSystemDefault, TestContext.TestContext)),
     ),
   );
 });
@@ -190,9 +183,9 @@ Let background fibers execute:
 import { yieldFibers } from "effect-machine";
 
 // After sending event that triggers async effect
-yield* actor.send(Event.Start());
-yield* yieldFibers;  // Effects run here
-const state = yield* actor.state.get;
+yield * actor.send(Event.Start());
+yield * yieldFibers; // Effects run here
+const state = yield * actor.state.get;
 ```
 
 ## Testing Guards
@@ -200,9 +193,7 @@ const state = yield* actor.state.get;
 Test guards in isolation:
 
 ```typescript
-const isAdmin = Guard.make<UserState, AccessEvent>(
-  ({ state }) => state.role === "admin",
-);
+const isAdmin = Guard.make<UserState, AccessEvent>(({ state }) => state.role === "admin");
 
 test("isAdmin guard", () => {
   const adminCtx = {

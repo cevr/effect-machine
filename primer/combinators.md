@@ -18,14 +18,16 @@ on(
 ```
 
 **Handler context:**
+
 ```typescript
 type TransitionContext<S, E> = {
-  state: S;   // Current state (narrowed)
-  event: E;   // Triggering event (narrowed)
+  state: S; // Current state (narrowed)
+  event: E; // Triggering event (narrowed)
 };
 ```
 
 **Options:**
+
 ```typescript
 {
   guard?: (ctx) => boolean,        // Enable/disable transition
@@ -34,6 +36,7 @@ type TransitionContext<S, E> = {
 ```
 
 **Example:**
+
 ```typescript
 on(State.Idle, Event.Start, ({ event }) => State.Running({ id: event.id }), {
   guard: ({ state }) => !state.locked,
@@ -46,10 +49,11 @@ on(State.Idle, Event.Start, ({ event }) => State.Running({ id: event.id }), {
 Mark a state as terminal.
 
 ```typescript
-final(stateConstructor)
+final(stateConstructor);
 ```
 
 **Example:**
+
 ```typescript
 final(State.Success),
 final(State.Error),
@@ -64,19 +68,21 @@ Run effect when entering a state.
 ```typescript
 onEnter(
   stateConstructor,
-  handler,  // (ctx) => Effect<void>
-)
+  handler, // (ctx) => Effect<void>
+);
 ```
 
 **Context:**
+
 ```typescript
 type StateEffectContext<S, E> = {
-  state: S;                                    // Current state
-  self: { send: (e: E) => Effect<void> };     // Self-reference
+  state: S; // Current state
+  self: { send: (e: E) => Effect<void> }; // Self-reference
 };
 ```
 
 **Example:**
+
 ```typescript
 onEnter(State.Loading, ({ state, self }) =>
   Effect.gen(function* () {
@@ -91,14 +97,13 @@ onEnter(State.Loading, ({ state, self }) =>
 Run effect when exiting a state.
 
 ```typescript
-onExit(stateConstructor, handler)
+onExit(stateConstructor, handler);
 ```
 
 **Example:**
+
 ```typescript
-onExit(State.Editing, ({ state }) =>
-  Effect.log(`Saved draft: ${state.content}`),
-);
+onExit(State.Editing, ({ state }) => Effect.log(`Saved draft: ${state.content}`));
 ```
 
 ### invoke
@@ -106,12 +111,13 @@ onExit(State.Editing, ({ state }) =>
 Run effect on entry, auto-cancel on exit.
 
 ```typescript
-invoke(stateConstructor, handler)
+invoke(stateConstructor, handler);
 ```
 
 Combines `onEnter` + `onExit` with automatic fiber cancellation.
 
 **Example:**
+
 ```typescript
 invoke(State.Polling, ({ state, self }) =>
   Effect.gen(function* () {
@@ -137,10 +143,11 @@ choose(stateConstructor, eventConstructor, [
   { guard: (ctx) => boolean, to: (ctx) => newState },
   { guard: (ctx) => boolean, to: (ctx) => newState },
   { otherwise: true, to: (ctx) => newState },
-])
+]);
 ```
 
 **Example:**
+
 ```typescript
 choose(State.Form, Event.Submit, [
   {
@@ -168,12 +175,13 @@ Eventless transitions - fire immediately when state matches.
 always(stateConstructor, [
   { guard: (state) => boolean, to: (state) => newState },
   { otherwise: true, to: (state) => newState },
-])
+]);
 ```
 
 **Note:** `always` handlers receive just the state, not a context object.
 
 **Example:**
+
 ```typescript
 always(State.Calculating, [
   { guard: (s) => s.value >= 100, to: () => State.Overflow() },
@@ -210,6 +218,7 @@ delay(
 ```
 
 **Example:**
+
 ```typescript
 delay(State.Success, "3 seconds", Event.Dismiss()),
 
@@ -220,6 +229,7 @@ delay(State.Error, "5 seconds", Event.Retry(), {
 ```
 
 Timer is cancelled if:
+
 - State exits before duration
 - Actor is stopped
 
@@ -232,10 +242,11 @@ Works with TestClock for deterministic testing.
 Helper for partial state updates (doesn't change tag).
 
 ```typescript
-assign(updater)  // (ctx) => Partial<State>
+assign(updater); // (ctx) => Partial<State>
 ```
 
 **Example:**
+
 ```typescript
 on(State.Form, Event.SetName, assign(({ event }) => ({ name: event.name }))),
 on(State.Form, Event.SetEmail, assign(({ event }) => ({ email: event.email }))),
@@ -255,9 +266,14 @@ update(
 ```
 
 **Example:**
+
 ```typescript
 // These are equivalent:
-on(State.Form, Event.SetName, assign(({ event }) => ({ name: event.name })));
+on(
+  State.Form,
+  Event.SetName,
+  assign(({ event }) => ({ name: event.name })),
+);
 update(State.Form, Event.SetName, ({ event }) => ({ name: event.name }));
 ```
 
