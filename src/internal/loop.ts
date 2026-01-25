@@ -24,7 +24,7 @@ export const resolveTransition = <
       continue;
     }
     // If no guard, or guard passes, this transition wins
-    if (!transition.guard || transition.guard({ state: currentState, event })) {
+    if (transition.guard === undefined || transition.guard({ state: currentState, event })) {
       return transition;
     }
     // Guard failed - continue to next transition (guard cascade)
@@ -49,7 +49,7 @@ export const resolveAlwaysTransition = <
       continue;
     }
     // If no guard, or guard passes, this transition wins
-    if (!transition.guard || transition.guard(currentState)) {
+    if (transition.guard === undefined || transition.guard(currentState)) {
       return transition;
     }
   }
@@ -74,7 +74,7 @@ export const applyAlways = <
 
     while (steps < MAX_ALWAYS_STEPS) {
       const transition = resolveAlwaysTransition(machine, currentState);
-      if (!transition) {
+      if (transition === undefined) {
         break;
       }
 
@@ -133,9 +133,7 @@ export const createActor = <
         id,
         send: (event) => Queue.offer(eventQueue, event),
         state: stateRef,
-        stop: Effect.gen(function* () {
-          yield* Queue.shutdown(eventQueue);
-        }).pipe(Effect.asVoid),
+        stop: Queue.shutdown(eventQueue).pipe(Effect.asVoid),
       };
       return actorRef;
     }
@@ -176,7 +174,7 @@ const eventLoop = <S extends { readonly _tag: string }, E extends { readonly _ta
       // Find matching transition using guard cascade
       const transition = resolveTransition(machine, currentState, event);
 
-      if (!transition) {
+      if (transition === undefined) {
         // No transition for this state/event pair - ignore
         continue;
       }
@@ -186,17 +184,28 @@ const eventLoop = <S extends { readonly _tag: string }, E extends { readonly _ta
       let newState = Effect.isEffect(newStateResult) ? yield* newStateResult : newStateResult;
 
       // Run transition effect if any
-      if (transition.effect) {
+      if (transition.effect !== undefined) {
         yield* transition.effect({ state: currentState, event });
       }
 
-      // Check if state actually changed
-      if (newState._tag !== currentState._tag) {
+      // Determine if we should run exit/enter effects
+      const stateTagChanged = newState._tag !== currentState._tag;
+      // Run lifecycle if:
+      // - State tag changed (always run exit/enter)
+      // - reenter=true (force lifecycle even for same tag)
+      // Skip lifecycle if:
+      // - internal=true and same tag (explicitly skip)
+      const runLifecycle =
+        stateTagChanged || (transition.reenter === true && transition.internal !== true);
+
+      if (runLifecycle) {
         // Run exit effects for old state
         yield* runExitEffects(machine, currentState, self);
 
-        // Apply always transitions
-        newState = yield* applyAlways(machine, newState);
+        // Apply always transitions (only if tag changed)
+        if (stateTagChanged) {
+          newState = yield* applyAlways(machine, newState);
+        }
 
         // Update state
         yield* SubscriptionRef.set(stateRef, newState);
@@ -209,7 +218,7 @@ const eventLoop = <S extends { readonly _tag: string }, E extends { readonly _ta
           return;
         }
       } else {
-        // Same state tag, just update
+        // Same state tag with internal=true, or no reenter - just update state
         yield* SubscriptionRef.set(stateRef, newState);
       }
     }

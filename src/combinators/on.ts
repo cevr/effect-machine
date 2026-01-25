@@ -59,6 +59,8 @@ export function on<
       effect: normalizedOptions?.effect as unknown as
         | ((ctx: TransitionContext<State, Event>) => Effect.Effect<void, never, R2>)
         | undefined,
+      internal: normalizedOptions?.internal,
+      reenter: normalizedOptions?.reenter,
     };
 
     return addTransition(transition)(builder) as MachineBuilder<State, Event, R | R2>;

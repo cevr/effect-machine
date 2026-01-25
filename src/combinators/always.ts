@@ -60,7 +60,7 @@ export function always<NarrowedState extends { readonly _tag: string }, R2 = nev
         stateTag,
         handler: branch.to as unknown as (state: State) => TransitionResult<State, R2>,
         guard:
-          "otherwise" in branch && branch.otherwise
+          "otherwise" in branch && branch.otherwise === true
             ? undefined // otherwise always matches
             : (branch.guard as unknown as ((state: State) => boolean) | undefined),
       };

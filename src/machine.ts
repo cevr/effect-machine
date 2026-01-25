@@ -26,6 +26,8 @@ export interface Transition<State, Event, R> {
   readonly handler: (ctx: TransitionContext<State, Event>) => TransitionResult<State, R>;
   readonly guard?: GuardFn<State, Event>;
   readonly effect?: (ctx: TransitionContext<State, Event>) => Effect.Effect<void, never, R>;
+  readonly internal?: boolean;
+  readonly reenter?: boolean;
 }
 
 /**
@@ -180,6 +182,16 @@ export type EventFromConstructor<C> = C extends TaggedConstructor<infer E> ? E :
 export interface OnOptions<S, E, R> {
   readonly guard?: GuardInput<S, E>;
   readonly effect?: (ctx: TransitionContext<S, E>) => Effect.Effect<void, never, R>;
+  /**
+   * Internal transitions stay in the same state without running exit/enter effects.
+   * Only applies when handler returns the same state tag.
+   */
+  readonly internal?: boolean;
+  /**
+   * Force exit/enter effects even when staying in the same state tag.
+   * Useful for restarting timers or invoke effects.
+   */
+  readonly reenter?: boolean;
 }
 
 /**
@@ -191,11 +203,13 @@ export const normalizeOnOptions = <S, E, R>(
   | {
       guard?: GuardFn<S, E>;
       effect?: (ctx: TransitionContext<S, E>) => Effect.Effect<void, never, R>;
+      internal?: boolean;
+      reenter?: boolean;
     }
   | undefined => {
-  if (!options) return undefined;
+  if (options === undefined) return undefined;
   return {
     ...options,
-    guard: options.guard ? normalizeGuard(options.guard) : undefined,
+    guard: options.guard !== undefined ? normalizeGuard(options.guard) : undefined,
   };
 };

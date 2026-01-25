@@ -1,0 +1,135 @@
+// @effect-diagnostics strictEffectProvide:off - tests are entry points
+import { Data, Effect, Layer, pipe, TestClock, TestContext } from "effect";
+import { describe, expect, test } from "bun:test";
+
+import {
+  ActorSystemDefault,
+  ActorSystemService,
+  build,
+  delay,
+  make,
+  on,
+  onEnter,
+  onExit,
+  yieldFibers,
+} from "../../src/index.js";
+
+describe("Reenter Transitions", () => {
+  type State = Data.TaggedEnum<{
+    Polling: { attempts: number };
+    Done: {};
+  }>;
+  const State = Data.taggedEnum<State>();
+
+  type Event = Data.TaggedEnum<{
+    Poll: {};
+    Reset: {};
+    Finish: {};
+  }>;
+  const Event = Data.taggedEnum<Event>();
+
+  test("reenter=true forces exit/enter for same state tag", async () => {
+    const effects: string[] = [];
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const machine = build(
+          pipe(
+            make<State, Event>(State.Polling({ attempts: 0 })),
+            on(
+              State.Polling,
+              Event.Reset,
+              ({ state }) => State.Polling({ attempts: state.attempts + 1 }),
+              { reenter: true },
+            ),
+            on(State.Polling, Event.Finish, () => State.Done()),
+            onEnter(State.Polling, ({ state }) =>
+              Effect.sync(() => effects.push(`enter:Polling:${state.attempts}`)),
+            ),
+            onExit(State.Polling, ({ state }) =>
+              Effect.sync(() => effects.push(`exit:Polling:${state.attempts}`)),
+            ),
+          ),
+        );
+
+        const system = yield* ActorSystemService;
+        const actor = yield* system.spawn("poller", machine);
+
+        // Initial enter
+        expect(effects).toEqual(["enter:Polling:0"]);
+
+        // Reset with reenter=true should run exit/enter
+        yield* actor.send(Event.Reset());
+        yield* yieldFibers;
+
+        const state = yield* actor.state.get;
+        expect(state._tag).toBe("Polling");
+        expect((state as State & { _tag: "Polling" }).attempts).toBe(1);
+        expect(effects).toEqual(["enter:Polling:0", "exit:Polling:0", "enter:Polling:1"]);
+
+        // Another reenter
+        yield* actor.send(Event.Reset());
+        yield* yieldFibers;
+
+        expect(effects).toEqual([
+          "enter:Polling:0",
+          "exit:Polling:0",
+          "enter:Polling:1",
+          "exit:Polling:1",
+          "enter:Polling:2",
+        ]);
+      }).pipe(Effect.scoped, Effect.provide(ActorSystemDefault)),
+    );
+  });
+
+  test("reenter restarts delay timer", async () => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const machine = build(
+          pipe(
+            make<State, Event>(State.Polling({ attempts: 0 })),
+            on(
+              State.Polling,
+              Event.Reset,
+              ({ state }) => State.Polling({ attempts: state.attempts + 1 }),
+              { reenter: true },
+            ),
+            on(State.Polling, Event.Poll, () => State.Done()),
+            delay(State.Polling, "5 seconds", Event.Poll()),
+          ),
+        );
+
+        const system = yield* ActorSystemService;
+        const actor = yield* system.spawn("poller", machine);
+
+        // Advance 3 seconds
+        yield* TestClock.adjust("3 seconds");
+        yield* yieldFibers;
+
+        let state = yield* actor.state.get;
+        expect(state._tag).toBe("Polling");
+
+        // Reset - should restart the 5 second timer
+        yield* actor.send(Event.Reset());
+        yield* yieldFibers;
+
+        // Advance another 3 seconds (6 total from start, but 3 from reset)
+        yield* TestClock.adjust("3 seconds");
+        yield* yieldFibers;
+
+        state = yield* actor.state.get;
+        expect(state._tag).toBe("Polling"); // Timer not done yet
+
+        // Advance 2 more seconds (5 total from reset)
+        yield* TestClock.adjust("2 seconds");
+        yield* yieldFibers;
+
+        state = yield* actor.state.get;
+        expect(state._tag).toBe("Done"); // Timer fired
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.merge(ActorSystemDefault, TestContext.TestContext)),
+      ),
+    );
+  });
+});

@@ -1,7 +1,7 @@
 import { Duration, Effect, Fiber } from "effect";
 import type { DurationInput } from "effect/Duration";
 
-import type { MachineBuilder, StateEffect } from "../machine.js";
+import type { MachineBuilder, MachineRef, StateEffect } from "../machine.js";
 import { addOnEnter, addOnExit } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
 
@@ -13,11 +13,16 @@ export interface DelayOptions<S> {
 }
 
 /**
+ * Duration that can be static or computed from state at entry time
+ */
+export type DurationOrFn<S> = DurationInput | ((state: S) => DurationInput);
+
+/**
  * Schedule an event to be sent after a delay when entering a state.
  * The delay timer starts when entering the state and is cancelled on exit.
  * Works with TestClock for deterministic testing.
  *
- * @example
+ * @example Static duration
  * ```ts
  * pipe(
  *   Machine.make<NotificationState, NotificationEvent>(State.Idle()),
@@ -27,6 +32,15 @@ export interface DelayOptions<S> {
  *   delay(State.Success, "3 seconds", Event.Dismiss()),
  *   final(State.Dismissed),
  * )
+ * ```
+ *
+ * @example Dynamic duration from state
+ * ```ts
+ * // Timeout duration from state
+ * delay(State.Polling, (state) => Duration.seconds(state.timeout), Event.Timeout())
+ *
+ * // Duration from settings
+ * delay(State.Success, () => Duration.seconds(getSettings().autoDismiss), Event.Dismiss())
  * ```
  *
  * @example With guard
@@ -42,48 +56,73 @@ export function delay<
   EventType extends { readonly _tag: string },
 >(
   stateConstructor: { (...args: never[]): NarrowedState },
-  duration: DurationInput,
+  duration: DurationOrFn<NarrowedState>,
   event: EventType,
   options?: DelayOptions<NarrowedState>,
 ) {
   const stateTag = getTag(stateConstructor);
-  const decodedDuration = Duration.decode(duration);
 
-  // Store the fiber ref for cleanup
-  let timerFiber: Fiber.RuntimeFiber<void, never> | null = null;
+  // Pre-decode if static duration
+  const staticDuration = typeof duration !== "function" ? Duration.decode(duration) : null;
+
+  // Unique key for this delay instance within the state
+  // Multiple delays on same state need separate storage
+  const delayKey = Symbol("delay");
 
   return <State extends { readonly _tag: string }, Event extends { readonly _tag: string }, R>(
     builder: MachineBuilder<State, Event, R>,
   ): MachineBuilder<State, Event, R> => {
+    // Per-actor, per-delay fiber storage
+    const actorDelayFibers = new WeakMap<
+      MachineRef<unknown>,
+      Map<symbol, Fiber.RuntimeFiber<void, never>>
+    >();
+
+    const getFiberMap = (self: MachineRef<Event>): Map<symbol, Fiber.RuntimeFiber<void, never>> => {
+      const key = self as MachineRef<unknown>;
+      let map = actorDelayFibers.get(key);
+      if (map === undefined) {
+        map = new Map();
+        actorDelayFibers.set(key, map);
+      }
+      return map;
+    };
+
     const enterEffect: StateEffect<State, Event, never> = {
       stateTag,
       handler: ({ state, self }) => {
         const typedState = state as unknown as NarrowedState;
 
         // Check guard
-        if (options?.guard && !options.guard(typedState)) {
+        if (options?.guard !== undefined && !options.guard(typedState)) {
           return Effect.void;
         }
+
+        // Compute duration at entry time
+        const resolvedDuration =
+          staticDuration ??
+          Duration.decode((duration as (state: NarrowedState) => DurationInput)(typedState));
 
         return Effect.gen(function* () {
           const fiber = yield* Effect.fork(
             Effect.gen(function* () {
-              yield* Effect.sleep(decodedDuration);
+              yield* Effect.sleep(resolvedDuration);
               yield* self.send(event as unknown as Event);
             }),
           );
-          timerFiber = fiber;
+          getFiberMap(self).set(delayKey, fiber);
         });
       },
     };
 
     const exitEffect: StateEffect<State, Event, never> = {
       stateTag,
-      handler: () =>
+      handler: ({ self }) =>
         Effect.suspend(() => {
-          if (timerFiber) {
-            const fiber = timerFiber;
-            timerFiber = null;
+          const fiberMap = getFiberMap(self);
+          const fiber = fiberMap.get(delayKey);
+          if (fiber !== undefined) {
+            fiberMap.delete(delayKey);
             return Fiber.interrupt(fiber).pipe(Effect.asVoid);
           }
           return Effect.void;

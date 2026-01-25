@@ -77,7 +77,7 @@ export function choose<
           ctx: TransitionContext<State, Event>,
         ) => TransitionResult<State, R2>,
         guard:
-          "otherwise" in branch && branch.otherwise
+          "otherwise" in branch && branch.otherwise === true
             ? undefined // otherwise always matches
             : (branch.guard as unknown as
                 | ((ctx: TransitionContext<State, Event>) => boolean)

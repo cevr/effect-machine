@@ -56,7 +56,7 @@ export const simulate = <
       // Use shared resolver for guard cascade support
       const transition = resolveTransition(machine, currentState, event);
 
-      if (!transition) {
+      if (transition === undefined) {
         continue;
       }
 
@@ -65,7 +65,7 @@ export const simulate = <
       let newState = Effect.isEffect(newStateResult) ? yield* newStateResult : newStateResult;
 
       // Run transition effect if any (for side effects during test)
-      if (transition.effect) {
+      if (transition.effect !== undefined) {
         yield* transition.effect({ state: currentState, event });
       }
 
@@ -119,6 +119,94 @@ export const assertReaches = <
   });
 
 /**
+ * Assert that a machine follows a specific path of state tags
+ *
+ * @example
+ * ```ts
+ * yield* assertPath(
+ *   machine,
+ *   [Event.Start(), Event.Increment(), Event.Stop()],
+ *   ["Idle", "Counting", "Counting", "Done"]
+ * )
+ * ```
+ */
+export const assertPath = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+>(
+  machine: Machine<S, E, R>,
+  events: ReadonlyArray<E>,
+  expectedPath: ReadonlyArray<string>,
+): Effect.Effect<SimulationResult<S>, AssertionError, R> =>
+  Effect.gen(function* () {
+    const result = yield* simulate(machine, events);
+    const actualPath = result.states.map((s) => s._tag);
+
+    if (actualPath.length !== expectedPath.length) {
+      return yield* Effect.fail(
+        new AssertionError(
+          `Path length mismatch. Expected ${expectedPath.length} states but got ${actualPath.length}.\n` +
+            `Expected: ${expectedPath.join(" -> ")}\n` +
+            `Actual:   ${actualPath.join(" -> ")}`,
+        ),
+      );
+    }
+
+    for (let i = 0; i < expectedPath.length; i++) {
+      if (actualPath[i] !== expectedPath[i]) {
+        return yield* Effect.fail(
+          new AssertionError(
+            `Path mismatch at position ${i}. Expected "${expectedPath[i]}" but got "${actualPath[i]}".\n` +
+              `Expected: ${expectedPath.join(" -> ")}\n` +
+              `Actual:   ${actualPath.join(" -> ")}`,
+          ),
+        );
+      }
+    }
+
+    return result;
+  });
+
+/**
+ * Assert that a machine never reaches a specific state given a sequence of events
+ *
+ * @example
+ * ```ts
+ * // Verify error handling doesn't reach crash state
+ * yield* assertNeverReaches(
+ *   machine,
+ *   [Event.Error(), Event.Retry(), Event.Success()],
+ *   "Crashed"
+ * )
+ * ```
+ */
+export const assertNeverReaches = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+>(
+  machine: Machine<S, E, R>,
+  events: ReadonlyArray<E>,
+  forbiddenTag: string,
+): Effect.Effect<SimulationResult<S>, AssertionError, R> =>
+  Effect.gen(function* () {
+    const result = yield* simulate(machine, events);
+
+    const visitedIndex = result.states.findIndex((s) => s._tag === forbiddenTag);
+    if (visitedIndex !== -1) {
+      return yield* Effect.fail(
+        new AssertionError(
+          `Machine reached forbidden state "${forbiddenTag}" at position ${visitedIndex}.\n` +
+            `States visited: ${result.states.map((s) => s._tag).join(" -> ")}`,
+        ),
+      );
+    }
+
+    return result;
+  });
+
+/**
  * Create a controllable test harness for a machine
  */
 export interface TestHarness<S, E, R> {
@@ -128,8 +216,35 @@ export interface TestHarness<S, E, R> {
 }
 
 /**
+ * Options for creating a test harness
+ */
+export interface TestHarnessOptions<S, E> {
+  /**
+   * Called after each transition with the previous state, event, and new state.
+   * Useful for logging or spying on transitions.
+   */
+  readonly onTransition?: (from: S, event: E, to: S) => void;
+}
+
+/**
  * Create a test harness for step-by-step testing.
  * Does not run onEnter/onExit effects, but does apply always transitions.
+ *
+ * @example Basic usage
+ * ```ts
+ * const harness = yield* createTestHarness(machine)
+ * yield* harness.send(Event.Start())
+ * const state = yield* harness.getState
+ * ```
+ *
+ * @example With transition observer
+ * ```ts
+ * const transitions: Array<{ from: string; event: string; to: string }> = []
+ * const harness = yield* createTestHarness(machine, {
+ *   onTransition: (from, event, to) =>
+ *     transitions.push({ from: from._tag, event: event._tag, to: to._tag })
+ * })
+ * ```
  */
 export const createTestHarness = <
   S extends { readonly _tag: string },
@@ -137,6 +252,7 @@ export const createTestHarness = <
   R,
 >(
   machine: Machine<S, E, R>,
+  options?: TestHarnessOptions<S, E>,
 ): Effect.Effect<TestHarness<S, E, R>, never, R> =>
   Effect.gen(function* () {
     // Apply always transitions to initial state
@@ -150,14 +266,14 @@ export const createTestHarness = <
         // Use shared resolver for guard cascade support
         const transition = resolveTransition(machine, currentState, event);
 
-        if (!transition) {
+        if (transition === undefined) {
           return currentState;
         }
 
         const newStateResult = transition.handler({ state: currentState, event });
         let newState = Effect.isEffect(newStateResult) ? yield* newStateResult : newStateResult;
 
-        if (transition.effect) {
+        if (transition.effect !== undefined) {
           yield* transition.effect({ state: currentState, event });
         }
 
@@ -167,6 +283,12 @@ export const createTestHarness = <
         }
 
         yield* SubscriptionRef.set(stateRef, newState);
+
+        // Call transition observer
+        if (options?.onTransition !== undefined) {
+          options.onTransition(currentState, event, newState);
+        }
+
         return newState;
       });
 

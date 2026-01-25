@@ -12,7 +12,56 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "plugins": [{ "name": "@effect/language-service" }]
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "diagnostics": true,
+        "diagnosticsName": true,
+        "diagnosticSeverity": {
+          // Enable rules that are off by default
+          "anyUnknownInErrorContext": "error",
+          "deterministicKeys": "warning",
+          "importFromBarrel": "warning",
+          "instanceOfSchema": "warning",
+          "missedPipeableOpportunity": "suggestion",
+          "missingEffectServiceDependency": "warning",
+          "schemaUnionOfLiterals": "warning",
+          "strictBooleanExpressions": "warning",
+          "strictEffectProvide": "warning",
+
+          // Upgrade suggestions to warnings for stricter enforcement
+          "catchAllToMapError": "warning",
+          "catchUnfailableEffect": "warning",
+          "effectFnOpportunity": "warning",
+          "effectMapVoid": "warning",
+          "effectSucceedWithVoid": "warning",
+          "leakingRequirements": "warning",
+          "preferSchemaOverJson": "warning",
+          "redundantSchemaTagIdentifier": "warning",
+          "returnEffectInGen": "warning",
+          "runEffectInsideEffect": "error",
+          "schemaStructWithTag": "warning",
+          "schemaSyncInEffect": "warning",
+          "tryCatchInEffectGen": "warning",
+          "unnecessaryEffectGen": "warning",
+          "unnecessaryFailYieldableError": "warning",
+          "unnecessaryPipe": "warning",
+          "unnecessaryPipeChain": "warning"
+        },
+        "keyPatterns": [
+          {
+            "target": "service",
+            "pattern": "default",
+            "skipLeadingPath": ["src/"]
+          },
+          {
+            "target": "error",
+            "pattern": "default",
+            "skipLeadingPath": ["src/"]
+          }
+        ]
+      }
+    ]
   },
   "include": ["src", "test"],
   "exclude": ["node_modules"]

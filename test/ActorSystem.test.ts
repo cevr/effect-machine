@@ -1,3 +1,4 @@
+// @effect-diagnostics strictEffectProvide:off - tests are entry points
 import { Data, Effect, pipe } from "effect";
 import { describe, expect, test } from "bun:test";
 

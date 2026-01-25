@@ -79,14 +79,14 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const map = yield* SynchronizedRef.get(actors);
       const actor = map.get(id);
-      return actor ? Option.some(actor) : Option.none();
+      return actor !== undefined ? Option.some(actor) : Option.none();
     });
 
   const stop = (id: string): Effect.Effect<boolean> =>
     Effect.gen(function* () {
       const map = yield* SynchronizedRef.get(actors);
       const actor = map.get(id);
-      if (!actor) {
+      if (actor === undefined) {
         return false;
       }
 
