@@ -87,6 +87,7 @@ export interface TransitionOptions<S, E, R> {
  */
 export interface Guard<S, E> {
   readonly _tag: "Guard";
+  readonly name?: string;
   readonly predicate: GuardFn<S, E>;
 }
 
@@ -97,9 +98,18 @@ export const Guard = {
   /**
    * Create a guard from a predicate function
    */
-  make: <S, E>(predicate: GuardFn<S, E>): Guard<S, E> => ({
+  make: <S, E>(predicate: GuardFn<S, E>, name?: string): Guard<S, E> => ({
     _tag: "Guard",
+    name,
     predicate,
+  }),
+
+  /**
+   * Add a name to an existing guard for introspection
+   */
+  named: <S, E>(name: string, guard: Guard<S, E>): Guard<S, E> => ({
+    ...guard,
+    name,
   }),
 
   /**
@@ -127,24 +137,33 @@ export const Guard = {
   /**
    * Combine guards with logical AND
    */
-  and: <S, E>(...guards: Guard<S, E>[]): Guard<S, E> => ({
-    _tag: "Guard",
-    predicate: (ctx) => guards.every((g) => g.predicate(ctx)),
-  }),
+  and: <S, E>(...guards: Guard<S, E>[]): Guard<S, E> => {
+    const names = guards.map((g) => g.name).filter((n): n is string => n !== undefined);
+    return {
+      _tag: "Guard",
+      name: names.length > 0 ? `and(${names.join(", ")})` : undefined,
+      predicate: (ctx) => guards.every((g) => g.predicate(ctx)),
+    };
+  },
 
   /**
    * Combine guards with logical OR
    */
-  or: <S, E>(...guards: Guard<S, E>[]): Guard<S, E> => ({
-    _tag: "Guard",
-    predicate: (ctx) => guards.some((g) => g.predicate(ctx)),
-  }),
+  or: <S, E>(...guards: Guard<S, E>[]): Guard<S, E> => {
+    const names = guards.map((g) => g.name).filter((n): n is string => n !== undefined);
+    return {
+      _tag: "Guard",
+      name: names.length > 0 ? `or(${names.join(", ")})` : undefined,
+      predicate: (ctx) => guards.some((g) => g.predicate(ctx)),
+    };
+  },
 
   /**
    * Negate a guard
    */
   not: <S, E>(guard: Guard<S, E>): Guard<S, E> => ({
     _tag: "Guard",
+    name: guard.name !== undefined ? `not(${guard.name})` : undefined,
     predicate: (ctx) => !guard.predicate(ctx),
   }),
 

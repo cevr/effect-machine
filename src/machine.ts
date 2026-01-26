@@ -25,6 +25,7 @@ export interface Transition<State, Event, R> {
   readonly eventTag: string;
   readonly handler: (ctx: TransitionContext<State, Event>) => TransitionResult<State, R>;
   readonly guard?: GuardFn<State, Event>;
+  readonly guardName?: string;
   readonly effect?: (ctx: TransitionContext<State, Event>) => Effect.Effect<void, never, R>;
   readonly reenter?: boolean;
 }
@@ -187,20 +188,29 @@ export interface OnOptions<S, E, R> {
 }
 
 /**
- * Normalize OnOptions guard to GuardFn
+ * Normalize OnOptions guard to GuardFn and extract guard name
  */
 export const normalizeOnOptions = <S, E, R>(
   options?: OnOptions<S, E, R>,
 ):
   | {
       guard?: GuardFn<S, E>;
+      guardName?: string;
       effect?: (ctx: TransitionContext<S, E>) => Effect.Effect<void, never, R>;
       reenter?: boolean;
     }
   | undefined => {
   if (options === undefined) return undefined;
+
+  // Extract guard name if it's a Guard object
+  let guardName: string | undefined;
+  if (options.guard !== undefined && typeof options.guard === "object" && "_tag" in options.guard) {
+    guardName = (options.guard as { name?: string }).name;
+  }
+
   return {
     ...options,
     guard: options.guard !== undefined ? normalizeGuard(options.guard) : undefined,
+    guardName,
   };
 };

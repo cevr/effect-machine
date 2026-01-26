@@ -69,3 +69,21 @@ export type {
 } from "./internal/types.js";
 export { Guard, normalizeGuard } from "./internal/types.js";
 export type { Guard as GuardType } from "./internal/types.js";
+
+// Inspection / introspection
+export type {
+  EffectEvent,
+  EventReceivedEvent,
+  GuardEvaluatedEvent,
+  InspectionEvent,
+  Inspector,
+  SpawnEvent,
+  StopEvent,
+  TransitionEvent,
+} from "./inspection.js";
+export {
+  collectingInspector,
+  consoleInspector,
+  Inspector as InspectorService,
+  makeInspector,
+} from "./inspection.js";

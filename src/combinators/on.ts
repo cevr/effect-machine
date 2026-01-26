@@ -56,6 +56,7 @@ function onImpl<
       guard: normalizedOptions?.guard as unknown as
         | ((ctx: TransitionContext<State, Event>) => boolean)
         | undefined,
+      guardName: normalizedOptions?.guardName,
       effect: normalizedOptions?.effect as unknown as
         | ((ctx: TransitionContext<State, Event>) => Effect.Effect<void, never, R2>)
         | undefined,
