@@ -3,6 +3,9 @@ import { Effect, Fiber, Queue, SubscriptionRef } from "effect";
 import type { ActorRef } from "../actor-ref.js";
 import type { Machine, MachineRef } from "../machine.js";
 
+/** Listener set for sync subscriptions */
+type Listeners<S> = Set<(state: S) => void>;
+
 /** Maximum steps for always transitions to prevent infinite loops */
 const MAX_ALWAYS_STEPS = 100;
 
@@ -100,6 +103,52 @@ export const applyAlways = <
   });
 
 /**
+ * Build ActorRef with all methods
+ */
+const buildActorRef = <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
+  id: string,
+  machine: Machine<S, E, R>,
+  stateRef: SubscriptionRef.SubscriptionRef<S>,
+  eventQueue: Queue.Queue<E>,
+  listeners: Listeners<S>,
+  stop: Effect.Effect<void>,
+): ActorRef<S, E> => ({
+  id,
+  send: (event) => Queue.offer(eventQueue, event),
+  state: stateRef,
+  stop,
+  snapshot: SubscriptionRef.get(stateRef),
+  snapshotSync: () => Effect.runSync(SubscriptionRef.get(stateRef)),
+  matches: (tag) => Effect.map(SubscriptionRef.get(stateRef), (s) => s._tag === tag),
+  matchesSync: (tag) => Effect.runSync(SubscriptionRef.get(stateRef))._tag === tag,
+  can: (event) =>
+    Effect.map(
+      SubscriptionRef.get(stateRef),
+      (s) => resolveTransition(machine, s, event) !== undefined,
+    ),
+  canSync: (event) => {
+    const state = Effect.runSync(SubscriptionRef.get(stateRef));
+    return resolveTransition(machine, state, event) !== undefined;
+  },
+  changes: stateRef.changes,
+  subscribe: (fn) => {
+    listeners.add(fn);
+    return () => {
+      listeners.delete(fn);
+    };
+  },
+});
+
+/**
+ * Notify all listeners of state change
+ */
+const notifyListeners = <S>(listeners: Listeners<S>, state: S): void => {
+  for (const listener of listeners) {
+    listener(state);
+  }
+};
+
+/**
  * Create and start an actor for a machine
  */
 export const createActor = <
@@ -117,6 +166,7 @@ export const createActor = <
     // Initialize state
     const stateRef = yield* SubscriptionRef.make(resolvedInitial);
     const eventQueue = yield* Queue.unbounded<E>();
+    const listeners: Listeners<S> = new Set();
 
     // Create self reference for sending events
     const self: MachineRef<E> = {
@@ -128,31 +178,30 @@ export const createActor = <
 
     // Check if initial state (after always) is final
     if (machine.finalStates.has(resolvedInitial._tag)) {
-      // Create actor ref but don't start loop
-      const actorRef: ActorRef<S, E> = {
+      return buildActorRef(
         id,
-        send: (event) => Queue.offer(eventQueue, event),
-        state: stateRef,
-        stop: Queue.shutdown(eventQueue).pipe(Effect.asVoid),
-      };
-      return actorRef;
+        machine,
+        stateRef,
+        eventQueue,
+        listeners,
+        Queue.shutdown(eventQueue).pipe(Effect.asVoid),
+      );
     }
 
     // Start the event loop
-    const loopFiber = yield* Effect.fork(eventLoop(machine, stateRef, eventQueue, self));
+    const loopFiber = yield* Effect.fork(eventLoop(machine, stateRef, eventQueue, self, listeners));
 
-    // Create the actor ref
-    const actorRef: ActorRef<S, E> = {
+    return buildActorRef(
       id,
-      send: (event) => Queue.offer(eventQueue, event),
-      state: stateRef,
-      stop: Effect.gen(function* () {
+      machine,
+      stateRef,
+      eventQueue,
+      listeners,
+      Effect.gen(function* () {
         yield* Queue.shutdown(eventQueue);
         yield* Fiber.interrupt(loopFiber);
       }).pipe(Effect.asVoid),
-    };
-
-    return actorRef;
+    );
   });
 
 /**
@@ -163,6 +212,7 @@ const eventLoop = <S extends { readonly _tag: string }, E extends { readonly _ta
   stateRef: SubscriptionRef.SubscriptionRef<S>,
   eventQueue: Queue.Queue<E>,
   self: MachineRef<E>,
+  listeners: Listeners<S>,
 ): Effect.Effect<void, never, R> =>
   Effect.gen(function* () {
     while (true) {
@@ -206,17 +256,20 @@ const eventLoop = <S extends { readonly _tag: string }, E extends { readonly _ta
 
         // Update state
         yield* SubscriptionRef.set(stateRef, newState);
+        notifyListeners(listeners, newState);
 
         // Run entry effects for new state
         yield* runEntryEffects(machine, newState, self);
 
         // Check if new state is final
         if (machine.finalStates.has(newState._tag)) {
+          notifyListeners(listeners, newState);
           return;
         }
       } else {
         // Same state tag without reenter - just update state
         yield* SubscriptionRef.set(stateRef, newState);
+        notifyListeners(listeners, newState);
       }
     }
   });

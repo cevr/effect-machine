@@ -5,6 +5,9 @@ import type { ActorRef } from "./actor-ref.js";
 import type { Machine } from "./machine.js";
 import { createActor } from "./internal/loop.js";
 
+/** Base type for stored actors (internal) */
+type AnyState = { readonly _tag: string };
+
 /**
  * Actor system for managing actor lifecycles
  */
@@ -20,7 +23,7 @@ export interface ActorSystem {
   /**
    * Get an existing actor by ID
    */
-  readonly get: (id: string) => Effect.Effect<Option.Option<ActorRef<unknown, unknown>>>;
+  readonly get: (id: string) => Effect.Effect<Option.Option<ActorRef<AnyState, unknown>>>;
 
   /**
    * Stop an actor by ID
@@ -37,7 +40,7 @@ export const ActorSystem = Context.GenericTag<ActorSystem>("@effect/machine/Acto
  * Internal implementation
  */
 const make = Effect.gen(function* () {
-  const actors = yield* SynchronizedRef.make(new Map<string, ActorRef<unknown, unknown>>());
+  const actors = yield* SynchronizedRef.make(new Map<string, ActorRef<AnyState, unknown>>());
 
   const spawn = <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
     id: string,
@@ -56,7 +59,7 @@ const make = Effect.gen(function* () {
       // Register it
       yield* SynchronizedRef.update(actors, (map) => {
         const newMap = new Map(map);
-        newMap.set(id, actor as ActorRef<unknown, unknown>);
+        newMap.set(id, actor as unknown as ActorRef<AnyState, unknown>);
         return newMap;
       });
 
@@ -75,7 +78,7 @@ const make = Effect.gen(function* () {
       return actor;
     });
 
-  const get = (id: string): Effect.Effect<Option.Option<ActorRef<unknown, unknown>>> =>
+  const get = (id: string): Effect.Effect<Option.Option<ActorRef<AnyState, unknown>>> =>
     Effect.gen(function* () {
       const map = yield* SynchronizedRef.get(actors);
       const actor = map.get(id);

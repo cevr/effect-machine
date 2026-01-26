@@ -119,8 +119,9 @@ export const Guard = {
     _stateConstructor: { (...args: never[]): NarrowedState },
     _eventConstructor: { (...args: never[]): NarrowedEvent },
   ) => {
-    return (predicate: GuardFn<NarrowedState, NarrowedEvent>): Guard<NarrowedState, NarrowedEvent> =>
-      Guard.make(predicate);
+    return (
+      predicate: GuardFn<NarrowedState, NarrowedEvent>,
+    ): Guard<NarrowedState, NarrowedEvent> => Guard.make(predicate);
   },
 
   /**

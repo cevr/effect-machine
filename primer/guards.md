@@ -116,7 +116,10 @@ const canStart = Guard.make<IdleState, StartEvent>(({ state, event }) => {
 Or use `Guard.for` for automatic narrowing:
 
 ```typescript
-const canStart = Guard.for(State.Idle, Event.Start)(({ state, event }) => {
+const canStart = Guard.for(
+  State.Idle,
+  Event.Start,
+)(({ state, event }) => {
   return state.ready && event.force;
 });
 ```
@@ -142,7 +145,7 @@ First passing guard wins. Use `choose` for explicit cascade:
 choose(State.A, Event.X, [
   { guard: ({ state }) => state.value > 100, to: () => State.B() },
   { guard: ({ state }) => state.value > 50, to: () => State.C() },
-  { to: () => State.D() },  // Fallback (no guard)
+  { to: () => State.D() }, // Fallback (no guard)
 ]);
 ```
 
@@ -154,7 +157,7 @@ choose(State.A, Event.X, [
 always(State.Calculating, [
   { guard: (state) => state.value >= 70, to: () => State.High() },
   { guard: (state) => state.value >= 40, to: () => State.Medium() },
-  { to: () => State.Low() },  // Fallback (no guard)
+  { to: () => State.Low() }, // Fallback (no guard)
 ]);
 ```
 

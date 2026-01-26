@@ -27,6 +27,7 @@ src/
 test/
 ├── Machine.test.ts       # Core machine tests
 ├── ActorSystem.test.ts   # Actor spawning/lifecycle
+├── actor-ref.test.ts     # ActorRef ergonomics (snapshot, matches, can, subscribe)
 ├── Testing.test.ts       # Test utilities (assertPath, assertNeverReaches, onTransition)
 ├── features/             # Feature-specific tests
 │   ├── always-transitions.test.ts
@@ -46,14 +47,15 @@ test/
 
 ## Key Files
 
-| File                | Purpose                                                                  |
-| ------------------- | ------------------------------------------------------------------------ |
-| `internal/loop.ts`  | Event processing, `resolveTransition`, `applyAlways`, `createActor`      |
-| `internal/types.ts` | `TransitionContext`, `StateEffectContext`, `Guard` module                |
-| `machine.ts`        | `Machine`, `MachineBuilder`, `Transition`, `OnOptions` interfaces        |
-| `testing.ts`        | `simulate`, `createTestHarness`, `assertPath`, `assertNeverReaches`      |
-| `delay.ts`          | `DurationOrFn`, WeakMap fiber storage pattern                            |
-| `invoke.ts`         | WeakMap fiber storage pattern (same as delay)                            |
+| File                | Purpose                                                             |
+| ------------------- | ------------------------------------------------------------------- |
+| `internal/loop.ts`  | Event processing, `resolveTransition`, `applyAlways`, `createActor` |
+| `internal/types.ts` | `TransitionContext`, `StateEffectContext`, `Guard` module           |
+| `machine.ts`        | `Machine`, `MachineBuilder`, `Transition`, `OnOptions` interfaces   |
+| `actor-ref.ts`      | `ActorRef` interface with ergonomic helpers                         |
+| `testing.ts`        | `simulate`, `createTestHarness`, `assertPath`, `assertNeverReaches` |
+| `delay.ts`          | `DurationOrFn`, WeakMap fiber storage pattern                       |
+| `invoke.ts`         | WeakMap fiber storage pattern (same as delay)                       |
 
 ## Event Flow
 
@@ -72,8 +74,8 @@ Event → resolveTransition (guard cascade) → onExit → handler → applyAlwa
 `delay.ts` and `invoke.ts` use WeakMap for per-actor, per-combinator fiber storage:
 
 ```ts
-const actorFibers = new WeakMap<MachineRef<unknown>, Map<symbol, Fiber>>()
-const instanceKey = Symbol("delay") // unique per combinator instance
+const actorFibers = new WeakMap<MachineRef<unknown>, Map<symbol, Fiber>>();
+const instanceKey = Symbol("delay"); // unique per combinator instance
 ```
 
 - Prevents closure-based fiber leaks across actor instances
@@ -92,3 +94,19 @@ const instanceKey = Symbol("delay") // unique per combinator instance
 - `onTransition: (from, event, to) => void` - spy on transitions
 
 Use `Layer.merge(ActorSystemDefault, TestContext.TestContext)` for TestClock.
+
+## ActorRef API
+
+| Method         | Effect | Sync | Purpose                                   |
+| -------------- | ------ | ---- | ----------------------------------------- |
+| `snapshot`     | ✓      | -    | Get current state                         |
+| `snapshotSync` | -      | ✓    | Get current state (sync)                  |
+| `matches`      | ✓      | -    | Check if state matches tag                |
+| `matchesSync`  | -      | ✓    | Check if state matches tag (sync)         |
+| `can`          | ✓      | -    | Check if event can be handled (w/ guards) |
+| `canSync`      | -      | ✓    | Check if event can be handled (sync)      |
+| `changes`      | Stream | -    | Stream of state updates                   |
+| `subscribe`    | -      | ✓    | Sync callback, returns unsubscribe fn     |
+
+- `can`/`canSync` evaluate guards - returns `true` only if transition exists AND guards pass
+- `subscribe` callback fires on each state change; `changes` stream excludes initial value
