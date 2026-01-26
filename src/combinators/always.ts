@@ -1,6 +1,11 @@
 import type { AlwaysTransition, MachineBuilder } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
 import type { TransitionResult } from "../internal/types.js";
+import type { StateBrand, EventBrand } from "../internal/brands.js";
+
+// Branded type constraints
+type BrandedState = { readonly _tag: string } & StateBrand;
+type BrandedEvent = { readonly _tag: string } & EventBrand;
 
 /**
  * A single branch in an always transition cascade
@@ -43,13 +48,13 @@ export type AlwaysEntry<S, R> = AlwaysBranch<S, R> | AlwaysOtherwise<S, R>;
  * )
  * ```
  */
-export function always<NarrowedState extends { readonly _tag: string }, R2 = never>(
+export function always<NarrowedState extends BrandedState, R2 = never>(
   stateConstructor: { (...args: never[]): NarrowedState },
   branches: ReadonlyArray<AlwaysEntry<NarrowedState, R2>>,
 ) {
   const stateTag = getTag(stateConstructor);
 
-  return <State extends { readonly _tag: string }, Event extends { readonly _tag: string }, R>(
+  return <State extends BrandedState, Event extends BrandedEvent, R>(
     builder: MachineBuilder<State, Event, R>,
   ): MachineBuilder<State, Event, R | R2> => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -11,6 +11,11 @@ import type {
   TransitionResult,
 } from "./internal/types.js";
 import { normalizeGuard } from "./internal/types.js";
+import type { StateBrand, EventBrand } from "./internal/brands.js";
+
+// Branded type constraints for compile-time safety
+type BrandedState = { readonly _tag: string } & StateBrand;
+type BrandedEvent = { readonly _tag: string } & EventBrand;
 
 /**
  * Self reference for sending events back to the machine
@@ -94,10 +99,7 @@ interface MachineBuilderMutable<State, Event, R = never> extends Pipeable {
 /**
  * Create a new machine with initial state
  */
-export const make = <
-  State extends { readonly _tag: string },
-  Event extends { readonly _tag: string },
->(
+export const make = <State extends BrandedState, Event extends BrandedEvent>(
   initial: State,
 ): MachineBuilder<State, Event> => {
   const builder: MachineBuilderMutable<State, Event> = Object.create(PipeableProto);
@@ -115,9 +117,7 @@ export const make = <
  * Add a transition handler
  */
 export const addTransition =
-  <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R, R2>(
-    transition: Transition<S, E, R2>,
-  ) =>
+  <S extends BrandedState, E extends BrandedEvent, R, R2>(transition: Transition<S, E, R2>) =>
   (builder: MachineBuilder<S, E, R>): MachineBuilder<S, E, R | R2> => ({
     ...builder,
     transitions: [...builder.transitions, transition as Transition<S, E, R | R2>],
@@ -127,9 +127,7 @@ export const addTransition =
  * Add an always (eventless) transition
  */
 export const addAlwaysTransition =
-  <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R, R2>(
-    transition: AlwaysTransition<S, R2>,
-  ) =>
+  <S extends BrandedState, E extends BrandedEvent, R, R2>(transition: AlwaysTransition<S, R2>) =>
   (builder: MachineBuilder<S, E, R>): MachineBuilder<S, E, R | R2> => ({
     ...builder,
     alwaysTransitions: [...builder.alwaysTransitions, transition as AlwaysTransition<S, R | R2>],
@@ -139,9 +137,7 @@ export const addAlwaysTransition =
  * Add an entry effect
  */
 export const addOnEnter =
-  <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R, R2>(
-    effect: StateEffect<S, E, R2>,
-  ) =>
+  <S extends BrandedState, E extends BrandedEvent, R, R2>(effect: StateEffect<S, E, R2>) =>
   (builder: MachineBuilder<S, E, R>): MachineBuilder<S, E, R | R2> => ({
     ...builder,
     onEnter: [...builder.onEnter, effect as StateEffect<S, E, R | R2>],
@@ -151,9 +147,7 @@ export const addOnEnter =
  * Add an exit effect
  */
 export const addOnExit =
-  <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R, R2>(
-    effect: StateEffect<S, E, R2>,
-  ) =>
+  <S extends BrandedState, E extends BrandedEvent, R, R2>(effect: StateEffect<S, E, R2>) =>
   (builder: MachineBuilder<S, E, R>): MachineBuilder<S, E, R | R2> => ({
     ...builder,
     onExit: [...builder.onExit, effect as StateEffect<S, E, R | R2>],
@@ -163,7 +157,7 @@ export const addOnExit =
  * Mark a state as final
  */
 export const addFinal =
-  <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(stateTag: string) =>
+  <S extends BrandedState, E extends BrandedEvent, R>(stateTag: string) =>
   (builder: MachineBuilder<S, E, R>): MachineBuilder<S, E, R> => ({
     ...builder,
     finalStates: new Set([...builder.finalStates, stateTag]),
@@ -172,7 +166,7 @@ export const addFinal =
 /**
  * Build the machine from builder
  */
-export const build = <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
+export const build = <S extends BrandedState, E extends BrandedEvent, R>(
   builder: MachineBuilder<S, E, R>,
 ): Machine<S, E, R> => {
   const machine: Machine<S, E, R> = Object.create(PipeableProto);

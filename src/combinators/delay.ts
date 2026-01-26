@@ -4,6 +4,11 @@ import type { DurationInput } from "effect/Duration";
 import type { MachineBuilder, MachineRef, StateEffect } from "../machine.js";
 import { addOnEnter, addOnExit } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
+import type { StateBrand, EventBrand } from "../internal/brands.js";
+
+// Branded type constraints
+type BrandedState = { readonly _tag: string } & StateBrand;
+type BrandedEvent = { readonly _tag: string } & EventBrand;
 
 /**
  * Options for delayed event scheduling
@@ -51,10 +56,7 @@ export type DurationOrFn<S> = DurationInput | ((state: S) => DurationInput);
  * })
  * ```
  */
-export function delay<
-  NarrowedState extends { readonly _tag: string },
-  EventType extends { readonly _tag: string },
->(
+export function delay<NarrowedState extends BrandedState, EventType extends BrandedEvent>(
   stateConstructor: { (...args: never[]): NarrowedState },
   duration: DurationOrFn<NarrowedState>,
   event: EventType,
@@ -69,7 +71,7 @@ export function delay<
   // Multiple delays on same state need separate storage
   const delayKey = Symbol("delay");
 
-  return <State extends { readonly _tag: string }, Event extends { readonly _tag: string }, R>(
+  return <State extends BrandedState, Event extends BrandedEvent, R>(
     builder: MachineBuilder<State, Event, R>,
   ): MachineBuilder<State, Event, R> => {
     // Per-actor, per-delay fiber storage

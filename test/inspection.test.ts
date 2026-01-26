@@ -1,5 +1,5 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Data, Effect } from "effect";
+import { Effect } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import {
@@ -11,21 +11,23 @@ import {
   InspectorService,
   Machine,
   yieldFibers,
+  State,
+  Event,
 } from "../src/index.js";
 
-type TestState = Data.TaggedEnum<{
+type TestState = State.TaggedEnum<{
   Idle: {};
   Loading: { url: string };
   Done: { result: string };
 }>;
-const State = Data.taggedEnum<TestState>();
+const TestState = State.taggedEnum<TestState>();
 
-type TestEvent = Data.TaggedEnum<{
+type TestEvent = Event.TaggedEnum<{
   Fetch: { url: string };
   Success: { result: string };
   Reset: {};
 }>;
-const Event = Data.taggedEnum<TestEvent>();
+const TestEvent = Event.taggedEnum<TestEvent>();
 
 describe("Inspection", () => {
   test("emits spawn event on actor creation", async () => {
@@ -34,8 +36,10 @@ describe("Inspection", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<TestState, TestEvent>(State.Idle()).pipe(
-            Machine.on(State.Idle, Event.Fetch, ({ event }) => State.Loading({ url: event.url })),
+          Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+            Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
+              TestState.Loading({ url: event.url }),
+            ),
           ),
         );
 
@@ -61,15 +65,17 @@ describe("Inspection", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<TestState, TestEvent>(State.Idle()).pipe(
-            Machine.on(State.Idle, Event.Fetch, ({ event }) => State.Loading({ url: event.url })),
+          Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+            Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
+              TestState.Loading({ url: event.url }),
+            ),
           ),
         );
 
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("test", machine);
 
-        yield* actor.send(Event.Fetch({ url: "https://example.com" }));
+        yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
         yield* yieldFibers;
       }).pipe(
         Effect.scoped,
@@ -90,15 +96,17 @@ describe("Inspection", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<TestState, TestEvent>(State.Idle()).pipe(
-            Machine.on(State.Idle, Event.Fetch, ({ event }) => State.Loading({ url: event.url })),
+          Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+            Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
+              TestState.Loading({ url: event.url }),
+            ),
           ),
         );
 
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("test", machine);
 
-        yield* actor.send(Event.Fetch({ url: "https://example.com" }));
+        yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
         yield* yieldFibers;
       }).pipe(
         Effect.scoped,
@@ -121,17 +129,22 @@ describe("Inspection", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<TestState, TestEvent>(State.Idle()).pipe(
-            Machine.on(State.Idle, Event.Fetch, ({ event }) => State.Loading({ url: event.url }), {
-              guard: canFetch,
-            }),
+          Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+            Machine.on(
+              TestState.Idle,
+              TestEvent.Fetch,
+              ({ event }) => TestState.Loading({ url: event.url }),
+              {
+                guard: canFetch,
+              },
+            ),
           ),
         );
 
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("test", machine);
 
-        yield* actor.send(Event.Fetch({ url: "https://example.com" }));
+        yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
         yield* yieldFibers;
       }).pipe(
         Effect.scoped,
@@ -152,18 +165,20 @@ describe("Inspection", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<TestState, TestEvent>(State.Idle()).pipe(
-            Machine.on(State.Idle, Event.Fetch, ({ event }) => State.Loading({ url: event.url })),
-            Machine.onEnter(State.Idle, () => Effect.void),
-            Machine.onExit(State.Idle, () => Effect.void),
-            Machine.onEnter(State.Loading, () => Effect.void),
+          Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+            Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
+              TestState.Loading({ url: event.url }),
+            ),
+            Machine.onEnter(TestState.Idle, () => Effect.void),
+            Machine.onExit(TestState.Idle, () => Effect.void),
+            Machine.onEnter(TestState.Loading, () => Effect.void),
           ),
         );
 
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("test", machine);
 
-        yield* actor.send(Event.Fetch({ url: "https://example.com" }));
+        yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
         yield* yieldFibers;
       }).pipe(
         Effect.scoped,
@@ -191,21 +206,23 @@ describe("Inspection", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<TestState, TestEvent>(State.Idle()).pipe(
-            Machine.on(State.Idle, Event.Fetch, ({ event }) => State.Loading({ url: event.url })),
-            Machine.on(State.Loading, Event.Success, ({ event }) =>
-              State.Done({ result: event.result }),
+          Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+            Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
+              TestState.Loading({ url: event.url }),
             ),
-            Machine.final(State.Done),
+            Machine.on(TestState.Loading, TestEvent.Success, ({ event }) =>
+              TestState.Done({ result: event.result }),
+            ),
+            Machine.final(TestState.Done),
           ),
         );
 
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("test", machine);
 
-        yield* actor.send(Event.Fetch({ url: "https://example.com" }));
+        yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
         yield* yieldFibers;
-        yield* actor.send(Event.Success({ result: "ok" }));
+        yield* actor.send(TestEvent.Success({ result: "ok" }));
         yield* yieldFibers;
       }).pipe(
         Effect.scoped,
@@ -225,8 +242,10 @@ describe("Inspection", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<TestState, TestEvent>(State.Idle()).pipe(
-            Machine.on(State.Idle, Event.Fetch, ({ event }) => State.Loading({ url: event.url })),
+          Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+            Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
+              TestState.Loading({ url: event.url }),
+            ),
           ),
         );
 
@@ -251,15 +270,17 @@ describe("Inspection", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<TestState, TestEvent>(State.Idle()).pipe(
-            Machine.on(State.Idle, Event.Fetch, ({ event }) => State.Loading({ url: event.url })),
+          Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+            Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
+              TestState.Loading({ url: event.url }),
+            ),
           ),
         );
 
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("test", machine);
 
-        yield* actor.send(Event.Fetch({ url: "https://example.com" }));
+        yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
         yield* yieldFibers;
 
         const state = yield* actor.snapshot;
@@ -277,17 +298,22 @@ describe("Inspection", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<TestState, TestEvent>(State.Idle()).pipe(
-            Machine.on(State.Idle, Event.Fetch, ({ event }) => State.Loading({ url: event.url }), {
-              guard: namedGuard,
-            }),
+          Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+            Machine.on(
+              TestState.Idle,
+              TestEvent.Fetch,
+              ({ event }) => TestState.Loading({ url: event.url }),
+              {
+                guard: namedGuard,
+              },
+            ),
           ),
         );
 
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("test", machine);
 
-        yield* actor.send(Event.Fetch({ url: "https://example.com" }));
+        yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
         yield* yieldFibers;
       }).pipe(
         Effect.scoped,
@@ -323,19 +349,24 @@ describe("Inspection", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<TestState, TestEvent>(State.Idle()).pipe(
-            Machine.on(State.Idle, Event.Fetch, ({ event }) => State.Loading({ url: event.url }), {
-              guard: canFetch,
-            }),
-            Machine.onExit(State.Idle, () => Effect.void),
-            Machine.onEnter(State.Loading, () => Effect.void),
+          Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+            Machine.on(
+              TestState.Idle,
+              TestEvent.Fetch,
+              ({ event }) => TestState.Loading({ url: event.url }),
+              {
+                guard: canFetch,
+              },
+            ),
+            Machine.onExit(TestState.Idle, () => Effect.void),
+            Machine.onEnter(TestState.Loading, () => Effect.void),
           ),
         );
 
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("test", machine);
 
-        yield* actor.send(Event.Fetch({ url: "https://example.com" }));
+        yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
         yield* yieldFibers;
       }).pipe(
         Effect.scoped,

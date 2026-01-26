@@ -1,4 +1,4 @@
-import { Data, Effect } from "effect";
+import { Effect } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import {
@@ -8,30 +8,36 @@ import {
   createTestHarness,
   Machine,
   simulate,
+  State,
+  Event,
 } from "../src/index.js";
 
-type TestState = Data.TaggedEnum<{
+type TestState = State.TaggedEnum<{
   Idle: {};
   Loading: {};
   Success: { data: string };
   Error: { message: string };
 }>;
-const State = Data.taggedEnum<TestState>();
+const TestState = State.taggedEnum<TestState>();
 
-type TestEvent = Data.TaggedEnum<{
+type TestEvent = Event.TaggedEnum<{
   Fetch: {};
   Resolve: { data: string };
   Reject: { message: string };
 }>;
-const Event = Data.taggedEnum<TestEvent>();
+const TestEvent = Event.taggedEnum<TestEvent>();
 
 const testMachine = Machine.build(
-  Machine.make<TestState, TestEvent>(State.Idle()).pipe(
-    Machine.on(State.Idle, Event.Fetch, () => State.Loading()),
-    Machine.on(State.Loading, Event.Resolve, ({ event }) => State.Success({ data: event.data })),
-    Machine.on(State.Loading, Event.Reject, ({ event }) => State.Error({ message: event.message })),
-    Machine.final(State.Success),
-    Machine.final(State.Error),
+  Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+    Machine.on(TestState.Idle, TestEvent.Fetch, () => TestState.Loading()),
+    Machine.on(TestState.Loading, TestEvent.Resolve, ({ event }) =>
+      TestState.Success({ data: event.data }),
+    ),
+    Machine.on(TestState.Loading, TestEvent.Reject, ({ event }) =>
+      TestState.Error({ message: event.message }),
+    ),
+    Machine.final(TestState.Success),
+    Machine.final(TestState.Error),
   ),
 );
 
@@ -41,8 +47,8 @@ describe("Testing", () => {
       await Effect.runPromise(
         Effect.gen(function* () {
           const result = yield* simulate(testMachine, [
-            Event.Fetch(),
-            Event.Resolve({ data: "hello" }),
+            TestEvent.Fetch(),
+            TestEvent.Resolve({ data: "hello" }),
           ]);
 
           expect(result.states.map((s) => s._tag)).toEqual(["Idle", "Loading", "Success"]);
@@ -55,7 +61,7 @@ describe("Testing", () => {
       await Effect.runPromise(
         Effect.gen(function* () {
           const result = yield* simulate(testMachine, [
-            Event.Resolve({ data: "ignored" }), // No transition from Idle
+            TestEvent.Resolve({ data: "ignored" }), // No transition from Idle
           ]);
 
           expect(result.finalState._tag).toBe("Idle");
@@ -74,11 +80,11 @@ describe("Testing", () => {
           let current = yield* harness.getState;
           expect(current._tag).toBe("Idle");
 
-          yield* harness.send(Event.Fetch());
+          yield* harness.send(TestEvent.Fetch());
           current = yield* harness.getState;
           expect(current._tag).toBe("Loading");
 
-          yield* harness.send(Event.Resolve({ data: "test" }));
+          yield* harness.send(TestEvent.Resolve({ data: "test" }));
           current = yield* harness.getState;
           expect(current._tag).toBe("Success");
         }),
@@ -89,13 +95,17 @@ describe("Testing", () => {
   describe("assertReaches", () => {
     test("passes when state is reached", async () => {
       await Effect.runPromise(
-        assertReaches(testMachine, [Event.Fetch(), Event.Resolve({ data: "ok" })], "Success"),
+        assertReaches(
+          testMachine,
+          [TestEvent.Fetch(), TestEvent.Resolve({ data: "ok" })],
+          "Success",
+        ),
       );
     });
 
     test("fails when state is not reached", async () => {
       const result = await Effect.runPromise(
-        assertReaches(testMachine, [Event.Fetch()], "Success").pipe(Effect.either),
+        assertReaches(testMachine, [TestEvent.Fetch()], "Success").pipe(Effect.either),
       );
 
       expect(result._tag).toBe("Left");
@@ -107,7 +117,7 @@ describe("Testing", () => {
       await Effect.runPromise(
         assertPath(
           testMachine,
-          [Event.Fetch(), Event.Resolve({ data: "ok" })],
+          [TestEvent.Fetch(), TestEvent.Resolve({ data: "ok" })],
           ["Idle", "Loading", "Success"],
         ),
       );
@@ -117,7 +127,7 @@ describe("Testing", () => {
       const result = await Effect.runPromise(
         assertPath(
           testMachine,
-          [Event.Fetch(), Event.Resolve({ data: "ok" })],
+          [TestEvent.Fetch(), TestEvent.Resolve({ data: "ok" })],
           ["Idle", "Success"], // Wrong path
         ).pipe(Effect.either),
       );
@@ -129,7 +139,7 @@ describe("Testing", () => {
       const result = await Effect.runPromise(
         assertPath(
           testMachine,
-          [Event.Fetch(), Event.Resolve({ data: "ok" })],
+          [TestEvent.Fetch(), TestEvent.Resolve({ data: "ok" })],
           ["Idle", "Loading", "Error"], // Wrong final state
         ).pipe(Effect.either),
       );
@@ -141,7 +151,11 @@ describe("Testing", () => {
   describe("assertNeverReaches", () => {
     test("passes when forbidden state is not reached", async () => {
       await Effect.runPromise(
-        assertNeverReaches(testMachine, [Event.Fetch(), Event.Resolve({ data: "ok" })], "Error"),
+        assertNeverReaches(
+          testMachine,
+          [TestEvent.Fetch(), TestEvent.Resolve({ data: "ok" })],
+          "Error",
+        ),
       );
     });
 
@@ -149,7 +163,7 @@ describe("Testing", () => {
       const result = await Effect.runPromise(
         assertNeverReaches(
           testMachine,
-          [Event.Fetch(), Event.Reject({ message: "oops" })],
+          [TestEvent.Fetch(), TestEvent.Reject({ message: "oops" })],
           "Error",
         ).pipe(Effect.either),
       );
@@ -169,8 +183,8 @@ describe("Testing", () => {
               transitions.push({ from: from._tag, event: event._tag, to: to._tag }),
           });
 
-          yield* harness.send(Event.Fetch());
-          yield* harness.send(Event.Resolve({ data: "test" }));
+          yield* harness.send(TestEvent.Fetch());
+          yield* harness.send(TestEvent.Resolve({ data: "test" }));
 
           expect(transitions).toEqual([
             { from: "Idle", event: "Fetch", to: "Loading" },

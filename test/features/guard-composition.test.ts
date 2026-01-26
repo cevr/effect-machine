@@ -1,24 +1,24 @@
-import { Data, Effect } from "effect";
+import { Effect } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { Guard, Machine, simulate } from "../../src/index.js";
+import { Event, Guard, Machine, simulate, State } from "../../src/index.js";
 
 describe("Guard Composition", () => {
-  type State = Data.TaggedEnum<{
+  type AuthState = State.TaggedEnum<{
     Idle: { role: string; age: number };
     Allowed: {};
     Denied: {};
   }>;
-  const State = Data.taggedEnum<State>();
+  const AuthState = State.taggedEnum<AuthState>();
 
-  type Event = Data.TaggedEnum<{
+  type AuthEvent = Event.TaggedEnum<{
     Access: {};
   }>;
-  const Event = Data.taggedEnum<Event>();
+  const AuthEvent = Event.taggedEnum<AuthEvent>();
 
   // Define narrowed types for the Idle state
-  type IdleState = State & { readonly _tag: "Idle" };
-  type AccessEvent = Event & { readonly _tag: "Access" };
+  type IdleState = AuthState & { readonly _tag: "Idle" };
+  type AccessEvent = AuthEvent & { readonly _tag: "Access" };
 
   test("Guard.and combines guards with logical AND", async () => {
     // Type guards narrowed to Idle state
@@ -28,15 +28,15 @@ describe("Guard Composition", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<State, Event>(State.Idle({ role: "admin", age: 25 })).pipe(
-            Machine.on(State.Idle, Event.Access, () => State.Allowed(), {
+          Machine.make<AuthState, AuthEvent>(AuthState.Idle({ role: "admin", age: 25 })).pipe(
+            Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed(), {
               guard: Guard.and(isAdmin, isAdult),
             }),
-            Machine.final(State.Allowed),
+            Machine.final(AuthState.Allowed),
           ),
         );
 
-        const result = yield* simulate(machine, [Event.Access()]);
+        const result = yield* simulate(machine, [AuthEvent.Access()]);
         expect(result.finalState._tag).toBe("Allowed");
       }),
     );
@@ -45,15 +45,15 @@ describe("Guard Composition", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<State, Event>(State.Idle({ role: "admin", age: 16 })).pipe(
-            Machine.on(State.Idle, Event.Access, () => State.Allowed(), {
+          Machine.make<AuthState, AuthEvent>(AuthState.Idle({ role: "admin", age: 16 })).pipe(
+            Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed(), {
               guard: Guard.and(isAdmin, isAdult),
             }),
-            Machine.final(State.Allowed),
+            Machine.final(AuthState.Allowed),
           ),
         );
 
-        const result = yield* simulate(machine, [Event.Access()]);
+        const result = yield* simulate(machine, [AuthEvent.Access()]);
         expect(result.finalState._tag).toBe("Idle");
       }),
     );
@@ -68,15 +68,15 @@ describe("Guard Composition", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<State, Event>(State.Idle({ role: "moderator", age: 20 })).pipe(
-            Machine.on(State.Idle, Event.Access, () => State.Allowed(), {
+          Machine.make<AuthState, AuthEvent>(AuthState.Idle({ role: "moderator", age: 20 })).pipe(
+            Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed(), {
               guard: Guard.or(isAdmin, isModerator),
             }),
-            Machine.final(State.Allowed),
+            Machine.final(AuthState.Allowed),
           ),
         );
 
-        const result = yield* simulate(machine, [Event.Access()]);
+        const result = yield* simulate(machine, [AuthEvent.Access()]);
         expect(result.finalState._tag).toBe("Allowed");
       }),
     );
@@ -88,15 +88,15 @@ describe("Guard Composition", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<State, Event>(State.Idle({ role: "user", age: 20 })).pipe(
-            Machine.on(State.Idle, Event.Access, () => State.Allowed(), {
+          Machine.make<AuthState, AuthEvent>(AuthState.Idle({ role: "user", age: 20 })).pipe(
+            Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed(), {
               guard: Guard.not(isGuest),
             }),
-            Machine.final(State.Allowed),
+            Machine.final(AuthState.Allowed),
           ),
         );
 
-        const result = yield* simulate(machine, [Event.Access()]);
+        const result = yield* simulate(machine, [AuthEvent.Access()]);
         expect(result.finalState._tag).toBe("Allowed");
       }),
     );
@@ -104,21 +104,24 @@ describe("Guard Composition", () => {
 
   test("Guard.for auto-narrows types from constructors", async () => {
     // Guard.for infers types from constructors - no manual type annotations needed
-    const isAdmin = Guard.for(State.Idle, Event.Access)(({ state }) => state.role === "admin");
-    const isAdult = Guard.for(State.Idle, Event.Access)(({ state }) => state.age >= 18);
+    const isAdmin = Guard.for(
+      AuthState.Idle,
+      AuthEvent.Access,
+    )(({ state }) => state.role === "admin");
+    const isAdult = Guard.for(AuthState.Idle, AuthEvent.Access)(({ state }) => state.age >= 18);
 
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<State, Event>(State.Idle({ role: "admin", age: 25 })).pipe(
-            Machine.on(State.Idle, Event.Access, () => State.Allowed(), {
+          Machine.make<AuthState, AuthEvent>(AuthState.Idle({ role: "admin", age: 25 })).pipe(
+            Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed(), {
               guard: Guard.and(isAdmin, isAdult),
             }),
-            Machine.final(State.Allowed),
+            Machine.final(AuthState.Allowed),
           ),
         );
 
-        const result = yield* simulate(machine, [Event.Access()]);
+        const result = yield* simulate(machine, [AuthEvent.Access()]);
         expect(result.finalState._tag).toBe("Allowed");
       }),
     );

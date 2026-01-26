@@ -4,6 +4,11 @@ import type { MachineBuilder, StateEffect } from "../machine.js";
 import { addOnExit } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
 import type { StateEffectContext } from "../internal/types.js";
+import type { StateBrand, EventBrand } from "../internal/brands.js";
+
+// Branded type constraints
+type BrandedState = { readonly _tag: string } & StateBrand;
+type BrandedEvent = { readonly _tag: string } & EventBrand;
 
 /**
  * Define an effect to run when exiting a state.
@@ -20,8 +25,8 @@ import type { StateEffectContext } from "../internal/types.js";
  * ```
  */
 export function onExit<
-  NarrowedState extends { readonly _tag: string },
-  EventType extends { readonly _tag: string },
+  NarrowedState extends BrandedState,
+  EventType extends BrandedEvent,
   R2 = never,
 >(
   stateConstructor: { (...args: never[]): NarrowedState },
@@ -29,7 +34,7 @@ export function onExit<
 ) {
   const stateTag = getTag(stateConstructor);
 
-  return <State extends { readonly _tag: string }, Event extends { readonly _tag: string }, R>(
+  return <State extends BrandedState, Event extends BrandedEvent, R>(
     builder: MachineBuilder<State, Event, R>,
   ): MachineBuilder<State, Event, R | R2> => {
     const effect: StateEffect<State, Event, R2> = {

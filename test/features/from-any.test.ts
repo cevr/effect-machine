@@ -1,23 +1,23 @@
 // @effect-diagnostics strictEffectProvide:off
-import { Data, Effect } from "effect";
+import { Effect } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { Machine, build, simulate } from "../../src/index.js";
+import { Event, Machine, build, simulate, State } from "../../src/index.js";
 
 // ============================================================================
 // Test fixtures
 // ============================================================================
 
-type EditorState = Data.TaggedEnum<{
+type EditorState = State.TaggedEnum<{
   Idle: {};
   Typing: { text: string };
   Submitting: { text: string };
   Submitted: { text: string };
   Cancelled: {};
 }>;
-const State = Data.taggedEnum<EditorState>();
+const EditorState = State.taggedEnum<EditorState>();
 
-type EditorEvent = Data.TaggedEnum<{
+type EditorEvent = Event.TaggedEnum<{
   Focus: {};
   KeyPress: { key: string };
   Backspace: {};
@@ -25,7 +25,7 @@ type EditorEvent = Data.TaggedEnum<{
   Cancel: {};
   Success: {};
 }>;
-const Event = Data.taggedEnum<EditorEvent>();
+const EditorEvent = Event.taggedEnum<EditorEvent>();
 
 // ============================================================================
 // from() tests
@@ -36,25 +36,27 @@ describe("Machine.from", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = build(
-          Machine.make<EditorState, EditorEvent>(State.Idle()).pipe(
-            Machine.on(State.Idle, Event.Focus, () => State.Typing({ text: "" })),
-            Machine.from(State.Typing).pipe(
-              Machine.on(Event.KeyPress, ({ state, event }) =>
-                State.Typing({ text: state.text + event.key }),
+          Machine.make<EditorState, EditorEvent>(EditorState.Idle()).pipe(
+            Machine.on(EditorState.Idle, EditorEvent.Focus, () => EditorState.Typing({ text: "" })),
+            Machine.from(EditorState.Typing).pipe(
+              Machine.on(EditorEvent.KeyPress, ({ state, event }) =>
+                EditorState.Typing({ text: state.text + event.key }),
               ),
-              Machine.on(Event.Backspace, ({ state }) =>
-                State.Typing({ text: state.text.slice(0, -1) }),
+              Machine.on(EditorEvent.Backspace, ({ state }) =>
+                EditorState.Typing({ text: state.text.slice(0, -1) }),
               ),
-              Machine.on(Event.Submit, ({ state }) => State.Submitted({ text: state.text })),
+              Machine.on(EditorEvent.Submit, ({ state }) =>
+                EditorState.Submitted({ text: state.text }),
+              ),
             ),
           ),
         );
 
         const result = yield* simulate(machine, [
-          Event.Focus(),
-          Event.KeyPress({ key: "h" }),
-          Event.KeyPress({ key: "i" }),
-          Event.Submit(),
+          EditorEvent.Focus(),
+          EditorEvent.KeyPress({ key: "h" }),
+          EditorEvent.KeyPress({ key: "i" }),
+          EditorEvent.Submit(),
         ]);
 
         expect(result.finalState._tag).toBe("Submitted");
@@ -69,24 +71,26 @@ describe("Machine.from", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = build(
-          Machine.make<EditorState, EditorEvent>(State.Typing({ text: "" })).pipe(
-            Machine.from(State.Typing).pipe(
+          Machine.make<EditorState, EditorEvent>(EditorState.Typing({ text: "" })).pipe(
+            Machine.from(EditorState.Typing).pipe(
               Machine.on(
-                Event.KeyPress,
-                ({ state, event }) => State.Typing({ text: state.text + event.key }),
+                EditorEvent.KeyPress,
+                ({ state, event }) => EditorState.Typing({ text: state.text + event.key }),
                 { guard: ({ state }) => state.text.length < 3 },
               ),
-              Machine.on(Event.Submit, ({ state }) => State.Submitted({ text: state.text })),
+              Machine.on(EditorEvent.Submit, ({ state }) =>
+                EditorState.Submitted({ text: state.text }),
+              ),
             ),
           ),
         );
 
         const result = yield* simulate(machine, [
-          Event.KeyPress({ key: "a" }),
-          Event.KeyPress({ key: "b" }),
-          Event.KeyPress({ key: "c" }),
-          Event.KeyPress({ key: "d" }), // blocked by guard
-          Event.Submit(),
+          EditorEvent.KeyPress({ key: "a" }),
+          EditorEvent.KeyPress({ key: "b" }),
+          EditorEvent.KeyPress({ key: "c" }),
+          EditorEvent.KeyPress({ key: "d" }), // blocked by guard
+          EditorEvent.Submit(),
         ]);
 
         expect(result.finalState._tag).toBe("Submitted");
@@ -103,11 +107,11 @@ describe("Machine.from", () => {
         const logs: string[] = [];
 
         const machine = build(
-          Machine.make<EditorState, EditorEvent>(State.Typing({ text: "" })).pipe(
-            Machine.from(State.Typing).pipe(
+          Machine.make<EditorState, EditorEvent>(EditorState.Typing({ text: "" })).pipe(
+            Machine.from(EditorState.Typing).pipe(
               Machine.on(
-                Event.KeyPress,
-                ({ state, event }) => State.Typing({ text: state.text + event.key }),
+                EditorEvent.KeyPress,
+                ({ state, event }) => EditorState.Typing({ text: state.text + event.key }),
                 {
                   effect: ({ event }) =>
                     Effect.sync(() => {
@@ -115,15 +119,17 @@ describe("Machine.from", () => {
                     }),
                 },
               ),
-              Machine.on(Event.Submit, ({ state }) => State.Submitted({ text: state.text })),
+              Machine.on(EditorEvent.Submit, ({ state }) =>
+                EditorState.Submitted({ text: state.text }),
+              ),
             ),
           ),
         );
 
         yield* simulate(machine, [
-          Event.KeyPress({ key: "h" }),
-          Event.KeyPress({ key: "i" }),
-          Event.Submit(),
+          EditorEvent.KeyPress({ key: "h" }),
+          EditorEvent.KeyPress({ key: "i" }),
+          EditorEvent.Submit(),
         ]);
 
         expect(logs).toEqual(["key: h", "key: i"]);
@@ -135,27 +141,31 @@ describe("Machine.from", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = build(
-          Machine.make<EditorState, EditorEvent>(State.Idle()).pipe(
-            Machine.from(State.Idle).pipe(
-              Machine.on(Event.Focus, () => State.Typing({ text: "" })),
+          Machine.make<EditorState, EditorEvent>(EditorState.Idle()).pipe(
+            Machine.from(EditorState.Idle).pipe(
+              Machine.on(EditorEvent.Focus, () => EditorState.Typing({ text: "" })),
             ),
-            Machine.from(State.Typing).pipe(
-              Machine.on(Event.KeyPress, ({ state, event }) =>
-                State.Typing({ text: state.text + event.key }),
+            Machine.from(EditorState.Typing).pipe(
+              Machine.on(EditorEvent.KeyPress, ({ state, event }) =>
+                EditorState.Typing({ text: state.text + event.key }),
               ),
-              Machine.on(Event.Submit, ({ state }) => State.Submitting({ text: state.text })),
+              Machine.on(EditorEvent.Submit, ({ state }) =>
+                EditorState.Submitting({ text: state.text }),
+              ),
             ),
-            Machine.from(State.Submitting).pipe(
-              Machine.on(Event.Success, ({ state }) => State.Submitted({ text: state.text })),
+            Machine.from(EditorState.Submitting).pipe(
+              Machine.on(EditorEvent.Success, ({ state }) =>
+                EditorState.Submitted({ text: state.text }),
+              ),
             ),
           ),
         );
 
         const result = yield* simulate(machine, [
-          Event.Focus(),
-          Event.KeyPress({ key: "x" }),
-          Event.Submit(),
-          Event.Success(),
+          EditorEvent.Focus(),
+          EditorEvent.KeyPress({ key: "x" }),
+          EditorEvent.Submit(),
+          EditorEvent.Success(),
         ]);
 
         expect(result.finalState._tag).toBe("Submitted");
@@ -176,22 +186,24 @@ describe("Machine.any", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = build(
-          Machine.make<EditorState, EditorEvent>(State.Typing({ text: "hello" })).pipe(
-            Machine.on(State.Typing, Event.Submit, ({ state }) =>
-              State.Submitting({ text: state.text }),
+          Machine.make<EditorState, EditorEvent>(EditorState.Typing({ text: "hello" })).pipe(
+            Machine.on(EditorState.Typing, EditorEvent.Submit, ({ state }) =>
+              EditorState.Submitting({ text: state.text }),
             ),
-            Machine.on(Machine.any(State.Typing, State.Submitting), Event.Cancel, () =>
-              State.Cancelled(),
+            Machine.on(
+              Machine.any(EditorState.Typing, EditorState.Submitting),
+              EditorEvent.Cancel,
+              () => EditorState.Cancelled(),
             ),
           ),
         );
 
         // Cancel from Typing
-        const result1 = yield* simulate(machine, [Event.Cancel()]);
+        const result1 = yield* simulate(machine, [EditorEvent.Cancel()]);
         expect(result1.finalState._tag).toBe("Cancelled");
 
         // Cancel from Submitting
-        const result2 = yield* simulate(machine, [Event.Submit(), Event.Cancel()]);
+        const result2 = yield* simulate(machine, [EditorEvent.Submit(), EditorEvent.Cancel()]);
         expect(result2.finalState._tag).toBe("Cancelled");
       }),
     );
@@ -201,21 +213,21 @@ describe("Machine.any", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = build(
-          Machine.make<EditorState, EditorEvent>(State.Typing({ text: "abc" })).pipe(
-            Machine.on(State.Typing, Event.Submit, ({ state }) =>
-              State.Submitting({ text: state.text }),
+          Machine.make<EditorState, EditorEvent>(EditorState.Typing({ text: "abc" })).pipe(
+            Machine.on(EditorState.Typing, EditorEvent.Submit, ({ state }) =>
+              EditorState.Submitting({ text: state.text }),
             ),
             Machine.on(
-              Machine.any(State.Typing, State.Submitting),
-              Event.Cancel,
-              () => State.Cancelled(),
+              Machine.any(EditorState.Typing, EditorState.Submitting),
+              EditorEvent.Cancel,
+              () => EditorState.Cancelled(),
               // Guard tests state has text field - both Typing and Submitting have it
               { guard: ({ state }) => "text" in state && state.text.length > 0 },
             ),
           ),
         );
 
-        const result = yield* simulate(machine, [Event.Cancel()]);
+        const result = yield* simulate(machine, [EditorEvent.Cancel()]);
         expect(result.finalState._tag).toBe("Cancelled");
       }),
     );
@@ -227,14 +239,14 @@ describe("Machine.any", () => {
         const logs: string[] = [];
 
         const machine = build(
-          Machine.make<EditorState, EditorEvent>(State.Typing({ text: "" })).pipe(
-            Machine.on(State.Typing, Event.Submit, ({ state }) =>
-              State.Submitting({ text: state.text }),
+          Machine.make<EditorState, EditorEvent>(EditorState.Typing({ text: "" })).pipe(
+            Machine.on(EditorState.Typing, EditorEvent.Submit, ({ state }) =>
+              EditorState.Submitting({ text: state.text }),
             ),
             Machine.on(
-              Machine.any(State.Typing, State.Submitting),
-              Event.Cancel,
-              () => State.Cancelled(),
+              Machine.any(EditorState.Typing, EditorState.Submitting),
+              EditorEvent.Cancel,
+              () => EditorState.Cancelled(),
               {
                 effect: ({ state }) =>
                   Effect.sync(() => {
@@ -245,31 +257,31 @@ describe("Machine.any", () => {
           ),
         );
 
-        yield* simulate(machine, [Event.Cancel()]);
+        yield* simulate(machine, [EditorEvent.Cancel()]);
         expect(logs).toEqual(["cancelled from: Typing"]);
 
         logs.length = 0;
-        yield* simulate(machine, [Event.Submit(), Event.Cancel()]);
+        yield* simulate(machine, [EditorEvent.Submit(), EditorEvent.Cancel()]);
         expect(logs).toEqual(["cancelled from: Submitting"]);
       }),
     );
   });
 
   test("any() creates separate transitions (3+ states)", async () => {
-    type MultiState = Data.TaggedEnum<{
+    type MultiState = State.TaggedEnum<{
       A: {};
       B: {};
       C: {};
       D: {};
       Done: {};
     }>;
-    const S = Data.taggedEnum<MultiState>();
+    const S = State.taggedEnum<MultiState>();
 
-    type MultiEvent = Data.TaggedEnum<{
+    type MultiEvent = Event.TaggedEnum<{
       Next: {};
       Finish: {};
     }>;
-    const E = Data.taggedEnum<MultiEvent>();
+    const E = Event.taggedEnum<MultiEvent>();
 
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -329,28 +341,30 @@ describe("Machine namespace", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<EditorState, EditorEvent>(State.Idle()).pipe(
-            Machine.from(State.Idle).pipe(
-              Machine.on(Event.Focus, () => State.Typing({ text: "" })),
+          Machine.make<EditorState, EditorEvent>(EditorState.Idle()).pipe(
+            Machine.from(EditorState.Idle).pipe(
+              Machine.on(EditorEvent.Focus, () => EditorState.Typing({ text: "" })),
             ),
-            Machine.from(State.Typing).pipe(
-              Machine.on(Event.KeyPress, ({ state, event }) =>
-                State.Typing({ text: state.text + event.key }),
+            Machine.from(EditorState.Typing).pipe(
+              Machine.on(EditorEvent.KeyPress, ({ state, event }) =>
+                EditorState.Typing({ text: state.text + event.key }),
               ),
-              Machine.on(Event.Submit, ({ state }) => State.Submitted({ text: state.text })),
+              Machine.on(EditorEvent.Submit, ({ state }) =>
+                EditorState.Submitted({ text: state.text }),
+              ),
             ),
-            Machine.on(Machine.any(State.Idle, State.Typing), Event.Cancel, () =>
-              State.Cancelled(),
+            Machine.on(Machine.any(EditorState.Idle, EditorState.Typing), EditorEvent.Cancel, () =>
+              EditorState.Cancelled(),
             ),
-            Machine.final(State.Submitted),
-            Machine.final(State.Cancelled),
+            Machine.final(EditorState.Submitted),
+            Machine.final(EditorState.Cancelled),
           ),
         );
 
         const result = yield* simulate(machine, [
-          Event.Focus(),
-          Event.KeyPress({ key: "!" }),
-          Event.Submit(),
+          EditorEvent.Focus(),
+          EditorEvent.KeyPress({ key: "!" }),
+          EditorEvent.Submit(),
         ]);
 
         expect(result.finalState._tag).toBe("Submitted");

@@ -1,22 +1,29 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Data, Effect, Layer, TestClock, TestContext } from "effect";
+import { Effect, Layer, TestClock, TestContext } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { ActorSystemDefault, ActorSystemService, Machine, yieldFibers } from "../../src/index.js";
+import {
+  ActorSystemDefault,
+  ActorSystemService,
+  Event,
+  Machine,
+  State,
+  yieldFibers,
+} from "../../src/index.js";
 
 describe("on.force Transitions", () => {
-  type State = Data.TaggedEnum<{
+  type PollState = State.TaggedEnum<{
     Polling: { attempts: number };
     Done: {};
   }>;
-  const State = Data.taggedEnum<State>();
+  const PollState = State.taggedEnum<PollState>();
 
-  type Event = Data.TaggedEnum<{
+  type PollEvent = Event.TaggedEnum<{
     Poll: {};
     Reset: {};
     Finish: {};
   }>;
-  const Event = Data.taggedEnum<Event>();
+  const PollEvent = Event.taggedEnum<PollEvent>();
 
   test("on.force runs exit/enter for same state tag", async () => {
     const effects: string[] = [];
@@ -24,15 +31,15 @@ describe("on.force Transitions", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<State, Event>(State.Polling({ attempts: 0 })).pipe(
-            Machine.on.force(State.Polling, Event.Reset, ({ state }) =>
-              State.Polling({ attempts: state.attempts + 1 }),
+          Machine.make<PollState, PollEvent>(PollState.Polling({ attempts: 0 })).pipe(
+            Machine.on.force(PollState.Polling, PollEvent.Reset, ({ state }) =>
+              PollState.Polling({ attempts: state.attempts + 1 }),
             ),
-            Machine.on(State.Polling, Event.Finish, () => State.Done()),
-            Machine.onEnter(State.Polling, ({ state }) =>
+            Machine.on(PollState.Polling, PollEvent.Finish, () => PollState.Done()),
+            Machine.onEnter(PollState.Polling, ({ state }) =>
               Effect.sync(() => effects.push(`enter:Polling:${state.attempts}`)),
             ),
-            Machine.onExit(State.Polling, ({ state }) =>
+            Machine.onExit(PollState.Polling, ({ state }) =>
               Effect.sync(() => effects.push(`exit:Polling:${state.attempts}`)),
             ),
           ),
@@ -45,16 +52,16 @@ describe("on.force Transitions", () => {
         expect(effects).toEqual(["enter:Polling:0"]);
 
         // on.force runs exit/enter
-        yield* actor.send(Event.Reset());
+        yield* actor.send(PollEvent.Reset());
         yield* yieldFibers;
 
         const state = yield* actor.state.get;
         expect(state._tag).toBe("Polling");
-        expect((state as State & { _tag: "Polling" }).attempts).toBe(1);
+        expect((state as PollState & { _tag: "Polling" }).attempts).toBe(1);
         expect(effects).toEqual(["enter:Polling:0", "exit:Polling:0", "enter:Polling:1"]);
 
         // Another force transition
-        yield* actor.send(Event.Reset());
+        yield* actor.send(PollEvent.Reset());
         yield* yieldFibers;
 
         expect(effects).toEqual([
@@ -72,12 +79,12 @@ describe("on.force Transitions", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<State, Event>(State.Polling({ attempts: 0 })).pipe(
-            Machine.on.force(State.Polling, Event.Reset, ({ state }) =>
-              State.Polling({ attempts: state.attempts + 1 }),
+          Machine.make<PollState, PollEvent>(PollState.Polling({ attempts: 0 })).pipe(
+            Machine.on.force(PollState.Polling, PollEvent.Reset, ({ state }) =>
+              PollState.Polling({ attempts: state.attempts + 1 }),
             ),
-            Machine.on(State.Polling, Event.Poll, () => State.Done()),
-            Machine.delay(State.Polling, "5 seconds", Event.Poll()),
+            Machine.on(PollState.Polling, PollEvent.Poll, () => PollState.Done()),
+            Machine.delay(PollState.Polling, "5 seconds", PollEvent.Poll()),
           ),
         );
 
@@ -92,7 +99,7 @@ describe("on.force Transitions", () => {
         expect(state._tag).toBe("Polling");
 
         // Reset - should restart the 5 second timer
-        yield* actor.send(Event.Reset());
+        yield* actor.send(PollEvent.Reset());
         yield* yieldFibers;
 
         // Advance another 3 seconds (6 total from start, but 3 from reset)

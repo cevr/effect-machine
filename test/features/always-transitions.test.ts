@@ -1,32 +1,32 @@
-import { Data, Effect } from "effect";
+import { Effect } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { Machine, simulate } from "../../src/index.js";
+import { Event, Machine, simulate, State } from "../../src/index.js";
 
 describe("Always Transitions", () => {
   test("applies eventless transition on state entry", async () => {
-    type State = Data.TaggedEnum<{
+    type TestState = State.TaggedEnum<{
       Calculating: { value: number };
       High: { value: number };
       Low: { value: number };
     }>;
-    const State = Data.taggedEnum<State>();
+    const TestState = State.taggedEnum<TestState>();
 
-    type Event = Data.TaggedEnum<{
+    type TestEvent = Event.TaggedEnum<{
       SetValue: { value: number };
     }>;
-    const Event = Data.taggedEnum<Event>();
+    const TestEvent = Event.taggedEnum<TestEvent>();
 
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<State, Event>(State.Calculating({ value: 75 })).pipe(
-            Machine.always(State.Calculating, [
-              { guard: (s) => s.value >= 70, to: (s) => State.High({ value: s.value }) },
-              { otherwise: true, to: (s) => State.Low({ value: s.value }) },
+          Machine.make<TestState, TestEvent>(TestState.Calculating({ value: 75 })).pipe(
+            Machine.always(TestState.Calculating, [
+              { guard: (s) => s.value >= 70, to: (s) => TestState.High({ value: s.value }) },
+              { otherwise: true, to: (s) => TestState.Low({ value: s.value }) },
             ]),
-            Machine.final(State.High),
-            Machine.final(State.Low),
+            Machine.final(TestState.High),
+            Machine.final(TestState.Low),
           ),
         );
 
@@ -38,25 +38,31 @@ describe("Always Transitions", () => {
   });
 
   test("cascades through multiple always transitions", async () => {
-    type State = Data.TaggedEnum<{
+    type TestState = State.TaggedEnum<{
       A: { n: number };
       B: { n: number };
       C: { n: number };
       Done: { n: number };
     }>;
-    const State = Data.taggedEnum<State>();
+    const TestState = State.taggedEnum<TestState>();
 
-    type Event = Data.TaggedEnum<{ Start: {} }>;
-    const Event = Data.taggedEnum<Event>();
+    type TestEvent = Event.TaggedEnum<{ Start: {} }>;
+    const TestEvent = Event.taggedEnum<TestEvent>();
 
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<State, Event>(State.A({ n: 0 })).pipe(
-            Machine.always(State.A, [{ otherwise: true, to: (s) => State.B({ n: s.n + 1 }) }]),
-            Machine.always(State.B, [{ otherwise: true, to: (s) => State.C({ n: s.n + 1 }) }]),
-            Machine.always(State.C, [{ otherwise: true, to: (s) => State.Done({ n: s.n + 1 }) }]),
-            Machine.final(State.Done),
+          Machine.make<TestState, TestEvent>(TestState.A({ n: 0 })).pipe(
+            Machine.always(TestState.A, [
+              { otherwise: true, to: (s) => TestState.B({ n: s.n + 1 }) },
+            ]),
+            Machine.always(TestState.B, [
+              { otherwise: true, to: (s) => TestState.C({ n: s.n + 1 }) },
+            ]),
+            Machine.always(TestState.C, [
+              { otherwise: true, to: (s) => TestState.Done({ n: s.n + 1 }) },
+            ]),
+            Machine.final(TestState.Done),
           ),
         );
 
@@ -70,29 +76,29 @@ describe("Always Transitions", () => {
   });
 
   test("guard cascade - first match wins", async () => {
-    type State = Data.TaggedEnum<{
+    type TestState = State.TaggedEnum<{
       Input: { value: number };
       High: {};
       Medium: {};
       Low: {};
     }>;
-    const State = Data.taggedEnum<State>();
+    const TestState = State.taggedEnum<TestState>();
 
-    type Event = Data.TaggedEnum<{ Process: {} }>;
-    const Event = Data.taggedEnum<Event>();
+    type TestEvent = Event.TaggedEnum<{ Process: {} }>;
+    const TestEvent = Event.taggedEnum<TestEvent>();
 
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<State, Event>(State.Input({ value: 50 })).pipe(
-            Machine.always(State.Input, [
-              { guard: (s) => s.value >= 70, to: () => State.High() },
-              { guard: (s) => s.value >= 40, to: () => State.Medium() },
-              { otherwise: true, to: () => State.Low() },
+          Machine.make<TestState, TestEvent>(TestState.Input({ value: 50 })).pipe(
+            Machine.always(TestState.Input, [
+              { guard: (s) => s.value >= 70, to: () => TestState.High() },
+              { guard: (s) => s.value >= 40, to: () => TestState.Medium() },
+              { otherwise: true, to: () => TestState.Low() },
             ]),
-            Machine.final(State.High),
-            Machine.final(State.Medium),
-            Machine.final(State.Low),
+            Machine.final(TestState.High),
+            Machine.final(TestState.Medium),
+            Machine.final(TestState.Low),
           ),
         );
 

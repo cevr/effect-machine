@@ -4,6 +4,11 @@ import type { MachineBuilder, Transition } from "../machine.js";
 import { addTransition } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
 import type { TransitionContext, TransitionResult } from "../internal/types.js";
+import type { StateBrand, EventBrand } from "../internal/brands.js";
+
+// Branded type constraints
+type BrandedState = { readonly _tag: string } & StateBrand;
+type BrandedEvent = { readonly _tag: string } & EventBrand;
 
 /**
  * A single branch in a choose transition cascade
@@ -51,8 +56,8 @@ export type ChooseEntry<S, E, R> = ChooseBranch<S, E, R> | ChooseOtherwise<S, E,
  * ```
  */
 export function choose<
-  NarrowedState extends { readonly _tag: string },
-  NarrowedEvent extends { readonly _tag: string },
+  NarrowedState extends BrandedState,
+  NarrowedEvent extends BrandedEvent,
   R2 = never,
 >(
   stateConstructor: { (...args: never[]): NarrowedState },
@@ -62,7 +67,7 @@ export function choose<
   const stateTag = getTag(stateConstructor);
   const eventTag = getTag(eventConstructor);
 
-  return <State extends { readonly _tag: string }, Event extends { readonly _tag: string }, R>(
+  return <State extends BrandedState, Event extends BrandedEvent, R>(
     builder: MachineBuilder<State, Event, R>,
   ): MachineBuilder<State, Event, R | R2> => {
     // Each branch becomes a separate transition, leveraging guard cascade

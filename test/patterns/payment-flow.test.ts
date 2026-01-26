@@ -1,5 +1,5 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Data, Effect, Layer, TestClock, TestContext } from "effect";
+import { Effect, Layer, TestClock, TestContext } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import {
@@ -7,8 +7,10 @@ import {
   ActorSystemService,
   assertNeverReaches,
   assertPath,
+  Event,
   Guard,
   Machine,
+  State,
   yieldFibers,
 } from "../../src/index.js";
 
@@ -19,7 +21,7 @@ import {
 describe("Payment Flow Pattern", () => {
   type PaymentMethod = "card" | "bridge" | "cash";
 
-  type PaymentState = Data.TaggedEnum<{
+  type PaymentState = State.TaggedEnum<{
     Idle: {};
     SelectingMethod: { amount: number };
     ProcessingPayment: { method: PaymentMethod; amount: number; attempts: number };
@@ -28,9 +30,9 @@ describe("Payment Flow Pattern", () => {
     PaymentSuccess: { receiptId: string };
     PaymentCancelled: {};
   }>;
-  const State = Data.taggedEnum<PaymentState>();
+  const PaymentState = State.taggedEnum<PaymentState>();
 
-  type PaymentEvent = Data.TaggedEnum<{
+  type PaymentEvent = Event.TaggedEnum<{
     StartCheckout: { amount: number };
     SelectMethod: { method: PaymentMethod };
     PaymentSucceeded: { receiptId: string };
@@ -41,7 +43,7 @@ describe("Payment Flow Pattern", () => {
     Cancel: {};
     AutoDismissError: {};
   }>;
-  const Event = Data.taggedEnum<PaymentEvent>();
+  const PaymentEvent = Event.taggedEnum<PaymentEvent>();
 
   // Type aliases for guards
   type SelectingMethodState = PaymentState & { _tag: "SelectingMethod" };
@@ -58,45 +60,54 @@ describe("Payment Flow Pattern", () => {
   );
 
   const paymentMachine = Machine.build(
-    Machine.make<PaymentState, PaymentEvent>(State.Idle()).pipe(
+    Machine.make<PaymentState, PaymentEvent>(PaymentState.Idle()).pipe(
       // Start checkout
-      Machine.on(State.Idle, Event.StartCheckout, ({ event }) =>
-        State.SelectingMethod({ amount: event.amount }),
+      Machine.on(PaymentState.Idle, PaymentEvent.StartCheckout, ({ event }) =>
+        PaymentState.SelectingMethod({ amount: event.amount }),
       ),
 
       // Method selection - guard cascade for bridge vs regular
-      Machine.from(State.SelectingMethod).pipe(
+      Machine.from(PaymentState.SelectingMethod).pipe(
         Machine.on(
-          Event.SelectMethod,
+          PaymentEvent.SelectMethod,
           ({ state, event }) =>
-            State.ProcessingPayment({ method: event.method, amount: state.amount, attempts: 1 }),
+            PaymentState.ProcessingPayment({
+              method: event.method,
+              amount: state.amount,
+              attempts: 1,
+            }),
           { guard: Guard.not(isBridgePayment) },
         ),
         Machine.on(
-          Event.SelectMethod,
-          () => State.AwaitingBridgeConfirm({ transactionId: `bridge-${Date.now()}` }),
+          PaymentEvent.SelectMethod,
+          () => PaymentState.AwaitingBridgeConfirm({ transactionId: `bridge-${Date.now()}` }),
           { guard: isBridgePayment },
         ),
       ),
 
       // Bridge confirmation
-      Machine.from(State.AwaitingBridgeConfirm).pipe(
-        Machine.on(Event.BridgeConfirmed, ({ event }) =>
-          State.PaymentSuccess({ receiptId: event.transactionId }),
+      Machine.from(PaymentState.AwaitingBridgeConfirm).pipe(
+        Machine.on(PaymentEvent.BridgeConfirmed, ({ event }) =>
+          PaymentState.PaymentSuccess({ receiptId: event.transactionId }),
         ),
-        Machine.on(Event.BridgeTimeout, () =>
-          State.PaymentError({ error: "Bridge timeout", canRetry: true, attempts: 1, amount: 100 }),
+        Machine.on(PaymentEvent.BridgeTimeout, () =>
+          PaymentState.PaymentError({
+            error: "Bridge timeout",
+            canRetry: true,
+            attempts: 1,
+            amount: 100,
+          }),
         ),
       ),
-      Machine.delay(State.AwaitingBridgeConfirm, "30 seconds", Event.BridgeTimeout()),
+      Machine.delay(PaymentState.AwaitingBridgeConfirm, "30 seconds", PaymentEvent.BridgeTimeout()),
 
       // Processing results
-      Machine.from(State.ProcessingPayment).pipe(
-        Machine.on(Event.PaymentSucceeded, ({ event }) =>
-          State.PaymentSuccess({ receiptId: event.receiptId }),
+      Machine.from(PaymentState.ProcessingPayment).pipe(
+        Machine.on(PaymentEvent.PaymentSucceeded, ({ event }) =>
+          PaymentState.PaymentSuccess({ receiptId: event.receiptId }),
         ),
-        Machine.on(Event.PaymentFailed, ({ state, event }) =>
-          State.PaymentError({
+        Machine.on(PaymentEvent.PaymentFailed, ({ state, event }) =>
+          PaymentState.PaymentError({
             error: event.error,
             canRetry: event.canRetry,
             attempts: state.attempts,
@@ -106,40 +117,40 @@ describe("Payment Flow Pattern", () => {
       ),
 
       // Error state handlers
-      Machine.from(State.PaymentError).pipe(
+      Machine.from(PaymentState.PaymentError).pipe(
         // Retry with guard
         Machine.on(
-          Event.Retry,
+          PaymentEvent.Retry,
           ({ state }) =>
-            State.ProcessingPayment({
+            PaymentState.ProcessingPayment({
               method: "card",
               amount: state.amount,
               attempts: state.attempts + 1,
             }),
           { guard: canRetry },
         ),
-        Machine.on(Event.AutoDismissError, () => State.Idle()),
+        Machine.on(PaymentEvent.AutoDismissError, () => PaymentState.Idle()),
       ),
 
       // Auto-dismiss non-retryable errors
-      Machine.delay(State.PaymentError, "5 seconds", Event.AutoDismissError(), {
+      Machine.delay(PaymentState.PaymentError, "5 seconds", PaymentEvent.AutoDismissError(), {
         guard: (state) => !state.canRetry,
       }),
 
       // Cancellation from any processing state using Machine.any
       Machine.on(
         Machine.any(
-          State.SelectingMethod,
-          State.ProcessingPayment,
-          State.AwaitingBridgeConfirm,
-          State.PaymentError,
+          PaymentState.SelectingMethod,
+          PaymentState.ProcessingPayment,
+          PaymentState.AwaitingBridgeConfirm,
+          PaymentState.PaymentError,
         ),
-        Event.Cancel,
-        () => State.PaymentCancelled(),
+        PaymentEvent.Cancel,
+        () => PaymentState.PaymentCancelled(),
       ),
 
-      Machine.final(State.PaymentSuccess),
-      Machine.final(State.PaymentCancelled),
+      Machine.final(PaymentState.PaymentSuccess),
+      Machine.final(PaymentState.PaymentCancelled),
     ),
   );
 
@@ -148,9 +159,9 @@ describe("Payment Flow Pattern", () => {
       assertPath(
         paymentMachine,
         [
-          Event.StartCheckout({ amount: 100 }),
-          Event.SelectMethod({ method: "card" }),
-          Event.PaymentSucceeded({ receiptId: "rcpt-123" }),
+          PaymentEvent.StartCheckout({ amount: 100 }),
+          PaymentEvent.SelectMethod({ method: "card" }),
+          PaymentEvent.PaymentSucceeded({ receiptId: "rcpt-123" }),
         ],
         ["Idle", "SelectingMethod", "ProcessingPayment", "PaymentSuccess"],
       ),
@@ -162,9 +173,9 @@ describe("Payment Flow Pattern", () => {
       assertPath(
         paymentMachine,
         [
-          Event.StartCheckout({ amount: 200 }),
-          Event.SelectMethod({ method: "bridge" }),
-          Event.BridgeConfirmed({ transactionId: "tx-456" }),
+          PaymentEvent.StartCheckout({ amount: 200 }),
+          PaymentEvent.SelectMethod({ method: "bridge" }),
+          PaymentEvent.BridgeConfirmed({ transactionId: "tx-456" }),
         ],
         ["Idle", "SelectingMethod", "AwaitingBridgeConfirm", "PaymentSuccess"],
       ),
@@ -176,11 +187,11 @@ describe("Payment Flow Pattern", () => {
       assertPath(
         paymentMachine,
         [
-          Event.StartCheckout({ amount: 50 }),
-          Event.SelectMethod({ method: "card" }),
-          Event.PaymentFailed({ error: "Network error", canRetry: true }),
-          Event.Retry(),
-          Event.PaymentSucceeded({ receiptId: "rcpt-retry" }),
+          PaymentEvent.StartCheckout({ amount: 50 }),
+          PaymentEvent.SelectMethod({ method: "card" }),
+          PaymentEvent.PaymentFailed({ error: "Network error", canRetry: true }),
+          PaymentEvent.Retry(),
+          PaymentEvent.PaymentSucceeded({ receiptId: "rcpt-retry" }),
         ],
         [
           "Idle",
@@ -200,23 +211,23 @@ describe("Payment Flow Pattern", () => {
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("payment", paymentMachine);
 
-        yield* actor.send(Event.StartCheckout({ amount: 50 }));
-        yield* actor.send(Event.SelectMethod({ method: "card" }));
+        yield* actor.send(PaymentEvent.StartCheckout({ amount: 50 }));
+        yield* actor.send(PaymentEvent.SelectMethod({ method: "card" }));
 
         // Fail and retry twice (total 3 attempts)
-        yield* actor.send(Event.PaymentFailed({ error: "Error 1", canRetry: true }));
+        yield* actor.send(PaymentEvent.PaymentFailed({ error: "Error 1", canRetry: true }));
         yield* yieldFibers;
-        yield* actor.send(Event.Retry());
+        yield* actor.send(PaymentEvent.Retry());
         yield* yieldFibers;
-        yield* actor.send(Event.PaymentFailed({ error: "Error 2", canRetry: true }));
+        yield* actor.send(PaymentEvent.PaymentFailed({ error: "Error 2", canRetry: true }));
         yield* yieldFibers;
-        yield* actor.send(Event.Retry());
+        yield* actor.send(PaymentEvent.Retry());
         yield* yieldFibers;
-        yield* actor.send(Event.PaymentFailed({ error: "Error 3", canRetry: true }));
+        yield* actor.send(PaymentEvent.PaymentFailed({ error: "Error 3", canRetry: true }));
         yield* yieldFibers;
 
         // Third retry should be blocked (attempts = 3, guard requires < 3)
-        yield* actor.send(Event.Retry());
+        yield* actor.send(PaymentEvent.Retry());
         yield* yieldFibers;
 
         const state = yield* actor.state.get;
@@ -230,9 +241,9 @@ describe("Payment Flow Pattern", () => {
       assertPath(
         paymentMachine,
         [
-          Event.StartCheckout({ amount: 100 }),
-          Event.SelectMethod({ method: "card" }),
-          Event.Cancel(),
+          PaymentEvent.StartCheckout({ amount: 100 }),
+          PaymentEvent.SelectMethod({ method: "card" }),
+          PaymentEvent.Cancel(),
         ],
         ["Idle", "SelectingMethod", "ProcessingPayment", "PaymentCancelled"],
       ),
@@ -243,7 +254,7 @@ describe("Payment Flow Pattern", () => {
     await Effect.runPromise(
       assertNeverReaches(
         paymentMachine,
-        [Event.StartCheckout({ amount: 100 }), Event.Cancel()],
+        [PaymentEvent.StartCheckout({ amount: 100 }), PaymentEvent.Cancel()],
         "PaymentSuccess",
       ),
     );
@@ -255,8 +266,8 @@ describe("Payment Flow Pattern", () => {
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("payment", paymentMachine);
 
-        yield* actor.send(Event.StartCheckout({ amount: 100 }));
-        yield* actor.send(Event.SelectMethod({ method: "bridge" }));
+        yield* actor.send(PaymentEvent.StartCheckout({ amount: 100 }));
+        yield* actor.send(PaymentEvent.SelectMethod({ method: "bridge" }));
         yield* yieldFibers;
 
         let state = yield* actor.state.get;
@@ -281,9 +292,9 @@ describe("Payment Flow Pattern", () => {
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("payment", paymentMachine);
 
-        yield* actor.send(Event.StartCheckout({ amount: 100 }));
-        yield* actor.send(Event.SelectMethod({ method: "card" }));
-        yield* actor.send(Event.PaymentFailed({ error: "Card declined", canRetry: false }));
+        yield* actor.send(PaymentEvent.StartCheckout({ amount: 100 }));
+        yield* actor.send(PaymentEvent.SelectMethod({ method: "card" }));
+        yield* actor.send(PaymentEvent.PaymentFailed({ error: "Card declined", canRetry: false }));
         yield* yieldFibers;
 
         let state = yield* actor.state.get;

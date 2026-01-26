@@ -12,8 +12,17 @@ import type { ScopedTransition } from "./from.js";
 // Type helpers
 // ============================================================================
 
+import type { StateBrand, EventBrand } from "../internal/brands.js";
+
+// Base tagged types (no brand required)
 type TaggedState = { readonly _tag: string };
 type TaggedEvent = { readonly _tag: string };
+
+// Branded type constraints for compile-time safety in public API
+type BrandedState = TaggedState & StateBrand;
+type BrandedEvent = TaggedEvent & EventBrand;
+
+// Constructor type that works with both branded and unbranded types
 type Constructor<T extends TaggedState | TaggedEvent> = { (...args: never[]): T };
 
 // ============================================================================
@@ -27,9 +36,9 @@ type Constructor<T extends TaggedState | TaggedEvent> = { (...args: never[]): T 
  * The State type parameter must be explicitly provided or inferred from from().pipe().
  */
 function onImpl<
-  NarrowedState extends TaggedState,
-  NarrowedEvent extends TaggedEvent,
-  ResultState extends TaggedState,
+  NarrowedState extends BrandedState,
+  NarrowedEvent extends BrandedEvent,
+  ResultState extends BrandedState,
   R2 = never,
 >(
   eventConstructor: Constructor<NarrowedEvent>,
@@ -43,9 +52,9 @@ function onImpl<
  * Multi-state on: StateMatcher signature for `any(State1, State2, ...)`
  */
 function onImpl<
-  NarrowedState extends TaggedState,
-  NarrowedEvent extends TaggedEvent,
-  ResultState extends TaggedState,
+  NarrowedState extends BrandedState,
+  NarrowedEvent extends BrandedEvent,
+  ResultState extends BrandedState,
   R2 = never,
 >(
   matcher: StateMatcher<NarrowedState>,
@@ -54,7 +63,7 @@ function onImpl<
     ctx: TransitionContext<NarrowedState, NarrowedEvent>,
   ) => TransitionResult<ResultState, R2>,
   options?: OnOptions<NarrowedState, NarrowedEvent, R2>,
-): <State extends TaggedState, Event extends TaggedEvent, R>(
+): <State extends BrandedState, Event extends BrandedEvent, R>(
   builder: MachineBuilder<State, Event, R>,
 ) => MachineBuilder<State, Event, R | R2>;
 
@@ -62,9 +71,9 @@ function onImpl<
  * Standard on: state + event signature
  */
 function onImpl<
-  NarrowedState extends TaggedState,
-  NarrowedEvent extends TaggedEvent,
-  ResultState extends TaggedState,
+  NarrowedState extends BrandedState,
+  NarrowedEvent extends BrandedEvent,
+  ResultState extends BrandedState,
   R2 = never,
 >(
   stateConstructor: Constructor<NarrowedState>,
@@ -73,7 +82,7 @@ function onImpl<
     ctx: TransitionContext<NarrowedState, NarrowedEvent>,
   ) => TransitionResult<ResultState, R2>,
   options?: OnOptions<NarrowedState, NarrowedEvent, R2>,
-): <State extends TaggedState, Event extends TaggedEvent, R>(
+): <State extends BrandedState, Event extends BrandedEvent, R>(
   builder: MachineBuilder<State, Event, R>,
 ) => MachineBuilder<State, Event, R | R2>;
 
@@ -89,35 +98,38 @@ function onImpl(first: unknown, second: unknown, third?: unknown, fourth?: unkno
     typeof second === "function" &&
     (third === undefined || (typeof third === "object" && third !== null && !("_tag" in third)))
   ) {
+    // Cast through unknown to bypass brand checks - runtime doesn't have brands
     return scopedOnImpl(
-      first as Constructor<TaggedEvent>,
-      second as (
-        ctx: TransitionContext<TaggedState, TaggedEvent>,
-      ) => TransitionResult<TaggedState, unknown>,
-      third as OnOptions<TaggedState, TaggedEvent, unknown> | undefined,
+      first as unknown as Constructor<BrandedEvent>,
+      second as unknown as (
+        ctx: TransitionContext<BrandedState, BrandedEvent>,
+      ) => TransitionResult<BrandedState, unknown>,
+      third as OnOptions<BrandedState, BrandedEvent, unknown> | undefined,
     );
   }
 
   // StateMatcher on: first arg has _tag: "StateMatcher"
   if (isStateMatcher(first)) {
+    // Cast through unknown to bypass brand checks - runtime doesn't have brands
     return matcherOnImpl(
-      first,
-      second as Constructor<TaggedEvent>,
-      third as (
-        ctx: TransitionContext<TaggedState, TaggedEvent>,
-      ) => TransitionResult<TaggedState, unknown>,
-      fourth as OnOptions<TaggedState, TaggedEvent, unknown> | undefined,
+      first as StateMatcher<BrandedState>,
+      second as unknown as Constructor<BrandedEvent>,
+      third as unknown as (
+        ctx: TransitionContext<BrandedState, BrandedEvent>,
+      ) => TransitionResult<BrandedState, unknown>,
+      fourth as OnOptions<BrandedState, BrandedEvent, unknown> | undefined,
     );
   }
 
   // Standard on: first and second are both constructors
+  // Cast through unknown to bypass brand checks - runtime doesn't have brands
   return standardOnImpl(
-    first as Constructor<TaggedState>,
-    second as Constructor<TaggedEvent>,
-    third as (
-      ctx: TransitionContext<TaggedState, TaggedEvent>,
-    ) => TransitionResult<TaggedState, unknown>,
-    fourth as OnOptions<TaggedState, TaggedEvent, unknown> | undefined,
+    first as unknown as Constructor<BrandedState>,
+    second as unknown as Constructor<BrandedEvent>,
+    third as unknown as (
+      ctx: TransitionContext<BrandedState, BrandedEvent>,
+    ) => TransitionResult<BrandedState, unknown>,
+    fourth as OnOptions<BrandedState, BrandedEvent, unknown> | undefined,
   );
 }
 
@@ -125,9 +137,9 @@ function onImpl(first: unknown, second: unknown, third?: unknown, fourth?: unkno
  * Standard on implementation (state + event)
  */
 function standardOnImpl<
-  NarrowedState extends TaggedState,
-  NarrowedEvent extends TaggedEvent,
-  ResultState extends TaggedState,
+  NarrowedState extends BrandedState,
+  NarrowedEvent extends BrandedEvent,
+  ResultState extends BrandedState,
   R2 = never,
 >(
   stateConstructor: Constructor<NarrowedState>,
@@ -141,7 +153,7 @@ function standardOnImpl<
   const eventTag = getTag(eventConstructor);
   const normalizedOptions = normalizeOnOptions(options);
 
-  return <State extends TaggedState, Event extends TaggedEvent, R>(
+  return <State extends BrandedState, Event extends BrandedEvent, R>(
     builder: MachineBuilder<State, Event, R>,
   ): MachineBuilder<State, Event, R | R2> => {
     const transition: Transition<State, Event, R2> = {
@@ -168,9 +180,9 @@ function standardOnImpl<
  * StateMatcher on implementation - creates one transition per matched state
  */
 function matcherOnImpl<
-  NarrowedState extends TaggedState,
-  NarrowedEvent extends TaggedEvent,
-  ResultState extends TaggedState,
+  NarrowedState extends BrandedState,
+  NarrowedEvent extends BrandedEvent,
+  ResultState extends BrandedState,
   R2 = never,
 >(
   matcher: StateMatcher<NarrowedState>,
@@ -183,7 +195,7 @@ function matcherOnImpl<
   const eventTag = getTag(eventConstructor);
   const normalizedOptions = normalizeOnOptions(options);
 
-  return <State extends TaggedState, Event extends TaggedEvent, R>(
+  return <State extends BrandedState, Event extends BrandedEvent, R>(
     builder: MachineBuilder<State, Event, R>,
   ): MachineBuilder<State, Event, R | R2> => {
     let result = builder as MachineBuilder<State, Event, R | R2>;
@@ -216,9 +228,9 @@ function matcherOnImpl<
  * Scoped on implementation (event-only, for use inside from().pipe())
  */
 function scopedOnImpl<
-  NarrowedState extends TaggedState,
-  NarrowedEvent extends TaggedEvent,
-  ResultState extends TaggedState,
+  NarrowedState extends BrandedState,
+  NarrowedEvent extends BrandedEvent,
+  ResultState extends BrandedState,
   R2 = never,
 >(
   eventConstructor: Constructor<NarrowedEvent>,
@@ -261,9 +273,9 @@ export interface OnForceOptions<S, E, R> {
  * Scoped on.force: event-only signature for use inside `from().pipe()`
  */
 function forceImpl<
-  NarrowedState extends TaggedState,
-  NarrowedEvent extends TaggedEvent,
-  ResultState extends TaggedState,
+  NarrowedState extends BrandedState,
+  NarrowedEvent extends BrandedEvent,
+  ResultState extends BrandedState,
   R2 = never,
 >(
   eventConstructor: Constructor<NarrowedEvent>,
@@ -277,9 +289,9 @@ function forceImpl<
  * Multi-state on.force: StateMatcher signature
  */
 function forceImpl<
-  NarrowedState extends TaggedState,
-  NarrowedEvent extends TaggedEvent,
-  ResultState extends TaggedState,
+  NarrowedState extends BrandedState,
+  NarrowedEvent extends BrandedEvent,
+  ResultState extends BrandedState,
   R2 = never,
 >(
   matcher: StateMatcher<NarrowedState>,
@@ -288,7 +300,7 @@ function forceImpl<
     ctx: TransitionContext<NarrowedState, NarrowedEvent>,
   ) => TransitionResult<ResultState, R2>,
   options?: OnForceOptions<NarrowedState, NarrowedEvent, R2>,
-): <State extends TaggedState, Event extends TaggedEvent, R>(
+): <State extends BrandedState, Event extends BrandedEvent, R>(
   builder: MachineBuilder<State, Event, R>,
 ) => MachineBuilder<State, Event, R | R2>;
 
@@ -296,9 +308,9 @@ function forceImpl<
  * Standard on.force: state + event signature
  */
 function forceImpl<
-  NarrowedState extends TaggedState,
-  NarrowedEvent extends TaggedEvent,
-  ResultState extends TaggedState,
+  NarrowedState extends BrandedState,
+  NarrowedEvent extends BrandedEvent,
+  ResultState extends BrandedState,
   R2 = never,
 >(
   stateConstructor: Constructor<NarrowedState>,
@@ -307,7 +319,7 @@ function forceImpl<
     ctx: TransitionContext<NarrowedState, NarrowedEvent>,
   ) => TransitionResult<ResultState, R2>,
   options?: OnForceOptions<NarrowedState, NarrowedEvent, R2>,
-): <State extends TaggedState, Event extends TaggedEvent, R>(
+): <State extends BrandedState, Event extends BrandedEvent, R>(
   builder: MachineBuilder<State, Event, R>,
 ) => MachineBuilder<State, Event, R | R2>;
 

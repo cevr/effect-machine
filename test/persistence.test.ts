@@ -1,34 +1,36 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Data, Effect, Layer, Option, Schedule, Schema } from "effect";
+import { Effect, Layer, Option, Schedule, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import {
   ActorSystemDefault,
   ActorSystemService,
+  Event,
   InMemoryPersistenceAdapter,
   Machine,
   makeInMemoryPersistenceAdapter,
   PersistenceAdapterTag,
   type PersistentActorRef,
+  State,
   withPersistence,
   yieldFibers,
 } from "../src/index.js";
 
 // Test state and event types
-type OrderState = Data.TaggedEnum<{
+type OrderState = State.TaggedEnum<{
   Idle: {};
   Pending: { orderId: string };
   Paid: { orderId: string; amount: number };
   Done: {};
 }>;
-const State = Data.taggedEnum<OrderState>();
+const OrderState = State.taggedEnum<OrderState>();
 
-type OrderEvent = Data.TaggedEnum<{
+type OrderEvent = Event.TaggedEnum<{
   Submit: { orderId: string };
   Pay: { amount: number };
   Complete: {};
 }>;
-const Event = Data.taggedEnum<OrderEvent>();
+const OrderEvent = Event.taggedEnum<OrderEvent>();
 
 // Schemas for persistence
 const StateSchema = Schema.Union(
@@ -50,15 +52,15 @@ const TestLayer = Layer.merge(ActorSystemDefault, InMemoryPersistenceAdapter);
 describe("Persistence", () => {
   const createPersistentMachine = () =>
     Machine.build(
-      Machine.make<OrderState, OrderEvent>(State.Idle()).pipe(
-        Machine.on(State.Idle, Event.Submit, ({ event }) =>
-          State.Pending({ orderId: event.orderId }),
+      Machine.make<OrderState, OrderEvent>(OrderState.Idle()).pipe(
+        Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
+          OrderState.Pending({ orderId: event.orderId }),
         ),
-        Machine.on(State.Pending, Event.Pay, ({ state, event }) =>
-          State.Paid({ orderId: state.orderId, amount: event.amount }),
+        Machine.on(OrderState.Pending, OrderEvent.Pay, ({ state, event }) =>
+          OrderState.Paid({ orderId: state.orderId, amount: event.amount }),
         ),
-        Machine.on(State.Paid, Event.Complete, () => State.Done()),
-        Machine.final(State.Done),
+        Machine.on(OrderState.Paid, OrderEvent.Complete, () => OrderState.Done()),
+        Machine.final(OrderState.Done),
       ),
     ).pipe(
       withPersistence({
@@ -82,7 +84,7 @@ describe("Persistence", () => {
         expect(initialState._tag).toBe("Idle");
 
         // Send events
-        yield* actor.send(Event.Submit({ orderId: "ORD-123" }));
+        yield* actor.send(OrderEvent.Submit({ orderId: "ORD-123" }));
         yield* yieldFibers;
 
         const state1 = yield* actor.snapshot;
@@ -91,7 +93,7 @@ describe("Persistence", () => {
           expect(state1.orderId).toBe("ORD-123");
         }
 
-        yield* actor.send(Event.Pay({ amount: 99.99 }));
+        yield* actor.send(OrderEvent.Pay({ amount: 99.99 }));
         yield* yieldFibers;
 
         const state2 = yield* actor.snapshot;
@@ -119,14 +121,14 @@ describe("Persistence", () => {
         expect(v0).toBe(0);
 
         // Send first event
-        yield* actor.send(Event.Submit({ orderId: "ORD-456" }));
+        yield* actor.send(OrderEvent.Submit({ orderId: "ORD-456" }));
         yield* yieldFibers;
 
         const v1 = yield* actor.version;
         expect(v1).toBe(1);
 
         // Send second event
-        yield* actor.send(Event.Pay({ amount: 50 }));
+        yield* actor.send(OrderEvent.Pay({ amount: 50 }));
         yield* yieldFibers;
 
         const v2 = yield* actor.version;
@@ -153,9 +155,9 @@ describe("Persistence", () => {
           PersistentActorRef<OrderState, OrderEvent>
         >;
 
-        yield* actor1.send(Event.Submit({ orderId: "ORD-789" }));
+        yield* actor1.send(OrderEvent.Submit({ orderId: "ORD-789" }));
         yield* yieldFibers;
-        yield* actor1.send(Event.Pay({ amount: 200 }));
+        yield* actor1.send(OrderEvent.Pay({ amount: 200 }));
         yield* yieldFibers;
 
         // Force snapshot
@@ -216,12 +218,12 @@ describe("Persistence", () => {
 
         // Create machine with no automatic snapshots (using recurs(0) which never triggers)
         const noAutoSnapshotMachine = Machine.build(
-          Machine.make<OrderState, OrderEvent>(State.Idle()).pipe(
-            Machine.on(State.Idle, Event.Submit, ({ event }) =>
-              State.Pending({ orderId: event.orderId }),
+          Machine.make<OrderState, OrderEvent>(OrderState.Idle()).pipe(
+            Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
+              OrderState.Pending({ orderId: event.orderId }),
             ),
-            Machine.on(State.Pending, Event.Pay, ({ state, event }) =>
-              State.Paid({ orderId: state.orderId, amount: event.amount }),
+            Machine.on(OrderState.Pending, OrderEvent.Pay, ({ state, event }) =>
+              OrderState.Paid({ orderId: state.orderId, amount: event.amount }),
             ),
           ),
         ).pipe(
@@ -237,7 +239,7 @@ describe("Persistence", () => {
           PersistentActorRef<OrderState, OrderEvent>
         >;
 
-        yield* actor.send(Event.Submit({ orderId: "ORD-PERSIST" }));
+        yield* actor.send(OrderEvent.Submit({ orderId: "ORD-PERSIST" }));
         yield* yieldFibers;
 
         // Force snapshot
@@ -279,12 +281,12 @@ describe("Persistence", () => {
 
         // Create machine that snapshots infrequently
         const infrequentSnapshotMachine = Machine.build(
-          Machine.make<OrderState, OrderEvent>(State.Idle()).pipe(
-            Machine.on(State.Idle, Event.Submit, ({ event }) =>
-              State.Pending({ orderId: event.orderId }),
+          Machine.make<OrderState, OrderEvent>(OrderState.Idle()).pipe(
+            Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
+              OrderState.Pending({ orderId: event.orderId }),
             ),
-            Machine.on(State.Pending, Event.Pay, ({ state, event }) =>
-              State.Paid({ orderId: state.orderId, amount: event.amount }),
+            Machine.on(OrderState.Pending, OrderEvent.Pay, ({ state, event }) =>
+              OrderState.Paid({ orderId: state.orderId, amount: event.amount }),
             ),
           ),
         ).pipe(
@@ -304,9 +306,9 @@ describe("Persistence", () => {
         yield* actor.persist;
 
         // Process events (not snapshotted automatically)
-        yield* actor.send(Event.Submit({ orderId: "ORD-REPLAY" }));
+        yield* actor.send(OrderEvent.Submit({ orderId: "ORD-REPLAY" }));
         yield* yieldFibers;
-        yield* actor.send(Event.Pay({ amount: 300 }));
+        yield* actor.send(OrderEvent.Pay({ amount: 300 }));
         yield* yieldFibers;
 
         yield* system.stop("order-5");
@@ -353,7 +355,7 @@ describe("Persistence", () => {
           PersistentActorRef<OrderState, OrderEvent>
         >;
 
-        yield* actor.send(Event.Submit({ orderId: "ORD-AUTO" }));
+        yield* actor.send(OrderEvent.Submit({ orderId: "ORD-AUTO" }));
         yield* yieldFibers;
         yield* actor.persist;
 
@@ -394,10 +396,10 @@ describe("Persistence", () => {
         // Test ActorRef methods work
         expect(actor.id).toBe("order-7");
 
-        const canSubmit = yield* actor.can(Event.Submit({ orderId: "test" }));
+        const canSubmit = yield* actor.can(OrderEvent.Submit({ orderId: "test" }));
         expect(canSubmit).toBe(true);
 
-        const canPay = yield* actor.can(Event.Pay({ amount: 10 }));
+        const canPay = yield* actor.can(OrderEvent.Pay({ amount: 10 }));
         expect(canPay).toBe(false); // Can't pay in Idle state
 
         const matchesIdle = yield* actor.matches("Idle");
@@ -405,13 +407,13 @@ describe("Persistence", () => {
 
         // Sync methods
         expect(actor.matchesSync("Idle")).toBe(true);
-        expect(actor.canSync(Event.Submit({ orderId: "test" }))).toBe(true);
+        expect(actor.canSync(OrderEvent.Submit({ orderId: "test" }))).toBe(true);
 
         // Subscribe
         const states: string[] = [];
         const unsubscribe = actor.subscribe((s) => states.push(s._tag));
 
-        yield* actor.send(Event.Submit({ orderId: "ORD-SUB" }));
+        yield* actor.send(OrderEvent.Submit({ orderId: "ORD-SUB" }));
         yield* yieldFibers;
 
         expect(states).toContain("Pending");
@@ -431,11 +433,11 @@ describe("Persistence", () => {
           PersistentActorRef<OrderState, OrderEvent>
         >;
 
-        yield* actor.send(Event.Submit({ orderId: "ORD-FINAL" }));
+        yield* actor.send(OrderEvent.Submit({ orderId: "ORD-FINAL" }));
         yield* yieldFibers;
-        yield* actor.send(Event.Pay({ amount: 100 }));
+        yield* actor.send(OrderEvent.Pay({ amount: 100 }));
         yield* yieldFibers;
-        yield* actor.send(Event.Complete());
+        yield* actor.send(OrderEvent.Complete());
         yield* yieldFibers;
 
         const state = yield* actor.snapshot;

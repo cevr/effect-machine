@@ -1,21 +1,28 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Data, Effect } from "effect";
+import { Effect } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { ActorSystemDefault, ActorSystemService, Machine, yieldFibers } from "../../src/index.js";
+import {
+  ActorSystemDefault,
+  ActorSystemService,
+  Event,
+  Machine,
+  State,
+  yieldFibers,
+} from "../../src/index.js";
 
 describe("Same-state Transitions", () => {
-  type State = Data.TaggedEnum<{
+  type FormState = State.TaggedEnum<{
     Form: { name: string; count: number };
     Submitted: {};
   }>;
-  const State = Data.taggedEnum<State>();
+  const FormState = State.taggedEnum<FormState>();
 
-  type Event = Data.TaggedEnum<{
+  type FormEvent = Event.TaggedEnum<{
     SetName: { name: string };
     Submit: {};
   }>;
-  const Event = Data.taggedEnum<Event>();
+  const FormEvent = Event.taggedEnum<FormEvent>();
 
   test("default: same state tag skips exit/enter effects", async () => {
     const effects: string[] = [];
@@ -23,13 +30,13 @@ describe("Same-state Transitions", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<State, Event>(State.Form({ name: "", count: 0 })).pipe(
-            Machine.on(State.Form, Event.SetName, ({ state, event }) =>
-              State.Form({ name: event.name, count: state.count + 1 }),
+          Machine.make<FormState, FormEvent>(FormState.Form({ name: "", count: 0 })).pipe(
+            Machine.on(FormState.Form, FormEvent.SetName, ({ state, event }) =>
+              FormState.Form({ name: event.name, count: state.count + 1 }),
             ),
-            Machine.on(State.Form, Event.Submit, () => State.Submitted()),
-            Machine.onEnter(State.Form, () => Effect.sync(() => effects.push("enter:Form"))),
-            Machine.onExit(State.Form, () => Effect.sync(() => effects.push("exit:Form"))),
+            Machine.on(FormState.Form, FormEvent.Submit, () => FormState.Submitted()),
+            Machine.onEnter(FormState.Form, () => Effect.sync(() => effects.push("enter:Form"))),
+            Machine.onExit(FormState.Form, () => Effect.sync(() => effects.push("exit:Form"))),
           ),
         );
 
@@ -40,22 +47,22 @@ describe("Same-state Transitions", () => {
         expect(effects).toEqual(["enter:Form"]);
 
         // Same state tag - no exit/enter
-        yield* actor.send(Event.SetName({ name: "Alice" }));
+        yield* actor.send(FormEvent.SetName({ name: "Alice" }));
         yield* yieldFibers;
 
         const state = yield* actor.state.get;
         expect(state._tag).toBe("Form");
-        expect((state as State & { _tag: "Form" }).name).toBe("Alice");
+        expect((state as FormState & { _tag: "Form" }).name).toBe("Alice");
         expect(effects).toEqual(["enter:Form"]);
 
         // Another same-state transition
-        yield* actor.send(Event.SetName({ name: "Bob" }));
+        yield* actor.send(FormEvent.SetName({ name: "Bob" }));
         yield* yieldFibers;
 
         expect(effects).toEqual(["enter:Form"]);
 
         // Different state tag - runs exit
-        yield* actor.send(Event.Submit());
+        yield* actor.send(FormEvent.Submit());
         yield* yieldFibers;
 
         expect(effects).toEqual(["enter:Form", "exit:Form"]);
@@ -69,12 +76,12 @@ describe("Same-state Transitions", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<State, Event>(State.Form({ name: "", count: 0 })).pipe(
-            Machine.on.force(State.Form, Event.SetName, ({ state, event }) =>
-              State.Form({ name: event.name, count: state.count + 1 }),
+          Machine.make<FormState, FormEvent>(FormState.Form({ name: "", count: 0 })).pipe(
+            Machine.on.force(FormState.Form, FormEvent.SetName, ({ state, event }) =>
+              FormState.Form({ name: event.name, count: state.count + 1 }),
             ),
-            Machine.onEnter(State.Form, () => Effect.sync(() => effects.push("enter:Form"))),
-            Machine.onExit(State.Form, () => Effect.sync(() => effects.push("exit:Form"))),
+            Machine.onEnter(FormState.Form, () => Effect.sync(() => effects.push("enter:Form"))),
+            Machine.onExit(FormState.Form, () => Effect.sync(() => effects.push("exit:Form"))),
           ),
         );
 
@@ -85,7 +92,7 @@ describe("Same-state Transitions", () => {
         expect(effects).toEqual(["enter:Form"]);
 
         // on.force runs exit/enter even for same state tag
-        yield* actor.send(Event.SetName({ name: "Alice" }));
+        yield* actor.send(FormEvent.SetName({ name: "Alice" }));
         yield* yieldFibers;
 
         expect(effects).toEqual(["enter:Form", "exit:Form", "enter:Form"]);

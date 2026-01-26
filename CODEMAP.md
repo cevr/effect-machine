@@ -6,6 +6,8 @@
 src/
 ├── index.ts              # Public exports
 ├── namespace.ts          # Machine namespace (Effect-style API)
+├── state.ts              # Branded State.TaggedEnum wrapper
+├── event.ts              # Branded Event.TaggedEnum wrapper
 ├── machine.ts            # Core types (Machine, MachineBuilder, Transition, OnOptions)
 ├── actor-ref.ts          # Actor reference interface
 ├── actor-system.ts       # Actor system service + layer
@@ -25,6 +27,7 @@ src/
 └── internal/
     ├── loop.ts           # Event loop, transition resolver, actor creation
     ├── types.ts          # Internal types (contexts, Guard module)
+    ├── brands.ts         # StateBrand/EventBrand phantom types
     └── get-tag.ts        # Tag extraction from constructors
 
 test/
@@ -53,6 +56,9 @@ test/
 
 | File                  | Purpose                                                             |
 | --------------------- | ------------------------------------------------------------------- |
+| `state.ts`            | Branded `State.TaggedEnum` wrapper - prevents State/Event mixup     |
+| `event.ts`            | Branded `Event.TaggedEnum` wrapper - prevents State/Event mixup     |
+| `internal/brands.ts`  | `StateBrand`/`EventBrand` using Effect's `Brand` (phantom types)    |
 | `namespace.ts`        | Machine namespace export (named `namespace.ts` for macOS compat)    |
 | `internal/loop.ts`    | Event processing, `resolveTransition`, `applyAlways`, `createActor` |
 | `internal/types.ts`   | `TransitionContext`, `StateEffectContext`, `Guard` module           |

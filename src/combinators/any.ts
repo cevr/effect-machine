@@ -1,4 +1,5 @@
 import { getTag } from "../internal/get-tag.js";
+import type { StateBrand } from "../internal/brands.js";
 
 /**
  * A matcher for multiple states - use with `on` to handle an event in multiple states
@@ -9,6 +10,7 @@ export interface StateMatcher<_State> {
 }
 
 type TaggedState = { readonly _tag: string };
+type BrandedState = TaggedState & StateBrand;
 type StateConstructor<S extends TaggedState> = { (...args: never[]): S };
 
 /**
@@ -32,21 +34,21 @@ type StateOf<C> = C extends StateConstructor<infer S> ? S : never;
  * ```
  */
 export function any<
-  C1 extends StateConstructor<TaggedState>,
-  C2 extends StateConstructor<TaggedState>,
+  C1 extends StateConstructor<BrandedState>,
+  C2 extends StateConstructor<BrandedState>,
 >(c1: C1, c2: C2): StateMatcher<StateOf<C1> | StateOf<C2>>;
 
 export function any<
-  C1 extends StateConstructor<TaggedState>,
-  C2 extends StateConstructor<TaggedState>,
-  C3 extends StateConstructor<TaggedState>,
+  C1 extends StateConstructor<BrandedState>,
+  C2 extends StateConstructor<BrandedState>,
+  C3 extends StateConstructor<BrandedState>,
 >(c1: C1, c2: C2, c3: C3): StateMatcher<StateOf<C1> | StateOf<C2> | StateOf<C3>>;
 
 export function any<
-  C1 extends StateConstructor<TaggedState>,
-  C2 extends StateConstructor<TaggedState>,
-  C3 extends StateConstructor<TaggedState>,
-  C4 extends StateConstructor<TaggedState>,
+  C1 extends StateConstructor<BrandedState>,
+  C2 extends StateConstructor<BrandedState>,
+  C3 extends StateConstructor<BrandedState>,
+  C4 extends StateConstructor<BrandedState>,
 >(
   c1: C1,
   c2: C2,
@@ -55,11 +57,11 @@ export function any<
 ): StateMatcher<StateOf<C1> | StateOf<C2> | StateOf<C3> | StateOf<C4>>;
 
 export function any<
-  C1 extends StateConstructor<TaggedState>,
-  C2 extends StateConstructor<TaggedState>,
-  C3 extends StateConstructor<TaggedState>,
-  C4 extends StateConstructor<TaggedState>,
-  C5 extends StateConstructor<TaggedState>,
+  C1 extends StateConstructor<BrandedState>,
+  C2 extends StateConstructor<BrandedState>,
+  C3 extends StateConstructor<BrandedState>,
+  C4 extends StateConstructor<BrandedState>,
+  C5 extends StateConstructor<BrandedState>,
 >(
   c1: C1,
   c2: C2,
@@ -69,12 +71,12 @@ export function any<
 ): StateMatcher<StateOf<C1> | StateOf<C2> | StateOf<C3> | StateOf<C4> | StateOf<C5>>;
 
 export function any<
-  C1 extends StateConstructor<TaggedState>,
-  C2 extends StateConstructor<TaggedState>,
-  C3 extends StateConstructor<TaggedState>,
-  C4 extends StateConstructor<TaggedState>,
-  C5 extends StateConstructor<TaggedState>,
-  C6 extends StateConstructor<TaggedState>,
+  C1 extends StateConstructor<BrandedState>,
+  C2 extends StateConstructor<BrandedState>,
+  C3 extends StateConstructor<BrandedState>,
+  C4 extends StateConstructor<BrandedState>,
+  C5 extends StateConstructor<BrandedState>,
+  C6 extends StateConstructor<BrandedState>,
 >(
   c1: C1,
   c2: C2,
@@ -85,13 +87,13 @@ export function any<
 ): StateMatcher<StateOf<C1> | StateOf<C2> | StateOf<C3> | StateOf<C4> | StateOf<C5> | StateOf<C6>>;
 
 // Fallback for more than 6 states
-export function any<NarrowedState extends TaggedState>(
+export function any<NarrowedState extends BrandedState>(
   ...stateConstructors: Array<StateConstructor<NarrowedState>>
 ): StateMatcher<NarrowedState>;
 
 export function any(
-  ...stateConstructors: Array<StateConstructor<TaggedState>>
-): StateMatcher<TaggedState> {
+  ...stateConstructors: Array<StateConstructor<BrandedState>>
+): StateMatcher<BrandedState> {
   return {
     _tag: "StateMatcher",
     stateTags: stateConstructors.map(getTag),

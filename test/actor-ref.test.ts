@@ -1,43 +1,54 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Data, Effect, Stream } from "effect";
+import { Effect, Stream } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { ActorSystemDefault, ActorSystemService, Machine, yieldFibers } from "../src/index.js";
+import {
+  ActorSystemDefault,
+  ActorSystemService,
+  Machine,
+  yieldFibers,
+  State,
+  Event,
+} from "../src/index.js";
 
-type TestState = Data.TaggedEnum<{
+type TestState = State.TaggedEnum<{
   Idle: {};
   Loading: { value: number };
   Active: { value: number };
   Done: {};
 }>;
-const State = Data.taggedEnum<TestState>();
+const TestState = State.taggedEnum<TestState>();
 
-type TestEvent = Data.TaggedEnum<{
+type TestEvent = Event.TaggedEnum<{
   Start: { value: number };
   Complete: {};
   Update: { value: number };
   Stop: {};
 }>;
-const Event = Data.taggedEnum<TestEvent>();
+const TestEvent = Event.taggedEnum<TestEvent>();
 
 const createTestMachine = () =>
   Machine.build(
-    Machine.make<TestState, TestEvent>(State.Idle()).pipe(
-      Machine.on(State.Idle, Event.Start, ({ event }) => State.Loading({ value: event.value })),
-      Machine.on(State.Loading, Event.Complete, ({ state }) =>
-        State.Active({ value: state.value }),
+    Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+      Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
+        TestState.Loading({ value: event.value }),
       ),
-      Machine.on(State.Active, Event.Update, ({ event }) => State.Active({ value: event.value })),
-      Machine.on(State.Active, Event.Stop, () => State.Done()),
+      Machine.on(TestState.Loading, TestEvent.Complete, ({ state }) =>
+        TestState.Active({ value: state.value }),
+      ),
+      Machine.on(TestState.Active, TestEvent.Update, ({ event }) =>
+        TestState.Active({ value: event.value }),
+      ),
+      Machine.on(TestState.Active, TestEvent.Stop, () => TestState.Done()),
       Machine.on(
-        State.Active,
-        Event.Update,
-        ({ state }) => State.Active({ value: state.value * 2 }),
+        TestState.Active,
+        TestEvent.Update,
+        ({ state }) => TestState.Active({ value: state.value * 2 }),
         {
           guard: ({ event }) => event.value > 100,
         },
       ),
-      Machine.final(State.Done),
+      Machine.final(TestState.Done),
     ),
   );
 
@@ -53,7 +64,7 @@ describe("ActorRef ergonomics", () => {
           const state = yield* actor.snapshot;
           expect(state._tag).toBe("Idle");
 
-          yield* actor.send(Event.Start({ value: 42 }));
+          yield* actor.send(TestEvent.Start({ value: 42 }));
           yield* yieldFibers;
 
           const state2 = yield* actor.snapshot;
@@ -72,7 +83,7 @@ describe("ActorRef ergonomics", () => {
           const state = actor.snapshotSync();
           expect(state._tag).toBe("Idle");
 
-          yield* actor.send(Event.Start({ value: 42 }));
+          yield* actor.send(TestEvent.Start({ value: 42 }));
           yield* yieldFibers;
 
           const state2 = actor.snapshotSync();
@@ -93,7 +104,7 @@ describe("ActorRef ergonomics", () => {
           expect(yield* actor.matches("Idle")).toBe(true);
           expect(yield* actor.matches("Loading")).toBe(false);
 
-          yield* actor.send(Event.Start({ value: 10 }));
+          yield* actor.send(TestEvent.Start({ value: 10 }));
           yield* yieldFibers;
 
           expect(yield* actor.matches("Idle")).toBe(false);
@@ -112,7 +123,7 @@ describe("ActorRef ergonomics", () => {
           expect(actor.matchesSync("Idle")).toBe(true);
           expect(actor.matchesSync("Loading")).toBe(false);
 
-          yield* actor.send(Event.Start({ value: 10 }));
+          yield* actor.send(TestEvent.Start({ value: 10 }));
           yield* yieldFibers;
 
           expect(actor.matchesSync("Idle")).toBe(false);
@@ -131,18 +142,18 @@ describe("ActorRef ergonomics", () => {
           const actor = yield* system.spawn("test", machine);
 
           // From Idle, can Start
-          expect(yield* actor.can(Event.Start({ value: 1 }))).toBe(true);
+          expect(yield* actor.can(TestEvent.Start({ value: 1 }))).toBe(true);
           // From Idle, cannot Complete
-          expect(yield* actor.can(Event.Complete())).toBe(false);
+          expect(yield* actor.can(TestEvent.Complete())).toBe(false);
           // From Idle, cannot Stop
-          expect(yield* actor.can(Event.Stop())).toBe(false);
+          expect(yield* actor.can(TestEvent.Stop())).toBe(false);
 
-          yield* actor.send(Event.Start({ value: 5 }));
+          yield* actor.send(TestEvent.Start({ value: 5 }));
           yield* yieldFibers;
 
           // Now in Loading
-          expect(yield* actor.can(Event.Start({ value: 1 }))).toBe(false);
-          expect(yield* actor.can(Event.Complete())).toBe(true);
+          expect(yield* actor.can(TestEvent.Start({ value: 1 }))).toBe(false);
+          expect(yield* actor.can(TestEvent.Complete())).toBe(true);
         }).pipe(Effect.scoped, Effect.provide(ActorSystemDefault)),
       );
     });
@@ -154,14 +165,14 @@ describe("ActorRef ergonomics", () => {
           const system = yield* ActorSystemService;
           const actor = yield* system.spawn("test", machine);
 
-          expect(actor.canSync(Event.Start({ value: 1 }))).toBe(true);
-          expect(actor.canSync(Event.Complete())).toBe(false);
+          expect(actor.canSync(TestEvent.Start({ value: 1 }))).toBe(true);
+          expect(actor.canSync(TestEvent.Complete())).toBe(false);
 
-          yield* actor.send(Event.Start({ value: 5 }));
+          yield* actor.send(TestEvent.Start({ value: 5 }));
           yield* yieldFibers;
 
-          expect(actor.canSync(Event.Start({ value: 1 }))).toBe(false);
-          expect(actor.canSync(Event.Complete())).toBe(true);
+          expect(actor.canSync(TestEvent.Start({ value: 1 }))).toBe(false);
+          expect(actor.canSync(TestEvent.Complete())).toBe(true);
         }).pipe(Effect.scoped, Effect.provide(ActorSystemDefault)),
       );
     });
@@ -170,17 +181,17 @@ describe("ActorRef ergonomics", () => {
       await Effect.runPromise(
         Effect.gen(function* () {
           const machine = Machine.build(
-            Machine.make<TestState, TestEvent>(State.Active({ value: 0 })).pipe(
+            Machine.make<TestState, TestEvent>(TestState.Active({ value: 0 })).pipe(
               Machine.on(
-                State.Active,
-                Event.Update,
-                ({ event }) => State.Active({ value: event.value }),
+                TestState.Active,
+                TestEvent.Update,
+                ({ event }) => TestState.Active({ value: event.value }),
                 {
                   guard: ({ event }) => event.value < 10,
                 },
               ),
-              Machine.on(State.Active, Event.Stop, () => State.Done()),
-              Machine.final(State.Done),
+              Machine.on(TestState.Active, TestEvent.Stop, () => TestState.Done()),
+              Machine.final(TestState.Done),
             ),
           );
 
@@ -188,12 +199,12 @@ describe("ActorRef ergonomics", () => {
           const actor = yield* system.spawn("test", machine);
 
           // Guard passes
-          expect(yield* actor.can(Event.Update({ value: 5 }))).toBe(true);
-          expect(actor.canSync(Event.Update({ value: 5 }))).toBe(true);
+          expect(yield* actor.can(TestEvent.Update({ value: 5 }))).toBe(true);
+          expect(actor.canSync(TestEvent.Update({ value: 5 }))).toBe(true);
 
           // Guard fails
-          expect(yield* actor.can(Event.Update({ value: 15 }))).toBe(false);
-          expect(actor.canSync(Event.Update({ value: 15 }))).toBe(false);
+          expect(yield* actor.can(TestEvent.Update({ value: 15 }))).toBe(false);
+          expect(actor.canSync(TestEvent.Update({ value: 15 }))).toBe(false);
         }).pipe(Effect.scoped, Effect.provide(ActorSystemDefault)),
       );
     });
@@ -218,11 +229,11 @@ describe("ActorRef ergonomics", () => {
             ),
           );
 
-          yield* actor.send(Event.Start({ value: 1 }));
+          yield* actor.send(TestEvent.Start({ value: 1 }));
           yield* yieldFibers;
-          yield* actor.send(Event.Complete());
+          yield* actor.send(TestEvent.Complete());
           yield* yieldFibers;
-          yield* actor.send(Event.Stop());
+          yield* actor.send(TestEvent.Stop());
           yield* yieldFibers;
 
           yield* Effect.yieldNow();
@@ -247,9 +258,9 @@ describe("ActorRef ergonomics", () => {
             updates.push(state._tag);
           });
 
-          yield* actor.send(Event.Start({ value: 1 }));
+          yield* actor.send(TestEvent.Start({ value: 1 }));
           yield* yieldFibers;
-          yield* actor.send(Event.Complete());
+          yield* actor.send(TestEvent.Complete());
           yield* yieldFibers;
 
           expect(updates).toEqual(["Loading", "Active"]);
@@ -269,12 +280,12 @@ describe("ActorRef ergonomics", () => {
             updates.push(state._tag);
           });
 
-          yield* actor.send(Event.Start({ value: 1 }));
+          yield* actor.send(TestEvent.Start({ value: 1 }));
           yield* yieldFibers;
 
           unsub();
 
-          yield* actor.send(Event.Complete());
+          yield* actor.send(TestEvent.Complete());
           yield* yieldFibers;
 
           // Only got the first update

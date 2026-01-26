@@ -1,10 +1,18 @@
 import type { Schema, Schedule } from "effect";
 
 import type { Machine } from "../machine.js";
+import type { StateBrand, EventBrand } from "../internal/brands.js";
+
+// Branded type constraints
+type BrandedState = { readonly _tag: string } & StateBrand;
+type BrandedEvent = { readonly _tag: string } & EventBrand;
 
 /**
  * Configuration for persistence behavior.
  * Schemas must have no context requirements (use Schema<S, SI, never>).
+ *
+ * Note: Schema types S and E should match the structural shape of the machine's
+ * state and event types (without brands). The schemas don't know about brands.
  */
 export interface PersistenceConfig<S, E, SSI = unknown, ESI = unknown> {
   /**
@@ -74,6 +82,9 @@ export const isPersistentMachine = (
  * Attach persistence configuration to a machine.
  * Use after build() to create a PersistentMachine.
  *
+ * Note: The schema types don't need to include brands - they work with the
+ * structural shape of the types. Brands are type-level only.
+ *
  * @example
  * ```ts
  * const orderMachine = pipe(
@@ -93,17 +104,22 @@ export const isPersistentMachine = (
  * );
  * ```
  */
+// Type for config to allow flexible schema typing
+interface WithPersistenceConfig<SSI, ESI> {
+  readonly snapshotSchedule: Schedule.Schedule<unknown, { readonly _tag: string }>;
+  readonly journalEvents: boolean;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- schemas operate on unbranded types
+  readonly stateSchema: Schema.Schema<any, SSI, never>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- schemas operate on unbranded types
+  readonly eventSchema: Schema.Schema<any, ESI, never>;
+}
+
 export const withPersistence =
-  <
-    S extends { readonly _tag: string },
-    E extends { readonly _tag: string },
-    SSI = unknown,
-    ESI = unknown,
-  >(
-    config: PersistenceConfig<S, E, SSI, ESI>,
-  ) =>
-  <R>(machine: Machine<S, E, R>): PersistentMachine<S, E, R, SSI, ESI> => ({
+  <SSI = unknown, ESI = unknown>(config: WithPersistenceConfig<SSI, ESI>) =>
+  <S extends BrandedState, E extends BrandedEvent, R>(
+    machine: Machine<S, E, R>,
+  ): PersistentMachine<S, E, R, SSI, ESI> => ({
     _tag: "PersistentMachine",
     machine,
-    persistence: config,
+    persistence: config as unknown as PersistenceConfig<S, E, SSI, ESI>,
   });

@@ -1,0 +1,15 @@
+// eslint-disable-next-line eslint-plugin-import/namespace -- false positive: Brand is a type namespace in effect
+import type { Brand } from "effect";
+
+// Unique symbols for type-level branding
+declare const StateTypeId: unique symbol;
+declare const EventTypeId: unique symbol;
+
+export type StateTypeId = typeof StateTypeId;
+export type EventTypeId = typeof EventTypeId;
+
+// Brand interfaces - eslint-disable-next-line comments for false positive namespace warnings
+// eslint-disable-next-line import/namespace
+export interface StateBrand extends Brand.Brand<StateTypeId> {}
+// eslint-disable-next-line import/namespace
+export interface EventBrand extends Brand.Brand<EventTypeId> {}

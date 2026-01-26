@@ -1,46 +1,48 @@
-import { Data, Effect } from "effect";
+import { Effect } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { Machine, simulate } from "../../src/index.js";
+import { Event, Machine, simulate, State } from "../../src/index.js";
 
 describe("Assign and Update Helpers", () => {
-  type FormState = Data.TaggedEnum<{
+  type FormState = State.TaggedEnum<{
     Editing: { name: string; email: string };
     Submitted: { name: string; email: string };
   }>;
-  const State = Data.taggedEnum<FormState>();
+  const FormState = State.taggedEnum<FormState>();
 
-  type FormEvent = Data.TaggedEnum<{
+  type FormEvent = Event.TaggedEnum<{
     SetName: { name: string };
     SetEmail: { email: string };
     Submit: {};
   }>;
-  const Event = Data.taggedEnum<FormEvent>();
+  const FormEvent = Event.taggedEnum<FormEvent>();
 
   test("assign helper updates partial state", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<FormState, FormEvent>(State.Editing({ name: "", email: "" })).pipe(
+          Machine.make<FormState, FormEvent>(FormState.Editing({ name: "", email: "" })).pipe(
             Machine.on(
-              State.Editing,
-              Event.SetName,
+              FormState.Editing,
+              FormEvent.SetName,
               Machine.assign(({ event }) => ({ name: event.name })),
             ),
             Machine.on(
-              State.Editing,
-              Event.SetEmail,
+              FormState.Editing,
+              FormEvent.SetEmail,
               Machine.assign(({ event }) => ({ email: event.email })),
             ),
-            Machine.on(State.Editing, Event.Submit, ({ state }) => State.Submitted(state)),
-            Machine.final(State.Submitted),
+            Machine.on(FormState.Editing, FormEvent.Submit, ({ state }) =>
+              FormState.Submitted(state),
+            ),
+            Machine.final(FormState.Submitted),
           ),
         );
 
         const result = yield* simulate(machine, [
-          Event.SetName({ name: "John" }),
-          Event.SetEmail({ email: "john@example.com" }),
-          Event.Submit(),
+          FormEvent.SetName({ name: "John" }),
+          FormEvent.SetEmail({ email: "john@example.com" }),
+          FormEvent.Submit(),
         ]);
 
         expect(result.finalState._tag).toBe("Submitted");
@@ -56,18 +58,24 @@ describe("Assign and Update Helpers", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<FormState, FormEvent>(State.Editing({ name: "", email: "" })).pipe(
-            Machine.update(State.Editing, Event.SetName, ({ event }) => ({ name: event.name })),
-            Machine.update(State.Editing, Event.SetEmail, ({ event }) => ({ email: event.email })),
-            Machine.on(State.Editing, Event.Submit, ({ state }) => State.Submitted(state)),
-            Machine.final(State.Submitted),
+          Machine.make<FormState, FormEvent>(FormState.Editing({ name: "", email: "" })).pipe(
+            Machine.update(FormState.Editing, FormEvent.SetName, ({ event }) => ({
+              name: event.name,
+            })),
+            Machine.update(FormState.Editing, FormEvent.SetEmail, ({ event }) => ({
+              email: event.email,
+            })),
+            Machine.on(FormState.Editing, FormEvent.Submit, ({ state }) =>
+              FormState.Submitted(state),
+            ),
+            Machine.final(FormState.Submitted),
           ),
         );
 
         const result = yield* simulate(machine, [
-          Event.SetName({ name: "Jane" }),
-          Event.SetEmail({ email: "jane@example.com" }),
-          Event.Submit(),
+          FormEvent.SetName({ name: "Jane" }),
+          FormEvent.SetEmail({ email: "jane@example.com" }),
+          FormEvent.Submit(),
         ]);
 
         expect(result.finalState._tag).toBe("Submitted");
@@ -83,18 +91,25 @@ describe("Assign and Update Helpers", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<FormState, FormEvent>(State.Editing({ name: "", email: "" })).pipe(
-            Machine.update(State.Editing, Event.SetName, ({ event }) => ({ name: event.name }), {
-              guard: ({ event }) => event.name.length <= 50,
-            }),
-            Machine.on(State.Editing, Event.Submit, ({ state }) => State.Submitted(state)),
-            Machine.final(State.Submitted),
+          Machine.make<FormState, FormEvent>(FormState.Editing({ name: "", email: "" })).pipe(
+            Machine.update(
+              FormState.Editing,
+              FormEvent.SetName,
+              ({ event }) => ({ name: event.name }),
+              {
+                guard: ({ event }) => event.name.length <= 50,
+              },
+            ),
+            Machine.on(FormState.Editing, FormEvent.Submit, ({ state }) =>
+              FormState.Submitted(state),
+            ),
+            Machine.final(FormState.Submitted),
           ),
         );
 
         const result = yield* simulate(machine, [
-          Event.SetName({ name: "A".repeat(100) }), // blocked by guard
-          Event.Submit(),
+          FormEvent.SetName({ name: "A".repeat(100) }), // blocked by guard
+          FormEvent.Submit(),
         ]);
 
         expect(result.finalState._tag).toBe("Submitted");

@@ -4,6 +4,11 @@ import type { MachineBuilder, OnOptions, Transition } from "../machine.js";
 import { addTransition, normalizeOnOptions } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
 import type { TransitionContext } from "../internal/types.js";
+import type { StateBrand, EventBrand } from "../internal/brands.js";
+
+// Branded type constraints
+type BrandedState = { readonly _tag: string } & StateBrand;
+type BrandedEvent = { readonly _tag: string } & EventBrand;
 
 /**
  * Create a handler function that merges partial updates into the current state.
@@ -41,8 +46,8 @@ export function assign<S extends { readonly _tag: string }, E>(
  * ```
  */
 export function update<
-  NarrowedState extends { readonly _tag: string },
-  NarrowedEvent extends { readonly _tag: string },
+  NarrowedState extends BrandedState,
+  NarrowedEvent extends BrandedEvent,
   R2 = never,
 >(
   stateConstructor: { (...args: never[]): NarrowedState },
@@ -56,7 +61,7 @@ export function update<
   const eventTag = getTag(eventConstructor);
   const normalizedOptions = normalizeOnOptions(options);
 
-  return <State extends { readonly _tag: string }, Event extends { readonly _tag: string }, R>(
+  return <State extends BrandedState, Event extends BrandedEvent, R>(
     builder: MachineBuilder<State, Event, R>,
   ): MachineBuilder<State, Event, R | R2> => {
     const transition: Transition<State, Event, R2> = {

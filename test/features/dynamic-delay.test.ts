@@ -1,33 +1,40 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Data, Duration, Effect, Layer, TestClock, TestContext } from "effect";
+import { Duration, Effect, Layer, TestClock, TestContext } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { ActorSystemDefault, ActorSystemService, Machine, yieldFibers } from "../../src/index.js";
+import {
+  ActorSystemDefault,
+  ActorSystemService,
+  Event,
+  Machine,
+  State,
+  yieldFibers,
+} from "../../src/index.js";
 
 describe("Dynamic Delay Duration", () => {
-  type State = Data.TaggedEnum<{
+  type WaitState = State.TaggedEnum<{
     Waiting: { timeout: number };
     TimedOut: {};
   }>;
-  const State = Data.taggedEnum<State>();
+  const WaitState = State.taggedEnum<WaitState>();
 
-  type Event = Data.TaggedEnum<{
+  type WaitEvent = Event.TaggedEnum<{
     Timeout: {};
   }>;
-  const Event = Data.taggedEnum<Event>();
+  const WaitEvent = Event.taggedEnum<WaitEvent>();
 
   test("dynamic duration computed from state", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<State, Event>(State.Waiting({ timeout: 5 })).pipe(
-            Machine.on(State.Waiting, Event.Timeout, () => State.TimedOut()),
+          Machine.make<WaitState, WaitEvent>(WaitState.Waiting({ timeout: 5 })).pipe(
+            Machine.on(WaitState.Waiting, WaitEvent.Timeout, () => WaitState.TimedOut()),
             Machine.delay(
-              State.Waiting,
+              WaitState.Waiting,
               (state) => Duration.seconds(state.timeout),
-              Event.Timeout(),
+              WaitEvent.Timeout(),
             ),
-            Machine.final(State.TimedOut),
+            Machine.final(WaitState.TimedOut),
           ),
         );
 
@@ -59,18 +66,18 @@ describe("Dynamic Delay Duration", () => {
   });
 
   test("dynamic duration with different state values", async () => {
-    type RetryState = Data.TaggedEnum<{
+    type RetryState = State.TaggedEnum<{
       Retrying: { attempt: number; backoff: number };
       Failed: {};
       Success: {};
     }>;
-    const RetryState = Data.taggedEnum<RetryState>();
+    const RetryState = State.taggedEnum<RetryState>();
 
-    type RetryEvent = Data.TaggedEnum<{
+    type RetryEvent = Event.TaggedEnum<{
       Retry: {};
       GiveUp: {};
     }>;
-    const RetryEvent = Data.taggedEnum<RetryEvent>();
+    const RetryEvent = Event.taggedEnum<RetryEvent>();
 
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -131,11 +138,11 @@ describe("Dynamic Delay Duration", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.build(
-          Machine.make<State, Event>(State.Waiting({ timeout: 999 })).pipe(
-            Machine.on(State.Waiting, Event.Timeout, () => State.TimedOut()),
+          Machine.make<WaitState, WaitEvent>(WaitState.Waiting({ timeout: 999 })).pipe(
+            Machine.on(WaitState.Waiting, WaitEvent.Timeout, () => WaitState.TimedOut()),
             // Static "3 seconds" ignores state.timeout
-            Machine.delay(State.Waiting, "3 seconds", Event.Timeout()),
-            Machine.final(State.TimedOut),
+            Machine.delay(WaitState.Waiting, "3 seconds", WaitEvent.Timeout()),
+            Machine.final(WaitState.TimedOut),
           ),
         );
 

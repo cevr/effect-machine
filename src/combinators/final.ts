@@ -1,6 +1,11 @@
 import type { MachineBuilder } from "../machine.js";
 import { addFinal } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
+import type { StateBrand, EventBrand } from "../internal/brands.js";
+
+// Branded type constraints
+type BrandedState = { readonly _tag: string } & StateBrand;
+type BrandedEvent = { readonly _tag: string } & EventBrand;
 
 /**
  * Mark a state as final (stops the actor when entered).
@@ -14,12 +19,12 @@ import { getTag } from "../internal/get-tag.js";
  * )
  * ```
  */
-export function final<NarrowedState extends { readonly _tag: string }>(stateConstructor: {
+export function final<NarrowedState extends BrandedState>(stateConstructor: {
   (...args: never[]): NarrowedState;
 }) {
   const stateTag = getTag(stateConstructor);
 
-  return <State extends { readonly _tag: string }, Event extends { readonly _tag: string }, R>(
+  return <State extends BrandedState, Event extends BrandedEvent, R>(
     builder: MachineBuilder<State, Event, R>,
   ): MachineBuilder<State, Event, R> => addFinal<State, Event, R>(stateTag)(builder);
 }

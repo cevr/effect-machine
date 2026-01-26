@@ -4,6 +4,7 @@ import { getTag } from "../internal/get-tag.js";
 import type { MachineBuilder, OnOptions, Transition } from "../machine.js";
 import { addTransition, normalizeOnOptions } from "../machine.js";
 import type { TransitionContext, TransitionResult } from "../internal/types.js";
+import type { StateBrand, EventBrand } from "../internal/brands.js";
 
 /**
  * A partial transition created inside `from().pipe()` - missing the stateTag
@@ -18,73 +19,70 @@ export interface ScopedTransition<State, Event, R> {
   readonly reenter?: boolean;
 }
 
+// Branded type constraints
+type BrandedState = { readonly _tag: string } & StateBrand;
+type BrandedEvent = { readonly _tag: string } & EventBrand;
+
 /**
  * A scoped state context that provides event-only `on` calls.
  * Use `.pipe()` with scoped `on(Event, handler)` calls.
  */
-export interface StateScope<NarrowedState extends { readonly _tag: string }> {
+export interface StateScope<NarrowedState extends BrandedState> {
   readonly _tag: "StateScope";
   readonly stateTag: string;
 
   /**
    * Pipe scoped transitions (event-only on() calls) and return a builder transform
    */
-  pipe<E1 extends { readonly _tag: string }, R1>(
+  pipe<E1 extends BrandedEvent, R1>(
     t1: ScopedTransition<NarrowedState, E1, R1>,
-  ): <FullState extends { readonly _tag: string }, FullEvent extends { readonly _tag: string }, R>(
+  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R>(
     builder: MachineBuilder<FullState, FullEvent, R>,
   ) => MachineBuilder<FullState, FullEvent, R | R1>;
 
-  pipe<E1 extends { readonly _tag: string }, R1, E2 extends { readonly _tag: string }, R2>(
+  pipe<E1 extends BrandedEvent, R1, E2 extends BrandedEvent, R2>(
     t1: ScopedTransition<NarrowedState, E1, R1>,
     t2: ScopedTransition<NarrowedState, E2, R2>,
-  ): <FullState extends { readonly _tag: string }, FullEvent extends { readonly _tag: string }, R>(
+  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R>(
     builder: MachineBuilder<FullState, FullEvent, R>,
   ) => MachineBuilder<FullState, FullEvent, R | R1 | R2>;
 
-  pipe<
-    E1 extends { readonly _tag: string },
-    R1,
-    E2 extends { readonly _tag: string },
-    R2,
-    E3 extends { readonly _tag: string },
-    R3,
-  >(
+  pipe<E1 extends BrandedEvent, R1, E2 extends BrandedEvent, R2, E3 extends BrandedEvent, R3>(
     t1: ScopedTransition<NarrowedState, E1, R1>,
     t2: ScopedTransition<NarrowedState, E2, R2>,
     t3: ScopedTransition<NarrowedState, E3, R3>,
-  ): <FullState extends { readonly _tag: string }, FullEvent extends { readonly _tag: string }, R>(
+  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R>(
     builder: MachineBuilder<FullState, FullEvent, R>,
   ) => MachineBuilder<FullState, FullEvent, R | R1 | R2 | R3>;
 
   pipe<
-    E1 extends { readonly _tag: string },
+    E1 extends BrandedEvent,
     R1,
-    E2 extends { readonly _tag: string },
+    E2 extends BrandedEvent,
     R2,
-    E3 extends { readonly _tag: string },
+    E3 extends BrandedEvent,
     R3,
-    E4 extends { readonly _tag: string },
+    E4 extends BrandedEvent,
     R4,
   >(
     t1: ScopedTransition<NarrowedState, E1, R1>,
     t2: ScopedTransition<NarrowedState, E2, R2>,
     t3: ScopedTransition<NarrowedState, E3, R3>,
     t4: ScopedTransition<NarrowedState, E4, R4>,
-  ): <FullState extends { readonly _tag: string }, FullEvent extends { readonly _tag: string }, R>(
+  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R>(
     builder: MachineBuilder<FullState, FullEvent, R>,
   ) => MachineBuilder<FullState, FullEvent, R | R1 | R2 | R3 | R4>;
 
   pipe<
-    E1 extends { readonly _tag: string },
+    E1 extends BrandedEvent,
     R1,
-    E2 extends { readonly _tag: string },
+    E2 extends BrandedEvent,
     R2,
-    E3 extends { readonly _tag: string },
+    E3 extends BrandedEvent,
     R3,
-    E4 extends { readonly _tag: string },
+    E4 extends BrandedEvent,
     R4,
-    E5 extends { readonly _tag: string },
+    E5 extends BrandedEvent,
     R5,
   >(
     t1: ScopedTransition<NarrowedState, E1, R1>,
@@ -92,22 +90,22 @@ export interface StateScope<NarrowedState extends { readonly _tag: string }> {
     t3: ScopedTransition<NarrowedState, E3, R3>,
     t4: ScopedTransition<NarrowedState, E4, R4>,
     t5: ScopedTransition<NarrowedState, E5, R5>,
-  ): <FullState extends { readonly _tag: string }, FullEvent extends { readonly _tag: string }, R>(
+  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R>(
     builder: MachineBuilder<FullState, FullEvent, R>,
   ) => MachineBuilder<FullState, FullEvent, R | R1 | R2 | R3 | R4 | R5>;
 
   pipe<
-    E1 extends { readonly _tag: string },
+    E1 extends BrandedEvent,
     R1,
-    E2 extends { readonly _tag: string },
+    E2 extends BrandedEvent,
     R2,
-    E3 extends { readonly _tag: string },
+    E3 extends BrandedEvent,
     R3,
-    E4 extends { readonly _tag: string },
+    E4 extends BrandedEvent,
     R4,
-    E5 extends { readonly _tag: string },
+    E5 extends BrandedEvent,
     R5,
-    E6 extends { readonly _tag: string },
+    E6 extends BrandedEvent,
     R6,
   >(
     t1: ScopedTransition<NarrowedState, E1, R1>,
@@ -116,14 +114,14 @@ export interface StateScope<NarrowedState extends { readonly _tag: string }> {
     t4: ScopedTransition<NarrowedState, E4, R4>,
     t5: ScopedTransition<NarrowedState, E5, R5>,
     t6: ScopedTransition<NarrowedState, E6, R6>,
-  ): <FullState extends { readonly _tag: string }, FullEvent extends { readonly _tag: string }, R>(
+  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R>(
     builder: MachineBuilder<FullState, FullEvent, R>,
   ) => MachineBuilder<FullState, FullEvent, R | R1 | R2 | R3 | R4 | R5 | R6>;
 
   // Fallback for more than 6 transitions
   pipe(
-    ...transitions: Array<ScopedTransition<NarrowedState, { readonly _tag: string }, unknown>>
-  ): <FullState extends { readonly _tag: string }, FullEvent extends { readonly _tag: string }, R>(
+    ...transitions: Array<ScopedTransition<NarrowedState, BrandedEvent, unknown>>
+  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R>(
     builder: MachineBuilder<FullState, FullEvent, R>,
   ) => MachineBuilder<FullState, FullEvent, R | unknown>;
 }
@@ -131,15 +129,15 @@ export interface StateScope<NarrowedState extends { readonly _tag: string }> {
 /**
  * Implementation of StateScope.pipe
  */
-function stateScopePipe<NarrowedState extends { readonly _tag: string }>(
+function stateScopePipe<NarrowedState extends BrandedState>(
   this: StateScope<NarrowedState>,
-  ...transitions: Array<ScopedTransition<NarrowedState, { readonly _tag: string }, unknown>>
-): <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
+  ...transitions: Array<ScopedTransition<NarrowedState, BrandedEvent, unknown>>
+): <S extends BrandedState, E extends BrandedEvent, R>(
   builder: MachineBuilder<S, E, R>,
 ) => MachineBuilder<S, E, unknown> {
   const stateTag = this.stateTag;
 
-  return <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
+  return <S extends BrandedState, E extends BrandedEvent, R>(
     builder: MachineBuilder<S, E, R>,
   ): MachineBuilder<S, E, unknown> => {
     let result: MachineBuilder<S, E, unknown> = builder;
@@ -173,7 +171,7 @@ function stateScopePipe<NarrowedState extends { readonly _tag: string }>(
  * )
  * ```
  */
-export const from = <NarrowedState extends { readonly _tag: string }>(stateConstructor: {
+export const from = <NarrowedState extends BrandedState>(stateConstructor: {
   (...args: never[]): NarrowedState;
 }): StateScope<NarrowedState> => {
   const scope: StateScope<NarrowedState> = {
@@ -189,9 +187,9 @@ export const from = <NarrowedState extends { readonly _tag: string }>(stateConst
  * This is an internal helper - use `on` which auto-detects scoped vs full context.
  */
 export const scopedOn = <
-  NarrowedState extends { readonly _tag: string },
-  NarrowedEvent extends { readonly _tag: string },
-  ResultState extends { readonly _tag: string },
+  NarrowedState extends BrandedState,
+  NarrowedEvent extends BrandedEvent,
+  ResultState extends BrandedState,
   R2 = never,
 >(
   eventConstructor: { (...args: never[]): NarrowedEvent },
@@ -222,9 +220,9 @@ export const scopedOn = <
  * Force variant for scoped transitions
  */
 export const scopedOnForce = <
-  NarrowedState extends { readonly _tag: string },
-  NarrowedEvent extends { readonly _tag: string },
-  ResultState extends { readonly _tag: string },
+  NarrowedState extends BrandedState,
+  NarrowedEvent extends BrandedEvent,
+  ResultState extends BrandedState,
   R2 = never,
 >(
   eventConstructor: { (...args: never[]): NarrowedEvent },
