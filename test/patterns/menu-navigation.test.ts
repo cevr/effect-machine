@@ -6,7 +6,7 @@ import {
   assertPath,
   build,
   final,
-  GuardModule,
+  Guard,
   make,
   on,
   simulate,
@@ -65,18 +65,18 @@ describe("Menu Navigation Pattern", () => {
   const cart: string[] = [];
 
   // Guards
-  const isValidPage = GuardModule.make<BrowsingState, NavigateEvent>(({ event }) =>
+  const isValidPage = Guard.make<BrowsingState, NavigateEvent>(({ event }) =>
     pages.some((p) => p.id === event.pageId),
   );
 
-  const isValidSection = GuardModule.make<BrowsingState, ScrollEvent>(({ state, event }) => {
+  const isValidSection = Guard.make<BrowsingState, ScrollEvent>(({ state, event }) => {
     const page = pages.find((p) => p.id === state.pageId);
     return page !== undefined
       ? event.sectionIndex >= 0 && event.sectionIndex < page.sections.length
       : false;
   });
 
-  const isDifferentPage = GuardModule.make<BrowsingState, NavigateEvent>(
+  const isDifferentPage = Guard.make<BrowsingState, NavigateEvent>(
     ({ state, event }) => state.pageId !== event.pageId,
   );
 
@@ -92,21 +92,20 @@ describe("Menu Navigation Pattern", () => {
         State.Browsing,
         Event.NavigateToPage,
         ({ event }) => State.Browsing({ pageId: event.pageId, sectionIndex: 0, itemIndex: null }),
-        { guard: GuardModule.and(isDifferentPage, isValidPage) },
+        { guard: Guard.and(isDifferentPage, isValidPage) },
       ),
-      // Second: same page - no-op (internal)
+      // Second: same page - no-op (same state, no lifecycle by default)
       on(State.Browsing, Event.NavigateToPage, ({ state }) => state, {
-        guard: GuardModule.not(isDifferentPage),
-        internal: true,
+        guard: Guard.not(isDifferentPage),
       }),
 
-      // Section scrolling
+      // Section scrolling (same state, no lifecycle by default)
       on(
         State.Browsing,
         Event.ScrollToSection,
         ({ state, event }) =>
           State.Browsing({ ...state, sectionIndex: event.sectionIndex, itemIndex: null }),
-        { guard: isValidSection, internal: true },
+        { guard: isValidSection },
       ),
 
       // Item selection

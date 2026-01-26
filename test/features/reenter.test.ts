@@ -14,7 +14,7 @@ import {
   yieldFibers,
 } from "../../src/index.js";
 
-describe("Reenter Transitions", () => {
+describe("on.force Transitions", () => {
   type State = Data.TaggedEnum<{
     Polling: { attempts: number };
     Done: {};
@@ -28,7 +28,7 @@ describe("Reenter Transitions", () => {
   }>;
   const Event = Data.taggedEnum<Event>();
 
-  test("reenter=true forces exit/enter for same state tag", async () => {
+  test("on.force runs exit/enter for same state tag", async () => {
     const effects: string[] = [];
 
     await Effect.runPromise(
@@ -36,11 +36,8 @@ describe("Reenter Transitions", () => {
         const machine = build(
           pipe(
             make<State, Event>(State.Polling({ attempts: 0 })),
-            on(
-              State.Polling,
-              Event.Reset,
-              ({ state }) => State.Polling({ attempts: state.attempts + 1 }),
-              { reenter: true },
+            on.force(State.Polling, Event.Reset, ({ state }) =>
+              State.Polling({ attempts: state.attempts + 1 }),
             ),
             on(State.Polling, Event.Finish, () => State.Done()),
             onEnter(State.Polling, ({ state }) =>
@@ -58,7 +55,7 @@ describe("Reenter Transitions", () => {
         // Initial enter
         expect(effects).toEqual(["enter:Polling:0"]);
 
-        // Reset with reenter=true should run exit/enter
+        // on.force runs exit/enter
         yield* actor.send(Event.Reset());
         yield* yieldFibers;
 
@@ -67,7 +64,7 @@ describe("Reenter Transitions", () => {
         expect((state as State & { _tag: "Polling" }).attempts).toBe(1);
         expect(effects).toEqual(["enter:Polling:0", "exit:Polling:0", "enter:Polling:1"]);
 
-        // Another reenter
+        // Another force transition
         yield* actor.send(Event.Reset());
         yield* yieldFibers;
 
@@ -82,17 +79,14 @@ describe("Reenter Transitions", () => {
     );
   });
 
-  test("reenter restarts delay timer", async () => {
+  test("on.force restarts delay timer", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = build(
           pipe(
             make<State, Event>(State.Polling({ attempts: 0 })),
-            on(
-              State.Polling,
-              Event.Reset,
-              ({ state }) => State.Polling({ attempts: state.attempts + 1 }),
-              { reenter: true },
+            on.force(State.Polling, Event.Reset, ({ state }) =>
+              State.Polling({ attempts: state.attempts + 1 }),
             ),
             on(State.Polling, Event.Poll, () => State.Done()),
             delay(State.Polling, "5 seconds", Event.Poll()),

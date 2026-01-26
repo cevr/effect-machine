@@ -8,11 +8,12 @@ import type { TransitionResult } from "../internal/types.js";
 export interface AlwaysBranch<S, R> {
   readonly guard?: (state: S) => boolean;
   readonly to: (state: S) => TransitionResult<{ readonly _tag: string }, R>;
-  readonly otherwise?: never;
+  /** @deprecated Last branch without guard is automatically a fallback */
+  readonly otherwise?: true;
 }
 
 /**
- * The fallback branch (no guard required)
+ * @deprecated Use AlwaysBranch without guard for fallback
  */
 export interface AlwaysOtherwise<S, R> {
   readonly otherwise: true;
@@ -28,16 +29,16 @@ export type AlwaysEntry<S, R> = AlwaysBranch<S, R> | AlwaysOtherwise<S, R>;
 /**
  * Define eventless (always) transitions with guard cascade.
  * These transitions are evaluated immediately on state entry.
- * First guard to pass wins; `otherwise: true` matches unconditionally.
+ * First guard to pass wins; last branch without guard is the fallback.
  *
- * @example Single always transition
+ * @example
  * ```ts
  * pipe(
  *   Machine.make<State, Event>(State.Calculating({ value: 75 })),
  *   always(State.Calculating, [
  *     { guard: (s) => s.value >= 70, to: (s) => State.High(s) },
  *     { guard: (s) => s.value >= 40, to: (s) => State.Medium(s) },
- *     { otherwise: true, to: (s) => State.Low(s) },
+ *     { to: (s) => State.Low(s) },  // Fallback (no guard)
  *   ]),
  * )
  * ```
@@ -51,18 +52,22 @@ export function always<NarrowedState extends { readonly _tag: string }, R2 = nev
   return <State extends { readonly _tag: string }, Event extends { readonly _tag: string }, R>(
     builder: MachineBuilder<State, Event, R>,
   ): MachineBuilder<State, Event, R | R2> => {
-    // Convert each branch to an AlwaysTransition
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let result: MachineBuilder<State, Event, any> = builder;
 
     for (const branch of branches) {
+      // A branch is a fallback if:
+      // - It has `otherwise: true` (deprecated)
+      // - It has no guard
+      const isFallback =
+        ("otherwise" in branch && branch.otherwise === true) || branch.guard === undefined;
+
       const transition: AlwaysTransition<State, R2> = {
         stateTag,
         handler: branch.to as unknown as (state: State) => TransitionResult<State, R2>,
-        guard:
-          "otherwise" in branch && branch.otherwise === true
-            ? undefined // otherwise always matches
-            : (branch.guard as unknown as ((state: State) => boolean) | undefined),
+        guard: isFallback
+          ? undefined
+          : (branch.guard as unknown as ((state: State) => boolean) | undefined),
       };
 
       result = {

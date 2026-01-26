@@ -39,6 +39,7 @@ export type { DelayOptions, DurationOrFn } from "./combinators/delay.js";
 export { final } from "./combinators/final.js";
 export { invoke } from "./combinators/invoke.js";
 export { on } from "./combinators/on.js";
+export type { OnForceOptions } from "./combinators/on.js";
 export { onEnter } from "./combinators/on-enter.js";
 export { onExit } from "./combinators/on-exit.js";
 
@@ -56,7 +57,6 @@ export type { SimulationResult, TestHarness, TestHarnessOptions } from "./testin
 
 // Re-export internal types that users might need
 export type {
-  Guard,
   GuardFn,
   GuardInput,
   InstanceOf,
@@ -67,4 +67,5 @@ export type {
   TransitionOptions,
   TransitionResult,
 } from "./internal/types.js";
-export { Guard as GuardModule, normalizeGuard } from "./internal/types.js";
+export { Guard, normalizeGuard } from "./internal/types.js";
+export type { Guard as GuardType } from "./internal/types.js";

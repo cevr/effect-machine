@@ -83,12 +83,8 @@ describe("Dynamic Delay Duration", () => {
         const machine = build(
           pipe(
             make<RetryState, RetryEvent>(RetryState.Retrying({ attempt: 1, backoff: 1 })),
-            on(
-              RetryState.Retrying,
-              RetryEvent.Retry,
-              ({ state }) =>
-                RetryState.Retrying({ attempt: state.attempt + 1, backoff: state.backoff * 2 }),
-              { reenter: true }, // Need reenter to restart the delay timer
+            on.force(RetryState.Retrying, RetryEvent.Retry, ({ state }) =>
+              RetryState.Retrying({ attempt: state.attempt + 1, backoff: state.backoff * 2 }),
             ),
             on(RetryState.Retrying, RetryEvent.GiveUp, () => RetryState.Failed()),
             // Exponential backoff based on state

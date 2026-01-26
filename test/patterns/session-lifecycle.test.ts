@@ -58,12 +58,9 @@ describe("Session Lifecycle Pattern", () => {
       ),
       on(State.Initializing, Event.TokenInvalid, () => State.Guest()),
 
-      // Activity tracking
-      on(
-        State.Active,
-        Event.Activity,
-        ({ state }) => State.Active({ ...state, lastActivity: Date.now() }),
-        { internal: true }, // Don't restart timeout timer
+      // Activity tracking - same state tag, no lifecycle (default)
+      on(State.Active, Event.Activity, ({ state }) =>
+        State.Active({ ...state, lastActivity: Date.now() }),
       ),
 
       // Session timeout
@@ -175,11 +172,8 @@ describe("Session Lifecycle Pattern", () => {
             make<SessionState, SessionEvent>(
               State.Active({ userId: "user-1", role: "user", lastActivity: Date.now() }),
             ),
-            on(
-              State.Active,
-              Event.Activity,
-              ({ state }) => State.Active({ ...state, lastActivity: Date.now() }),
-              { internal: true },
+            on(State.Active, Event.Activity, ({ state }) =>
+              State.Active({ ...state, lastActivity: Date.now() }),
             ),
             delay(State.Active, "30 minutes", Event.SessionTimeout()),
             on(State.Active, Event.SessionTimeout, () => State.SessionExpired()),
@@ -223,11 +217,8 @@ describe("Session Lifecycle Pattern", () => {
             make<SessionState, SessionEvent>(
               State.Active({ userId: "user-1", role: "user", lastActivity: Date.now() }),
             ),
-            on(
-              State.Active,
-              Event.Activity,
-              ({ state }) => State.Active({ ...state, lastActivity: Date.now() }),
-              { reenter: true }, // Force timer restart
+            on.force(State.Active, Event.Activity, ({ state }) =>
+              State.Active({ ...state, lastActivity: Date.now() }),
             ),
             delay(State.Active, "30 minutes", Event.SessionTimeout()),
             on(State.Active, Event.SessionTimeout, () => State.SessionExpired()),

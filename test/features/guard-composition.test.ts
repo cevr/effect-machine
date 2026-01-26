@@ -1,9 +1,7 @@
 import { Data, Effect, pipe } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { build, final, GuardModule, make, on, simulate } from "../../src/index.js";
-
-const Guard = GuardModule;
+import { build, final, Guard, make, on, simulate } from "../../src/index.js";
 
 describe("Guard Composition", () => {
   type State = Data.TaggedEnum<{
@@ -97,6 +95,29 @@ describe("Guard Composition", () => {
             make<State, Event>(State.Idle({ role: "user", age: 20 })),
             on(State.Idle, Event.Access, () => State.Allowed(), {
               guard: Guard.not(isGuest),
+            }),
+            final(State.Allowed),
+          ),
+        );
+
+        const result = yield* simulate(machine, [Event.Access()]);
+        expect(result.finalState._tag).toBe("Allowed");
+      }),
+    );
+  });
+
+  test("Guard.for auto-narrows types from constructors", async () => {
+    // Guard.for infers types from constructors - no manual type annotations needed
+    const isAdmin = Guard.for(State.Idle, Event.Access)(({ state }) => state.role === "admin");
+    const isAdult = Guard.for(State.Idle, Event.Access)(({ state }) => state.age >= 18);
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const machine = build(
+          pipe(
+            make<State, Event>(State.Idle({ role: "admin", age: 25 })),
+            on(State.Idle, Event.Access, () => State.Allowed(), {
+              guard: Guard.and(isAdmin, isAdult),
             }),
             final(State.Allowed),
           ),

@@ -10,7 +10,7 @@ import {
   build,
   delay,
   final,
-  GuardModule,
+  Guard,
   make,
   on,
   yieldFibers,
@@ -54,10 +54,10 @@ describe("Payment Flow Pattern", () => {
   type RetryEvent = PaymentEvent & { _tag: "Retry" };
 
   // Guards
-  const isBridgePayment = GuardModule.make<SelectingMethodState, SelectMethodEvent>(
+  const isBridgePayment = Guard.make<SelectingMethodState, SelectMethodEvent>(
     ({ event }) => event.method === "bridge",
   );
-  const canRetry = GuardModule.make<PaymentErrorState, RetryEvent>(
+  const canRetry = Guard.make<PaymentErrorState, RetryEvent>(
     ({ state }) => state.canRetry && state.attempts < 3,
   );
 
@@ -76,7 +76,7 @@ describe("Payment Flow Pattern", () => {
         Event.SelectMethod,
         ({ state, event }) =>
           State.ProcessingPayment({ method: event.method, amount: state.amount, attempts: 1 }),
-        { guard: GuardModule.not(isBridgePayment) },
+        { guard: Guard.not(isBridgePayment) },
       ),
       on(
         State.SelectingMethod,

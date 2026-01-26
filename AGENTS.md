@@ -26,9 +26,10 @@ bun run fmt           # oxfmt
 - TestClock: use `Layer.merge(ActorSystemDefault, TestContext.TestContext)`
 - `simulate`/`createTestHarness` are pure - no onEnter/onExit effects
 - Actor testing needs `yieldFibers` after `send()` to let effects run
-- `internal: true` skips exit/enter even if handler returns same-state - use for context-only updates
-- `reenter: true` forces exit/enter on same state tag - use to restart timers/invoke
+- Same-state transitions skip exit/enter by default
+- `on.force()` runs exit/enter even on same state tag - use to restart timers/invoke
 - Dynamic delay: duration fn evaluated at state entry, not registration time
+- `always` fallback: last branch without guard matches unconditionally
 
 ## Effect Language Service
 

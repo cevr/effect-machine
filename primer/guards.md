@@ -19,7 +19,7 @@ If guard returns `false`, transition is skipped.
 Create named guards with `Guard.make`:
 
 ```typescript
-import { GuardModule as Guard } from "effect-machine";
+import { Guard } from "effect-machine";
 
 const isValid = Guard.make<FormState, SubmitEvent>(({ state }) => state.isValid);
 
@@ -28,6 +28,19 @@ const hasEmail = Guard.make<FormState, SubmitEvent>(({ state }) => state.email.l
 on(State.Form, Event.Submit, () => State.Submitting(), {
   guard: isValid,
 });
+```
+
+## Guard.for - Auto-narrowed Types
+
+Use `Guard.for` to create guards without manual type annotations:
+
+```typescript
+import { Guard } from "effect-machine";
+
+// Types inferred from constructors
+const isValid = Guard.for(State.Form, Event.Submit)(({ state }) => state.isValid);
+
+const hasEmail = Guard.for(State.Form, Event.Submit)(({ state }) => state.email.length > 0);
 ```
 
 ## Guard Composition
@@ -100,6 +113,14 @@ const canStart = Guard.make<IdleState, StartEvent>(({ state, event }) => {
 });
 ```
 
+Or use `Guard.for` for automatic narrowing:
+
+```typescript
+const canStart = Guard.for(State.Idle, Event.Start)(({ state, event }) => {
+  return state.ready && event.force;
+});
+```
+
 ## Guard Cascade Order
 
 When multiple transitions match the same state + event, guards are evaluated in **registration order**:
@@ -121,7 +142,7 @@ First passing guard wins. Use `choose` for explicit cascade:
 choose(State.A, Event.X, [
   { guard: ({ state }) => state.value > 100, to: () => State.B() },
   { guard: ({ state }) => state.value > 50, to: () => State.C() },
-  { otherwise: true, to: () => State.D() },
+  { to: () => State.D() },  // Fallback (no guard)
 ]);
 ```
 
@@ -133,7 +154,7 @@ choose(State.A, Event.X, [
 always(State.Calculating, [
   { guard: (state) => state.value >= 70, to: () => State.High() },
   { guard: (state) => state.value >= 40, to: () => State.Medium() },
-  { otherwise: true, to: () => State.Low() },
+  { to: () => State.Low() },  // Fallback (no guard)
 ]);
 ```
 
@@ -142,7 +163,7 @@ always(State.Calculating, [
 Test guards in isolation:
 
 ```typescript
-import { GuardModule as Guard } from "effect-machine";
+import { Guard } from "effect-machine";
 
 const isValid = Guard.make<FormState, SubmitEvent>(({ state }) => state.email.includes("@"));
 
@@ -151,7 +172,7 @@ test("isValid passes for valid email", () => {
     state: State.Form({ email: "test@example.com" }),
     event: Event.Submit(),
   };
-  expect(isValid(ctx)).toBe(true);
+  expect(Guard.toFn(isValid)(ctx)).toBe(true);
 });
 
 test("isValid fails for invalid email", () => {
@@ -159,7 +180,7 @@ test("isValid fails for invalid email", () => {
     state: State.Form({ email: "invalid" }),
     event: Event.Submit(),
   };
-  expect(isValid(ctx)).toBe(false);
+  expect(Guard.toFn(isValid)(ctx)).toBe(false);
 });
 ```
 

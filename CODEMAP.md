@@ -10,7 +10,7 @@ src/
 ├── actor-system.ts       # Actor system service + layer
 ├── testing.ts            # Test utilities (simulate, harness, assertions)
 ├── combinators/
-│   ├── on.ts             # State/event transitions (supports internal/reenter)
+│   ├── on.ts             # State/event transitions (on, on.force)
 │   ├── final.ts          # Final state marker
 │   ├── always.ts         # Eventless transitions
 │   ├── choose.ts         # Guard cascade for events
@@ -21,7 +21,7 @@ src/
 │   └── on-exit.ts        # State exit effects
 └── internal/
     ├── loop.ts           # Event loop, transition resolver, actor creation
-    ├── types.ts          # Internal types (contexts, guards)
+    ├── types.ts          # Internal types (contexts, Guard module)
     └── get-tag.ts        # Tag extraction from constructors
 
 test/
@@ -58,12 +58,12 @@ test/
 ## Event Flow
 
 ```
-Event → resolveTransition (guard cascade) → [if !internal] onExit → handler → applyAlways → onEnter → update state
+Event → resolveTransition (guard cascade) → onExit → handler → applyAlways → onEnter → update state
 ```
 
 - Guard cascade: first passing guard wins (registration order)
-- `internal: true`: skip onExit/onEnter even if same state tag
-- `reenter: true`: force onExit/onEnter even if same state tag
+- Same-state transitions skip onExit/onEnter by default
+- `on.force()`: force onExit/onEnter even for same state tag
 - `applyAlways`: loops until no match or final state (max 100 iterations)
 - Final states stop the actor
 

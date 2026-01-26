@@ -37,47 +37,34 @@ describe("Keyboard Input Pattern", () => {
         State.Typing({ value: state.value, mode: state.mode }),
       ),
 
-      // Key input - different modes
-      on(
-        State.Typing,
-        Event.KeyPress,
-        ({ state, event }) => {
-          let newValue: string;
-          switch (state.mode) {
-            case "insert":
-              newValue = state.value + event.key;
-              break;
-            case "append":
-              newValue = state.value + event.key;
-              break;
-            case "replace":
-              newValue = event.key;
-              break;
-          }
-          return State.Typing({ value: newValue, mode: state.mode });
-        },
-        { internal: true }, // Stay in typing, don't re-trigger effects
-      ),
+      // Key input - different modes (same state, no lifecycle by default)
+      on(State.Typing, Event.KeyPress, ({ state, event }) => {
+        let newValue: string;
+        switch (state.mode) {
+          case "insert":
+            newValue = state.value + event.key;
+            break;
+          case "append":
+            newValue = state.value + event.key;
+            break;
+          case "replace":
+            newValue = event.key;
+            break;
+        }
+        return State.Typing({ value: newValue, mode: state.mode });
+      }),
 
       // Backspace
-      on(
-        State.Typing,
-        Event.Backspace,
-        ({ state }) => State.Typing({ value: state.value.slice(0, -1), mode: state.mode }),
-        { internal: true },
+      on(State.Typing, Event.Backspace, ({ state }) =>
+        State.Typing({ value: state.value.slice(0, -1), mode: state.mode }),
       ),
 
       // Clear all input
-      on(State.Typing, Event.Clear, ({ state }) => State.Typing({ value: "", mode: state.mode }), {
-        internal: true,
-      }),
+      on(State.Typing, Event.Clear, ({ state }) => State.Typing({ value: "", mode: state.mode })),
 
       // Mode switching
-      on(
-        State.Typing,
-        Event.SwitchMode,
-        ({ state, event }) => State.Typing({ value: state.value, mode: event.mode }),
-        { internal: true },
+      on(State.Typing, Event.SwitchMode, ({ state, event }) =>
+        State.Typing({ value: state.value, mode: event.mode }),
       ),
 
       // Submit

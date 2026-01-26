@@ -13,7 +13,7 @@ import {
   yieldFibers,
 } from "../../src/index.js";
 
-describe("Internal Transitions", () => {
+describe("Same-state Transitions", () => {
   type State = Data.TaggedEnum<{
     Form: { name: string; count: number };
     Submitted: {};
@@ -26,7 +26,7 @@ describe("Internal Transitions", () => {
   }>;
   const Event = Data.taggedEnum<Event>();
 
-  test("internal=true skips exit/enter effects for same state", async () => {
+  test("default: same state tag skips exit/enter effects", async () => {
     const effects: string[] = [];
 
     await Effect.runPromise(
@@ -34,11 +34,8 @@ describe("Internal Transitions", () => {
         const machine = build(
           pipe(
             make<State, Event>(State.Form({ name: "", count: 0 })),
-            on(
-              State.Form,
-              Event.SetName,
-              ({ state, event }) => State.Form({ name: event.name, count: state.count + 1 }),
-              { internal: true },
+            on(State.Form, Event.SetName, ({ state, event }) =>
+              State.Form({ name: event.name, count: state.count + 1 }),
             ),
             on(State.Form, Event.Submit, () => State.Submitted()),
             onEnter(State.Form, () => Effect.sync(() => effects.push("enter:Form"))),
@@ -52,22 +49,22 @@ describe("Internal Transitions", () => {
         // Initial enter should fire
         expect(effects).toEqual(["enter:Form"]);
 
-        // SetName with internal=true should NOT fire exit/enter
+        // Same state tag - no exit/enter
         yield* actor.send(Event.SetName({ name: "Alice" }));
         yield* yieldFibers;
 
         const state = yield* actor.state.get;
         expect(state._tag).toBe("Form");
         expect((state as State & { _tag: "Form" }).name).toBe("Alice");
-        expect(effects).toEqual(["enter:Form"]); // No additional effects
+        expect(effects).toEqual(["enter:Form"]);
 
-        // Another internal transition
+        // Another same-state transition
         yield* actor.send(Event.SetName({ name: "Bob" }));
         yield* yieldFibers;
 
-        expect(effects).toEqual(["enter:Form"]); // Still no additional effects
+        expect(effects).toEqual(["enter:Form"]);
 
-        // Non-internal transition should run exit
+        // Different state tag - runs exit
         yield* actor.send(Event.Submit());
         yield* yieldFibers;
 
@@ -76,7 +73,7 @@ describe("Internal Transitions", () => {
     );
   });
 
-  test("default behavior runs exit/enter for same state tag", async () => {
+  test("on.force runs exit/enter for same state tag", async () => {
     const effects: string[] = [];
 
     await Effect.runPromise(
@@ -84,8 +81,7 @@ describe("Internal Transitions", () => {
         const machine = build(
           pipe(
             make<State, Event>(State.Form({ name: "", count: 0 })),
-            // No internal flag - default behavior
-            on(State.Form, Event.SetName, ({ state, event }) =>
+            on.force(State.Form, Event.SetName, ({ state, event }) =>
               State.Form({ name: event.name, count: state.count + 1 }),
             ),
             onEnter(State.Form, () => Effect.sync(() => effects.push("enter:Form"))),
@@ -99,12 +95,11 @@ describe("Internal Transitions", () => {
         // Initial enter
         expect(effects).toEqual(["enter:Form"]);
 
-        // Without internal flag, same state tag does NOT run exit/enter (current behavior)
+        // on.force runs exit/enter even for same state tag
         yield* actor.send(Event.SetName({ name: "Alice" }));
         yield* yieldFibers;
 
-        // Default is to NOT run lifecycle for same tag (unless reenter)
-        expect(effects).toEqual(["enter:Form"]);
+        expect(effects).toEqual(["enter:Form", "exit:Form", "enter:Form"]);
       }).pipe(Effect.scoped, Effect.provide(ActorSystemDefault)),
     );
   });

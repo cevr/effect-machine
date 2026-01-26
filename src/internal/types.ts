@@ -103,6 +103,27 @@ export const Guard = {
   }),
 
   /**
+   * Create a guard with auto-narrowed types from state/event constructors.
+   *
+   * @example
+   * ```ts
+   * const canRetry = Guard.for(State.Error, Event.Retry)(
+   *   ({ state }) => state.attempts < 3
+   * );
+   * ```
+   */
+  for: <
+    NarrowedState extends { readonly _tag: string },
+    NarrowedEvent extends { readonly _tag: string },
+  >(
+    _stateConstructor: { (...args: never[]): NarrowedState },
+    _eventConstructor: { (...args: never[]): NarrowedEvent },
+  ) => {
+    return (predicate: GuardFn<NarrowedState, NarrowedEvent>): Guard<NarrowedState, NarrowedEvent> =>
+      Guard.make(predicate);
+  },
+
+  /**
    * Combine guards with logical AND
    */
   and: <S, E>(...guards: Guard<S, E>[]): Guard<S, E> => ({

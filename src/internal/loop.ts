@@ -193,10 +193,7 @@ const eventLoop = <S extends { readonly _tag: string }, E extends { readonly _ta
       // Run lifecycle if:
       // - State tag changed (always run exit/enter)
       // - reenter=true (force lifecycle even for same tag)
-      // Skip lifecycle if:
-      // - internal=true and same tag (explicitly skip)
-      const runLifecycle =
-        stateTagChanged || (transition.reenter === true && transition.internal !== true);
+      const runLifecycle = stateTagChanged || transition.reenter === true;
 
       if (runLifecycle) {
         // Run exit effects for old state
@@ -218,7 +215,7 @@ const eventLoop = <S extends { readonly _tag: string }, E extends { readonly _ta
           return;
         }
       } else {
-        // Same state tag with internal=true, or no reenter - just update state
+        // Same state tag without reenter - just update state
         yield* SubscriptionRef.set(stateRef, newState);
       }
     }
