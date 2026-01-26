@@ -23,7 +23,7 @@
           "deterministicKeys": "warning",
           "importFromBarrel": "warning",
           "instanceOfSchema": "warning",
-          "missedPipeableOpportunity": "suggestion",
+          "missedPipeableOpportunity": "warning",
           "missingEffectServiceDependency": "warning",
           "schemaUnionOfLiterals": "warning",
           "strictBooleanExpressions": "warning",
