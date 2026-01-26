@@ -1,4 +1,6 @@
 import type { Effect } from "effect";
+import type { Pipeable } from "effect/Pipeable";
+import { pipeArguments } from "effect/Pipeable";
 
 import type {
   GuardFn,
@@ -62,7 +64,7 @@ export interface Machine<State, Event, R = never> {
 /**
  * Machine builder for fluent API
  */
-export interface MachineBuilder<State, Event, R = never> {
+export interface MachineBuilder<State, Event, R = never> extends Pipeable {
   readonly _tag: "MachineBuilder";
   readonly initial: State;
   readonly transitions: ReadonlyArray<Transition<State, Event, R>>;
@@ -70,6 +72,23 @@ export interface MachineBuilder<State, Event, R = never> {
   readonly onEnter: ReadonlyArray<StateEffect<State, Event, R>>;
   readonly onExit: ReadonlyArray<StateEffect<State, Event, R>>;
   readonly finalStates: ReadonlySet<string>;
+}
+
+const MachineBuilderProto: Pipeable = {
+  pipe() {
+    return pipeArguments(this, arguments);
+  },
+};
+
+/** @internal Mutable version for construction */
+interface MachineBuilderMutable<State, Event, R = never> extends Pipeable {
+  _tag: "MachineBuilder";
+  initial: State;
+  transitions: Array<Transition<State, Event, R>>;
+  alwaysTransitions: Array<AlwaysTransition<State, R>>;
+  onEnter: Array<StateEffect<State, Event, R>>;
+  onExit: Array<StateEffect<State, Event, R>>;
+  finalStates: Set<string>;
 }
 
 /**
@@ -80,15 +99,17 @@ export const make = <
   Event extends { readonly _tag: string },
 >(
   initial: State,
-): MachineBuilder<State, Event> => ({
-  _tag: "MachineBuilder",
-  initial,
-  transitions: [],
-  alwaysTransitions: [],
-  onEnter: [],
-  onExit: [],
-  finalStates: new Set(),
-});
+): MachineBuilder<State, Event> => {
+  const builder: MachineBuilderMutable<State, Event> = Object.create(MachineBuilderProto);
+  builder._tag = "MachineBuilder";
+  builder.initial = initial;
+  builder.transitions = [];
+  builder.alwaysTransitions = [];
+  builder.onEnter = [];
+  builder.onExit = [];
+  builder.finalStates = new Set();
+  return builder;
+};
 
 /**
  * Add a transition handler

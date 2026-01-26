@@ -1,4 +1,4 @@
-import { Data, Effect, pipe } from "effect";
+import { Data, Effect } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import { build, final, make, on, simulate } from "../src/index.js";
@@ -18,10 +18,9 @@ type CounterEvent = Data.TaggedEnum<{
 const Event = Data.taggedEnum<CounterEvent>();
 
 describe("Machine", () => {
-  test("creates machine with initial state", () => {
+  test("creates machine with initial state using .pipe() syntax", () => {
     const machine = build(
-      pipe(
-        make<CounterState, CounterEvent>(State.Idle({ count: 0 })),
+      make<CounterState, CounterEvent>(State.Idle({ count: 0 })).pipe(
         on(State.Idle, Event.Start, ({ state }) => State.Counting({ count: state.count })),
       ),
     );
@@ -33,8 +32,7 @@ describe("Machine", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = build(
-          pipe(
-            make<CounterState, CounterEvent>(State.Idle({ count: 0 })),
+          make<CounterState, CounterEvent>(State.Idle({ count: 0 })).pipe(
             on(State.Idle, Event.Start, ({ state }) => State.Counting({ count: state.count })),
             on(State.Counting, Event.Increment, ({ state }) =>
               State.Counting({ count: state.count + 1 }),
@@ -61,8 +59,7 @@ describe("Machine", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = build(
-          pipe(
-            make<CounterState, CounterEvent>(State.Counting({ count: 0 })),
+          make<CounterState, CounterEvent>(State.Counting({ count: 0 })).pipe(
             on(
               State.Counting,
               Event.Increment,
@@ -95,8 +92,7 @@ describe("Machine", () => {
         const logs: string[] = [];
 
         const machine = build(
-          pipe(
-            make<CounterState, CounterEvent>(State.Idle({ count: 0 })),
+          make<CounterState, CounterEvent>(State.Idle({ count: 0 })).pipe(
             on(State.Idle, Event.Start, ({ state }) => State.Counting({ count: state.count }), {
               effect: ({ state }) =>
                 Effect.sync(() => {
@@ -116,8 +112,7 @@ describe("Machine", () => {
 
   test("marks states as final", () => {
     const machine = build(
-      pipe(
-        make<CounterState, CounterEvent>(State.Idle({ count: 0 })),
+      make<CounterState, CounterEvent>(State.Idle({ count: 0 })).pipe(
         on(State.Idle, Event.Start, () => State.Done({ count: 0 })),
         final(State.Done),
       ),
