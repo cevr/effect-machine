@@ -4,6 +4,12 @@ import type { Scope } from "effect";
 import type { ActorRef } from "./actor-ref.js";
 import type { Machine } from "./machine.js";
 import { createActor } from "./internal/loop.js";
+import type { PersistenceError, VersionConflictError } from "./persistence/adapter.js";
+import { PersistenceAdapterTag } from "./persistence/adapter.js";
+import type { PersistentMachine } from "./persistence/persistent-machine.js";
+import { isPersistentMachine } from "./persistence/persistent-machine.js";
+import type { PersistentActorRef } from "./persistence/persistent-actor.js";
+import { createPersistentActor, restorePersistentActor } from "./persistence/persistent-actor.js";
 
 /** Base type for stored actors (internal) */
 type AnyState = { readonly _tag: string };
@@ -13,12 +19,68 @@ type AnyState = { readonly _tag: string };
  */
 export interface ActorSystem {
   /**
-   * Spawn a new actor with the given machine
+   * Spawn a new actor with the given machine.
+   *
+   * For regular machines, returns ActorRef.
+   * For persistent machines (created with withPersistence), returns PersistentActorRef.
+   *
+   * @example
+   * ```ts
+   * // Regular machine
+   * const actor = yield* system.spawn("my-actor", machine);
+   *
+   * // Persistent machine (auto-detected)
+   * const persistentActor = yield* system.spawn("my-actor", persistentMachine);
+   * persistentActor.persist; // available
+   * persistentActor.version; // available
+   * ```
    */
-  readonly spawn: <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
+  readonly spawn: {
+    // Regular machine overload
+    <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
+      id: string,
+      machine: Machine<S, E, R>,
+    ): Effect.Effect<ActorRef<S, E>, never, R | Scope.Scope>;
+
+    // Persistent machine overload
+    <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R, SSI, ESI>(
+      id: string,
+      machine: PersistentMachine<S, E, R, SSI, ESI>,
+    ): Effect.Effect<
+      PersistentActorRef<S, E>,
+      PersistenceError | VersionConflictError,
+      R | Scope.Scope | PersistenceAdapterTag
+    >;
+  };
+
+  /**
+   * Restore an actor from persistence.
+   * Returns None if no persisted state exists for the given ID.
+   *
+   * @example
+   * ```ts
+   * const maybeActor = yield* system.restore("order-1", persistentMachine);
+   * if (Option.isSome(maybeActor)) {
+   *   const actor = maybeActor.value;
+   *   const state = yield* actor.snapshot;
+   *   console.log(`Restored to state: ${state._tag}`);
+   * }
+   * ```
+   */
+  readonly restore: <
+    S extends { readonly _tag: string },
+    E extends { readonly _tag: string },
+    R,
+    SSI,
+    ESI,
+  >(
     id: string,
-    machine: Machine<S, E, R>,
-  ) => Effect.Effect<ActorRef<S, E>, never, R | Scope.Scope>;
+    machine: PersistentMachine<S, E, R, SSI, ESI>,
+  ) => Effect.Effect<
+    Option.Option<PersistentActorRef<S, E>>,
+    PersistenceError,
+    R | Scope.Scope | PersistenceAdapterTag
+  >;
 
   /**
    * Get an existing actor by ID
@@ -42,7 +104,11 @@ export const ActorSystem = Context.GenericTag<ActorSystem>("@effect/machine/Acto
 const make = Effect.gen(function* () {
   const actors = yield* SynchronizedRef.make(new Map<string, ActorRef<AnyState, unknown>>());
 
-  const spawn = <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
+  const spawnRegular = <
+    S extends { readonly _tag: string },
+    E extends { readonly _tag: string },
+    R,
+  >(
     id: string,
     machine: Machine<S, E, R>,
   ): Effect.Effect<ActorRef<S, E>, never, R | Scope.Scope> =>
@@ -78,6 +144,162 @@ const make = Effect.gen(function* () {
       return actor;
     });
 
+  const spawnPersistent = <
+    S extends { readonly _tag: string },
+    E extends { readonly _tag: string },
+    R,
+    SSI,
+    ESI,
+  >(
+    id: string,
+    persistentMachine: PersistentMachine<S, E, R, SSI, ESI>,
+  ): Effect.Effect<
+    PersistentActorRef<S, E>,
+    PersistenceError | VersionConflictError,
+    R | Scope.Scope | PersistenceAdapterTag
+  > =>
+    Effect.gen(function* () {
+      // Check if actor already exists
+      const existing = yield* SynchronizedRef.get(actors);
+      if (existing.has(id)) {
+        throw new Error(`Actor with id "${id}" already exists`);
+      }
+
+      const adapter = yield* PersistenceAdapterTag;
+
+      // Try to load existing snapshot
+      const maybeSnapshot = yield* adapter.loadSnapshot(
+        id,
+        persistentMachine.persistence.stateSchema,
+      );
+
+      // Load events after snapshot (if any)
+      const events = Option.isSome(maybeSnapshot)
+        ? yield* adapter.loadEvents(
+            id,
+            persistentMachine.persistence.eventSchema,
+            maybeSnapshot.value.version,
+          )
+        : [];
+
+      // Create the persistent actor
+      const actor = yield* createPersistentActor(id, persistentMachine, maybeSnapshot, events);
+
+      // Register it
+      yield* SynchronizedRef.update(actors, (map) => {
+        const newMap = new Map(map);
+        newMap.set(id, actor as unknown as ActorRef<AnyState, unknown>);
+        return newMap;
+      });
+
+      // Register cleanup on scope finalization
+      yield* Effect.addFinalizer(() =>
+        Effect.gen(function* () {
+          yield* actor.stop;
+          yield* SynchronizedRef.update(actors, (map) => {
+            const newMap = new Map(map);
+            newMap.delete(id);
+            return newMap;
+          });
+        }),
+      );
+
+      return actor;
+    });
+
+  // Type-safe overloaded spawn implementation
+  function spawn<S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
+    id: string,
+    machine: Machine<S, E, R>,
+  ): Effect.Effect<ActorRef<S, E>, never, R | Scope.Scope>;
+  function spawn<
+    S extends { readonly _tag: string },
+    E extends { readonly _tag: string },
+    R,
+    SSI,
+    ESI,
+  >(
+    id: string,
+    machine: PersistentMachine<S, E, R, SSI, ESI>,
+  ): Effect.Effect<
+    PersistentActorRef<S, E>,
+    PersistenceError | VersionConflictError,
+    R | Scope.Scope | PersistenceAdapterTag
+  >;
+  function spawn<
+    S extends { readonly _tag: string },
+    E extends { readonly _tag: string },
+    R,
+    SSI,
+    ESI,
+  >(
+    id: string,
+    machine: Machine<S, E, R> | PersistentMachine<S, E, R, SSI, ESI>,
+  ):
+    | Effect.Effect<ActorRef<S, E>, never, R | Scope.Scope>
+    | Effect.Effect<
+        PersistentActorRef<S, E>,
+        PersistenceError | VersionConflictError,
+        R | Scope.Scope | PersistenceAdapterTag
+      > {
+    if (isPersistentMachine(machine)) {
+      // TypeScript can't narrow union with invariant generic params
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return spawnPersistent(id, machine as PersistentMachine<S, E, R, any, any>);
+    }
+    return spawnRegular(id, machine as Machine<S, E, R>);
+  }
+
+  const restore = <
+    S extends { readonly _tag: string },
+    E extends { readonly _tag: string },
+    R,
+    SSI,
+    ESI,
+  >(
+    id: string,
+    persistentMachine: PersistentMachine<S, E, R, SSI, ESI>,
+  ): Effect.Effect<
+    Option.Option<PersistentActorRef<S, E>>,
+    PersistenceError,
+    R | Scope.Scope | PersistenceAdapterTag
+  > =>
+    Effect.gen(function* () {
+      // Check if actor already exists
+      const existing = yield* SynchronizedRef.get(actors);
+      if (existing.has(id)) {
+        throw new Error(`Actor with id "${id}" already exists`);
+      }
+
+      // Try to restore from persistence
+      const maybeActor = yield* restorePersistentActor(id, persistentMachine);
+
+      if (Option.isSome(maybeActor)) {
+        const actor = maybeActor.value;
+
+        // Register it
+        yield* SynchronizedRef.update(actors, (map) => {
+          const newMap = new Map(map);
+          newMap.set(id, actor as unknown as ActorRef<AnyState, unknown>);
+          return newMap;
+        });
+
+        // Register cleanup on scope finalization
+        yield* Effect.addFinalizer(() =>
+          Effect.gen(function* () {
+            yield* actor.stop;
+            yield* SynchronizedRef.update(actors, (map) => {
+              const newMap = new Map(map);
+              newMap.delete(id);
+              return newMap;
+            });
+          }),
+        );
+      }
+
+      return maybeActor;
+    });
+
   const get = (id: string): Effect.Effect<Option.Option<ActorRef<AnyState, unknown>>> =>
     Effect.gen(function* () {
       const map = yield* SynchronizedRef.get(actors);
@@ -102,7 +324,7 @@ const make = Effect.gen(function* () {
       return true;
     });
 
-  return ActorSystem.of({ spawn, get, stop });
+  return ActorSystem.of({ spawn, restore, get, stop });
 });
 
 /**

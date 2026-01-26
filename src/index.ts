@@ -87,3 +87,24 @@ export {
   Inspector as InspectorService,
   makeInspector,
 } from "./inspection.js";
+
+// Persistence
+export type {
+  PersistedEvent,
+  PersistenceAdapter,
+  PersistenceConfig,
+  PersistentActorRef,
+  PersistentMachine,
+  Snapshot,
+} from "./persistence/index.js";
+export {
+  createPersistentActor,
+  InMemoryPersistenceAdapter,
+  isPersistentMachine,
+  makeInMemoryPersistenceAdapter,
+  PersistenceAdapterTag,
+  PersistenceError,
+  restorePersistentActor,
+  VersionConflictError,
+  withPersistence,
+} from "./persistence/index.js";
