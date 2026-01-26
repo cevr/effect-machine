@@ -25,10 +25,10 @@ src/
     └── get-tag.ts        # Tag extraction from constructors
 
 test/
-├── Machine.test.ts       # Core machine tests
-├── ActorSystem.test.ts   # Actor spawning/lifecycle
+├── machine.test.ts       # Core machine tests
+├── actor-system.test.ts  # Actor spawning/lifecycle
 ├── actor-ref.test.ts     # ActorRef ergonomics (snapshot, matches, can, subscribe)
-├── Testing.test.ts       # Test utilities (assertPath, assertNeverReaches, onTransition)
+├── testing.test.ts       # Test utilities (assertPath, assertNeverReaches, onTransition)
 ├── features/             # Feature-specific tests
 │   ├── always-transitions.test.ts
 │   ├── assign-update.test.ts
