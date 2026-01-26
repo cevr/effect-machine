@@ -1,16 +1,8 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Data, Effect, pipe, Stream } from "effect";
+import { Data, Effect, Stream } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import {
-  ActorSystemDefault,
-  ActorSystemService,
-  build,
-  final,
-  make,
-  on,
-  yieldFibers,
-} from "../src/index.js";
+import { ActorSystemDefault, ActorSystemService, Machine, yieldFibers } from "../src/index.js";
 
 type TestState = Data.TaggedEnum<{
   Idle: {};
@@ -29,17 +21,23 @@ type TestEvent = Data.TaggedEnum<{
 const Event = Data.taggedEnum<TestEvent>();
 
 const createTestMachine = () =>
-  build(
-    pipe(
-      make<TestState, TestEvent>(State.Idle()),
-      on(State.Idle, Event.Start, ({ event }) => State.Loading({ value: event.value })),
-      on(State.Loading, Event.Complete, ({ state }) => State.Active({ value: state.value })),
-      on(State.Active, Event.Update, ({ event }) => State.Active({ value: event.value })),
-      on(State.Active, Event.Stop, () => State.Done()),
-      on(State.Active, Event.Update, ({ state }) => State.Active({ value: state.value * 2 }), {
-        guard: ({ event }) => event.value > 100,
-      }),
-      final(State.Done),
+  Machine.build(
+    Machine.make<TestState, TestEvent>(State.Idle()).pipe(
+      Machine.on(State.Idle, Event.Start, ({ event }) => State.Loading({ value: event.value })),
+      Machine.on(State.Loading, Event.Complete, ({ state }) =>
+        State.Active({ value: state.value }),
+      ),
+      Machine.on(State.Active, Event.Update, ({ event }) => State.Active({ value: event.value })),
+      Machine.on(State.Active, Event.Stop, () => State.Done()),
+      Machine.on(
+        State.Active,
+        Event.Update,
+        ({ state }) => State.Active({ value: state.value * 2 }),
+        {
+          guard: ({ event }) => event.value > 100,
+        },
+      ),
+      Machine.final(State.Done),
     ),
   );
 
@@ -171,14 +169,18 @@ describe("ActorRef ergonomics", () => {
     test("can/canSync evaluates guards", async () => {
       await Effect.runPromise(
         Effect.gen(function* () {
-          const machine = build(
-            pipe(
-              make<TestState, TestEvent>(State.Active({ value: 0 })),
-              on(State.Active, Event.Update, ({ event }) => State.Active({ value: event.value }), {
-                guard: ({ event }) => event.value < 10,
-              }),
-              on(State.Active, Event.Stop, () => State.Done()),
-              final(State.Done),
+          const machine = Machine.build(
+            Machine.make<TestState, TestEvent>(State.Active({ value: 0 })).pipe(
+              Machine.on(
+                State.Active,
+                Event.Update,
+                ({ event }) => State.Active({ value: event.value }),
+                {
+                  guard: ({ event }) => event.value < 10,
+                },
+              ),
+              Machine.on(State.Active, Event.Stop, () => State.Done()),
+              Machine.final(State.Done),
             ),
           );
 

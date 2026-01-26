@@ -1,16 +1,8 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Data, Effect, pipe } from "effect";
+import { Data, Effect } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import {
-  ActorSystemDefault,
-  ActorSystemService,
-  build,
-  final,
-  make,
-  on,
-  yieldFibers,
-} from "../src/index.js";
+import { ActorSystemDefault, ActorSystemService, Machine, yieldFibers } from "../src/index.js";
 
 type TestState = Data.TaggedEnum<{
   Idle: {};
@@ -30,13 +22,16 @@ describe("ActorSystem", () => {
   test("spawns actors and processes events", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          pipe(
-            make<TestState, TestEvent>(State.Idle()),
-            on(State.Idle, Event.Start, ({ event }) => State.Active({ value: event.value })),
-            on(State.Active, Event.Update, ({ event }) => State.Active({ value: event.value })),
-            on(State.Active, Event.Stop, () => State.Done()),
-            final(State.Done),
+        const machine = Machine.build(
+          Machine.make<TestState, TestEvent>(State.Idle()).pipe(
+            Machine.on(State.Idle, Event.Start, ({ event }) =>
+              State.Active({ value: event.value }),
+            ),
+            Machine.on(State.Active, Event.Update, ({ event }) =>
+              State.Active({ value: event.value }),
+            ),
+            Machine.on(State.Active, Event.Stop, () => State.Done()),
+            Machine.final(State.Done),
           ),
         );
 
@@ -70,10 +65,11 @@ describe("ActorSystem", () => {
   test("stops actors properly", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          pipe(
-            make<TestState, TestEvent>(State.Idle()),
-            on(State.Idle, Event.Start, ({ event }) => State.Active({ value: event.value })),
+        const machine = Machine.build(
+          Machine.make<TestState, TestEvent>(State.Idle()).pipe(
+            Machine.on(State.Idle, Event.Start, ({ event }) =>
+              State.Active({ value: event.value }),
+            ),
           ),
         );
 

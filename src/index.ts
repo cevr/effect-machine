@@ -1,7 +1,10 @@
+// Machine namespace (Effect-style)
+export * as Machine from "./namespace.js";
+
 // Core machine types and constructors
 export type {
   AlwaysTransition,
-  Machine,
+  Machine as MachineType,
   MachineBuilder,
   MachineRef,
   OnOptions,
@@ -42,6 +45,10 @@ export { on } from "./combinators/on.js";
 export type { OnForceOptions } from "./combinators/on.js";
 export { onEnter } from "./combinators/on-enter.js";
 export { onExit } from "./combinators/on-exit.js";
+export { from } from "./combinators/from.js";
+export type { StateScope, ScopedTransition } from "./combinators/from.js";
+export { any } from "./combinators/any.js";
+export type { StateMatcher } from "./combinators/any.js";
 
 // Testing utilities
 export {

@@ -1,17 +1,8 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Data, Effect, Layer, pipe, TestClock, TestContext } from "effect";
+import { Data, Effect, Layer, TestClock, TestContext } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import {
-  ActorSystemDefault,
-  ActorSystemService,
-  build,
-  delay,
-  final,
-  make,
-  on,
-  yieldFibers,
-} from "../../src/index.js";
+import { ActorSystemDefault, ActorSystemService, Machine, yieldFibers } from "../../src/index.js";
 
 describe("Delay Transitions", () => {
   type State = Data.TaggedEnum<{
@@ -28,12 +19,11 @@ describe("Delay Transitions", () => {
   test("schedules event after duration with TestClock", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          pipe(
-            make<State, Event>(State.Showing({ message: "Hello" })),
-            on(State.Showing, Event.Dismiss, () => State.Dismissed()),
-            delay(State.Showing, "3 seconds", Event.Dismiss()),
-            final(State.Dismissed),
+        const machine = Machine.build(
+          Machine.make<State, Event>(State.Showing({ message: "Hello" })).pipe(
+            Machine.on(State.Showing, Event.Dismiss, () => State.Dismissed()),
+            Machine.delay(State.Showing, "3 seconds", Event.Dismiss()),
+            Machine.final(State.Dismissed),
           ),
         );
 
@@ -63,12 +53,11 @@ describe("Delay Transitions", () => {
   test("cancels timer on state exit before delay", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          pipe(
-            make<State, Event>(State.Showing({ message: "Hello" })),
-            on(State.Showing, Event.Dismiss, () => State.Dismissed()),
-            delay(State.Showing, "3 seconds", Event.Dismiss()),
-            final(State.Dismissed),
+        const machine = Machine.build(
+          Machine.make<State, Event>(State.Showing({ message: "Hello" })).pipe(
+            Machine.on(State.Showing, Event.Dismiss, () => State.Dismissed()),
+            Machine.delay(State.Showing, "3 seconds", Event.Dismiss()),
+            Machine.final(State.Dismissed),
           ),
         );
 

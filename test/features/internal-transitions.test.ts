@@ -1,17 +1,8 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Data, Effect, pipe } from "effect";
+import { Data, Effect } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import {
-  ActorSystemDefault,
-  ActorSystemService,
-  build,
-  make,
-  on,
-  onEnter,
-  onExit,
-  yieldFibers,
-} from "../../src/index.js";
+import { ActorSystemDefault, ActorSystemService, Machine, yieldFibers } from "../../src/index.js";
 
 describe("Same-state Transitions", () => {
   type State = Data.TaggedEnum<{
@@ -31,15 +22,14 @@ describe("Same-state Transitions", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          pipe(
-            make<State, Event>(State.Form({ name: "", count: 0 })),
-            on(State.Form, Event.SetName, ({ state, event }) =>
+        const machine = Machine.build(
+          Machine.make<State, Event>(State.Form({ name: "", count: 0 })).pipe(
+            Machine.on(State.Form, Event.SetName, ({ state, event }) =>
               State.Form({ name: event.name, count: state.count + 1 }),
             ),
-            on(State.Form, Event.Submit, () => State.Submitted()),
-            onEnter(State.Form, () => Effect.sync(() => effects.push("enter:Form"))),
-            onExit(State.Form, () => Effect.sync(() => effects.push("exit:Form"))),
+            Machine.on(State.Form, Event.Submit, () => State.Submitted()),
+            Machine.onEnter(State.Form, () => Effect.sync(() => effects.push("enter:Form"))),
+            Machine.onExit(State.Form, () => Effect.sync(() => effects.push("exit:Form"))),
           ),
         );
 
@@ -78,14 +68,13 @@ describe("Same-state Transitions", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          pipe(
-            make<State, Event>(State.Form({ name: "", count: 0 })),
-            on.force(State.Form, Event.SetName, ({ state, event }) =>
+        const machine = Machine.build(
+          Machine.make<State, Event>(State.Form({ name: "", count: 0 })).pipe(
+            Machine.on.force(State.Form, Event.SetName, ({ state, event }) =>
               State.Form({ name: event.name, count: state.count + 1 }),
             ),
-            onEnter(State.Form, () => Effect.sync(() => effects.push("enter:Form"))),
-            onExit(State.Form, () => Effect.sync(() => effects.push("exit:Form"))),
+            Machine.onEnter(State.Form, () => Effect.sync(() => effects.push("enter:Form"))),
+            Machine.onExit(State.Form, () => Effect.sync(() => effects.push("exit:Form"))),
           ),
         );
 

@@ -1,16 +1,7 @@
-import { Data, Effect, pipe } from "effect";
+import { Data, Effect } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import {
-  assertNeverReaches,
-  assertPath,
-  build,
-  final,
-  Guard,
-  make,
-  on,
-  simulate,
-} from "../../src/index.js";
+import { assertNeverReaches, assertPath, Guard, Machine, simulate } from "../../src/index.js";
 
 /**
  * Menu navigation pattern tests based on bite menu.machine.ts
@@ -80,66 +71,74 @@ describe("Menu Navigation Pattern", () => {
     ({ state, event }) => state.pageId !== event.pageId,
   );
 
-  const menuMachine = build(
-    pipe(
-      make<MenuState, MenuEvent>(
-        State.Browsing({ pageId: "food", sectionIndex: 0, itemIndex: null }),
-      ),
-
-      // Page navigation with guard cascade
-      // First: check if different page AND valid
-      on(
-        State.Browsing,
-        Event.NavigateToPage,
-        ({ event }) => State.Browsing({ pageId: event.pageId, sectionIndex: 0, itemIndex: null }),
-        { guard: Guard.and(isDifferentPage, isValidPage) },
-      ),
-      // Second: same page - no-op (same state, no lifecycle by default)
-      on(State.Browsing, Event.NavigateToPage, ({ state }) => state, {
-        guard: Guard.not(isDifferentPage),
-      }),
-
-      // Section scrolling (same state, no lifecycle by default)
-      on(
-        State.Browsing,
-        Event.ScrollToSection,
-        ({ state, event }) =>
-          State.Browsing({ ...state, sectionIndex: event.sectionIndex, itemIndex: null }),
-        { guard: isValidSection },
-      ),
-
-      // Item selection
-      on(State.Browsing, Event.SelectItem, ({ state, event }) =>
-        State.ItemSelected({
-          pageId: state.pageId,
-          sectionIndex: state.sectionIndex,
-          itemId: event.itemId,
+  const menuMachine = Machine.build(
+    Machine.make<MenuState, MenuEvent>(
+      State.Browsing({ pageId: "food", sectionIndex: 0, itemIndex: null }),
+    ).pipe(
+      // Browsing state handlers
+      Machine.from(State.Browsing).pipe(
+        // Page navigation with guard cascade
+        // First: check if different page AND valid
+        Machine.on(
+          Event.NavigateToPage,
+          ({ event }) => State.Browsing({ pageId: event.pageId, sectionIndex: 0, itemIndex: null }),
+          { guard: Guard.and(isDifferentPage, isValidPage) },
+        ),
+        // Second: same page - no-op (same state, no lifecycle by default)
+        Machine.on(Event.NavigateToPage, ({ state }) => state, {
+          guard: Guard.not(isDifferentPage),
         }),
+
+        // Section scrolling (same state, no lifecycle by default)
+        Machine.on(
+          Event.ScrollToSection,
+          ({ state, event }) =>
+            State.Browsing({ ...state, sectionIndex: event.sectionIndex, itemIndex: null }),
+          { guard: isValidSection },
+        ),
+
+        // Item selection
+        Machine.on(Event.SelectItem, ({ state, event }) =>
+          State.ItemSelected({
+            pageId: state.pageId,
+            sectionIndex: state.sectionIndex,
+            itemId: event.itemId,
+          }),
+        ),
+
+        // Go to checkout
+        Machine.on(Event.GoToCheckout, () => State.Checkout({ items: [...cart] })),
+
+        // Close menu
+        Machine.on(Event.Close, () => State.Closed()),
       ),
 
-      // Add to cart and return to browsing
-      on(State.ItemSelected, Event.AddToCart, ({ state }) => {
-        cart.push(state.itemId);
-        return State.Browsing({
-          pageId: state.pageId,
-          sectionIndex: state.sectionIndex,
-          itemIndex: null,
-        });
-      }),
+      // ItemSelected state handlers
+      Machine.from(State.ItemSelected).pipe(
+        // Add to cart and return to browsing
+        Machine.on(Event.AddToCart, ({ state }) => {
+          cart.push(state.itemId);
+          return State.Browsing({
+            pageId: state.pageId,
+            sectionIndex: state.sectionIndex,
+            itemIndex: null,
+          });
+        }),
 
-      // Cancel selection
-      on(State.ItemSelected, Event.Close, ({ state }) =>
-        State.Browsing({ pageId: state.pageId, sectionIndex: state.sectionIndex, itemIndex: null }),
+        // Cancel selection
+        Machine.on(Event.Close, ({ state }) =>
+          State.Browsing({
+            pageId: state.pageId,
+            sectionIndex: state.sectionIndex,
+            itemIndex: null,
+          }),
+        ),
       ),
 
-      // Go to checkout
-      on(State.Browsing, Event.GoToCheckout, () => State.Checkout({ items: [...cart] })),
+      // Close from Checkout
+      Machine.on(State.Checkout, Event.Close, () => State.Closed()),
 
-      // Close menu
-      on(State.Browsing, Event.Close, () => State.Closed()),
-      on(State.Checkout, Event.Close, () => State.Closed()),
-
-      final(State.Closed),
+      Machine.final(State.Closed),
     ),
   );
 

@@ -1,7 +1,7 @@
-import { Data, Effect, pipe } from "effect";
+import { Data, Effect } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { build, choose, final, make, simulate } from "../../src/index.js";
+import { Machine, simulate } from "../../src/index.js";
 
 describe("Choose Combinator", () => {
   test("first matching guard wins", async () => {
@@ -20,17 +20,16 @@ describe("Choose Combinator", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          pipe(
-            make<State, Event>(State.Idle({ value: 75 })),
-            choose(State.Idle, Event.Check, [
+        const machine = Machine.build(
+          Machine.make<State, Event>(State.Idle({ value: 75 })).pipe(
+            Machine.choose(State.Idle, Event.Check, [
               { guard: ({ state }) => state.value >= 70, to: () => State.High() },
               { guard: ({ state }) => state.value >= 40, to: () => State.Medium() },
               { otherwise: true, to: () => State.Low() },
             ]),
-            final(State.High),
-            final(State.Medium),
-            final(State.Low),
+            Machine.final(State.High),
+            Machine.final(State.Medium),
+            Machine.final(State.Low),
           ),
         );
 
@@ -55,15 +54,14 @@ describe("Choose Combinator", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          pipe(
-            make<State, Event>(State.Idle({ value: 10 })),
-            choose(State.Idle, Event.Check, [
+        const machine = Machine.build(
+          Machine.make<State, Event>(State.Idle({ value: 10 })).pipe(
+            Machine.choose(State.Idle, Event.Check, [
               { guard: ({ state }) => state.value >= 70, to: () => State.High() },
               { otherwise: true, to: () => State.Low() },
             ]),
-            final(State.High),
-            final(State.Low),
+            Machine.final(State.High),
+            Machine.final(State.Low),
           ),
         );
 
@@ -89,10 +87,9 @@ describe("Choose Combinator", () => {
       Effect.gen(function* () {
         const logs: string[] = [];
 
-        const machine = build(
-          pipe(
-            make<State, Event>(State.Idle()),
-            choose(State.Idle, Event.Go, [
+        const machine = Machine.build(
+          Machine.make<State, Event>(State.Idle()).pipe(
+            Machine.choose(State.Idle, Event.Go, [
               {
                 otherwise: true,
                 to: () => State.Done(),
@@ -102,7 +99,7 @@ describe("Choose Combinator", () => {
                   }),
               },
             ]),
-            final(State.Done),
+            Machine.final(State.Done),
           ),
         );
 

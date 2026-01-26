@@ -1,7 +1,7 @@
-import { Data, Effect, pipe } from "effect";
+import { Data, Effect } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { assign, build, final, make, on, simulate, update } from "../../src/index.js";
+import { Machine, simulate } from "../../src/index.js";
 
 describe("Assign and Update Helpers", () => {
   type FormState = Data.TaggedEnum<{
@@ -20,21 +20,20 @@ describe("Assign and Update Helpers", () => {
   test("assign helper updates partial state", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          pipe(
-            make<FormState, FormEvent>(State.Editing({ name: "", email: "" })),
-            on(
+        const machine = Machine.build(
+          Machine.make<FormState, FormEvent>(State.Editing({ name: "", email: "" })).pipe(
+            Machine.on(
               State.Editing,
               Event.SetName,
-              assign(({ event }) => ({ name: event.name })),
+              Machine.assign(({ event }) => ({ name: event.name })),
             ),
-            on(
+            Machine.on(
               State.Editing,
               Event.SetEmail,
-              assign(({ event }) => ({ email: event.email })),
+              Machine.assign(({ event }) => ({ email: event.email })),
             ),
-            on(State.Editing, Event.Submit, ({ state }) => State.Submitted(state)),
-            final(State.Submitted),
+            Machine.on(State.Editing, Event.Submit, ({ state }) => State.Submitted(state)),
+            Machine.final(State.Submitted),
           ),
         );
 
@@ -56,13 +55,12 @@ describe("Assign and Update Helpers", () => {
   test("update combinator is shorthand for on + assign", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          pipe(
-            make<FormState, FormEvent>(State.Editing({ name: "", email: "" })),
-            update(State.Editing, Event.SetName, ({ event }) => ({ name: event.name })),
-            update(State.Editing, Event.SetEmail, ({ event }) => ({ email: event.email })),
-            on(State.Editing, Event.Submit, ({ state }) => State.Submitted(state)),
-            final(State.Submitted),
+        const machine = Machine.build(
+          Machine.make<FormState, FormEvent>(State.Editing({ name: "", email: "" })).pipe(
+            Machine.update(State.Editing, Event.SetName, ({ event }) => ({ name: event.name })),
+            Machine.update(State.Editing, Event.SetEmail, ({ event }) => ({ email: event.email })),
+            Machine.on(State.Editing, Event.Submit, ({ state }) => State.Submitted(state)),
+            Machine.final(State.Submitted),
           ),
         );
 
@@ -84,14 +82,13 @@ describe("Assign and Update Helpers", () => {
   test("update with guard", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          pipe(
-            make<FormState, FormEvent>(State.Editing({ name: "", email: "" })),
-            update(State.Editing, Event.SetName, ({ event }) => ({ name: event.name }), {
+        const machine = Machine.build(
+          Machine.make<FormState, FormEvent>(State.Editing({ name: "", email: "" })).pipe(
+            Machine.update(State.Editing, Event.SetName, ({ event }) => ({ name: event.name }), {
               guard: ({ event }) => event.name.length <= 50,
             }),
-            on(State.Editing, Event.Submit, ({ state }) => State.Submitted(state)),
-            final(State.Submitted),
+            Machine.on(State.Editing, Event.Submit, ({ state }) => State.Submitted(state)),
+            Machine.final(State.Submitted),
           ),
         );
 

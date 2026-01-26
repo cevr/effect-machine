@@ -1,7 +1,7 @@
-import { Data, Effect, pipe } from "effect";
+import { Data, Effect } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { build, final, Guard, make, on, simulate } from "../../src/index.js";
+import { Guard, Machine, simulate } from "../../src/index.js";
 
 describe("Guard Composition", () => {
   type State = Data.TaggedEnum<{
@@ -27,13 +27,12 @@ describe("Guard Composition", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          pipe(
-            make<State, Event>(State.Idle({ role: "admin", age: 25 })),
-            on(State.Idle, Event.Access, () => State.Allowed(), {
+        const machine = Machine.build(
+          Machine.make<State, Event>(State.Idle({ role: "admin", age: 25 })).pipe(
+            Machine.on(State.Idle, Event.Access, () => State.Allowed(), {
               guard: Guard.and(isAdmin, isAdult),
             }),
-            final(State.Allowed),
+            Machine.final(State.Allowed),
           ),
         );
 
@@ -45,13 +44,12 @@ describe("Guard Composition", () => {
     // Fails when one condition is false
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          pipe(
-            make<State, Event>(State.Idle({ role: "admin", age: 16 })),
-            on(State.Idle, Event.Access, () => State.Allowed(), {
+        const machine = Machine.build(
+          Machine.make<State, Event>(State.Idle({ role: "admin", age: 16 })).pipe(
+            Machine.on(State.Idle, Event.Access, () => State.Allowed(), {
               guard: Guard.and(isAdmin, isAdult),
             }),
-            final(State.Allowed),
+            Machine.final(State.Allowed),
           ),
         );
 
@@ -69,13 +67,12 @@ describe("Guard Composition", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          pipe(
-            make<State, Event>(State.Idle({ role: "moderator", age: 20 })),
-            on(State.Idle, Event.Access, () => State.Allowed(), {
+        const machine = Machine.build(
+          Machine.make<State, Event>(State.Idle({ role: "moderator", age: 20 })).pipe(
+            Machine.on(State.Idle, Event.Access, () => State.Allowed(), {
               guard: Guard.or(isAdmin, isModerator),
             }),
-            final(State.Allowed),
+            Machine.final(State.Allowed),
           ),
         );
 
@@ -90,13 +87,12 @@ describe("Guard Composition", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          pipe(
-            make<State, Event>(State.Idle({ role: "user", age: 20 })),
-            on(State.Idle, Event.Access, () => State.Allowed(), {
+        const machine = Machine.build(
+          Machine.make<State, Event>(State.Idle({ role: "user", age: 20 })).pipe(
+            Machine.on(State.Idle, Event.Access, () => State.Allowed(), {
               guard: Guard.not(isGuest),
             }),
-            final(State.Allowed),
+            Machine.final(State.Allowed),
           ),
         );
 
@@ -113,13 +109,12 @@ describe("Guard Composition", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          pipe(
-            make<State, Event>(State.Idle({ role: "admin", age: 25 })),
-            on(State.Idle, Event.Access, () => State.Allowed(), {
+        const machine = Machine.build(
+          Machine.make<State, Event>(State.Idle({ role: "admin", age: 25 })).pipe(
+            Machine.on(State.Idle, Event.Access, () => State.Allowed(), {
               guard: Guard.and(isAdmin, isAdult),
             }),
-            final(State.Allowed),
+            Machine.final(State.Allowed),
           ),
         );
 

@@ -1,5 +1,5 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Data, Effect, Layer, pipe, TestClock, TestContext } from "effect";
+import { Data, Effect, Layer, TestClock, TestContext } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import {
@@ -7,12 +7,8 @@ import {
   ActorSystemService,
   assertNeverReaches,
   assertPath,
-  build,
-  delay,
-  final,
   Guard,
-  make,
-  on,
+  Machine,
   yieldFibers,
 } from "../../src/index.js";
 
@@ -61,79 +57,89 @@ describe("Payment Flow Pattern", () => {
     ({ state }) => state.canRetry && state.attempts < 3,
   );
 
-  const paymentMachine = build(
-    pipe(
-      make<PaymentState, PaymentEvent>(State.Idle()),
-
+  const paymentMachine = Machine.build(
+    Machine.make<PaymentState, PaymentEvent>(State.Idle()).pipe(
       // Start checkout
-      on(State.Idle, Event.StartCheckout, ({ event }) =>
+      Machine.on(State.Idle, Event.StartCheckout, ({ event }) =>
         State.SelectingMethod({ amount: event.amount }),
       ),
 
       // Method selection - guard cascade for bridge vs regular
-      on(
-        State.SelectingMethod,
-        Event.SelectMethod,
-        ({ state, event }) =>
-          State.ProcessingPayment({ method: event.method, amount: state.amount, attempts: 1 }),
-        { guard: Guard.not(isBridgePayment) },
-      ),
-      on(
-        State.SelectingMethod,
-        Event.SelectMethod,
-        () => State.AwaitingBridgeConfirm({ transactionId: `bridge-${Date.now()}` }),
-        { guard: isBridgePayment },
+      Machine.from(State.SelectingMethod).pipe(
+        Machine.on(
+          Event.SelectMethod,
+          ({ state, event }) =>
+            State.ProcessingPayment({ method: event.method, amount: state.amount, attempts: 1 }),
+          { guard: Guard.not(isBridgePayment) },
+        ),
+        Machine.on(
+          Event.SelectMethod,
+          () => State.AwaitingBridgeConfirm({ transactionId: `bridge-${Date.now()}` }),
+          { guard: isBridgePayment },
+        ),
       ),
 
       // Bridge confirmation
-      on(State.AwaitingBridgeConfirm, Event.BridgeConfirmed, ({ event }) =>
-        State.PaymentSuccess({ receiptId: event.transactionId }),
+      Machine.from(State.AwaitingBridgeConfirm).pipe(
+        Machine.on(Event.BridgeConfirmed, ({ event }) =>
+          State.PaymentSuccess({ receiptId: event.transactionId }),
+        ),
+        Machine.on(Event.BridgeTimeout, () =>
+          State.PaymentError({ error: "Bridge timeout", canRetry: true, attempts: 1, amount: 100 }),
+        ),
       ),
-      on(State.AwaitingBridgeConfirm, Event.BridgeTimeout, () =>
-        State.PaymentError({ error: "Bridge timeout", canRetry: true, attempts: 1, amount: 100 }),
-      ),
-      delay(State.AwaitingBridgeConfirm, "30 seconds", Event.BridgeTimeout()),
+      Machine.delay(State.AwaitingBridgeConfirm, "30 seconds", Event.BridgeTimeout()),
 
       // Processing results
-      on(State.ProcessingPayment, Event.PaymentSucceeded, ({ event }) =>
-        State.PaymentSuccess({ receiptId: event.receiptId }),
-      ),
-      on(State.ProcessingPayment, Event.PaymentFailed, ({ state, event }) =>
-        State.PaymentError({
-          error: event.error,
-          canRetry: event.canRetry,
-          attempts: state.attempts,
-          amount: state.amount,
-        }),
+      Machine.from(State.ProcessingPayment).pipe(
+        Machine.on(Event.PaymentSucceeded, ({ event }) =>
+          State.PaymentSuccess({ receiptId: event.receiptId }),
+        ),
+        Machine.on(Event.PaymentFailed, ({ state, event }) =>
+          State.PaymentError({
+            error: event.error,
+            canRetry: event.canRetry,
+            attempts: state.attempts,
+            amount: state.amount,
+          }),
+        ),
       ),
 
-      // Retry with guard
-      on(
-        State.PaymentError,
-        Event.Retry,
-        ({ state }) =>
-          State.ProcessingPayment({
-            method: "card",
-            amount: state.amount,
-            attempts: state.attempts + 1,
-          }),
-        { guard: canRetry },
+      // Error state handlers
+      Machine.from(State.PaymentError).pipe(
+        // Retry with guard
+        Machine.on(
+          Event.Retry,
+          ({ state }) =>
+            State.ProcessingPayment({
+              method: "card",
+              amount: state.amount,
+              attempts: state.attempts + 1,
+            }),
+          { guard: canRetry },
+        ),
+        Machine.on(Event.AutoDismissError, () => State.Idle()),
       ),
 
       // Auto-dismiss non-retryable errors
-      delay(State.PaymentError, "5 seconds", Event.AutoDismissError(), {
+      Machine.delay(State.PaymentError, "5 seconds", Event.AutoDismissError(), {
         guard: (state) => !state.canRetry,
       }),
-      on(State.PaymentError, Event.AutoDismissError, () => State.Idle()),
 
-      // Cancellation from any processing state
-      on(State.SelectingMethod, Event.Cancel, () => State.PaymentCancelled()),
-      on(State.ProcessingPayment, Event.Cancel, () => State.PaymentCancelled()),
-      on(State.AwaitingBridgeConfirm, Event.Cancel, () => State.PaymentCancelled()),
-      on(State.PaymentError, Event.Cancel, () => State.PaymentCancelled()),
+      // Cancellation from any processing state using Machine.any
+      Machine.on(
+        Machine.any(
+          State.SelectingMethod,
+          State.ProcessingPayment,
+          State.AwaitingBridgeConfirm,
+          State.PaymentError,
+        ),
+        Event.Cancel,
+        () => State.PaymentCancelled(),
+      ),
 
-      final(State.PaymentSuccess),
-      final(State.PaymentCancelled),
+      Machine.final(State.PaymentSuccess),
+      Machine.final(State.PaymentCancelled),
     ),
   );
 

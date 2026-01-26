@@ -1,18 +1,8 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Data, Effect, Layer, pipe, TestClock, TestContext } from "effect";
+import { Data, Effect, Layer, TestClock, TestContext } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import {
-  ActorSystemDefault,
-  ActorSystemService,
-  build,
-  delay,
-  make,
-  on,
-  onEnter,
-  onExit,
-  yieldFibers,
-} from "../../src/index.js";
+import { ActorSystemDefault, ActorSystemService, Machine, yieldFibers } from "../../src/index.js";
 
 describe("on.force Transitions", () => {
   type State = Data.TaggedEnum<{
@@ -33,17 +23,16 @@ describe("on.force Transitions", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          pipe(
-            make<State, Event>(State.Polling({ attempts: 0 })),
-            on.force(State.Polling, Event.Reset, ({ state }) =>
+        const machine = Machine.build(
+          Machine.make<State, Event>(State.Polling({ attempts: 0 })).pipe(
+            Machine.on.force(State.Polling, Event.Reset, ({ state }) =>
               State.Polling({ attempts: state.attempts + 1 }),
             ),
-            on(State.Polling, Event.Finish, () => State.Done()),
-            onEnter(State.Polling, ({ state }) =>
+            Machine.on(State.Polling, Event.Finish, () => State.Done()),
+            Machine.onEnter(State.Polling, ({ state }) =>
               Effect.sync(() => effects.push(`enter:Polling:${state.attempts}`)),
             ),
-            onExit(State.Polling, ({ state }) =>
+            Machine.onExit(State.Polling, ({ state }) =>
               Effect.sync(() => effects.push(`exit:Polling:${state.attempts}`)),
             ),
           ),
@@ -82,14 +71,13 @@ describe("on.force Transitions", () => {
   test("on.force restarts delay timer", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          pipe(
-            make<State, Event>(State.Polling({ attempts: 0 })),
-            on.force(State.Polling, Event.Reset, ({ state }) =>
+        const machine = Machine.build(
+          Machine.make<State, Event>(State.Polling({ attempts: 0 })).pipe(
+            Machine.on.force(State.Polling, Event.Reset, ({ state }) =>
               State.Polling({ attempts: state.attempts + 1 }),
             ),
-            on(State.Polling, Event.Poll, () => State.Done()),
-            delay(State.Polling, "5 seconds", Event.Poll()),
+            Machine.on(State.Polling, Event.Poll, () => State.Done()),
+            Machine.delay(State.Polling, "5 seconds", Event.Poll()),
           ),
         );
 

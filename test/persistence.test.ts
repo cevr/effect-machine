@@ -1,16 +1,13 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Data, Effect, Layer, Option, pipe, Schedule, Schema } from "effect";
+import { Data, Effect, Layer, Option, Schedule, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import {
   ActorSystemDefault,
   ActorSystemService,
-  build,
-  final,
   InMemoryPersistenceAdapter,
-  make,
+  Machine,
   makeInMemoryPersistenceAdapter,
-  on,
   PersistenceAdapterTag,
   type PersistentActorRef,
   withPersistence,
@@ -52,18 +49,18 @@ const TestLayer = Layer.merge(ActorSystemDefault, InMemoryPersistenceAdapter);
 
 describe("Persistence", () => {
   const createPersistentMachine = () =>
-    pipe(
-      build(
-        pipe(
-          make<OrderState, OrderEvent>(State.Idle()),
-          on(State.Idle, Event.Submit, ({ event }) => State.Pending({ orderId: event.orderId })),
-          on(State.Pending, Event.Pay, ({ state, event }) =>
-            State.Paid({ orderId: state.orderId, amount: event.amount }),
-          ),
-          on(State.Paid, Event.Complete, () => State.Done()),
-          final(State.Done),
+    Machine.build(
+      Machine.make<OrderState, OrderEvent>(State.Idle()).pipe(
+        Machine.on(State.Idle, Event.Submit, ({ event }) =>
+          State.Pending({ orderId: event.orderId }),
         ),
+        Machine.on(State.Pending, Event.Pay, ({ state, event }) =>
+          State.Paid({ orderId: state.orderId, amount: event.amount }),
+        ),
+        Machine.on(State.Paid, Event.Complete, () => State.Done()),
+        Machine.final(State.Done),
       ),
+    ).pipe(
       withPersistence({
         snapshotSchedule: Schedule.forever,
         journalEvents: true,
@@ -218,18 +215,16 @@ describe("Persistence", () => {
         const system = yield* ActorSystemService;
 
         // Create machine with no automatic snapshots (using recurs(0) which never triggers)
-        const noAutoSnapshotMachine = pipe(
-          build(
-            pipe(
-              make<OrderState, OrderEvent>(State.Idle()),
-              on(State.Idle, Event.Submit, ({ event }) =>
-                State.Pending({ orderId: event.orderId }),
-              ),
-              on(State.Pending, Event.Pay, ({ state, event }) =>
-                State.Paid({ orderId: state.orderId, amount: event.amount }),
-              ),
+        const noAutoSnapshotMachine = Machine.build(
+          Machine.make<OrderState, OrderEvent>(State.Idle()).pipe(
+            Machine.on(State.Idle, Event.Submit, ({ event }) =>
+              State.Pending({ orderId: event.orderId }),
+            ),
+            Machine.on(State.Pending, Event.Pay, ({ state, event }) =>
+              State.Paid({ orderId: state.orderId, amount: event.amount }),
             ),
           ),
+        ).pipe(
           withPersistence({
             snapshotSchedule: Schedule.stop, // Never auto-snapshot
             journalEvents: true,
@@ -283,18 +278,16 @@ describe("Persistence", () => {
         const system = yield* ActorSystemService;
 
         // Create machine that snapshots infrequently
-        const infrequentSnapshotMachine = pipe(
-          build(
-            pipe(
-              make<OrderState, OrderEvent>(State.Idle()),
-              on(State.Idle, Event.Submit, ({ event }) =>
-                State.Pending({ orderId: event.orderId }),
-              ),
-              on(State.Pending, Event.Pay, ({ state, event }) =>
-                State.Paid({ orderId: state.orderId, amount: event.amount }),
-              ),
+        const infrequentSnapshotMachine = Machine.build(
+          Machine.make<OrderState, OrderEvent>(State.Idle()).pipe(
+            Machine.on(State.Idle, Event.Submit, ({ event }) =>
+              State.Pending({ orderId: event.orderId }),
+            ),
+            Machine.on(State.Pending, Event.Pay, ({ state, event }) =>
+              State.Paid({ orderId: state.orderId, amount: event.amount }),
             ),
           ),
+        ).pipe(
           withPersistence({
             snapshotSchedule: Schedule.stop, // Never auto-snapshot
             journalEvents: true,

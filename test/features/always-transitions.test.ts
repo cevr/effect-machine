@@ -1,7 +1,7 @@
-import { Data, Effect, pipe } from "effect";
+import { Data, Effect } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { always, build, final, make, simulate } from "../../src/index.js";
+import { Machine, simulate } from "../../src/index.js";
 
 describe("Always Transitions", () => {
   test("applies eventless transition on state entry", async () => {
@@ -19,15 +19,14 @@ describe("Always Transitions", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          pipe(
-            make<State, Event>(State.Calculating({ value: 75 })),
-            always(State.Calculating, [
+        const machine = Machine.build(
+          Machine.make<State, Event>(State.Calculating({ value: 75 })).pipe(
+            Machine.always(State.Calculating, [
               { guard: (s) => s.value >= 70, to: (s) => State.High({ value: s.value }) },
               { otherwise: true, to: (s) => State.Low({ value: s.value }) },
             ]),
-            final(State.High),
-            final(State.Low),
+            Machine.final(State.High),
+            Machine.final(State.Low),
           ),
         );
 
@@ -52,13 +51,12 @@ describe("Always Transitions", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          pipe(
-            make<State, Event>(State.A({ n: 0 })),
-            always(State.A, [{ otherwise: true, to: (s) => State.B({ n: s.n + 1 }) }]),
-            always(State.B, [{ otherwise: true, to: (s) => State.C({ n: s.n + 1 }) }]),
-            always(State.C, [{ otherwise: true, to: (s) => State.Done({ n: s.n + 1 }) }]),
-            final(State.Done),
+        const machine = Machine.build(
+          Machine.make<State, Event>(State.A({ n: 0 })).pipe(
+            Machine.always(State.A, [{ otherwise: true, to: (s) => State.B({ n: s.n + 1 }) }]),
+            Machine.always(State.B, [{ otherwise: true, to: (s) => State.C({ n: s.n + 1 }) }]),
+            Machine.always(State.C, [{ otherwise: true, to: (s) => State.Done({ n: s.n + 1 }) }]),
+            Machine.final(State.Done),
           ),
         );
 
@@ -85,17 +83,16 @@ describe("Always Transitions", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          pipe(
-            make<State, Event>(State.Input({ value: 50 })),
-            always(State.Input, [
+        const machine = Machine.build(
+          Machine.make<State, Event>(State.Input({ value: 50 })).pipe(
+            Machine.always(State.Input, [
               { guard: (s) => s.value >= 70, to: () => State.High() },
               { guard: (s) => s.value >= 40, to: () => State.Medium() },
               { otherwise: true, to: () => State.Low() },
             ]),
-            final(State.High),
-            final(State.Medium),
-            final(State.Low),
+            Machine.final(State.High),
+            Machine.final(State.Medium),
+            Machine.final(State.Low),
           ),
         );
 

@@ -17,6 +17,8 @@ bun run fmt           # oxfmt
 - States/Events: `Data.taggedEnum` from Effect
 - Exports: all public API via `src/index.ts`
 - Strict Effect config: see `tsconfig.json` for `@effect/language-service` rules
+- Namespace pattern: `import { Machine } from "effect-machine"` then `Machine.make`, `Machine.on`, etc.
+- `Machine`/`MachineBuilder` are Pipeable: use `.pipe()` for fluent API
 
 ## Gotchas
 
@@ -30,6 +32,9 @@ bun run fmt           # oxfmt
 - `on.force()` runs exit/enter even on same state tag - use to restart timers/invoke
 - Dynamic delay: duration fn evaluated at state entry, not registration time
 - `always` fallback: last branch without guard matches unconditionally
+- `Machine.from(State).pipe()` scopes `on` calls - omit state arg inside scope
+- `Machine.any(S1, S2, ...)` creates transitions for each state - guards typed to union
+- `namespace.ts` exports Machine namespace (not `Machine.ts` - macOS case-insensitivity)
 
 ## Effect Language Service
 

@@ -1,15 +1,12 @@
-import { Data, Effect, pipe } from "effect";
+import { Data, Effect } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import {
   assertNeverReaches,
   assertPath,
   assertReaches,
-  build,
   createTestHarness,
-  final,
-  make,
-  on,
+  Machine,
   simulate,
 } from "../src/index.js";
 
@@ -28,14 +25,13 @@ type TestEvent = Data.TaggedEnum<{
 }>;
 const Event = Data.taggedEnum<TestEvent>();
 
-const testMachine = build(
-  pipe(
-    make<TestState, TestEvent>(State.Idle()),
-    on(State.Idle, Event.Fetch, () => State.Loading()),
-    on(State.Loading, Event.Resolve, ({ event }) => State.Success({ data: event.data })),
-    on(State.Loading, Event.Reject, ({ event }) => State.Error({ message: event.message })),
-    final(State.Success),
-    final(State.Error),
+const testMachine = Machine.build(
+  Machine.make<TestState, TestEvent>(State.Idle()).pipe(
+    Machine.on(State.Idle, Event.Fetch, () => State.Loading()),
+    Machine.on(State.Loading, Event.Resolve, ({ event }) => State.Success({ data: event.data })),
+    Machine.on(State.Loading, Event.Reject, ({ event }) => State.Error({ message: event.message })),
+    Machine.final(State.Success),
+    Machine.final(State.Error),
   ),
 );
 

@@ -52,7 +52,7 @@ export interface StateEffect<State, Event, R> {
 /**
  * Machine definition
  */
-export interface Machine<State, Event, R = never> {
+export interface Machine<State, Event, R = never> extends Pipeable {
   readonly initial: State;
   readonly transitions: ReadonlyArray<Transition<State, Event, R>>;
   readonly alwaysTransitions: ReadonlyArray<AlwaysTransition<State, R>>;
@@ -74,7 +74,7 @@ export interface MachineBuilder<State, Event, R = never> extends Pipeable {
   readonly finalStates: ReadonlySet<string>;
 }
 
-const MachineBuilderProto: Pipeable = {
+const PipeableProto: Pipeable = {
   pipe() {
     return pipeArguments(this, arguments);
   },
@@ -100,7 +100,7 @@ export const make = <
 >(
   initial: State,
 ): MachineBuilder<State, Event> => {
-  const builder: MachineBuilderMutable<State, Event> = Object.create(MachineBuilderProto);
+  const builder: MachineBuilderMutable<State, Event> = Object.create(PipeableProto);
   builder._tag = "MachineBuilder";
   builder.initial = initial;
   builder.transitions = [];
@@ -174,14 +174,17 @@ export const addFinal =
  */
 export const build = <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
   builder: MachineBuilder<S, E, R>,
-): Machine<S, E, R> => ({
-  initial: builder.initial,
-  transitions: builder.transitions,
-  alwaysTransitions: builder.alwaysTransitions,
-  onEnter: builder.onEnter,
-  onExit: builder.onExit,
-  finalStates: builder.finalStates,
-});
+): Machine<S, E, R> => {
+  const machine: Machine<S, E, R> = Object.create(PipeableProto);
+  return Object.assign(machine, {
+    initial: builder.initial,
+    transitions: builder.transitions,
+    alwaysTransitions: builder.alwaysTransitions,
+    onEnter: builder.onEnter,
+    onExit: builder.onExit,
+    finalStates: builder.finalStates,
+  });
+};
 
 /**
  * Type helper to extract state type from constructor

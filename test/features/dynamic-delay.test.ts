@@ -1,17 +1,8 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Data, Duration, Effect, Layer, pipe, TestClock, TestContext } from "effect";
+import { Data, Duration, Effect, Layer, TestClock, TestContext } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import {
-  ActorSystemDefault,
-  ActorSystemService,
-  build,
-  delay,
-  final,
-  make,
-  on,
-  yieldFibers,
-} from "../../src/index.js";
+import { ActorSystemDefault, ActorSystemService, Machine, yieldFibers } from "../../src/index.js";
 
 describe("Dynamic Delay Duration", () => {
   type State = Data.TaggedEnum<{
@@ -28,12 +19,15 @@ describe("Dynamic Delay Duration", () => {
   test("dynamic duration computed from state", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          pipe(
-            make<State, Event>(State.Waiting({ timeout: 5 })),
-            on(State.Waiting, Event.Timeout, () => State.TimedOut()),
-            delay(State.Waiting, (state) => Duration.seconds(state.timeout), Event.Timeout()),
-            final(State.TimedOut),
+        const machine = Machine.build(
+          Machine.make<State, Event>(State.Waiting({ timeout: 5 })).pipe(
+            Machine.on(State.Waiting, Event.Timeout, () => State.TimedOut()),
+            Machine.delay(
+              State.Waiting,
+              (state) => Duration.seconds(state.timeout),
+              Event.Timeout(),
+            ),
+            Machine.final(State.TimedOut),
           ),
         );
 
@@ -80,20 +74,21 @@ describe("Dynamic Delay Duration", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          pipe(
-            make<RetryState, RetryEvent>(RetryState.Retrying({ attempt: 1, backoff: 1 })),
-            on.force(RetryState.Retrying, RetryEvent.Retry, ({ state }) =>
+        const machine = Machine.build(
+          Machine.make<RetryState, RetryEvent>(
+            RetryState.Retrying({ attempt: 1, backoff: 1 }),
+          ).pipe(
+            Machine.on.force(RetryState.Retrying, RetryEvent.Retry, ({ state }) =>
               RetryState.Retrying({ attempt: state.attempt + 1, backoff: state.backoff * 2 }),
             ),
-            on(RetryState.Retrying, RetryEvent.GiveUp, () => RetryState.Failed()),
+            Machine.on(RetryState.Retrying, RetryEvent.GiveUp, () => RetryState.Failed()),
             // Exponential backoff based on state
-            delay(
+            Machine.delay(
               RetryState.Retrying,
               (state) => Duration.seconds(state.backoff),
               RetryEvent.GiveUp(),
             ),
-            final(RetryState.Failed),
+            Machine.final(RetryState.Failed),
           ),
         );
 
@@ -135,13 +130,12 @@ describe("Dynamic Delay Duration", () => {
   test("static duration still works", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          pipe(
-            make<State, Event>(State.Waiting({ timeout: 999 })),
-            on(State.Waiting, Event.Timeout, () => State.TimedOut()),
+        const machine = Machine.build(
+          Machine.make<State, Event>(State.Waiting({ timeout: 999 })).pipe(
+            Machine.on(State.Waiting, Event.Timeout, () => State.TimedOut()),
             // Static "3 seconds" ignores state.timeout
-            delay(State.Waiting, "3 seconds", Event.Timeout()),
-            final(State.TimedOut),
+            Machine.delay(State.Waiting, "3 seconds", Event.Timeout()),
+            Machine.final(State.TimedOut),
           ),
         );
 

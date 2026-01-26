@@ -1,7 +1,7 @@
-import { Data, Effect, pipe } from "effect";
+import { Data, Effect } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { assertPath, build, make, on, simulate } from "../../src/index.js";
+import { assertPath, Machine, simulate } from "../../src/index.js";
 
 /**
  * Keyboard input pattern tests based on bite keyboard.machine.ts
@@ -28,53 +28,54 @@ describe("Keyboard Input Pattern", () => {
   }>;
   const Event = Data.taggedEnum<KeyboardEvent>();
 
-  const keyboardMachine = build(
-    pipe(
-      make<KeyboardState, KeyboardEvent>(State.Idle({ value: "", mode: "insert" })),
-
+  const keyboardMachine = Machine.build(
+    Machine.make<KeyboardState, KeyboardEvent>(State.Idle({ value: "", mode: "insert" })).pipe(
       // Focus activates keyboard
-      on(State.Idle, Event.Focus, ({ state }) =>
+      Machine.on(State.Idle, Event.Focus, ({ state }) =>
         State.Typing({ value: state.value, mode: state.mode }),
       ),
 
-      // Key input - different modes (same state, no lifecycle by default)
-      on(State.Typing, Event.KeyPress, ({ state, event }) => {
-        let newValue: string;
-        switch (state.mode) {
-          case "insert":
-            newValue = state.value + event.key;
-            break;
-          case "append":
-            newValue = state.value + event.key;
-            break;
-          case "replace":
-            newValue = event.key;
-            break;
-        }
-        return State.Typing({ value: newValue, mode: state.mode });
-      }),
+      // Typing state handlers
+      Machine.from(State.Typing).pipe(
+        // Key input - different modes (same state, no lifecycle by default)
+        Machine.on(Event.KeyPress, ({ state, event }) => {
+          let newValue: string;
+          switch (state.mode) {
+            case "insert":
+              newValue = state.value + event.key;
+              break;
+            case "append":
+              newValue = state.value + event.key;
+              break;
+            case "replace":
+              newValue = event.key;
+              break;
+          }
+          return State.Typing({ value: newValue, mode: state.mode });
+        }),
 
-      // Backspace
-      on(State.Typing, Event.Backspace, ({ state }) =>
-        State.Typing({ value: state.value.slice(0, -1), mode: state.mode }),
+        // Backspace
+        Machine.on(Event.Backspace, ({ state }) =>
+          State.Typing({ value: state.value.slice(0, -1), mode: state.mode }),
+        ),
+
+        // Clear all input
+        Machine.on(Event.Clear, ({ state }) => State.Typing({ value: "", mode: state.mode })),
+
+        // Mode switching
+        Machine.on(Event.SwitchMode, ({ state, event }) =>
+          State.Typing({ value: state.value, mode: event.mode }),
+        ),
+
+        // Submit
+        Machine.on(Event.Submit, ({ state }) => State.Confirming({ value: state.value })),
+
+        // Cancel returns to idle with original value preserved
+        Machine.on(Event.Cancel, ({ state }) => State.Idle({ value: "", mode: state.mode })),
       ),
-
-      // Clear all input
-      on(State.Typing, Event.Clear, ({ state }) => State.Typing({ value: "", mode: state.mode })),
-
-      // Mode switching
-      on(State.Typing, Event.SwitchMode, ({ state, event }) =>
-        State.Typing({ value: state.value, mode: event.mode }),
-      ),
-
-      // Submit
-      on(State.Typing, Event.Submit, ({ state }) => State.Confirming({ value: state.value })),
-
-      // Cancel returns to idle with original value preserved
-      on(State.Typing, Event.Cancel, ({ state }) => State.Idle({ value: "", mode: state.mode })),
 
       // From confirming
-      on(State.Confirming, Event.Cancel, ({ state }) =>
+      Machine.on(State.Confirming, Event.Cancel, ({ state }) =>
         State.Typing({ value: state.value, mode: "insert" }),
       ),
     ),

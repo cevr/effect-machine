@@ -5,12 +5,15 @@
 ```
 src/
 ├── index.ts              # Public exports
+├── namespace.ts          # Machine namespace (Effect-style API)
 ├── machine.ts            # Core types (Machine, MachineBuilder, Transition, OnOptions)
 ├── actor-ref.ts          # Actor reference interface
 ├── actor-system.ts       # Actor system service + layer
 ├── testing.ts            # Test utilities (simulate, harness, assertions)
 ├── combinators/
-│   ├── on.ts             # State/event transitions (on, on.force)
+│   ├── on.ts             # State/event transitions (on, on.force, scoped variant)
+│   ├── from.ts           # State scoping (Machine.from(State).pipe(...))
+│   ├── any.ts            # Multi-state matcher (Machine.any(S1, S2, ...))
 │   ├── final.ts          # Final state marker
 │   ├── always.ts         # Eventless transitions
 │   ├── choose.ts         # Guard cascade for events
@@ -35,27 +38,31 @@ test/
 │   ├── choose.test.ts
 │   ├── delay.test.ts
 │   ├── dynamic-delay.test.ts
+│   ├── from-any.test.ts          # Machine.from() and Machine.any() combinators
 │   ├── guard-composition.test.ts
 │   ├── internal-transitions.test.ts
 │   └── reenter.test.ts
 └── patterns/             # Real-world pattern tests (from bite analysis)
-    ├── payment-flow.test.ts      # Guard cascade, retry, cancellation
-    ├── session-lifecycle.test.ts # Always transitions, timeout
-    ├── keyboard-input.test.ts    # Mode switching, internal transitions
-    └── menu-navigation.test.ts   # Guard-based routing
+    ├── payment-flow.test.ts      # Guard cascade, retry, Machine.any() for Cancel
+    ├── session-lifecycle.test.ts # Machine.from() scoping, always transitions, timeout
+    ├── keyboard-input.test.ts    # Machine.from() scoping, mode switching
+    └── menu-navigation.test.ts   # Machine.from() scoping, guard-based routing
 ```
 
 ## Key Files
 
-| File                | Purpose                                                             |
-| ------------------- | ------------------------------------------------------------------- |
-| `internal/loop.ts`  | Event processing, `resolveTransition`, `applyAlways`, `createActor` |
-| `internal/types.ts` | `TransitionContext`, `StateEffectContext`, `Guard` module           |
-| `machine.ts`        | `Machine`, `MachineBuilder`, `Transition`, `OnOptions` interfaces   |
-| `actor-ref.ts`      | `ActorRef` interface with ergonomic helpers                         |
-| `testing.ts`        | `simulate`, `createTestHarness`, `assertPath`, `assertNeverReaches` |
-| `delay.ts`          | `DurationOrFn`, WeakMap fiber storage pattern                       |
-| `invoke.ts`         | WeakMap fiber storage pattern (same as delay)                       |
+| File                  | Purpose                                                             |
+| --------------------- | ------------------------------------------------------------------- |
+| `namespace.ts`        | Machine namespace export (named `namespace.ts` for macOS compat)    |
+| `internal/loop.ts`    | Event processing, `resolveTransition`, `applyAlways`, `createActor` |
+| `internal/types.ts`   | `TransitionContext`, `StateEffectContext`, `Guard` module           |
+| `machine.ts`          | `Machine`, `MachineBuilder`, `Transition`, `OnOptions` interfaces   |
+| `actor-ref.ts`        | `ActorRef` interface with ergonomic helpers                         |
+| `testing.ts`          | `simulate`, `createTestHarness`, `assertPath`, `assertNeverReaches` |
+| `combinators/from.ts` | `StateScope` for scoped transitions, custom `.pipe()` impl          |
+| `combinators/any.ts`  | `StateMatcher` interface, multi-state matching                      |
+| `delay.ts`            | `DurationOrFn`, WeakMap fiber storage pattern                       |
+| `invoke.ts`           | WeakMap fiber storage pattern (same as delay)                       |
 
 ## Event Flow
 
