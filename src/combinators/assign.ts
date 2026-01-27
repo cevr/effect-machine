@@ -4,11 +4,7 @@ import type { Machine, OnOptions, Transition } from "../machine.js";
 import { addTransition, normalizeOnOptions } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
 import type { TransitionContext } from "../internal/types.js";
-import type { StateBrand, EventBrand } from "../internal/brands.js";
-
-// Branded type constraints
-type BrandedState = { readonly _tag: string } & StateBrand;
-type BrandedEvent = { readonly _tag: string } & EventBrand;
+import type { BrandedState, BrandedEvent } from "../internal/brands.js";
 
 /**
  * Create a handler function that merges partial updates into the current state.

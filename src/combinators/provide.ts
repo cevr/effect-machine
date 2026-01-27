@@ -1,13 +1,10 @@
 import { Effect, Fiber } from "effect";
 
-import type { EffectSlot, Machine, MachineRef, StateEffect } from "../machine.js";
+import type { EffectSlot, Machine, StateEffect } from "../machine.js";
 import type { StateEffectContext } from "../internal/types.js";
-import type { StateBrand, EventBrand } from "../internal/brands.js";
+import type { BrandedState, BrandedEvent } from "../internal/brands.js";
 import { pipeArguments } from "effect/Pipeable";
-
-// Branded type constraints
-type BrandedState = { readonly _tag: string } & StateBrand;
-type BrandedEvent = { readonly _tag: string } & EventBrand;
+import { createFiberStorage } from "../internal/fiber-storage.js";
 
 /**
  * Effect handler function - receives context and returns an effect
@@ -132,24 +129,7 @@ function provideImpl<
     if (slot.type === "invoke") {
       // Invoke creates both an onEnter (to fork the effect) and onExit (to cancel it)
       const invokeKey = Symbol(`invoke:${name}`);
-
-      // Per-actor, per-invoke fiber storage
-      const actorInvokeFibers = new WeakMap<
-        MachineRef<unknown>,
-        Map<symbol, Fiber.RuntimeFiber<void, never>>
-      >();
-
-      const getFiberMap = (
-        self: MachineRef<Event>,
-      ): Map<symbol, Fiber.RuntimeFiber<void, never>> => {
-        const key = self as MachineRef<unknown>;
-        let map = actorInvokeFibers.get(key);
-        if (map === undefined) {
-          map = new Map();
-          actorInvokeFibers.set(key, map);
-        }
-        return map;
-      };
+      const getFiberMap = createFiberStorage();
 
       const enterEffect: StateEffect<State, Event, R2> = {
         stateTag: slot.stateTag,

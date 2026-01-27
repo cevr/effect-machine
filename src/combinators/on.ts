@@ -12,18 +12,10 @@ import type { ScopedTransition } from "./from.js";
 // Type helpers
 // ============================================================================
 
-import type { StateBrand, EventBrand } from "../internal/brands.js";
-
-// Base tagged types (no brand required)
-type TaggedState = { readonly _tag: string };
-type TaggedEvent = { readonly _tag: string };
-
-// Branded type constraints for compile-time safety in public API
-type BrandedState = TaggedState & StateBrand;
-type BrandedEvent = TaggedEvent & EventBrand;
+import type { BrandedState, BrandedEvent } from "../internal/brands.js";
 
 // Constructor type that works with both branded and unbranded types
-type Constructor<T extends TaggedState | TaggedEvent> = { (...args: never[]): T };
+type Constructor<T extends { readonly _tag: string }> = { (...args: never[]): T };
 
 // ============================================================================
 // Overload signatures

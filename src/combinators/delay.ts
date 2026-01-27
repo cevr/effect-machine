@@ -1,14 +1,11 @@
 import { Duration, Effect, Fiber } from "effect";
 import type { DurationInput } from "effect/Duration";
 
-import type { Machine, MachineRef, StateEffect } from "../machine.js";
+import type { Machine, StateEffect } from "../machine.js";
 import { addOnEnter, addOnExit } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
-import type { StateBrand, EventBrand } from "../internal/brands.js";
-
-// Branded type constraints
-type BrandedState = { readonly _tag: string } & StateBrand;
-type BrandedEvent = { readonly _tag: string } & EventBrand;
+import type { BrandedState, BrandedEvent } from "../internal/brands.js";
+import { createFiberStorage } from "../internal/fiber-storage.js";
 
 /**
  * Options for delayed event scheduling
@@ -74,21 +71,7 @@ export function delay<NarrowedState extends BrandedState, EventType extends Bran
   return <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
     builder: Machine<State, Event, R, Effects>,
   ): Machine<State, Event, R, Effects> => {
-    // Per-actor, per-delay fiber storage
-    const actorDelayFibers = new WeakMap<
-      MachineRef<unknown>,
-      Map<symbol, Fiber.RuntimeFiber<void, never>>
-    >();
-
-    const getFiberMap = (self: MachineRef<Event>): Map<symbol, Fiber.RuntimeFiber<void, never>> => {
-      const key = self as MachineRef<unknown>;
-      let map = actorDelayFibers.get(key);
-      if (map === undefined) {
-        map = new Map();
-        actorDelayFibers.set(key, map);
-      }
-      return map;
-    };
+    const getFiberMap = createFiberStorage();
 
     const enterEffect: StateEffect<State, Event, never> = {
       stateTag,

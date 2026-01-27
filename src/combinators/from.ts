@@ -4,7 +4,7 @@ import { getTag } from "../internal/get-tag.js";
 import type { Machine, OnOptions, Transition } from "../machine.js";
 import { addTransition, normalizeOnOptions } from "../machine.js";
 import type { TransitionContext, TransitionResult } from "../internal/types.js";
-import type { StateBrand, EventBrand } from "../internal/brands.js";
+import type { BrandedState, BrandedEvent } from "../internal/brands.js";
 
 /**
  * A partial transition created inside `from().pipe()` - missing the stateTag
@@ -18,10 +18,6 @@ export interface ScopedTransition<State, Event, R> {
   readonly effect?: (ctx: TransitionContext<State, Event>) => Effect.Effect<void, never, R>;
   readonly reenter?: boolean;
 }
-
-// Branded type constraints
-type BrandedState = { readonly _tag: string } & StateBrand;
-type BrandedEvent = { readonly _tag: string } & EventBrand;
 
 /**
  * A scoped state context that provides event-only `on` calls.
@@ -185,6 +181,8 @@ export const from = <NarrowedState extends BrandedState>(stateConstructor: {
 /**
  * Create a scoped transition (event-only) for use inside `from().pipe()`.
  * This is an internal helper - use `on` which auto-detects scoped vs full context.
+ *
+ * @internal
  */
 export const scopedOn = <
   NarrowedState extends BrandedState,
@@ -218,6 +216,8 @@ export const scopedOn = <
 
 /**
  * Force variant for scoped transitions
+ *
+ * @internal
  */
 export const scopedOnForce = <
   NarrowedState extends BrandedState,

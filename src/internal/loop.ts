@@ -1,10 +1,15 @@
-import { Effect, Fiber, Queue, SubscriptionRef } from "effect";
+import { Effect, Fiber, Option, Queue, SubscriptionRef } from "effect";
 
 import type { ActorRef } from "../actor-ref.js";
 import type { Machine, MachineRef } from "../machine.js";
 import type { InspectionEvent, Inspector } from "../inspection.js";
 import { Inspector as InspectorTag } from "../inspection.js";
-import { findTransitions, findAlwaysTransitions } from "./transition-index.js";
+import {
+  findTransitions,
+  findAlwaysTransitions,
+  findOnEnterEffects,
+  findOnExitEffects,
+} from "./transition-index.js";
 
 /** Listener set for sync subscriptions */
 type Listeners<S> = Set<(state: S) => void>;
@@ -204,9 +209,9 @@ export const createActor = <
   })(
     Effect.gen(function* () {
       // Get optional inspector from context
-      const inspector = yield* Effect.serviceOption(InspectorTag);
-      const inspectorValue =
-        inspector._tag === "Some" ? (inspector.value as Inspector<S, E>) : undefined;
+      const inspectorValue = Option.getOrUndefined(yield* Effect.serviceOption(InspectorTag)) as
+        | Inspector<S, E>
+        | undefined;
 
       // Apply always transitions to initial state
       const resolvedInitial = yield* applyAlways(machine, machine.initial);
@@ -442,7 +447,7 @@ const processEvent = <S extends { readonly _tag: string }, E extends { readonly 
 /**
  * Run entry effects for a state
  */
-const runEntryEffects = <
+export const runEntryEffects = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
@@ -454,7 +459,7 @@ const runEntryEffects = <
   inspector?: Inspector<S, E>,
 ): Effect.Effect<void, never, R> =>
   Effect.gen(function* () {
-    const effects = machine.onEnter.filter((e) => e.stateTag === state._tag);
+    const effects = findOnEnterEffects(machine, state._tag);
     for (const effect of effects) {
       if (actorId !== undefined && inspector !== undefined) {
         emit(inspector, {
@@ -474,7 +479,7 @@ const runEntryEffects = <
 /**
  * Run exit effects for a state
  */
-const runExitEffects = <
+export const runExitEffects = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
@@ -486,7 +491,7 @@ const runExitEffects = <
   inspector?: Inspector<S, E>,
 ): Effect.Effect<void, never, R> =>
   Effect.gen(function* () {
-    const effects = machine.onExit.filter((e) => e.stateTag === state._tag);
+    const effects = findOnExitEffects(machine, state._tag);
     for (const effect of effects) {
       if (actorId !== undefined && inspector !== undefined) {
         emit(inspector, {

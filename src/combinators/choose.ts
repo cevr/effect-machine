@@ -4,11 +4,7 @@ import type { Machine, Transition } from "../machine.js";
 import { addTransition } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
 import type { TransitionContext, TransitionResult } from "../internal/types.js";
-import type { StateBrand, EventBrand } from "../internal/brands.js";
-
-// Branded type constraints
-type BrandedState = { readonly _tag: string } & StateBrand;
-type BrandedEvent = { readonly _tag: string } & EventBrand;
+import type { BrandedState, BrandedEvent } from "../internal/brands.js";
 
 /**
  * A single branch in a choose transition cascade

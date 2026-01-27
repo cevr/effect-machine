@@ -6,7 +6,7 @@
  *
  * @internal
  */
-import type { Machine, Transition, AlwaysTransition } from "../machine.js";
+import type { Machine, Transition, AlwaysTransition, StateEffect } from "../machine.js";
 
 /**
  * Index structure: stateTag -> eventTag -> transitions[]
@@ -20,11 +20,18 @@ type TransitionIndex<S, E, R> = Map<string, Map<string, Array<Transition<S, E, R
 type AlwaysIndex<S, R> = Map<string, Array<AlwaysTransition<S, R>>>;
 
 /**
+ * Index for state effects: stateTag -> effects[]
+ */
+type EffectIndex<S, E, R> = Map<string, Array<StateEffect<S, E, R>>>;
+
+/**
  * Combined index for a machine
  */
 interface MachineIndex<S, E, R> {
   readonly transitions: TransitionIndex<S, E, R>;
   readonly always: AlwaysIndex<S, R>;
+  readonly onEnter: EffectIndex<S, E, R>;
+  readonly onExit: EffectIndex<S, E, R>;
 }
 
 // Module-level cache - WeakMap allows GC of unreferenced machines
@@ -83,6 +90,30 @@ const buildAlwaysIndex = <S extends { readonly _tag: string }, R>(
 };
 
 /**
+ * Build effect index from machine definition.
+ */
+const buildEffectIndex = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+>(
+  effects: ReadonlyArray<StateEffect<S, E, R>>,
+): EffectIndex<S, E, R> => {
+  const index: EffectIndex<S, E, R> = new Map();
+
+  for (const e of effects) {
+    let stateList = index.get(e.stateTag);
+    if (stateList === undefined) {
+      stateList = [];
+      index.set(e.stateTag, stateList);
+    }
+    stateList.push(e);
+  }
+
+  return index;
+};
+
+/**
  * Get or build index for a machine.
  */
 const getIndex = <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
@@ -93,6 +124,8 @@ const getIndex = <S extends { readonly _tag: string }, E extends { readonly _tag
     index = {
       transitions: buildTransitionIndex(machine.transitions),
       always: buildAlwaysIndex(machine.alwaysTransitions),
+      onEnter: buildEffectIndex(machine.onEnter),
+      onExit: buildEffectIndex(machine.onExit),
     };
     indexCache.set(machine, index as MachineIndex<unknown, unknown, unknown>);
   }
@@ -132,4 +165,40 @@ export const findAlwaysTransitions = <
 ): ReadonlyArray<AlwaysTransition<S, R>> => {
   const index = getIndex(machine);
   return index.always.get(stateTag) ?? [];
+};
+
+/**
+ * Find all onEnter effects for a state.
+ * Returns empty array if no matches.
+ *
+ * O(1) lookup after first access (index is lazily built).
+ */
+export const findOnEnterEffects = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+>(
+  machine: Machine<S, E, R>,
+  stateTag: string,
+): ReadonlyArray<StateEffect<S, E, R>> => {
+  const index = getIndex(machine);
+  return index.onEnter.get(stateTag) ?? [];
+};
+
+/**
+ * Find all onExit effects for a state.
+ * Returns empty array if no matches.
+ *
+ * O(1) lookup after first access (index is lazily built).
+ */
+export const findOnExitEffects = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+>(
+  machine: Machine<S, E, R>,
+  stateTag: string,
+): ReadonlyArray<StateEffect<S, E, R>> => {
+  const index = getIndex(machine);
+  return index.onExit.get(stateTag) ?? [];
 };

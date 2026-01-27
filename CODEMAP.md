@@ -34,9 +34,11 @@ src/
 │   ├── index.ts          # Cluster exports
 │   └── to-entity.ts      # toEntity - generates Entity from machine
 └── internal/
-    ├── loop.ts           # Event loop, transition resolver, actor creation
+    ├── loop.ts           # Event loop, transition resolver, lifecycle effects
+    ├── transition-index.ts # O(1) lookup for transitions and effects
+    ├── fiber-storage.ts  # Per-actor WeakMap fiber storage utility
     ├── types.ts          # Internal types (contexts, Guard module)
-    ├── brands.ts         # StateBrand/EventBrand phantom types
+    ├── brands.ts         # StateBrand/EventBrand + BrandedState/BrandedEvent
     └── get-tag.ts        # Tag extraction from constructors
 
 test/
@@ -71,15 +73,17 @@ test/
 
 ## Key Files
 
-| File                                | Purpose                                                |
-| ----------------------------------- | ------------------------------------------------------ |
-| `machine-schema.ts`                 | Schema-first `State`/`Event` - single source of truth  |
-| `machine.ts`                        | `Machine.make({ state, event, initial })` + core types |
-| `namespace.ts`                      | Machine namespace export (named for macOS compat)      |
-| `internal/loop.ts`                  | Event processing, `resolveTransition`, `applyAlways`   |
-| `internal/brands.ts`                | `StateBrand`/`EventBrand` phantom types                |
-| `persistence/persistent-machine.ts` | `Machine.persist` - schemas from machine, no drift     |
-| `cluster/to-entity.ts`              | `toEntity` - schemas from machine, no drift            |
+| File                                | Purpose                                                  |
+| ----------------------------------- | -------------------------------------------------------- |
+| `machine-schema.ts`                 | Schema-first `State`/`Event` - single source of truth    |
+| `machine.ts`                        | `Machine.make({ state, event, initial })` + core types   |
+| `namespace.ts`                      | Machine namespace export (named for macOS compat)        |
+| `internal/loop.ts`                  | Event processing, `resolveTransition`, lifecycle effects |
+| `internal/transition-index.ts`      | O(1) lookup for transitions, always, onEnter, onExit     |
+| `internal/brands.ts`                | Branded types: `StateBrand`, `BrandedState`, etc.        |
+| `internal/fiber-storage.ts`         | `createFiberStorage()` - per-actor WeakMap utility       |
+| `persistence/persistent-machine.ts` | `Machine.persist` - schemas from machine, no drift       |
+| `cluster/to-entity.ts`              | `toEntity` - schemas from machine, no drift              |
 
 ## Event Flow
 
@@ -117,12 +121,26 @@ const machine = Machine.make({
 
 ## Fiber Storage Pattern
 
-`delay.ts` and `provide.ts` use WeakMap for per-actor fiber storage:
+`delay.ts` and `provide.ts` use shared utility from `internal/fiber-storage.ts`:
 
 ```ts
-const actorFibers = new WeakMap<MachineRef<unknown>, Map<symbol, Fiber>>();
+import { createFiberStorage } from "../internal/fiber-storage.js";
+
+const getFiberMap = createFiberStorage(); // WeakMap-backed, per-actor
 const instanceKey = Symbol("delay"); // unique per combinator instance
+getFiberMap(self).set(instanceKey, fiber);
 ```
+
+## Transition Index
+
+`internal/transition-index.ts` provides O(1) lookup via lazy-built WeakMap cache:
+
+- `findTransitions(machine, stateTag, eventTag)` - event transitions
+- `findAlwaysTransitions(machine, stateTag)` - always transitions
+- `findOnEnterEffects(machine, stateTag)` - entry effects
+- `findOnExitEffects(machine, stateTag)` - exit effects
+
+Index built on first access, cached per machine instance.
 
 ## Effect Slots Pattern
 

@@ -4,7 +4,12 @@ import type { ActorRef } from "../actor-ref.js";
 import type { MachineRef } from "../machine.js";
 import type { Inspector } from "../inspection.js";
 import { Inspector as InspectorTag } from "../inspection.js";
-import { applyAlways, resolveTransition } from "../internal/loop.js";
+import {
+  applyAlways,
+  resolveTransition,
+  runEntryEffects,
+  runExitEffects,
+} from "../internal/loop.js";
 
 import type {
   ActorMetadata,
@@ -512,66 +517,6 @@ const saveMetadata = <S extends { readonly _tag: string }, E extends { readonly 
     .saveMetadata(metadata)
     .pipe(Effect.catchAll((e) => Effect.logWarning(`Failed to save metadata for actor ${id}`, e)));
 };
-
-/**
- * Run entry effects for a state
- */
-const runEntryEffects = <
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
-  R,
->(
-  machine: PersistentMachine<S, E, R>["machine"],
-  state: S,
-  self: MachineRef<E>,
-  actorId: string,
-  inspector?: Inspector<S, E>,
-): Effect.Effect<void, never, R> =>
-  Effect.gen(function* () {
-    const effects = machine.onEnter.filter((e) => e.stateTag === state._tag);
-    for (const effect of effects) {
-      if (inspector !== undefined) {
-        inspector.onInspect({
-          type: "@machine.effect",
-          actorId,
-          effectType: "entry",
-          state,
-          timestamp: Date.now(),
-        });
-      }
-      yield* effect.handler({ state, self });
-    }
-  });
-
-/**
- * Run exit effects for a state
- */
-const runExitEffects = <
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
-  R,
->(
-  machine: PersistentMachine<S, E, R>["machine"],
-  state: S,
-  self: MachineRef<E>,
-  actorId: string,
-  inspector?: Inspector<S, E>,
-): Effect.Effect<void, never, R> =>
-  Effect.gen(function* () {
-    const effects = machine.onExit.filter((e) => e.stateTag === state._tag);
-    for (const effect of effects) {
-      if (inspector !== undefined) {
-        inspector.onInspect({
-          type: "@machine.effect",
-          actorId,
-          effectType: "exit",
-          state,
-          timestamp: Date.now(),
-        });
-      }
-      yield* effect.handler({ state, self });
-    }
-  });
 
 /**
  * Restore an actor from persistence.

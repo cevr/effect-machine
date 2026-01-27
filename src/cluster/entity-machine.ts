@@ -7,8 +7,13 @@ import { Entity } from "@effect/cluster";
 import type { Rpc } from "@effect/rpc";
 import { Effect, type Layer, Queue, Ref } from "effect";
 
-import type { Machine, MachineRef, StateEffect } from "../machine.js";
-import { findTransitions, findAlwaysTransitions } from "../internal/transition-index.js";
+import type { Machine, MachineRef } from "../machine.js";
+import {
+  findTransitions,
+  findOnEnterEffects,
+  findOnExitEffects,
+} from "../internal/transition-index.js";
+import { applyAlways } from "../internal/loop.js";
 
 /**
  * Options for EntityMachine.layer
@@ -28,80 +33,40 @@ export interface EntityMachineOptions<S> {
   readonly initializeState?: (entityId: string) => S;
 }
 
-/** Maximum steps for always transitions to prevent infinite loops */
-const MAX_ALWAYS_STEPS = 100;
-
 /**
- * Apply always transitions until none match or max steps reached.
+ * Run entry effects for a state (simple version without inspector)
  */
-const applyAlways = <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
-  machine: Machine<S, E, R>,
-  state: S,
-): Effect.Effect<S, never, R> =>
-  Effect.gen(function* () {
-    let currentState = state;
-    let steps = 0;
-
-    while (steps < MAX_ALWAYS_STEPS) {
-      const candidates = findAlwaysTransitions(machine, currentState._tag);
-      let found = false;
-
-      for (const transition of candidates) {
-        if (transition.guard === undefined || transition.guard(currentState)) {
-          const newStateResult = transition.handler(currentState);
-          const newState = Effect.isEffect(newStateResult) ? yield* newStateResult : newStateResult;
-
-          if (newState._tag === currentState._tag && newState === currentState) {
-            break;
-          }
-
-          currentState = newState;
-          found = true;
-          steps++;
-          break;
-        }
-      }
-
-      if (!found) break;
-    }
-
-    return currentState;
-  });
-
-/**
- * Run entry effects for a state
- */
-const runEntryEffects = <
+const runEntryEffectsSimple = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
 >(
-  effects: ReadonlyArray<StateEffect<S, E, R>>,
+  machine: Machine<S, E, R>,
   state: S,
   self: MachineRef<E>,
 ): Effect.Effect<void, never, R> =>
   Effect.gen(function* () {
-    const stateEffects = effects.filter((e) => e.stateTag === state._tag);
-    for (const effect of stateEffects) {
+    const effects = findOnEnterEffects(machine, state._tag);
+    for (const effect of effects) {
       yield* effect.handler({ state, self });
     }
   });
 
 /**
- * Run exit effects for a state
+ * Run exit effects for a state (simple version without inspector)
  */
-const runExitEffects = <
+const runExitEffectsSimple = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
 >(
-  effects: ReadonlyArray<StateEffect<S, E, R>>,
+  machine: Machine<S, E, R>,
   state: S,
   self: MachineRef<E>,
 ): Effect.Effect<void, never, R> =>
   Effect.gen(function* () {
-    const stateEffects = effects.filter((e) => e.stateTag === state._tag);
-    for (const effect of stateEffects) {
+    const effects = findOnExitEffects(machine, state._tag);
+    for (const effect of effects) {
       yield* effect.handler({ state, self });
     }
   });
@@ -149,7 +114,7 @@ const processEvent = <S extends { readonly _tag: string }, E extends { readonly 
 
     if (runLifecycle) {
       // Run exit effects for old state
-      yield* runExitEffects(machine.onExit, currentState, self);
+      yield* runExitEffectsSimple(machine, currentState, self);
 
       // Apply always transitions (only if tag changed)
       if (stateTagChanged) {
@@ -160,7 +125,7 @@ const processEvent = <S extends { readonly _tag: string }, E extends { readonly 
       yield* Ref.set(stateRef, newState);
 
       // Run entry effects for new state
-      yield* runEntryEffects(machine.onEnter, newState, self);
+      yield* runEntryEffectsSimple(machine, newState, self);
     } else {
       // Same state tag without reenter - just update state
       yield* Ref.set(stateRef, newState);
@@ -243,7 +208,7 @@ export const EntityMachine = {
         };
 
         // Run initial entry effects
-        yield* runEntryEffects(machine.onEnter, resolvedInitial, self);
+        yield* runEntryEffectsSimple(machine, resolvedInitial, self);
 
         // Process internal events in background
         yield* Effect.forkScoped(

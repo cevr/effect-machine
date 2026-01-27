@@ -1,5 +1,5 @@
 import { getTag } from "../internal/get-tag.js";
-import type { StateBrand } from "../internal/brands.js";
+import type { BrandedState } from "../internal/brands.js";
 
 /**
  * A matcher for multiple states - use with `on` to handle an event in multiple states
@@ -9,9 +9,7 @@ export interface StateMatcher<_State> {
   readonly stateTags: ReadonlyArray<string>;
 }
 
-type TaggedState = { readonly _tag: string };
-type BrandedState = TaggedState & StateBrand;
-type StateConstructor<S extends TaggedState> = { (...args: never[]): S };
+type StateConstructor<S extends { readonly _tag: string }> = { (...args: never[]): S };
 
 /**
  * Extract return type from constructor

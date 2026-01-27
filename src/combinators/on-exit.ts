@@ -1,11 +1,7 @@
 import type { Machine } from "../machine.js";
 import { addEffectSlot } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
-import type { StateBrand, EventBrand } from "../internal/brands.js";
-
-// Branded type constraints
-type BrandedState = { readonly _tag: string } & StateBrand;
-type BrandedEvent = { readonly _tag: string } & EventBrand;
+import type { BrandedState, BrandedEvent } from "../internal/brands.js";
 
 /**
  * Register a named onExit slot for a state.

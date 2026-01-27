@@ -13,3 +13,7 @@ export type EventTypeId = typeof EventTypeId;
 export interface StateBrand extends Brand.Brand<StateTypeId> {}
 // eslint-disable-next-line import/namespace
 export interface EventBrand extends Brand.Brand<EventTypeId> {}
+
+// Shared branded type constraints used across all combinators
+export type BrandedState = { readonly _tag: string } & StateBrand;
+export type BrandedEvent = { readonly _tag: string } & EventBrand;
