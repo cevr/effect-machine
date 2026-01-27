@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import { Event, Machine, simulate, State } from "../../src/index.js";
@@ -7,24 +7,24 @@ import { Event, Machine, simulate, State } from "../../src/index.js";
 // Test fixtures
 // ============================================================================
 
-type EditorState = State<{
-  Idle: {};
-  Typing: { text: string };
-  Submitting: { text: string };
-  Submitted: { text: string };
-  Cancelled: {};
-}>;
-const EditorState = State<EditorState>();
+const EditorState = State({
+  Idle: {},
+  Typing: { text: Schema.String },
+  Submitting: { text: Schema.String },
+  Submitted: { text: Schema.String },
+  Cancelled: {},
+});
+type EditorState = typeof EditorState.Type;
 
-type EditorEvent = Event<{
-  Focus: {};
-  KeyPress: { key: string };
-  Backspace: {};
-  Submit: {};
-  Cancel: {};
-  Success: {};
-}>;
-const EditorEvent = Event<EditorEvent>();
+const EditorEvent = Event({
+  Focus: {},
+  KeyPress: { key: Schema.String },
+  Backspace: {},
+  Submit: {},
+  Cancel: {},
+  Success: {},
+});
+type EditorEvent = typeof EditorEvent.Type;
 
 // ============================================================================
 // from() tests
@@ -34,7 +34,7 @@ describe("Machine.from", () => {
   test("scopes multiple transitions to a single state", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<EditorState, EditorEvent>(EditorState.Idle()).pipe(
+        const machine = Machine.make<EditorState, EditorEvent>(EditorState.Idle({})).pipe(
           Machine.on(EditorState.Idle, EditorEvent.Focus, () => EditorState.Typing({ text: "" })),
           Machine.from(EditorState.Typing).pipe(
             Machine.on(EditorEvent.KeyPress, ({ state, event }) =>
@@ -50,10 +50,10 @@ describe("Machine.from", () => {
         );
 
         const result = yield* simulate(machine, [
-          EditorEvent.Focus(),
+          EditorEvent.Focus({}),
           EditorEvent.KeyPress({ key: "h" }),
           EditorEvent.KeyPress({ key: "i" }),
-          EditorEvent.Submit(),
+          EditorEvent.Submit({}),
         ]);
 
         expect(result.finalState._tag).toBe("Submitted");
@@ -87,7 +87,7 @@ describe("Machine.from", () => {
           EditorEvent.KeyPress({ key: "b" }),
           EditorEvent.KeyPress({ key: "c" }),
           EditorEvent.KeyPress({ key: "d" }), // blocked by guard
-          EditorEvent.Submit(),
+          EditorEvent.Submit({}),
         ]);
 
         expect(result.finalState._tag).toBe("Submitted");
@@ -126,7 +126,7 @@ describe("Machine.from", () => {
         yield* simulate(machine, [
           EditorEvent.KeyPress({ key: "h" }),
           EditorEvent.KeyPress({ key: "i" }),
-          EditorEvent.Submit(),
+          EditorEvent.Submit({}),
         ]);
 
         expect(logs).toEqual(["key: h", "key: i"]);
@@ -137,7 +137,7 @@ describe("Machine.from", () => {
   test("multiple from() scopes can be combined", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<EditorState, EditorEvent>(EditorState.Idle()).pipe(
+        const machine = Machine.make<EditorState, EditorEvent>(EditorState.Idle({})).pipe(
           Machine.from(EditorState.Idle).pipe(
             Machine.on(EditorEvent.Focus, () => EditorState.Typing({ text: "" })),
           ),
@@ -157,10 +157,10 @@ describe("Machine.from", () => {
         );
 
         const result = yield* simulate(machine, [
-          EditorEvent.Focus(),
+          EditorEvent.Focus({}),
           EditorEvent.KeyPress({ key: "x" }),
-          EditorEvent.Submit(),
-          EditorEvent.Success(),
+          EditorEvent.Submit({}),
+          EditorEvent.Success({}),
         ]);
 
         expect(result.finalState._tag).toBe("Submitted");

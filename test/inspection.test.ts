@@ -1,5 +1,5 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import {
@@ -15,19 +15,19 @@ import {
   Event,
 } from "../src/index.js";
 
-type TestState = State<{
-  Idle: {};
-  Loading: { url: string };
-  Done: { result: string };
-}>;
-const TestState = State<TestState>();
+const TestState = State({
+  Idle: {},
+  Loading: { url: Schema.String },
+  Done: { result: Schema.String },
+});
+type TestState = typeof TestState.Type;
 
-type TestEvent = Event<{
-  Fetch: { url: string };
-  Success: { result: string };
-  Reset: {};
-}>;
-const TestEvent = Event<TestEvent>();
+const TestEvent = Event({
+  Fetch: { url: Schema.String },
+  Success: { result: Schema.String },
+  Reset: {},
+});
+type TestEvent = typeof TestEvent.Type;
 
 describe("Inspection", () => {
   test("emits spawn event on actor creation", async () => {

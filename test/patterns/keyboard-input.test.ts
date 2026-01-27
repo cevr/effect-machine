@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import { assertPath, Event, Machine, simulate, State } from "../../src/index.js";
@@ -9,24 +9,25 @@ import { assertPath, Event, Machine, simulate, State } from "../../src/index.js"
  */
 describe("Keyboard Input Pattern", () => {
   type InputMode = "insert" | "append" | "replace";
+  const InputMode = Schema.Literal("insert", "append", "replace");
 
-  type KeyboardState = State<{
-    Idle: { value: string; mode: InputMode };
-    Typing: { value: string; mode: InputMode };
-    Confirming: { value: string };
-  }>;
-  const KeyboardState = State<KeyboardState>();
+  const KeyboardState = State({
+    Idle: { value: Schema.String, mode: InputMode },
+    Typing: { value: Schema.String, mode: InputMode },
+    Confirming: { value: Schema.String },
+  });
+  type KeyboardState = typeof KeyboardState.Type;
 
-  type KeyboardEvent = Event<{
-    Focus: {};
-    KeyPress: { key: string };
-    Backspace: {};
-    Clear: {};
-    SwitchMode: { mode: InputMode };
-    Submit: {};
-    Cancel: {};
-  }>;
-  const KeyboardEvent = Event<KeyboardEvent>();
+  const KeyboardEvent = Event({
+    Focus: {},
+    KeyPress: { key: Schema.String },
+    Backspace: {},
+    Clear: {},
+    SwitchMode: { mode: InputMode },
+    Submit: {},
+    Cancel: {},
+  });
+  type KeyboardEvent = typeof KeyboardEvent.Type;
 
   const keyboardMachine = Machine.make<KeyboardState, KeyboardEvent>(
     KeyboardState.Idle({ value: "", mode: "insert" }),
@@ -91,7 +92,7 @@ describe("Keyboard Input Pattern", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const result = yield* simulate(keyboardMachine, [
-          KeyboardEvent.Focus(),
+          KeyboardEvent.Focus({}),
           KeyboardEvent.KeyPress({ key: "1" }),
           KeyboardEvent.KeyPress({ key: "2" }),
           KeyboardEvent.KeyPress({ key: "3" }),
@@ -107,11 +108,11 @@ describe("Keyboard Input Pattern", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const result = yield* simulate(keyboardMachine, [
-          KeyboardEvent.Focus(),
+          KeyboardEvent.Focus({}),
           KeyboardEvent.KeyPress({ key: "1" }),
           KeyboardEvent.KeyPress({ key: "2" }),
           KeyboardEvent.KeyPress({ key: "3" }),
-          KeyboardEvent.Backspace(),
+          KeyboardEvent.Backspace({}),
         ]);
 
         expect((result.finalState as KeyboardState & { _tag: "Typing" }).value).toBe("12");
@@ -123,12 +124,12 @@ describe("Keyboard Input Pattern", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const result = yield* simulate(keyboardMachine, [
-          KeyboardEvent.Focus(),
+          KeyboardEvent.Focus({}),
           KeyboardEvent.KeyPress({ key: "a" }),
           KeyboardEvent.KeyPress({ key: "b" }),
-          KeyboardEvent.Backspace(),
-          KeyboardEvent.Backspace(),
-          KeyboardEvent.Backspace(), // Extra backspace on empty string
+          KeyboardEvent.Backspace({}),
+          KeyboardEvent.Backspace({}),
+          KeyboardEvent.Backspace({}), // Extra backspace on empty string
         ]);
 
         expect((result.finalState as KeyboardState & { _tag: "Typing" }).value).toBe("");
@@ -140,11 +141,11 @@ describe("Keyboard Input Pattern", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const result = yield* simulate(keyboardMachine, [
-          KeyboardEvent.Focus(),
+          KeyboardEvent.Focus({}),
           KeyboardEvent.KeyPress({ key: "1" }),
           KeyboardEvent.KeyPress({ key: "2" }),
           KeyboardEvent.KeyPress({ key: "3" }),
-          KeyboardEvent.Clear(),
+          KeyboardEvent.Clear({}),
         ]);
 
         expect((result.finalState as KeyboardState & { _tag: "Typing" }).value).toBe("");
@@ -156,7 +157,7 @@ describe("Keyboard Input Pattern", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const result = yield* simulate(keyboardMachine, [
-          KeyboardEvent.Focus(),
+          KeyboardEvent.Focus({}),
           KeyboardEvent.KeyPress({ key: "a" }),
           KeyboardEvent.KeyPress({ key: "b" }),
           KeyboardEvent.SwitchMode({ mode: "replace" }),
@@ -174,11 +175,11 @@ describe("Keyboard Input Pattern", () => {
       assertPath(
         keyboardMachine,
         [
-          KeyboardEvent.Focus(),
+          KeyboardEvent.Focus({}),
           KeyboardEvent.KeyPress({ key: "1" }),
           KeyboardEvent.KeyPress({ key: "0" }),
           KeyboardEvent.KeyPress({ key: "0" }),
-          KeyboardEvent.Submit(),
+          KeyboardEvent.Submit({}),
         ],
         ["Idle", "Typing", "Typing", "Typing", "Typing", "Confirming"],
       ),
@@ -189,9 +190,9 @@ describe("Keyboard Input Pattern", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const result = yield* simulate(keyboardMachine, [
-          KeyboardEvent.Focus(),
+          KeyboardEvent.Focus({}),
           KeyboardEvent.KeyPress({ key: "x" }),
-          KeyboardEvent.Cancel(),
+          KeyboardEvent.Cancel({}),
         ]);
 
         expect(result.finalState._tag).toBe("Idle");
@@ -205,10 +206,10 @@ describe("Keyboard Input Pattern", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const result = yield* simulate(keyboardMachine, [
-          KeyboardEvent.Focus(),
+          KeyboardEvent.Focus({}),
           KeyboardEvent.KeyPress({ key: "1" }),
-          KeyboardEvent.Submit(),
-          KeyboardEvent.Cancel(),
+          KeyboardEvent.Submit({}),
+          KeyboardEvent.Cancel({}),
         ]);
 
         expect(result.finalState._tag).toBe("Typing");
@@ -221,10 +222,10 @@ describe("Keyboard Input Pattern", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const result = yield* simulate(keyboardMachine, [
-          KeyboardEvent.Focus(),
+          KeyboardEvent.Focus({}),
           KeyboardEvent.SwitchMode({ mode: "append" }),
           KeyboardEvent.KeyPress({ key: "a" }),
-          KeyboardEvent.Clear(),
+          KeyboardEvent.Clear({}),
           KeyboardEvent.KeyPress({ key: "b" }),
         ]);
 

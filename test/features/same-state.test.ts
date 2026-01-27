@@ -1,5 +1,5 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import {
@@ -12,17 +12,17 @@ import {
 } from "../../src/index.js";
 
 describe("Same-state Transitions", () => {
-  type FormState = State<{
-    Form: { name: string; count: number };
-    Submitted: {};
-  }>;
-  const FormState = State<FormState>();
+  const FormState = State({
+    Form: { name: Schema.String, count: Schema.Number },
+    Submitted: {},
+  });
+  type FormState = typeof FormState.Type;
 
-  type FormEvent = Event<{
-    SetName: { name: string };
-    Submit: {};
-  }>;
-  const FormEvent = Event<FormEvent>();
+  const FormEvent = Event({
+    SetName: { name: Schema.String },
+    Submit: {},
+  });
+  type FormEvent = typeof FormEvent.Type;
 
   test("default: same state tag skips exit/enter effects", async () => {
     const effects: string[] = [];
@@ -35,7 +35,7 @@ describe("Same-state Transitions", () => {
           Machine.on(FormState.Form, FormEvent.SetName, ({ state, event }) =>
             FormState.Form({ name: event.name, count: state.count + 1 }),
           ),
-          Machine.on(FormState.Form, FormEvent.Submit, () => FormState.Submitted()),
+          Machine.on(FormState.Form, FormEvent.Submit, () => FormState.Submitted({})),
           Machine.onEnter(FormState.Form, "enterForm"),
           Machine.onExit(FormState.Form, "exitForm"),
         );
@@ -67,7 +67,7 @@ describe("Same-state Transitions", () => {
         expect(effects).toEqual(["enter:Form"]);
 
         // Different state tag - runs exit
-        yield* actor.send(FormEvent.Submit());
+        yield* actor.send(FormEvent.Submit({}));
         yield* yieldFibers;
 
         expect(effects).toEqual(["enter:Form", "exit:Form"]);

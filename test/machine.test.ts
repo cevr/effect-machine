@@ -1,21 +1,21 @@
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import { Machine, simulate, State, Event } from "../src/index.js";
 
-type CounterState = State<{
-  Idle: { count: number };
-  Counting: { count: number };
-  Done: { count: number };
-}>;
-const CounterState = State<CounterState>();
+const CounterState = State({
+  Idle: { count: Schema.Number },
+  Counting: { count: Schema.Number },
+  Done: { count: Schema.Number },
+});
+type CounterState = typeof CounterState.Type;
 
-type CounterEvent = Event<{
-  Start: {};
-  Increment: {};
-  Stop: {};
-}>;
-const CounterEvent = Event<CounterEvent>();
+const CounterEvent = Event({
+  Start: {},
+  Increment: {},
+  Stop: {},
+});
+type CounterEvent = typeof CounterEvent.Type;
 
 describe("Machine", () => {
   test("creates machine with initial state using .pipe() syntax", () => {

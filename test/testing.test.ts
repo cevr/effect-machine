@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import {
@@ -12,20 +12,20 @@ import {
   Event,
 } from "../src/index.js";
 
-type TestState = State<{
-  Idle: {};
-  Loading: {};
-  Success: { data: string };
-  Error: { message: string };
-}>;
-const TestState = State<TestState>();
+const TestState = State({
+  Idle: {},
+  Loading: {},
+  Success: { data: Schema.String },
+  Error: { message: Schema.String },
+});
+type TestState = typeof TestState.Type;
 
-type TestEvent = Event<{
-  Fetch: {};
-  Resolve: { data: string };
-  Reject: { message: string };
-}>;
-const TestEvent = Event<TestEvent>();
+const TestEvent = Event({
+  Fetch: {},
+  Resolve: { data: Schema.String },
+  Reject: { message: Schema.String },
+});
+type TestEvent = typeof TestEvent.Type;
 
 const testMachine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
   Machine.on(TestState.Idle, TestEvent.Fetch, () => TestState.Loading()),

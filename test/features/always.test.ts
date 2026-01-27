@@ -1,21 +1,21 @@
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import { Event, Machine, simulate, State } from "../../src/index.js";
 
 describe("Always Transitions", () => {
   test("applies eventless transition on state entry", async () => {
-    type TestState = State<{
-      Calculating: { value: number };
-      High: { value: number };
-      Low: { value: number };
-    }>;
-    const TestState = State<TestState>();
+    const TestState = State({
+      Calculating: { value: Schema.Number },
+      High: { value: Schema.Number },
+      Low: { value: Schema.Number },
+    });
+    type TestState = typeof TestState.Type;
 
-    type TestEvent = Event<{
-      SetValue: { value: number };
-    }>;
-    const TestEvent = Event<TestEvent>();
+    const TestEvent = Event({
+      SetValue: { value: Schema.Number },
+    });
+    type TestEvent = typeof TestEvent.Type;
 
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -38,16 +38,16 @@ describe("Always Transitions", () => {
   });
 
   test("cascades through multiple always transitions", async () => {
-    type TestState = State<{
-      A: { n: number };
-      B: { n: number };
-      C: { n: number };
-      Done: { n: number };
-    }>;
-    const TestState = State<TestState>();
+    const TestState = State({
+      A: { n: Schema.Number },
+      B: { n: Schema.Number },
+      C: { n: Schema.Number },
+      Done: { n: Schema.Number },
+    });
+    type TestState = typeof TestState.Type;
 
-    type TestEvent = Event<{ Start: {} }>;
-    const TestEvent = Event<TestEvent>();
+    const TestEvent = Event({ Start: {} });
+    type TestEvent = typeof TestEvent.Type;
 
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -68,24 +68,24 @@ describe("Always Transitions", () => {
   });
 
   test("guard cascade - first match wins", async () => {
-    type TestState = State<{
-      Input: { value: number };
-      High: {};
-      Medium: {};
-      Low: {};
-    }>;
-    const TestState = State<TestState>();
+    const TestState = State({
+      Input: { value: Schema.Number },
+      High: {},
+      Medium: {},
+      Low: {},
+    });
+    type TestState = typeof TestState.Type;
 
-    type TestEvent = Event<{ Process: {} }>;
-    const TestEvent = Event<TestEvent>();
+    const TestEvent = Event({ Process: {} });
+    type TestEvent = typeof TestEvent.Type;
 
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.make<TestState, TestEvent>(TestState.Input({ value: 50 })).pipe(
           Machine.always(TestState.Input, [
-            { guard: (s) => s.value >= 70, to: () => TestState.High() },
-            { guard: (s) => s.value >= 40, to: () => TestState.Medium() },
-            { to: () => TestState.Low() },
+            { guard: (s) => s.value >= 70, to: () => TestState.High({}) },
+            { guard: (s) => s.value >= 40, to: () => TestState.Medium({}) },
+            { to: () => TestState.Low({}) },
           ]),
           Machine.final(TestState.High),
           Machine.final(TestState.Medium),

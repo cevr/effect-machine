@@ -1,5 +1,5 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Effect, Layer, TestClock, TestContext } from "effect";
+import { Effect, Layer, Schema, TestClock, TestContext } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import {
@@ -19,31 +19,37 @@ import {
  * Tests: retry after error, bridge vs API routing, mid-flow cancellation
  */
 describe("Payment Flow Pattern", () => {
-  type PaymentMethod = "card" | "bridge" | "cash";
+  const PaymentMethod = Schema.Literal("card", "bridge", "cash");
+  type PaymentMethod = typeof PaymentMethod.Type;
 
-  type PaymentState = State<{
-    Idle: {};
-    SelectingMethod: { amount: number };
-    ProcessingPayment: { method: PaymentMethod; amount: number; attempts: number };
-    AwaitingBridgeConfirm: { transactionId: string };
-    PaymentError: { error: string; canRetry: boolean; attempts: number; amount: number };
-    PaymentSuccess: { receiptId: string };
-    PaymentCancelled: {};
-  }>;
-  const PaymentState = State<PaymentState>();
+  const PaymentState = State({
+    Idle: {},
+    SelectingMethod: { amount: Schema.Number },
+    ProcessingPayment: { method: PaymentMethod, amount: Schema.Number, attempts: Schema.Number },
+    AwaitingBridgeConfirm: { transactionId: Schema.String },
+    PaymentError: {
+      error: Schema.String,
+      canRetry: Schema.Boolean,
+      attempts: Schema.Number,
+      amount: Schema.Number,
+    },
+    PaymentSuccess: { receiptId: Schema.String },
+    PaymentCancelled: {},
+  });
+  type PaymentState = typeof PaymentState.Type;
 
-  type PaymentEvent = Event<{
-    StartCheckout: { amount: number };
-    SelectMethod: { method: PaymentMethod };
-    PaymentSucceeded: { receiptId: string };
-    PaymentFailed: { error: string; canRetry: boolean };
-    BridgeConfirmed: { transactionId: string };
-    BridgeTimeout: {};
-    Retry: {};
-    Cancel: {};
-    AutoDismissError: {};
-  }>;
-  const PaymentEvent = Event<PaymentEvent>();
+  const PaymentEvent = Event({
+    StartCheckout: { amount: Schema.Number },
+    SelectMethod: { method: PaymentMethod },
+    PaymentSucceeded: { receiptId: Schema.String },
+    PaymentFailed: { error: Schema.String, canRetry: Schema.Boolean },
+    BridgeConfirmed: { transactionId: Schema.String },
+    BridgeTimeout: {},
+    Retry: {},
+    Cancel: {},
+    AutoDismissError: {},
+  });
+  type PaymentEvent = typeof PaymentEvent.Type;
 
   // Type aliases for guards
   type SelectingMethodState = PaymentState & { _tag: "SelectingMethod" };
@@ -59,7 +65,7 @@ describe("Payment Flow Pattern", () => {
     ({ state }) => state.canRetry && state.attempts < 3,
   );
 
-  const paymentMachine = Machine.make<PaymentState, PaymentEvent>(PaymentState.Idle()).pipe(
+  const paymentMachine = Machine.make<PaymentState, PaymentEvent>(PaymentState.Idle({})).pipe(
     // Start checkout
     Machine.on(PaymentState.Idle, PaymentEvent.StartCheckout, ({ event }) =>
       PaymentState.SelectingMethod({ amount: event.amount }),
@@ -98,7 +104,7 @@ describe("Payment Flow Pattern", () => {
         }),
       ),
     ),
-    Machine.delay(PaymentState.AwaitingBridgeConfirm, "30 seconds", PaymentEvent.BridgeTimeout()),
+    Machine.delay(PaymentState.AwaitingBridgeConfirm, "30 seconds", PaymentEvent.BridgeTimeout({})),
 
     // Processing results
     Machine.from(PaymentState.ProcessingPayment).pipe(
@@ -128,11 +134,11 @@ describe("Payment Flow Pattern", () => {
           }),
         { guard: canRetry },
       ),
-      Machine.on(PaymentEvent.AutoDismissError, () => PaymentState.Idle()),
+      Machine.on(PaymentEvent.AutoDismissError, () => PaymentState.Idle({})),
     ),
 
     // Auto-dismiss non-retryable errors
-    Machine.delay(PaymentState.PaymentError, "5 seconds", PaymentEvent.AutoDismissError(), {
+    Machine.delay(PaymentState.PaymentError, "5 seconds", PaymentEvent.AutoDismissError({}), {
       guard: (state) => !state.canRetry,
     }),
 
@@ -145,7 +151,7 @@ describe("Payment Flow Pattern", () => {
         PaymentState.PaymentError,
       ),
       PaymentEvent.Cancel,
-      () => PaymentState.PaymentCancelled(),
+      () => PaymentState.PaymentCancelled({}),
     ),
 
     Machine.final(PaymentState.PaymentSuccess),
@@ -188,7 +194,7 @@ describe("Payment Flow Pattern", () => {
           PaymentEvent.StartCheckout({ amount: 50 }),
           PaymentEvent.SelectMethod({ method: "card" }),
           PaymentEvent.PaymentFailed({ error: "Network error", canRetry: true }),
-          PaymentEvent.Retry(),
+          PaymentEvent.Retry({}),
           PaymentEvent.PaymentSucceeded({ receiptId: "rcpt-retry" }),
         ],
         [
@@ -215,17 +221,17 @@ describe("Payment Flow Pattern", () => {
         // Fail and retry twice (total 3 attempts)
         yield* actor.send(PaymentEvent.PaymentFailed({ error: "Error 1", canRetry: true }));
         yield* yieldFibers;
-        yield* actor.send(PaymentEvent.Retry());
+        yield* actor.send(PaymentEvent.Retry({}));
         yield* yieldFibers;
         yield* actor.send(PaymentEvent.PaymentFailed({ error: "Error 2", canRetry: true }));
         yield* yieldFibers;
-        yield* actor.send(PaymentEvent.Retry());
+        yield* actor.send(PaymentEvent.Retry({}));
         yield* yieldFibers;
         yield* actor.send(PaymentEvent.PaymentFailed({ error: "Error 3", canRetry: true }));
         yield* yieldFibers;
 
         // Third retry should be blocked (attempts = 3, guard requires < 3)
-        yield* actor.send(PaymentEvent.Retry());
+        yield* actor.send(PaymentEvent.Retry({}));
         yield* yieldFibers;
 
         const state = yield* actor.state.get;
@@ -241,7 +247,7 @@ describe("Payment Flow Pattern", () => {
         [
           PaymentEvent.StartCheckout({ amount: 100 }),
           PaymentEvent.SelectMethod({ method: "card" }),
-          PaymentEvent.Cancel(),
+          PaymentEvent.Cancel({}),
         ],
         ["Idle", "SelectingMethod", "ProcessingPayment", "PaymentCancelled"],
       ),
@@ -252,7 +258,7 @@ describe("Payment Flow Pattern", () => {
     await Effect.runPromise(
       assertNeverReaches(
         paymentMachine,
-        [PaymentEvent.StartCheckout({ amount: 100 }), PaymentEvent.Cancel()],
+        [PaymentEvent.StartCheckout({ amount: 100 }), PaymentEvent.Cancel({})],
         "PaymentSuccess",
       ),
     );

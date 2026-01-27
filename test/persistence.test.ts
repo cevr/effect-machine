@@ -16,55 +16,41 @@ import {
   yieldFibers,
 } from "../src/index.js";
 
-// Test state and event types
-type OrderState = State<{
-  Idle: {};
-  Pending: { orderId: string };
-  Paid: { orderId: string; amount: number };
-  Done: {};
-}>;
-const OrderState = State<OrderState>();
+// Test state and event types using MachineSchema pattern
+const OrderState = State({
+  Idle: {},
+  Pending: { orderId: Schema.String },
+  Paid: { orderId: Schema.String, amount: Schema.Number },
+  Done: {},
+});
+type OrderState = typeof OrderState.Type;
 
-type OrderEvent = Event<{
-  Submit: { orderId: string };
-  Pay: { amount: number };
-  Complete: {};
-}>;
-const OrderEvent = Event<OrderEvent>();
-
-// Schemas for persistence
-const StateSchema = Schema.Union(
-  Schema.TaggedStruct("Idle", {}),
-  Schema.TaggedStruct("Pending", { orderId: Schema.String }),
-  Schema.TaggedStruct("Paid", { orderId: Schema.String, amount: Schema.Number }),
-  Schema.TaggedStruct("Done", {}),
-);
-
-const EventSchema = Schema.Union(
-  Schema.TaggedStruct("Submit", { orderId: Schema.String }),
-  Schema.TaggedStruct("Pay", { amount: Schema.Number }),
-  Schema.TaggedStruct("Complete", {}),
-);
+const OrderEvent = Event({
+  Submit: { orderId: Schema.String },
+  Pay: { amount: Schema.Number },
+  Complete: {},
+});
+type OrderEvent = typeof OrderEvent.Type;
 
 // Test layer combining ActorSystem and InMemoryPersistenceAdapter
 const TestLayer = Layer.merge(ActorSystemDefault, InMemoryPersistenceAdapter);
 
 describe("Persistence", () => {
   const createPersistentMachine = () =>
-    Machine.make<OrderState, OrderEvent>(OrderState.Idle()).pipe(
+    Machine.make<OrderState, OrderEvent>(OrderState.Idle({})).pipe(
       Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
         OrderState.Pending({ orderId: event.orderId }),
       ),
       Machine.on(OrderState.Pending, OrderEvent.Pay, ({ state, event }) =>
         OrderState.Paid({ orderId: state.orderId, amount: event.amount }),
       ),
-      Machine.on(OrderState.Paid, OrderEvent.Complete, () => OrderState.Done()),
+      Machine.on(OrderState.Paid, OrderEvent.Complete, () => OrderState.Done({})),
       Machine.final(OrderState.Done),
       Machine.persist({
         snapshotSchedule: Schedule.forever,
         journalEvents: true,
-        stateSchema: StateSchema,
-        eventSchema: EventSchema,
+        stateSchema: OrderState,
+        eventSchema: OrderEvent,
       }),
     );
 
@@ -214,7 +200,9 @@ describe("Persistence", () => {
         const system = yield* ActorSystemService;
 
         // Create machine with no automatic snapshots (using recurs(0) which never triggers)
-        const noAutoSnapshotMachine = Machine.make<OrderState, OrderEvent>(OrderState.Idle()).pipe(
+        const noAutoSnapshotMachine = Machine.make<OrderState, OrderEvent>(
+          OrderState.Idle({}),
+        ).pipe(
           Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
             OrderState.Pending({ orderId: event.orderId }),
           ),
@@ -224,8 +212,8 @@ describe("Persistence", () => {
           Machine.persist({
             snapshotSchedule: Schedule.stop, // Never auto-snapshot
             journalEvents: true,
-            stateSchema: StateSchema,
-            eventSchema: EventSchema,
+            stateSchema: OrderState,
+            eventSchema: OrderEvent,
           }),
         );
 
@@ -275,7 +263,7 @@ describe("Persistence", () => {
 
         // Create machine that snapshots infrequently
         const infrequentSnapshotMachine = Machine.make<OrderState, OrderEvent>(
-          OrderState.Idle(),
+          OrderState.Idle({}),
         ).pipe(
           Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
             OrderState.Pending({ orderId: event.orderId }),
@@ -286,8 +274,8 @@ describe("Persistence", () => {
           Machine.persist({
             snapshotSchedule: Schedule.stop, // Never auto-snapshot
             journalEvents: true,
-            stateSchema: StateSchema,
-            eventSchema: EventSchema,
+            stateSchema: OrderState,
+            eventSchema: OrderEvent,
           }),
         );
 
@@ -430,7 +418,7 @@ describe("Persistence", () => {
         yield* yieldFibers;
         yield* actor.send(OrderEvent.Pay({ amount: 100 }));
         yield* yieldFibers;
-        yield* actor.send(OrderEvent.Complete());
+        yield* actor.send(OrderEvent.Complete({}));
         yield* yieldFibers;
 
         const state = yield* actor.snapshot;
@@ -442,20 +430,20 @@ describe("Persistence", () => {
 
 describe("Persistence Registry", () => {
   const createPersistentMachine = (machineType?: string) =>
-    Machine.make<OrderState, OrderEvent>(OrderState.Idle()).pipe(
+    Machine.make<OrderState, OrderEvent>(OrderState.Idle({})).pipe(
       Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
         OrderState.Pending({ orderId: event.orderId }),
       ),
       Machine.on(OrderState.Pending, OrderEvent.Pay, ({ state, event }) =>
         OrderState.Paid({ orderId: state.orderId, amount: event.amount }),
       ),
-      Machine.on(OrderState.Paid, OrderEvent.Complete, () => OrderState.Done()),
+      Machine.on(OrderState.Paid, OrderEvent.Complete, () => OrderState.Done({})),
       Machine.final(OrderState.Done),
       Machine.persist({
         snapshotSchedule: Schedule.forever,
         journalEvents: true,
-        stateSchema: StateSchema,
-        eventSchema: EventSchema,
+        stateSchema: OrderState,
+        eventSchema: OrderEvent,
         machineType,
       }),
     );

@@ -1,5 +1,5 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Effect, Layer, TestClock, TestContext } from "effect";
+import { Effect, Layer, Schema, TestClock, TestContext } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import {
@@ -12,16 +12,16 @@ import {
 } from "../../src/index.js";
 
 describe("Delay Transitions", () => {
-  type NotifState = State<{
-    Showing: { message: string };
-    Dismissed: {};
-  }>;
-  const NotifState = State<NotifState>();
+  const NotifState = State({
+    Showing: { message: Schema.String },
+    Dismissed: {},
+  });
+  type NotifState = typeof NotifState.Type;
 
-  type NotifEvent = Event<{
-    Dismiss: {};
-  }>;
-  const NotifEvent = Event<NotifEvent>();
+  const NotifEvent = Event({
+    Dismiss: {},
+  });
+  type NotifEvent = typeof NotifEvent.Type;
 
   test("schedules event after duration with TestClock", async () => {
     await Effect.runPromise(
@@ -29,8 +29,8 @@ describe("Delay Transitions", () => {
         const machine = Machine.make<NotifState, NotifEvent>(
           NotifState.Showing({ message: "Hello" }),
         ).pipe(
-          Machine.on(NotifState.Showing, NotifEvent.Dismiss, () => NotifState.Dismissed()),
-          Machine.delay(NotifState.Showing, "3 seconds", NotifEvent.Dismiss()),
+          Machine.on(NotifState.Showing, NotifEvent.Dismiss, () => NotifState.Dismissed({})),
+          Machine.delay(NotifState.Showing, "3 seconds", NotifEvent.Dismiss({})),
           Machine.final(NotifState.Dismissed),
         );
 
@@ -63,8 +63,8 @@ describe("Delay Transitions", () => {
         const machine = Machine.make<NotifState, NotifEvent>(
           NotifState.Showing({ message: "Hello" }),
         ).pipe(
-          Machine.on(NotifState.Showing, NotifEvent.Dismiss, () => NotifState.Dismissed()),
-          Machine.delay(NotifState.Showing, "3 seconds", NotifEvent.Dismiss()),
+          Machine.on(NotifState.Showing, NotifEvent.Dismiss, () => NotifState.Dismissed({})),
+          Machine.delay(NotifState.Showing, "3 seconds", NotifEvent.Dismiss({})),
           Machine.final(NotifState.Dismissed),
         );
 
@@ -72,7 +72,7 @@ describe("Delay Transitions", () => {
         const actor = yield* system.spawn("notification", machine);
 
         // Manual dismiss before timer
-        yield* actor.send(NotifEvent.Dismiss());
+        yield* actor.send(NotifEvent.Dismiss({}));
         yield* yieldFibers;
 
         let current = yield* actor.state.get;

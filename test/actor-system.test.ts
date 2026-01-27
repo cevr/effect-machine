@@ -1,5 +1,5 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import {
@@ -11,32 +11,32 @@ import {
   Event,
 } from "../src/index.js";
 
-type TestState = State<{
-  Idle: {};
-  Active: { value: number };
-  Done: {};
-}>;
-const TestState = State<TestState>();
+const TestState = State({
+  Idle: {},
+  Active: { value: Schema.Number },
+  Done: {},
+});
+type TestState = typeof TestState.Type;
 
-type TestEvent = Event<{
-  Start: { value: number };
-  Update: { value: number };
-  Stop: {};
-}>;
-const TestEvent = Event<TestEvent>();
+const TestEvent = Event({
+  Start: { value: Schema.Number },
+  Update: { value: Schema.Number },
+  Stop: {},
+});
+type TestEvent = typeof TestEvent.Type;
 
 describe("ActorSystem", () => {
   test("spawns actors and processes events", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+        const machine = Machine.make<TestState, TestEvent>(TestState.Idle({})).pipe(
           Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
             TestState.Active({ value: event.value }),
           ),
           Machine.on(TestState.Active, TestEvent.Update, ({ event }) =>
             TestState.Active({ value: event.value }),
           ),
-          Machine.on(TestState.Active, TestEvent.Stop, () => TestState.Done()),
+          Machine.on(TestState.Active, TestEvent.Stop, () => TestState.Done({})),
           Machine.final(TestState.Done),
         );
 
@@ -58,7 +58,7 @@ describe("ActorSystem", () => {
           expect(state2.value).toBe(20);
         }
 
-        yield* actor.send(TestEvent.Stop());
+        yield* actor.send(TestEvent.Stop({}));
         yield* yieldFibers;
 
         const state3 = yield* actor.state.get;
@@ -70,7 +70,7 @@ describe("ActorSystem", () => {
   test("stops actors properly", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+        const machine = Machine.make<TestState, TestEvent>(TestState.Idle({})).pipe(
           Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
             TestState.Active({ value: event.value }),
           ),

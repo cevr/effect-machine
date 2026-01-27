@@ -1,93 +1,93 @@
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import { Event, Machine, simulate, State } from "../../src/index.js";
 
 describe("Choose Combinator", () => {
   test("first matching guard wins", async () => {
-    type TestState = State<{
-      Idle: { value: number };
-      High: {};
-      Medium: {};
-      Low: {};
-    }>;
-    const TestState = State<TestState>();
+    const TestState = State({
+      Idle: { value: Schema.Number },
+      High: {},
+      Medium: {},
+      Low: {},
+    });
+    type TestState = typeof TestState.Type;
 
-    type TestEvent = Event<{
-      Check: {};
-    }>;
-    const TestEvent = Event<TestEvent>();
+    const TestEvent = Event({
+      Check: {},
+    });
+    type TestEvent = typeof TestEvent.Type;
 
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.make<TestState, TestEvent>(TestState.Idle({ value: 75 })).pipe(
           Machine.choose(TestState.Idle, TestEvent.Check, [
-            { guard: ({ state }) => state.value >= 70, to: () => TestState.High() },
-            { guard: ({ state }) => state.value >= 40, to: () => TestState.Medium() },
-            { otherwise: true, to: () => TestState.Low() },
+            { guard: ({ state }) => state.value >= 70, to: () => TestState.High({}) },
+            { guard: ({ state }) => state.value >= 40, to: () => TestState.Medium({}) },
+            { otherwise: true, to: () => TestState.Low({}) },
           ]),
           Machine.final(TestState.High),
           Machine.final(TestState.Medium),
           Machine.final(TestState.Low),
         );
 
-        const result = yield* simulate(machine, [TestEvent.Check()]);
+        const result = yield* simulate(machine, [TestEvent.Check({})]);
         expect(result.finalState._tag).toBe("High");
       }),
     );
   });
 
   test("otherwise branch catches all", async () => {
-    type TestState = State<{
-      Idle: { value: number };
-      High: {};
-      Low: {};
-    }>;
-    const TestState = State<TestState>();
+    const TestState = State({
+      Idle: { value: Schema.Number },
+      High: {},
+      Low: {},
+    });
+    type TestState = typeof TestState.Type;
 
-    type TestEvent = Event<{
-      Check: {};
-    }>;
-    const TestEvent = Event<TestEvent>();
+    const TestEvent = Event({
+      Check: {},
+    });
+    type TestEvent = typeof TestEvent.Type;
 
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.make<TestState, TestEvent>(TestState.Idle({ value: 10 })).pipe(
           Machine.choose(TestState.Idle, TestEvent.Check, [
-            { guard: ({ state }) => state.value >= 70, to: () => TestState.High() },
-            { otherwise: true, to: () => TestState.Low() },
+            { guard: ({ state }) => state.value >= 70, to: () => TestState.High({}) },
+            { otherwise: true, to: () => TestState.Low({}) },
           ]),
           Machine.final(TestState.High),
           Machine.final(TestState.Low),
         );
 
-        const result = yield* simulate(machine, [TestEvent.Check()]);
+        const result = yield* simulate(machine, [TestEvent.Check({})]);
         expect(result.finalState._tag).toBe("Low");
       }),
     );
   });
 
   test("runs effect on matching branch", async () => {
-    type TestState = State<{
-      Idle: {};
-      Done: {};
-    }>;
-    const TestState = State<TestState>();
+    const TestState = State({
+      Idle: {},
+      Done: {},
+    });
+    type TestState = typeof TestState.Type;
 
-    type TestEvent = Event<{
-      Go: {};
-    }>;
-    const TestEvent = Event<TestEvent>();
+    const TestEvent = Event({
+      Go: {},
+    });
+    type TestEvent = typeof TestEvent.Type;
 
     await Effect.runPromise(
       Effect.gen(function* () {
         const logs: string[] = [];
 
-        const machine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+        const machine = Machine.make<TestState, TestEvent>(TestState.Idle({})).pipe(
           Machine.choose(TestState.Idle, TestEvent.Go, [
             {
               otherwise: true,
-              to: () => TestState.Done(),
+              to: () => TestState.Done({}),
               effect: () =>
                 Effect.sync(() => {
                   logs.push("effect ran");
@@ -97,7 +97,7 @@ describe("Choose Combinator", () => {
           Machine.final(TestState.Done),
         );
 
-        yield* simulate(machine, [TestEvent.Go()]);
+        yield* simulate(machine, [TestEvent.Go({})]);
         expect(logs).toEqual(["effect ran"]);
       }),
     );

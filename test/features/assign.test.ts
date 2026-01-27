@@ -1,21 +1,21 @@
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import { Event, Machine, simulate, State } from "../../src/index.js";
 
 describe("Assign and Update Helpers", () => {
-  type FormState = State<{
-    Editing: { name: string; email: string };
-    Submitted: { name: string; email: string };
-  }>;
-  const FormState = State<FormState>();
+  const FormState = State({
+    Editing: { name: Schema.String, email: Schema.String },
+    Submitted: { name: Schema.String, email: Schema.String },
+  });
+  type FormState = typeof FormState.Type;
 
-  type FormEvent = Event<{
-    SetName: { name: string };
-    SetEmail: { email: string };
-    Submit: {};
-  }>;
-  const FormEvent = Event<FormEvent>();
+  const FormEvent = Event({
+    SetName: { name: Schema.String },
+    SetEmail: { email: Schema.String },
+    Submit: {},
+  });
+  type FormEvent = typeof FormEvent.Type;
 
   test("assign helper updates partial state", async () => {
     await Effect.runPromise(
@@ -42,7 +42,7 @@ describe("Assign and Update Helpers", () => {
         const result = yield* simulate(machine, [
           FormEvent.SetName({ name: "John" }),
           FormEvent.SetEmail({ email: "john@example.com" }),
-          FormEvent.Submit(),
+          FormEvent.Submit({}),
         ]);
 
         expect(result.finalState._tag).toBe("Submitted");
@@ -75,7 +75,7 @@ describe("Assign and Update Helpers", () => {
         const result = yield* simulate(machine, [
           FormEvent.SetName({ name: "Jane" }),
           FormEvent.SetEmail({ email: "jane@example.com" }),
-          FormEvent.Submit(),
+          FormEvent.Submit({}),
         ]);
 
         expect(result.finalState._tag).toBe("Submitted");
@@ -109,7 +109,7 @@ describe("Assign and Update Helpers", () => {
 
         const result = yield* simulate(machine, [
           FormEvent.SetName({ name: "A".repeat(100) }), // blocked by guard
-          FormEvent.Submit(),
+          FormEvent.Submit({}),
         ]);
 
         expect(result.finalState._tag).toBe("Submitted");

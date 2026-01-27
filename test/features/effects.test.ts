@@ -1,5 +1,5 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Effect, Ref } from "effect";
+import { Effect, Ref, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import {
@@ -14,23 +14,23 @@ import {
 } from "../../src/index.js";
 
 describe("Effect Slots", () => {
-  type FetchState = State<{
-    Idle: {};
-    Loading: { url: string };
-    Success: { data: string };
-    Error: { message: string };
-  }>;
-  const FetchState = State<FetchState>();
+  const FetchState = State({
+    Idle: {},
+    Loading: { url: Schema.String },
+    Success: { data: Schema.String },
+    Error: { message: Schema.String },
+  });
+  type FetchState = typeof FetchState.Type;
 
-  type FetchEvent = Event<{
-    Fetch: { url: string };
-    Resolve: { data: string };
-    Reject: { message: string };
-  }>;
-  const FetchEvent = Event<FetchEvent>();
+  const FetchEvent = Event({
+    Fetch: { url: Schema.String },
+    Resolve: { data: Schema.String },
+    Reject: { message: Schema.String },
+  });
+  type FetchEvent = typeof FetchEvent.Type;
 
   // Machine with effect slots
-  const baseMachine = Machine.make<FetchState, FetchEvent>(FetchState.Idle()).pipe(
+  const baseMachine = Machine.make<FetchState, FetchEvent>(FetchState.Idle({})).pipe(
     Machine.on(FetchState.Idle, FetchEvent.Fetch, ({ event }) =>
       FetchState.Loading({ url: event.url }),
     ),
@@ -228,7 +228,7 @@ describe("Effect Slots", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         // Using the pipeable form - handlers first, then machine
-        const providedMachine = Machine.make<FetchState, FetchEvent>(FetchState.Idle()).pipe(
+        const providedMachine = Machine.make<FetchState, FetchEvent>(FetchState.Idle({})).pipe(
           Machine.on(FetchState.Idle, FetchEvent.Fetch, ({ event }) =>
             FetchState.Loading({ url: event.url }),
           ),
@@ -268,20 +268,20 @@ describe("Effect Slots", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        type TimerState = State<{
-          Running: {};
-          Stopped: {};
-        }>;
-        const TimerState = State<TimerState>();
+        const TimerState = State({
+          Running: {},
+          Stopped: {},
+        });
+        type TimerState = typeof TimerState.Type;
 
-        type TimerEvent = Event<{
-          Stop: {};
-          Tick: {};
-        }>;
-        const TimerEvent = Event<TimerEvent>();
+        const TimerEvent = Event({
+          Stop: {},
+          Tick: {},
+        });
+        type TimerEvent = typeof TimerEvent.Type;
 
-        const timerMachine = Machine.make<TimerState, TimerEvent>(TimerState.Running()).pipe(
-          Machine.on(TimerState.Running, TimerEvent.Stop, () => TimerState.Stopped()),
+        const timerMachine = Machine.make<TimerState, TimerEvent>(TimerState.Running({})).pipe(
+          Machine.on(TimerState.Running, TimerEvent.Stop, () => TimerState.Stopped({})),
           Machine.invoke(TimerState.Running, "runTimer"),
           Machine.final(TimerState.Stopped),
         );
@@ -310,7 +310,7 @@ describe("Effect Slots", () => {
         expect(log).toEqual(["timer:start"]);
 
         // Stop should cancel the invoke
-        yield* actor.send(TimerEvent.Stop());
+        yield* actor.send(TimerEvent.Stop({}));
         yield* yieldFibers;
 
         const state = yield* actor.snapshot;

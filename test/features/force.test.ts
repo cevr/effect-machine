@@ -1,5 +1,5 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Effect, Layer, TestClock, TestContext } from "effect";
+import { Effect, Layer, Schema, TestClock, TestContext } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import {
@@ -12,18 +12,18 @@ import {
 } from "../../src/index.js";
 
 describe("on.force Transitions", () => {
-  type PollState = State<{
-    Polling: { attempts: number };
-    Done: {};
-  }>;
-  const PollState = State<PollState>();
+  const PollState = State({
+    Polling: { attempts: Schema.Number },
+    Done: {},
+  });
+  type PollState = typeof PollState.Type;
 
-  type PollEvent = Event<{
-    Poll: {};
-    Reset: {};
-    Finish: {};
-  }>;
-  const PollEvent = Event<PollEvent>();
+  const PollEvent = Event({
+    Poll: {},
+    Reset: {},
+    Finish: {},
+  });
+  type PollEvent = typeof PollEvent.Type;
 
   test("on.force runs exit/enter for same state tag", async () => {
     const effects: string[] = [];
@@ -36,7 +36,7 @@ describe("on.force Transitions", () => {
           Machine.on.force(PollState.Polling, PollEvent.Reset, ({ state }) =>
             PollState.Polling({ attempts: state.attempts + 1 }),
           ),
-          Machine.on(PollState.Polling, PollEvent.Finish, () => PollState.Done()),
+          Machine.on(PollState.Polling, PollEvent.Finish, () => PollState.Done({})),
           Machine.onEnter(PollState.Polling, "enterPolling"),
           Machine.onExit(PollState.Polling, "exitPolling"),
         );
@@ -59,7 +59,7 @@ describe("on.force Transitions", () => {
         expect(effects).toEqual(["enter:Polling:0"]);
 
         // on.force runs exit/enter
-        yield* actor.send(PollEvent.Reset());
+        yield* actor.send(PollEvent.Reset({}));
         yield* yieldFibers;
 
         const state = yield* actor.state.get;
@@ -68,7 +68,7 @@ describe("on.force Transitions", () => {
         expect(effects).toEqual(["enter:Polling:0", "exit:Polling:0", "enter:Polling:1"]);
 
         // Another force transition
-        yield* actor.send(PollEvent.Reset());
+        yield* actor.send(PollEvent.Reset({}));
         yield* yieldFibers;
 
         expect(effects).toEqual([
@@ -89,8 +89,8 @@ describe("on.force Transitions", () => {
           Machine.on.force(PollState.Polling, PollEvent.Reset, ({ state }) =>
             PollState.Polling({ attempts: state.attempts + 1 }),
           ),
-          Machine.on(PollState.Polling, PollEvent.Poll, () => PollState.Done()),
-          Machine.delay(PollState.Polling, "5 seconds", PollEvent.Poll()),
+          Machine.on(PollState.Polling, PollEvent.Poll, () => PollState.Done({})),
+          Machine.delay(PollState.Polling, "5 seconds", PollEvent.Poll({})),
         );
 
         const system = yield* ActorSystemService;
@@ -104,7 +104,7 @@ describe("on.force Transitions", () => {
         expect(state._tag).toBe("Polling");
 
         // Reset - should restart the 5 second timer
-        yield* actor.send(PollEvent.Reset());
+        yield* actor.send(PollEvent.Reset({}));
         yield* yieldFibers;
 
         // Advance another 3 seconds (6 total from start, but 3 from reset)
