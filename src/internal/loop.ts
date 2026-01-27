@@ -10,6 +10,7 @@ import {
   findOnEnterEffects,
   findOnExitEffects,
 } from "./transition-index.js";
+import { GuardProvisionError } from "../errors.js";
 
 /** Listener set for sync subscriptions */
 type Listeners<S> = Set<(state: S) => void>;
@@ -61,11 +62,11 @@ export const resolveTransition = <
         (transition.guardNeedsProvision === true
           ? (() => {
               if (transition.guardName === undefined) {
-                throw new Error("Guard marked for provision but has no name.");
+                throw new GuardProvisionError({ guardName: "<unnamed>" });
               }
               const handler = machine.guardHandlers.get(transition.guardName);
               if (handler === undefined) {
-                throw new Error(`Missing guard handler for "${transition.guardName}".`);
+                throw new GuardProvisionError({ guardName: transition.guardName });
               }
               return handler;
             })()

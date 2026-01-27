@@ -12,6 +12,7 @@ import type { StateEffectContext, TransitionContext } from "../internal/types.js
 import type { BrandedState, BrandedEvent } from "../internal/brands.js";
 import { pipeArguments } from "effect/Pipeable";
 import { createFiberStorage } from "../internal/fiber-storage.js";
+import { MissingSlotHandlerError, UnknownSlotError } from "../errors.js";
 
 type IsAny<T> = 0 extends 1 & T ? true : false;
 type IsUnknown<T> = unknown extends T ? ([T] extends [unknown] ? true : false) : false;
@@ -149,12 +150,12 @@ function provideImpl<
 
   for (const name of slotNames) {
     if (!handlerNames.has(name)) {
-      throw new Error(`Missing handler for effect slot "${name}"`);
+      throw new MissingSlotHandlerError({ slotName: name });
     }
   }
   for (const name of handlerNames) {
     if (!slotNames.has(name)) {
-      throw new Error(`Unknown effect slot "${name}" - no slot with this name exists`);
+      throw new UnknownSlotError({ slotName: name });
     }
   }
 

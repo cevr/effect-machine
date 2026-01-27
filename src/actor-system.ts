@@ -4,6 +4,7 @@ import type { Scope } from "effect";
 import type { ActorRef } from "./actor-ref.js";
 import type { Machine } from "./machine.js";
 import { createActor } from "./internal/loop.js";
+import { DuplicateActorError, UnprovidedSlotsError } from "./errors.js";
 import type {
   ActorMetadata,
   PersistenceError,
@@ -184,16 +185,13 @@ const make = Effect.gen(function* () {
       // Check if actor already exists
       const existing = yield* SynchronizedRef.get(actors);
       if (existing.has(id)) {
-        throw new Error(`Actor with id "${id}" already exists`);
+        throw new DuplicateActorError({ actorId: id });
       }
 
       // Validate all effect slots are provided (runtime safety net)
       if (machine.effectSlots.size > 0) {
         const unprovided = Array.from(machine.effectSlots.keys());
-        throw new Error(
-          `Cannot spawn machine with unprovided effect slots: ${unprovided.join(", ")}. ` +
-            `Use Machine.provide() to supply effect handlers.`,
-        );
+        throw new UnprovidedSlotsError({ slots: unprovided });
       }
 
       // Create the actor
@@ -237,7 +235,7 @@ const make = Effect.gen(function* () {
       // Check if actor already exists
       const existing = yield* SynchronizedRef.get(actors);
       if (existing.has(id)) {
-        throw new Error(`Actor with id "${id}" already exists`);
+        throw new DuplicateActorError({ actorId: id });
       }
 
       const adapter = yield* PersistenceAdapterTag;
@@ -325,7 +323,7 @@ const make = Effect.gen(function* () {
       // Check if actor already exists
       const existing = yield* SynchronizedRef.get(actors);
       if (existing.has(id)) {
-        throw new Error(`Actor with id "${id}" already exists`);
+        throw new DuplicateActorError({ actorId: id });
       }
 
       // Try to restore from persistence

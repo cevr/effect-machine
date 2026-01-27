@@ -2,6 +2,7 @@ import type { Schema, Schedule } from "effect";
 
 import type { Machine } from "../machine.js";
 import type { StateBrand, EventBrand } from "../internal/brands.js";
+import { MissingSchemaError } from "../errors.js";
 
 // Branded type constraints
 type BrandedState = { readonly _tag: string } & StateBrand;
@@ -115,10 +116,7 @@ export const persist =
     const eventSchema = machine.eventSchema;
 
     if (stateSchema === undefined || eventSchema === undefined) {
-      throw new Error(
-        "persist requires schemas attached to the machine. " +
-          "Use Machine.make({ state, event, initial }) to create the machine.",
-      );
+      throw new MissingSchemaError({ operation: "persist" });
     }
 
     return {

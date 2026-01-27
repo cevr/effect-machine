@@ -1,6 +1,19 @@
 // Machine namespace (Effect-style)
 export * as Machine from "./namespace.js";
 
+// Errors
+export {
+  DuplicateActorError,
+  GuardCompositionError,
+  GuardProvisionError,
+  InvalidSchemaError,
+  MissingMatchHandlerError,
+  MissingSchemaError,
+  MissingSlotHandlerError,
+  UnknownSlotError,
+  UnprovidedSlotsError,
+} from "./errors.js";
+
 // Schema-first State/Event definitions (single source of truth)
 export { State, Event } from "./machine-schema.js";
 export type { MachineStateSchema, MachineEventSchema } from "./machine-schema.js";

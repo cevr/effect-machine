@@ -37,6 +37,7 @@
  */
 import { Schema } from "effect";
 import type { StateBrand, EventBrand } from "./internal/brands.js";
+import { InvalidSchemaError, MissingMatchHandlerError } from "./errors.js";
 
 // ============================================================================
 // Type Helpers
@@ -185,7 +186,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
   // Build union schema from all variants
   const variantArray = Object.values(variants);
   if (variantArray.length === 0) {
-    throw new Error("MachineSchema requires at least one variant");
+    throw new InvalidSchemaError();
   }
 
   // Schema.Union requires at least 2 members, handle single variant case
@@ -210,7 +211,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
       const cases = maybeCases as Record<string, (v: unknown) => unknown>;
       const handler = cases[value._tag];
       if (handler === undefined) {
-        throw new Error(`No handler for tag: ${value._tag}`);
+        throw new MissingMatchHandlerError({ tag: value._tag });
       }
       return handler(value);
     }
@@ -219,7 +220,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
     return (value: { _tag: string }): unknown => {
       const handler = cases[value._tag];
       if (handler === undefined) {
-        throw new Error(`No handler for tag: ${value._tag}`);
+        throw new MissingMatchHandlerError({ tag: value._tag });
       }
       return handler(value);
     };

@@ -7,8 +7,11 @@ import {
   Event,
   Machine,
   type MachineType,
+  MissingSlotHandlerError,
   simulate,
   State,
+  UnknownSlotError,
+  UnprovidedSlotsError,
 } from "../../src/index.js";
 import { describe, expect, it, test, yieldFibers } from "../utils/effect-test.js";
 
@@ -163,19 +166,23 @@ describe("Effect Slots", () => {
   test("Machine.provide throws on missing handler", () => {
     const built = baseMachine;
 
-    expect(() => {
+    try {
       // @ts-expect-error - intentionally missing handlers for testing
       Machine.provide(built, {
         fetchData: () => Effect.void,
         // Missing notifySuccess and cleanup
       });
-    }).toThrow('Missing handler for effect slot "notifySuccess"');
+      expect.unreachable("Should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(MissingSlotHandlerError);
+      expect((e as MissingSlotHandlerError).slotName).toBe("notifySuccess");
+    }
   });
 
   test("Machine.provide throws on extra handler", () => {
     const built = baseMachine;
 
-    expect(() => {
+    try {
       Machine.provide(built, {
         fetchData: () => Effect.void,
         notifySuccess: () => Effect.void,
@@ -183,7 +190,11 @@ describe("Effect Slots", () => {
         // @ts-expect-error - extra handler for testing
         unknownSlot: () => Effect.void,
       });
-    }).toThrow('Unknown effect slot "unknownSlot"');
+      expect.unreachable("Should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(UnknownSlotError);
+      expect((e as UnknownSlotError).slotName).toBe("unknownSlot");
+    }
   });
 
   it.scopedLive("spawning unprovided machine throws runtime error", () =>
@@ -197,17 +208,17 @@ describe("Effect Slots", () => {
 
       const system = yield* ActorSystemService;
 
-      let caughtError: Error | undefined;
+      let caughtError: UnprovidedSlotsError | undefined;
       yield* system.spawn("bad", built as unknown as ProvidedMachineType).pipe(
         Effect.catchAllDefect((defect) => {
-          caughtError = defect as Error;
+          caughtError = defect as UnprovidedSlotsError;
           return Effect.void;
         }),
       );
 
       expect(caughtError).toBeDefined();
-      expect(caughtError!.message).toContain("unprovided effect slots");
-      expect(caughtError!.message).toContain("fetchData");
+      expect(caughtError).toBeInstanceOf(UnprovidedSlotsError);
+      expect(caughtError!.slots).toContain("fetchData");
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
 

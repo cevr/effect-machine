@@ -1,0 +1,64 @@
+/**
+ * Typed error classes for effect-machine.
+ *
+ * All errors extend Schema.TaggedError for:
+ * - Type-safe catching via Effect.catchTag
+ * - Serialization support
+ * - Composable error handling
+ *
+ * @module
+ */
+import { Schema } from "effect";
+
+/** Attempted to spawn/restore actor with ID already in use */
+export class DuplicateActorError extends Schema.TaggedError<DuplicateActorError>()(
+  "DuplicateActorError",
+  { actorId: Schema.String },
+) {}
+
+/** Machine has unprovided effect slots */
+export class UnprovidedSlotsError extends Schema.TaggedError<UnprovidedSlotsError>()(
+  "UnprovidedSlotsError",
+  { slots: Schema.Array(Schema.String) },
+) {}
+
+/** Operation requires schemas attached to machine */
+export class MissingSchemaError extends Schema.TaggedError<MissingSchemaError>()(
+  "MissingSchemaError",
+  { operation: Schema.String },
+) {}
+
+/** State/Event schema has no variants */
+export class InvalidSchemaError extends Schema.TaggedError<InvalidSchemaError>()(
+  "InvalidSchemaError",
+  {},
+) {}
+
+/** $match called with missing handler for tag */
+export class MissingMatchHandlerError extends Schema.TaggedError<MissingMatchHandlerError>()(
+  "MissingMatchHandlerError",
+  { tag: Schema.String },
+) {}
+
+/** Machine.provide() missing handler for declared slot */
+export class MissingSlotHandlerError extends Schema.TaggedError<MissingSlotHandlerError>()(
+  "MissingSlotHandlerError",
+  { slotName: Schema.String },
+) {}
+
+/** Machine.provide() given handler for unknown slot */
+export class UnknownSlotError extends Schema.TaggedError<UnknownSlotError>()("UnknownSlotError", {
+  slotName: Schema.String,
+}) {}
+
+/** Guard slot not provided via Machine.provide() */
+export class GuardProvisionError extends Schema.TaggedError<GuardProvisionError>()(
+  "GuardProvisionError",
+  { guardName: Schema.String },
+) {}
+
+/** Guard.and/or/not called on guard without predicate */
+export class GuardCompositionError extends Schema.TaggedError<GuardCompositionError>()(
+  "GuardCompositionError",
+  { guardName: Schema.String, operation: Schema.String },
+) {}

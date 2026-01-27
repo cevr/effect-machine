@@ -8,6 +8,7 @@ import { Rpc } from "@effect/rpc";
 import type { Schema } from "effect";
 
 import type { AnySlot, Machine } from "../machine.js";
+import { MissingSchemaError } from "../errors.js";
 
 /**
  * Options for toEntity.
@@ -83,10 +84,7 @@ export const toEntity = <
   const eventSchema = machine.eventSchema;
 
   if (stateSchema === undefined || eventSchema === undefined) {
-    throw new Error(
-      "toEntity requires schemas attached to the machine. " +
-        "Use Machine.make({ state, event, initial }) to create the machine.",
-    );
+    throw new MissingSchemaError({ operation: "toEntity" });
   }
 
   return Entity.make(options.type, [

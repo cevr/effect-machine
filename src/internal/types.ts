@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 
 import type { MachineRef } from "../machine.js";
+import { GuardCompositionError } from "../errors.js";
 
 /**
  * Extracts _tag from a tagged union member
@@ -212,9 +213,7 @@ export const Guard = {
     // All guards must have predicates for composition
     const predicates = guards.map((g) => {
       if (g.predicate === undefined) {
-        throw new Error(
-          `Cannot compose guard "${g.name}" - it has no predicate. Provide it first.`,
-        );
+        throw new GuardCompositionError({ guardName: g.name, operation: "and" });
       }
       return g.predicate;
     });
@@ -257,9 +256,7 @@ export const Guard = {
     const names = guards.map((g) => g.name);
     const predicates = guards.map((g) => {
       if (g.predicate === undefined) {
-        throw new Error(
-          `Cannot compose guard "${g.name}" - it has no predicate. Provide it first.`,
-        );
+        throw new GuardCompositionError({ guardName: g.name, operation: "or" });
       }
       return g.predicate;
     });
@@ -300,9 +297,7 @@ export const Guard = {
    */
   not: <S, E, R>(guard: Guard<S, E, R>): Guard<S, E, R> => {
     if (guard.predicate === undefined) {
-      throw new Error(
-        `Cannot negate guard "${guard.name}" - it has no predicate. Provide it first.`,
-      );
+      throw new GuardCompositionError({ guardName: guard.name, operation: "not" });
     }
     const pred = guard.predicate;
     return {

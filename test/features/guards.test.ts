@@ -2,7 +2,15 @@
 import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { Event, Guard, Machine, simulate, State, type TransitionContext } from "../../src/index.js";
+import {
+  Event,
+  Guard,
+  Machine,
+  MissingSlotHandlerError,
+  simulate,
+  State,
+  type TransitionContext,
+} from "../../src/index.js";
 
 describe("Named Guards (Effect Slots)", () => {
   const TestState = State({
@@ -104,13 +112,17 @@ describe("Named Guards (Effect Slots)", () => {
 
     // TypeScript now catches missing guard at compile time
     // Runtime also throws if somehow bypassed
-    expect(() => {
+    try {
       Machine.provide(
         machine,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- testing runtime error
         { doPrint: () => Effect.void } as any,
       );
-    }).toThrow('Missing handler for effect slot "canPrint"');
+      expect.unreachable("Should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(MissingSlotHandlerError);
+      expect((e as MissingSlotHandlerError).slotName).toBe("canPrint");
+    }
   });
 
   test("guard handler stored separately from other effects", () => {
