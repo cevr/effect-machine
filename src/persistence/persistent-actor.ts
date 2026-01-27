@@ -7,6 +7,7 @@ import { Inspector as InspectorTag } from "../inspection.js";
 import { applyAlways, resolveTransition } from "../internal/loop.js";
 
 import type {
+  ActorMetadata,
   PersistedEvent,
   PersistenceAdapter,
   PersistenceError,
@@ -220,6 +221,11 @@ export const createPersistentActor = <
       const eventQueue = yield* Queue.unbounded<E>();
       const listeners: Listeners<S> = new Set();
 
+      // Track creation time for metadata
+      const createdAt = Option.isSome(initialSnapshot)
+        ? initialSnapshot.value.timestamp
+        : Date.now();
+
       // Create self reference for sending events
       const self: MachineRef<E> = {
         send: (event) => Queue.offer(eventQueue, event),
@@ -234,6 +240,16 @@ export const createPersistentActor = <
           timestamp: Date.now(),
         });
       }
+
+      // Save initial metadata
+      yield* saveMetadata(
+        id,
+        resolvedInitial,
+        initialVersion,
+        createdAt,
+        persistentMachine.persistence,
+        adapter,
+      );
 
       // Check if initial state is final
       if (machine.finalStates.has(resolvedInitial._tag)) {
@@ -268,6 +284,7 @@ export const createPersistentActor = <
           self,
           listeners,
           adapter,
+          createdAt,
           inspector,
         ),
       );
@@ -315,6 +332,7 @@ const persistentEventLoop = <
   self: MachineRef<E>,
   listeners: Listeners<S>,
   adapter: PersistenceAdapter,
+  createdAt: number,
   inspector?: Inspector<S, E>,
 ): Effect.Effect<void, never, R> =>
   Effect.gen(function* () {
@@ -410,6 +428,9 @@ const persistentEventLoop = <
         // Save snapshot (after state and version are both updated)
         yield* saveSnapshot(id, newState, newVersion, persistence, adapter);
 
+        // Update metadata
+        yield* saveMetadata(id, newState, newVersion, createdAt, persistence, adapter);
+
         // Run entry effects
         yield* runEntryEffects(machine, newState, self, id, inspector);
 
@@ -432,6 +453,9 @@ const persistentEventLoop = <
 
         // Save snapshot (after state and version are both updated)
         yield* saveSnapshot(id, newState, newVersion, persistence, adapter);
+
+        // Update metadata
+        yield* saveMetadata(id, newState, newVersion, createdAt, persistence, adapter);
       }
     }
   });
@@ -460,6 +484,39 @@ const saveSnapshot = <
   return adapter
     .saveSnapshot(id, snapshot, persistence.stateSchema)
     .pipe(Effect.catchAll((e) => Effect.logWarning(`Failed to save snapshot for actor ${id}`, e)));
+};
+
+/**
+ * Save or update actor metadata if adapter supports registry.
+ * Called on spawn and state transitions.
+ */
+const saveMetadata = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  SSI,
+  ESI,
+>(
+  id: string,
+  state: S,
+  version: number,
+  createdAt: number,
+  persistence: PersistentMachine<S, E, never, SSI, ESI>["persistence"],
+  adapter: PersistenceAdapter,
+): Effect.Effect<void> => {
+  if (adapter.saveMetadata === undefined) {
+    return Effect.void;
+  }
+  const metadata: ActorMetadata = {
+    id,
+    machineType: persistence.machineType ?? "unknown",
+    createdAt,
+    lastActivityAt: Date.now(),
+    version,
+    stateTag: state._tag,
+  };
+  return adapter
+    .saveMetadata(metadata)
+    .pipe(Effect.catchAll((e) => Effect.logWarning(`Failed to save metadata for actor ${id}`, e)));
 };
 
 /**

@@ -1,6 +1,43 @@
 import { Context, Schema } from "effect";
 import type { Effect, Option } from "effect";
 
+import type { PersistentActorRef } from "./persistent-actor.js";
+
+/**
+ * Metadata for a persisted actor.
+ * Used for discovery and filtering during bulk restore.
+ */
+export interface ActorMetadata {
+  readonly id: string;
+  /** User-provided identifier for the machine type */
+  readonly machineType: string;
+  readonly createdAt: number;
+  readonly lastActivityAt: number;
+  readonly version: number;
+  /** Current state _tag value */
+  readonly stateTag: string;
+}
+
+/**
+ * Result of a bulk restore operation.
+ * Contains both successfully restored actors and failures.
+ */
+export interface RestoreResult<
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+> {
+  readonly restored: ReadonlyArray<PersistentActorRef<S, E>>;
+  readonly failed: ReadonlyArray<RestoreFailure>;
+}
+
+/**
+ * A single restore failure with actor ID and error details.
+ */
+export interface RestoreFailure {
+  readonly id: string;
+  readonly error: PersistenceError;
+}
+
 /**
  * Snapshot of actor state at a point in time
  */
@@ -68,6 +105,28 @@ export interface PersistenceAdapter {
    * Delete all persisted data for an actor (snapshot + events).
    */
   readonly deleteActor: (id: string) => Effect.Effect<void, PersistenceError>;
+
+  // --- Optional registry methods for actor discovery ---
+
+  /**
+   * List all persisted actor metadata.
+   * Optional — adapters without registry support can omit this.
+   */
+  readonly listActors?: () => Effect.Effect<ReadonlyArray<ActorMetadata>, PersistenceError>;
+
+  /**
+   * Save or update actor metadata.
+   * Called on spawn and state transitions.
+   * Optional — adapters without registry support can omit this.
+   */
+  readonly saveMetadata?: (metadata: ActorMetadata) => Effect.Effect<void, PersistenceError>;
+
+  /**
+   * Delete actor metadata.
+   * Called when actor is deleted.
+   * Optional — adapters without registry support can omit this.
+   */
+  readonly deleteMetadata?: (id: string) => Effect.Effect<void, PersistenceError>;
 }
 
 /**

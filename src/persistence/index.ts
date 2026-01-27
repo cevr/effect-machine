@@ -1,5 +1,12 @@
 // Core types
-export type { PersistedEvent, PersistenceAdapter, Snapshot } from "./adapter.js";
+export type {
+  ActorMetadata,
+  PersistedEvent,
+  PersistenceAdapter,
+  RestoreFailure,
+  RestoreResult,
+  Snapshot,
+} from "./adapter.js";
 export { PersistenceAdapterTag, PersistenceError, VersionConflictError } from "./adapter.js";
 
 // Persistent machine

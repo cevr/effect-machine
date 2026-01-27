@@ -3,6 +3,7 @@ import { Effect, Layer, Option, Schedule, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import {
+  type ActorMetadata,
   ActorSystemDefault,
   ActorSystemService,
   Event,
@@ -443,6 +444,299 @@ describe("Persistence", () => {
         const state = yield* actor.snapshot;
         expect(state._tag).toBe("Done");
       }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+    );
+  });
+});
+
+describe("Persistence Registry", () => {
+  const createPersistentMachine = (machineType?: string) =>
+    Machine.build(
+      Machine.make<OrderState, OrderEvent>(OrderState.Idle()).pipe(
+        Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
+          OrderState.Pending({ orderId: event.orderId }),
+        ),
+        Machine.on(OrderState.Pending, OrderEvent.Pay, ({ state, event }) =>
+          OrderState.Paid({ orderId: state.orderId, amount: event.amount }),
+        ),
+        Machine.on(OrderState.Paid, OrderEvent.Complete, () => OrderState.Done()),
+        Machine.final(OrderState.Done),
+      ),
+    ).pipe(
+      withPersistence({
+        snapshotSchedule: Schedule.forever,
+        journalEvents: true,
+        stateSchema: StateSchema,
+        eventSchema: EventSchema,
+        machineType,
+      }),
+    );
+
+  test("listPersisted returns empty for no actors", async () => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const system = yield* ActorSystemService;
+        const actors = yield* system.listPersisted();
+        expect(actors).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+    );
+  });
+
+  test("listPersisted shows spawned actors with metadata", async () => {
+    const sharedAdapter = await Effect.runPromise(makeInMemoryPersistenceAdapter);
+    const sharedLayer = Layer.merge(
+      ActorSystemDefault,
+      Layer.succeed(PersistenceAdapterTag, sharedAdapter),
+    );
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const system = yield* ActorSystemService;
+        const persistentMachine = createPersistentMachine("orders");
+
+        // Spawn an actor
+        const actor = yield* system.spawn("order-reg-1", persistentMachine);
+        yield* actor.send(OrderEvent.Submit({ orderId: "ORD-1" }));
+        yield* yieldFibers;
+
+        // List should show it
+        const actors = yield* system.listPersisted();
+        expect(actors.length).toBe(1);
+        expect(actors[0]?.id).toBe("order-reg-1");
+        expect(actors[0]?.machineType).toBe("orders");
+        expect(actors[0]?.stateTag).toBe("Pending");
+        expect(actors[0]?.version).toBe(1);
+      }).pipe(Effect.scoped, Effect.provide(sharedLayer)),
+    );
+  });
+
+  test("restoreMany restores multiple actors", async () => {
+    const sharedAdapter = await Effect.runPromise(makeInMemoryPersistenceAdapter);
+    const sharedLayer = Layer.merge(
+      ActorSystemDefault,
+      Layer.succeed(PersistenceAdapterTag, sharedAdapter),
+    );
+
+    // First spawn some actors
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const system = yield* ActorSystemService;
+        const persistentMachine = createPersistentMachine("orders");
+
+        const actor1 = yield* system.spawn("order-m-1", persistentMachine);
+        yield* actor1.send(OrderEvent.Submit({ orderId: "ORD-A" }));
+        yield* yieldFibers;
+
+        const actor2 = yield* system.spawn("order-m-2", persistentMachine);
+        yield* actor2.send(OrderEvent.Submit({ orderId: "ORD-B" }));
+        yield* yieldFibers;
+        yield* actor2.send(OrderEvent.Pay({ amount: 50 }));
+        yield* yieldFibers;
+      }).pipe(Effect.scoped, Effect.provide(sharedLayer)),
+    );
+
+    // Restore in new scope
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const system = yield* ActorSystemService;
+        const persistentMachine = createPersistentMachine("orders");
+
+        const result = yield* system.restoreMany(["order-m-1", "order-m-2"], persistentMachine);
+
+        expect(result.restored.length).toBe(2);
+        expect(result.failed.length).toBe(0);
+
+        // Verify states
+        const state1 = yield* result.restored[0]!.snapshot;
+        expect(state1._tag).toBe("Pending");
+
+        const state2 = yield* result.restored[1]!.snapshot;
+        expect(state2._tag).toBe("Paid");
+      }).pipe(Effect.scoped, Effect.provide(sharedLayer)),
+    );
+  });
+
+  test("restoreMany reports failures for non-existent actors", async () => {
+    const sharedAdapter = await Effect.runPromise(makeInMemoryPersistenceAdapter);
+    const sharedLayer = Layer.merge(
+      ActorSystemDefault,
+      Layer.succeed(PersistenceAdapterTag, sharedAdapter),
+    );
+
+    // Spawn one actor
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const system = yield* ActorSystemService;
+        const persistentMachine = createPersistentMachine("orders");
+
+        const actor = yield* system.spawn("order-exists", persistentMachine);
+        yield* actor.send(OrderEvent.Submit({ orderId: "ORD-X" }));
+        yield* yieldFibers;
+      }).pipe(Effect.scoped, Effect.provide(sharedLayer)),
+    );
+
+    // Try to restore one that exists and one that doesn't
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const system = yield* ActorSystemService;
+        const persistentMachine = createPersistentMachine("orders");
+
+        const result = yield* system.restoreMany(
+          ["order-exists", "order-not-found"],
+          persistentMachine,
+        );
+
+        expect(result.restored.length).toBe(1);
+        expect(result.failed.length).toBe(1);
+        expect(result.failed[0]?.id).toBe("order-not-found");
+      }).pipe(Effect.scoped, Effect.provide(sharedLayer)),
+    );
+  });
+
+  test("restoreAll restores actors by machineType", async () => {
+    const sharedAdapter = await Effect.runPromise(makeInMemoryPersistenceAdapter);
+    const sharedLayer = Layer.merge(
+      ActorSystemDefault,
+      Layer.succeed(PersistenceAdapterTag, sharedAdapter),
+    );
+
+    // Spawn actors of different types
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const system = yield* ActorSystemService;
+        const orderMachine = createPersistentMachine("orders");
+        const invoiceMachine = createPersistentMachine("invoices");
+
+        const order1 = yield* system.spawn("order-all-1", orderMachine);
+        yield* order1.send(OrderEvent.Submit({ orderId: "O1" }));
+        yield* yieldFibers;
+
+        const order2 = yield* system.spawn("order-all-2", orderMachine);
+        yield* order2.send(OrderEvent.Submit({ orderId: "O2" }));
+        yield* yieldFibers;
+
+        const invoice1 = yield* system.spawn("invoice-1", invoiceMachine);
+        yield* invoice1.send(OrderEvent.Submit({ orderId: "I1" }));
+        yield* yieldFibers;
+      }).pipe(Effect.scoped, Effect.provide(sharedLayer)),
+    );
+
+    // Restore only orders
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const system = yield* ActorSystemService;
+        const orderMachine = createPersistentMachine("orders");
+
+        const result = yield* system.restoreAll(orderMachine);
+
+        expect(result.restored.length).toBe(2);
+        expect(result.failed.length).toBe(0);
+      }).pipe(Effect.scoped, Effect.provide(sharedLayer)),
+    );
+  });
+
+  test("restoreAll filters by stateTag", async () => {
+    const sharedAdapter = await Effect.runPromise(makeInMemoryPersistenceAdapter);
+    const sharedLayer = Layer.merge(
+      ActorSystemDefault,
+      Layer.succeed(PersistenceAdapterTag, sharedAdapter),
+    );
+
+    // Spawn actors in different states
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const system = yield* ActorSystemService;
+        const persistentMachine = createPersistentMachine("orders");
+
+        const pendingActor = yield* system.spawn("order-f-1", persistentMachine);
+        yield* pendingActor.send(OrderEvent.Submit({ orderId: "P1" }));
+        yield* yieldFibers;
+
+        const paidActor = yield* system.spawn("order-f-2", persistentMachine);
+        yield* paidActor.send(OrderEvent.Submit({ orderId: "P2" }));
+        yield* yieldFibers;
+        yield* paidActor.send(OrderEvent.Pay({ amount: 100 }));
+        yield* yieldFibers;
+      }).pipe(Effect.scoped, Effect.provide(sharedLayer)),
+    );
+
+    // Restore only Pending orders
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const system = yield* ActorSystemService;
+        const persistentMachine = createPersistentMachine("orders");
+
+        const result = yield* system.restoreAll(persistentMachine, {
+          filter: (meta: ActorMetadata) => meta.stateTag === "Pending",
+        });
+
+        expect(result.restored.length).toBe(1);
+        expect(result.failed.length).toBe(0);
+
+        const state = yield* result.restored[0]!.snapshot;
+        expect(state._tag).toBe("Pending");
+      }).pipe(Effect.scoped, Effect.provide(sharedLayer)),
+    );
+  });
+
+  test("metadata tracks stateTag changes", async () => {
+    const sharedAdapter = await Effect.runPromise(makeInMemoryPersistenceAdapter);
+    const sharedLayer = Layer.merge(
+      ActorSystemDefault,
+      Layer.succeed(PersistenceAdapterTag, sharedAdapter),
+    );
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const system = yield* ActorSystemService;
+        const persistentMachine = createPersistentMachine("orders");
+
+        const actor = yield* system.spawn("order-track", persistentMachine);
+
+        // Initial state
+        let actors = yield* system.listPersisted();
+        expect(actors[0]?.stateTag).toBe("Idle");
+
+        // Transition to Pending
+        yield* actor.send(OrderEvent.Submit({ orderId: "T1" }));
+        yield* yieldFibers;
+
+        actors = yield* system.listPersisted();
+        expect(actors[0]?.stateTag).toBe("Pending");
+        expect(actors[0]?.version).toBe(1);
+
+        // Transition to Paid
+        yield* actor.send(OrderEvent.Pay({ amount: 50 }));
+        yield* yieldFibers;
+
+        actors = yield* system.listPersisted();
+        expect(actors[0]?.stateTag).toBe("Paid");
+        expect(actors[0]?.version).toBe(2);
+      }).pipe(Effect.scoped, Effect.provide(sharedLayer)),
+    );
+  });
+
+  test("listPersisted gracefully degrades without registry support", async () => {
+    // Create a minimal adapter without registry methods
+    const minimalAdapter = {
+      saveSnapshot: () => Effect.void,
+      loadSnapshot: () => Effect.succeed(Option.none()),
+      appendEvent: () => Effect.void,
+      loadEvents: () => Effect.succeed([]),
+      deleteActor: () => Effect.void,
+      // No listActors, saveMetadata, deleteMetadata
+    };
+
+    const minimalLayer = Layer.merge(
+      ActorSystemDefault,
+      Layer.succeed(PersistenceAdapterTag, minimalAdapter),
+    );
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const system = yield* ActorSystemService;
+        const actors = yield* system.listPersisted();
+        expect(actors).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(minimalLayer)),
     );
   });
 });

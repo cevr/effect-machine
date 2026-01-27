@@ -101,11 +101,14 @@ export {
 
 // Persistence
 export type {
+  ActorMetadata,
   PersistedEvent,
   PersistenceAdapter,
   PersistenceConfig,
   PersistentActorRef,
   PersistentMachine,
+  RestoreFailure,
+  RestoreResult,
   Snapshot,
 } from "./persistence/index.js";
 export {

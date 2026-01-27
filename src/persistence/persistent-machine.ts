@@ -43,6 +43,13 @@ export interface PersistenceConfig<S, E, SSI = unknown, ESI = unknown> {
    * Required for type-safe persistence.
    */
   readonly eventSchema: Schema.Schema<E, ESI, never>;
+
+  /**
+   * User-provided identifier for the machine type.
+   * Used for filtering actors in restoreAll.
+   * Optional — defaults to "unknown" if not provided.
+   */
+  readonly machineType?: string;
 }
 
 /**
@@ -112,6 +119,7 @@ interface WithPersistenceConfig<SSI, ESI> {
   readonly stateSchema: Schema.Schema<any, SSI, never>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- schemas operate on unbranded types
   readonly eventSchema: Schema.Schema<any, ESI, never>;
+  readonly machineType?: string;
 }
 
 export const withPersistence =

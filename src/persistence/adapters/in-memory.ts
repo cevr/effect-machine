@@ -1,6 +1,6 @@
 import { Effect, Layer, Option, Ref, Schema } from "effect";
 
-import type { PersistedEvent, PersistenceAdapter, Snapshot } from "../adapter.js";
+import type { ActorMetadata, PersistedEvent, PersistenceAdapter, Snapshot } from "../adapter.js";
 import { PersistenceAdapterTag, PersistenceError, VersionConflictError } from "../adapter.js";
 
 /**
@@ -21,6 +21,7 @@ interface ActorStorage {
  */
 const make = Effect.gen(function* () {
   const storage = yield* Ref.make(new Map<string, ActorStorage>());
+  const registry = yield* Ref.make(new Map<string, ActorMetadata>());
 
   const getOrCreateStorage = (id: string): Effect.Effect<ActorStorage> =>
     Ref.modify(storage, (map) => {
@@ -201,7 +202,34 @@ const make = Effect.gen(function* () {
       }),
 
     deleteActor: (id: string): Effect.Effect<void, PersistenceError> =>
-      Ref.update(storage, (map) => {
+      Effect.gen(function* () {
+        yield* Ref.update(storage, (map) => {
+          const newMap = new Map(map);
+          newMap.delete(id);
+          return newMap;
+        });
+        // Also delete metadata
+        yield* Ref.update(registry, (map) => {
+          const newMap = new Map(map);
+          newMap.delete(id);
+          return newMap;
+        });
+      }),
+
+    // Registry methods for actor discovery
+
+    listActors: (): Effect.Effect<ReadonlyArray<ActorMetadata>, PersistenceError> =>
+      Effect.map(Ref.get(registry), (map) => Array.from(map.values())),
+
+    saveMetadata: (metadata: ActorMetadata): Effect.Effect<void, PersistenceError> =>
+      Ref.update(registry, (map) => {
+        const newMap = new Map(map);
+        newMap.set(metadata.id, metadata);
+        return newMap;
+      }),
+
+    deleteMetadata: (id: string): Effect.Effect<void, PersistenceError> =>
+      Ref.update(registry, (map) => {
         const newMap = new Map(map);
         newMap.delete(id);
         return newMap;

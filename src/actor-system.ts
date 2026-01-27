@@ -4,8 +4,16 @@ import type { Scope } from "effect";
 import type { ActorRef } from "./actor-ref.js";
 import type { Machine } from "./machine.js";
 import { createActor } from "./internal/loop.js";
-import type { PersistenceError, VersionConflictError } from "./persistence/adapter.js";
-import { PersistenceAdapterTag } from "./persistence/adapter.js";
+import type {
+  ActorMetadata,
+  PersistenceError,
+  RestoreResult,
+  VersionConflictError,
+} from "./persistence/adapter.js";
+import {
+  PersistenceAdapterTag,
+  PersistenceError as PersistenceErrorClass,
+} from "./persistence/adapter.js";
 import type { PersistentMachine } from "./persistence/persistent-machine.js";
 import { isPersistentMachine } from "./persistence/persistent-machine.js";
 import type { PersistentActorRef } from "./persistence/persistent-actor.js";
@@ -91,6 +99,72 @@ export interface ActorSystem {
    * Stop an actor by ID
    */
   readonly stop: (id: string) => Effect.Effect<boolean>;
+
+  /**
+   * List all persisted actor metadata.
+   * Returns empty array if adapter doesn't support registry.
+   *
+   * @example
+   * ```ts
+   * const actors = yield* system.listPersisted();
+   * for (const meta of actors) {
+   *   console.log(`${meta.id}: ${meta.stateTag} (v${meta.version})`);
+   * }
+   * ```
+   */
+  readonly listPersisted: () => Effect.Effect<
+    ReadonlyArray<ActorMetadata>,
+    PersistenceError,
+    PersistenceAdapterTag
+  >;
+
+  /**
+   * Restore multiple actors by ID.
+   * Returns both successfully restored actors and failures.
+   *
+   * @example
+   * ```ts
+   * const result = yield* system.restoreMany(["order-1", "order-2"], orderMachine);
+   * console.log(`Restored: ${result.restored.length}, Failed: ${result.failed.length}`);
+   * ```
+   */
+  readonly restoreMany: <
+    S extends { readonly _tag: string },
+    E extends { readonly _tag: string },
+    R,
+    SSI,
+    ESI,
+  >(
+    ids: ReadonlyArray<string>,
+    machine: PersistentMachine<S, E, R, SSI, ESI>,
+  ) => Effect.Effect<RestoreResult<S, E>, never, R | Scope.Scope | PersistenceAdapterTag>;
+
+  /**
+   * Restore all persisted actors for a machine type.
+   * Uses adapter registry if available, otherwise returns empty result.
+   *
+   * @example
+   * ```ts
+   * const result = yield* system.restoreAll(orderMachine, {
+   *   filter: (meta) => meta.stateTag !== "Done"
+   * });
+   * console.log(`Restored ${result.restored.length} active orders`);
+   * ```
+   */
+  readonly restoreAll: <
+    S extends { readonly _tag: string },
+    E extends { readonly _tag: string },
+    R,
+    SSI,
+    ESI,
+  >(
+    machine: PersistentMachine<S, E, R, SSI, ESI>,
+    options?: { filter?: (meta: ActorMetadata) => boolean },
+  ) => Effect.Effect<
+    RestoreResult<S, E>,
+    PersistenceError,
+    R | Scope.Scope | PersistenceAdapterTag
+  >;
 }
 
 /**
@@ -324,7 +398,95 @@ const make = Effect.gen(function* () {
       return true;
     });
 
-  return ActorSystem.of({ spawn, restore, get, stop });
+  const listPersisted = (): Effect.Effect<
+    ReadonlyArray<ActorMetadata>,
+    PersistenceError,
+    PersistenceAdapterTag
+  > =>
+    Effect.gen(function* () {
+      const adapter = yield* PersistenceAdapterTag;
+      if (adapter.listActors === undefined) {
+        return [];
+      }
+      return yield* adapter.listActors();
+    });
+
+  const restoreMany = <
+    S extends { readonly _tag: string },
+    E extends { readonly _tag: string },
+    R,
+    SSI,
+    ESI,
+  >(
+    ids: ReadonlyArray<string>,
+    persistentMachine: PersistentMachine<S, E, R, SSI, ESI>,
+  ): Effect.Effect<RestoreResult<S, E>, never, R | Scope.Scope | PersistenceAdapterTag> =>
+    Effect.gen(function* () {
+      const restored: PersistentActorRef<S, E>[] = [];
+      const failed: { id: string; error: PersistenceError }[] = [];
+
+      for (const id of ids) {
+        // Skip if already running
+        const existing = yield* SynchronizedRef.get(actors);
+        if (existing.has(id)) {
+          continue;
+        }
+
+        const result = yield* Effect.either(restore(id, persistentMachine));
+        if (result._tag === "Left") {
+          failed.push({ id, error: result.left });
+        } else if (Option.isSome(result.right)) {
+          restored.push(result.right.value);
+        } else {
+          // No persisted state for this ID
+          failed.push({
+            id,
+            error: new PersistenceErrorClass({
+              operation: "restore",
+              actorId: id,
+              message: "No persisted state found",
+            }),
+          });
+        }
+      }
+
+      return { restored, failed };
+    });
+
+  const restoreAll = <
+    S extends { readonly _tag: string },
+    E extends { readonly _tag: string },
+    R,
+    SSI,
+    ESI,
+  >(
+    persistentMachine: PersistentMachine<S, E, R, SSI, ESI>,
+    options?: { filter?: (meta: ActorMetadata) => boolean },
+  ): Effect.Effect<
+    RestoreResult<S, E>,
+    PersistenceError,
+    R | Scope.Scope | PersistenceAdapterTag
+  > =>
+    Effect.gen(function* () {
+      const adapter = yield* PersistenceAdapterTag;
+      if (adapter.listActors === undefined) {
+        return { restored: [], failed: [] };
+      }
+
+      const allMetadata = yield* adapter.listActors();
+      const machineType = persistentMachine.persistence.machineType ?? "unknown";
+
+      // Filter by machineType and optional user filter
+      let filtered = allMetadata.filter((meta) => meta.machineType === machineType);
+      if (options?.filter !== undefined) {
+        filtered = filtered.filter(options.filter);
+      }
+
+      const ids = filtered.map((meta) => meta.id);
+      return yield* restoreMany(ids, persistentMachine);
+    });
+
+  return ActorSystem.of({ spawn, restore, get, stop, listPersisted, restoreMany, restoreAll });
 });
 
 /**
