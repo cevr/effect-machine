@@ -4,11 +4,12 @@ Type-safe state machines for Effect. XState-inspired API with full Effect integr
 
 ## Features
 
-- **Type-safe transitions** - states and events are tagged enums
+- **Type-safe transitions** - branded `State<T>` and `Event<T>` types prevent mixups at compile time
 - **Guard composition** - `Guard.and`, `Guard.or`, `Guard.not`
 - **Eventless transitions** - `always` for computed state changes
 - **Delayed transitions** - `delay` with TestClock support
 - **Actor model** - spawn machines as actors with lifecycle management
+- **Persistence** - snapshot and event sourcing with pluggable adapters
 - **Effect-native** - full integration with Effect runtime, layers, and testing
 
 ## Install
@@ -20,48 +21,77 @@ bun add effect-machine effect
 ## Quick Start
 
 ```typescript
-import { Data, Effect, pipe } from "effect";
-import { build, final, make, on, simulate } from "effect-machine";
+import { Effect } from "effect";
+import { Machine, State, Event, simulate } from "effect-machine";
 
-// Define states
-type State = Data.TaggedEnum<{
+// Define states with branded types
+type MyState = State<{
   Idle: {};
   Loading: { url: string };
   Success: { data: string };
   Error: { message: string };
 }>;
-const State = Data.taggedEnum<State>();
+const MyState = State<MyState>();
 
-// Define events
-type Event = Data.TaggedEnum<{
+// Define events with branded types
+type MyEvent = Event<{
   Fetch: { url: string };
   Resolve: { data: string };
   Reject: { message: string };
 }>;
-const Event = Data.taggedEnum<Event>();
+const MyEvent = Event<MyEvent>();
 
-// Build machine
-const machine = build(
-  pipe(
-    make<State, Event>(State.Idle()),
-    on(State.Idle, Event.Fetch, ({ event }) => State.Loading({ url: event.url })),
-    on(State.Loading, Event.Resolve, ({ event }) => State.Success({ data: event.data })),
-    on(State.Loading, Event.Reject, ({ event }) => State.Error({ message: event.message })),
-    final(State.Success),
-    final(State.Error),
+// Build machine using namespace
+const machine = Machine.make<MyState, MyEvent>(MyState.Idle()).pipe(
+  Machine.on(MyState.Idle, MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url })),
+  Machine.on(MyState.Loading, MyEvent.Resolve, ({ event }) =>
+    MyState.Success({ data: event.data }),
   ),
+  Machine.on(MyState.Loading, MyEvent.Reject, ({ event }) =>
+    MyState.Error({ message: event.message }),
+  ),
+  Machine.final(MyState.Success),
+  Machine.final(MyState.Error),
+  Machine.build,
 );
 
 // Test with simulate
 Effect.runPromise(
   Effect.gen(function* () {
     const result = yield* simulate(machine, [
-      Event.Fetch({ url: "/api" }),
-      Event.Resolve({ data: "hello" }),
+      MyEvent.Fetch({ url: "/api" }),
+      MyEvent.Resolve({ data: "hello" }),
     ]);
     console.log(result.finalState); // Success { data: "hello" }
   }),
 );
+```
+
+## State Scoping with `Machine.from`
+
+Group transitions by source state:
+
+```typescript
+const machine = Machine.make<MyState, MyEvent>(MyState.Idle()).pipe(
+  Machine.from(MyState.Idle).pipe(
+    Machine.on(MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url })),
+  ),
+  Machine.from(MyState.Loading).pipe(
+    Machine.on(MyEvent.Resolve, ({ event }) => MyState.Success({ data: event.data })),
+    Machine.on(MyEvent.Reject, ({ event }) => MyState.Error({ message: event.message })),
+  ),
+  Machine.final(MyState.Success),
+  Machine.final(MyState.Error),
+  Machine.build,
+);
+```
+
+## Multi-State Transitions with `Machine.any`
+
+Handle events from multiple states:
+
+```typescript
+Machine.on(Machine.any(MyState.Loading, MyState.Success), MyEvent.Reset, () => MyState.Idle());
 ```
 
 ## Documentation
@@ -79,25 +109,29 @@ See the [primer](./primer/) for comprehensive documentation:
 
 ### Core
 
-| Export  | Description                               |
-| ------- | ----------------------------------------- |
-| `make`  | Create machine builder with initial state |
-| `build` | Finalize machine definition               |
-| `on`    | Add state/event transition                |
-| `final` | Mark state as final                       |
+| Export          | Description                               |
+| --------------- | ----------------------------------------- |
+| `State<T>`      | Branded state type and constructor        |
+| `Event<T>`      | Branded event type and constructor        |
+| `Machine.make`  | Create machine builder with initial state |
+| `Machine.build` | Finalize machine definition               |
+| `Machine.on`    | Add state/event transition                |
+| `Machine.final` | Mark state as final                       |
 
 ### Combinators
 
-| Export    | Description                               |
-| --------- | ----------------------------------------- |
-| `always`  | Eventless transitions with guard cascade  |
-| `choose`  | Guard cascade for event transitions       |
-| `delay`   | Schedule event after duration             |
-| `assign`  | Helper for partial state updates          |
-| `update`  | Shorthand for `on` + `assign`             |
-| `invoke`  | Run effect on state entry, cancel on exit |
-| `onEnter` | Run effect on state entry                 |
-| `onExit`  | Run effect on state exit                  |
+| Export            | Description                               |
+| ----------------- | ----------------------------------------- |
+| `Machine.from`    | Scope transitions to a source state       |
+| `Machine.any`     | Match multiple states for transitions     |
+| `Machine.always`  | Eventless transitions with guard cascade  |
+| `Machine.choose`  | Guard cascade for event transitions       |
+| `Machine.delay`   | Schedule event after duration             |
+| `Machine.assign`  | Helper for partial state updates          |
+| `Machine.update`  | Shorthand for `on` + `assign`             |
+| `Machine.invoke`  | Run effect on state entry, cancel on exit |
+| `Machine.onEnter` | Run effect on state entry                 |
+| `Machine.onExit`  | Run effect on state exit                  |
 
 ### Guards
 
@@ -123,6 +157,14 @@ See the [primer](./primer/) for comprehensive documentation:
 | -------------------- | -------------------------- |
 | `ActorSystemService` | Actor system service tag   |
 | `ActorSystemDefault` | Default actor system layer |
+
+### Persistence
+
+| Export                       | Description                    |
+| ---------------------------- | ------------------------------ |
+| `withPersistence`            | Add persistence to a machine   |
+| `InMemoryPersistenceAdapter` | In-memory adapter for testing  |
+| `PersistenceAdapterTag`      | Service tag for custom adapter |
 
 ## License
 
