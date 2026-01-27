@@ -1,9 +1,6 @@
-import { Effect, Fiber } from "effect";
-
-import type { MachineBuilder, MachineRef, StateEffect } from "../machine.js";
-import { addOnEnter, addOnExit } from "../machine.js";
+import type { MachineBuilder } from "../machine.js";
+import { addEffectSlot } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
-import type { StateEffectContext } from "../internal/types.js";
 import type { StateBrand, EventBrand } from "../internal/brands.js";
 
 // Branded type constraints
@@ -11,82 +8,41 @@ type BrandedState = { readonly _tag: string } & StateBrand;
 type BrandedEvent = { readonly _tag: string } & EventBrand;
 
 /**
- * Invoke an effect when entering a state, automatically cancelling it on exit.
- * Handler receives a context object with { state, self }.
+ * Register a named invoke slot for a state.
+ * The actual effect handler is provided via `Machine.provide`.
  *
  * @example
  * ```ts
- * pipe(
- *   Machine.make<FetcherState, FetcherEvent>(State.Idle({})),
- *   invoke(State.Loading, ({ state, self }) =>
- *     pipe(
- *       Effect.tryPromise(() => fetch(state.url).then(r => r.json())),
- *       Effect.map((data) => Event._Done({ data })),
- *       Effect.catchAll((e) => Effect.succeed(Event._Error({ error: String(e) }))),
- *       Effect.flatMap(self.send)
- *     )
- *   )
+ * const machine = Machine.make<FetcherState, FetcherEvent>(State.Idle({})).pipe(
+ *   Machine.on(State.Idle, Event.Fetch, ({ event }) => State.Loading({ url: event.url })),
+ *   Machine.on(State.Loading, Event.Resolve, ({ event }) => State.Success({ data: event.data })),
+ *   Machine.invoke(State.Loading, "fetchData"),
  * )
+ *
+ * // Then provide the implementation:
+ * const machineLive = Machine.provide(machine, {
+ *   fetchData: ({ state, self }) =>
+ *     Effect.gen(function* () {
+ *       const http = yield* HttpClient
+ *       const data = yield* http.get(state.url)
+ *       yield* self.send(Event.Resolve({ data }))
+ *     }),
+ * })
  * ```
  */
-export function invoke<
-  NarrowedState extends BrandedState,
-  EventType extends BrandedEvent,
-  R2 = never,
->(
+export function invoke<NarrowedState extends BrandedState, Name extends string>(
   stateConstructor: { (...args: never[]): NarrowedState },
-  handler: (ctx: StateEffectContext<NarrowedState, EventType>) => Effect.Effect<void, never, R2>,
+  name: Name,
 ) {
   const stateTag = getTag(stateConstructor);
 
-  // Unique key for this invoke instance within the state
-  const invokeKey = Symbol("invoke");
-
-  return <State extends BrandedState, Event extends BrandedEvent, R>(
-    builder: MachineBuilder<State, Event, R>,
-  ): MachineBuilder<State, Event, R | R2> => {
-    // Per-actor, per-invoke fiber storage
-    const actorInvokeFibers = new WeakMap<
-      MachineRef<unknown>,
-      Map<symbol, Fiber.RuntimeFiber<void, never>>
-    >();
-
-    const getFiberMap = (self: MachineRef<Event>): Map<symbol, Fiber.RuntimeFiber<void, never>> => {
-      const key = self as MachineRef<unknown>;
-      let map = actorInvokeFibers.get(key);
-      if (map === undefined) {
-        map = new Map();
-        actorInvokeFibers.set(key, map);
-      }
-      return map;
-    };
-
-    const enterEffect: StateEffect<State, Event, R2> = {
+  return <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
+    builder: MachineBuilder<State, Event, R, Effects>,
+  ): MachineBuilder<State, Event, R, Effects | Name> => {
+    return addEffectSlot<State, Event, R, Effects, Name>({
+      type: "invoke",
       stateTag,
-      handler: (ctx) =>
-        Effect.gen(function* () {
-          const fiber = yield* Effect.fork(
-            handler(ctx as unknown as StateEffectContext<NarrowedState, EventType>),
-          );
-          getFiberMap(ctx.self).set(invokeKey, fiber);
-        }),
-    };
-
-    const exitEffect: StateEffect<State, Event, R2> = {
-      stateTag,
-      handler: ({ self }) =>
-        Effect.suspend(() => {
-          const fiberMap = getFiberMap(self);
-          const fiber = fiberMap.get(invokeKey);
-          if (fiber !== undefined) {
-            fiberMap.delete(invokeKey);
-            return Fiber.interrupt(fiber).pipe(Effect.asVoid);
-          }
-          return Effect.void;
-        }),
-    };
-
-    const b1 = addOnEnter(enterEffect)(builder) as MachineBuilder<State, Event, R | R2>;
-    return addOnExit(exitEffect)(b1) as MachineBuilder<State, Event, R | R2>;
+      name,
+    })(builder);
   };
 }

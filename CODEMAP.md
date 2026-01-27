@@ -21,9 +21,10 @@ src/
 │   ├── choose.ts         # Guard cascade for events
 │   ├── delay.ts          # Delayed events (static or dynamic duration)
 │   ├── assign.ts         # Partial state updates (assign, update)
-│   ├── invoke.ts         # Async effect with auto-cancel
-│   ├── on-enter.ts       # State entry effects
-│   └── on-exit.ts        # State exit effects
+│   ├── invoke.ts         # Named invoke slot (effect provided via Machine.provide)
+│   ├── on-enter.ts       # Named onEnter slot (effect provided via Machine.provide)
+│   ├── on-exit.ts        # Named onExit slot (effect provided via Machine.provide)
+│   └── provide.ts        # Machine.provide - wires effect handlers to slots
 └── internal/
     ├── loop.ts           # Event loop, transition resolver, actor creation
     ├── types.ts          # Internal types (contexts, Guard module)
@@ -54,21 +55,22 @@ test/
 
 ## Key Files
 
-| File                  | Purpose                                                             |
-| --------------------- | ------------------------------------------------------------------- |
-| `state.ts`            | Branded `State.TaggedEnum` wrapper - prevents State/Event mixup     |
-| `event.ts`            | Branded `Event.TaggedEnum` wrapper - prevents State/Event mixup     |
-| `internal/brands.ts`  | `StateBrand`/`EventBrand` using Effect's `Brand` (phantom types)    |
-| `namespace.ts`        | Machine namespace export (named `namespace.ts` for macOS compat)    |
-| `internal/loop.ts`    | Event processing, `resolveTransition`, `applyAlways`, `createActor` |
-| `internal/types.ts`   | `TransitionContext`, `StateEffectContext`, `Guard` module           |
-| `machine.ts`          | `Machine`, `MachineBuilder`, `Transition`, `OnOptions` interfaces   |
-| `actor-ref.ts`        | `ActorRef` interface with ergonomic helpers                         |
-| `testing.ts`          | `simulate`, `createTestHarness`, `assertPath`, `assertNeverReaches` |
-| `combinators/from.ts` | `StateScope` for scoped transitions, custom `.pipe()` impl          |
-| `combinators/any.ts`  | `StateMatcher` interface, multi-state matching                      |
-| `delay.ts`            | `DurationOrFn`, WeakMap fiber storage pattern                       |
-| `invoke.ts`           | WeakMap fiber storage pattern (same as delay)                       |
+| File                     | Purpose                                                             |
+| ------------------------ | ------------------------------------------------------------------- |
+| `state.ts`               | Branded `State.TaggedEnum` wrapper - prevents State/Event mixup     |
+| `event.ts`               | Branded `Event.TaggedEnum` wrapper - prevents State/Event mixup     |
+| `internal/brands.ts`     | `StateBrand`/`EventBrand` using Effect's `Brand` (phantom types)    |
+| `namespace.ts`           | Machine namespace export (named `namespace.ts` for macOS compat)    |
+| `internal/loop.ts`       | Event processing, `resolveTransition`, `applyAlways`, `createActor` |
+| `internal/types.ts`      | `TransitionContext`, `StateEffectContext`, `Guard` module           |
+| `machine.ts`             | `Machine`, `MachineBuilder`, `Transition`, `OnOptions` interfaces   |
+| `actor-ref.ts`           | `ActorRef` interface with ergonomic helpers                         |
+| `testing.ts`             | `simulate`, `createTestHarness`, `assertPath`, `assertNeverReaches` |
+| `combinators/from.ts`    | `StateScope` for scoped transitions, custom `.pipe()` impl          |
+| `combinators/any.ts`     | `StateMatcher` interface, multi-state matching                      |
+| `combinators/provide.ts` | `Machine.provide` - wires handlers to effect slots                  |
+| `delay.ts`               | `DurationOrFn`, WeakMap fiber storage pattern                       |
+| `invoke.ts`              | Effect slot registration (handler provided via `Machine.provide`)   |
 
 ## Event Flow
 
@@ -84,7 +86,7 @@ Event → resolveTransition (guard cascade) → onExit → handler → applyAlwa
 
 ## Fiber Storage Pattern
 
-`delay.ts` and `invoke.ts` use WeakMap for per-actor, per-combinator fiber storage:
+`delay.ts` and `provide.ts` use WeakMap for per-actor, per-combinator fiber storage:
 
 ```ts
 const actorFibers = new WeakMap<MachineRef<unknown>, Map<symbol, Fiber>>();
@@ -93,6 +95,20 @@ const instanceKey = Symbol("delay"); // unique per combinator instance
 
 - Prevents closure-based fiber leaks across actor instances
 - Symbol key allows multiple delays/invokes per state
+
+## Effect Slots Pattern
+
+`invoke`, `onEnter`, `onExit` register named slots, not inline handlers:
+
+```ts
+Machine.invoke(State.Loading, "fetchData")  // registers slot
+Machine.provide(machine, { fetchData: ... }) // wires handler
+```
+
+- Slots tracked in `Machine.effectSlots: Map<string, EffectSlot>`
+- `Machine.provide` builds actual `StateEffect` entries from slots + handlers
+- Spawning validates all slots have handlers (runtime check)
+- `simulate()` ignores effects - works with unprovided machines
 
 ## Testing
 

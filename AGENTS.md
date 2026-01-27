@@ -26,7 +26,7 @@ bun run fmt           # oxfmt
 - `always` transitions max 100 iterations (infinite loop protection)
 - `delay` requires `Effect.scoped` + `ActorSystemDefault` layer
 - TestClock: use `Layer.merge(ActorSystemDefault, TestContext.TestContext)`
-- `simulate`/`createTestHarness` are pure - no onEnter/onExit effects
+- `simulate`/`createTestHarness` are pure - no onEnter/onExit/invoke effects
 - Actor testing needs `yieldFibers` after `send()` to let effects run
 - Same-state transitions skip exit/enter by default
 - `on.force()` runs exit/enter even on same state tag - use to restart timers/invoke
@@ -37,6 +37,14 @@ bun run fmt           # oxfmt
 - `namespace.ts` exports Machine namespace (not `Machine.ts` - macOS case-insensitivity)
 - Branded types: `State<T>` / `Event<T>` prevent accidental swap at compile time
 - Brand is phantom (type-level only) - runtime values identical to `Data.TaggedEnum`
+
+## Effect Slots
+
+- `invoke`, `onEnter`, `onExit` take slot name, not inline handler: `Machine.invoke(State.Loading, "fetchData")`
+- Provide handlers via `Machine.provide(machine, { fetchData: ... })` before spawning
+- Spawning machine with unprovided slots → runtime error
+- `simulate()` works without providing effects (pure transitions only)
+- Effects type param `_Effects` is phantom - TypeScript won't catch unprovided slots at compile time
 
 ## Effect Language Service
 

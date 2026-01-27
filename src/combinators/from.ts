@@ -36,24 +36,24 @@ export interface StateScope<NarrowedState extends BrandedState> {
    */
   pipe<E1 extends BrandedEvent, R1>(
     t1: ScopedTransition<NarrowedState, E1, R1>,
-  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R>(
-    builder: MachineBuilder<FullState, FullEvent, R>,
-  ) => MachineBuilder<FullState, FullEvent, R | R1>;
+  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R, Effects extends string>(
+    builder: MachineBuilder<FullState, FullEvent, R, Effects>,
+  ) => MachineBuilder<FullState, FullEvent, R | R1, Effects>;
 
   pipe<E1 extends BrandedEvent, R1, E2 extends BrandedEvent, R2>(
     t1: ScopedTransition<NarrowedState, E1, R1>,
     t2: ScopedTransition<NarrowedState, E2, R2>,
-  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R>(
-    builder: MachineBuilder<FullState, FullEvent, R>,
-  ) => MachineBuilder<FullState, FullEvent, R | R1 | R2>;
+  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R, Effects extends string>(
+    builder: MachineBuilder<FullState, FullEvent, R, Effects>,
+  ) => MachineBuilder<FullState, FullEvent, R | R1 | R2, Effects>;
 
   pipe<E1 extends BrandedEvent, R1, E2 extends BrandedEvent, R2, E3 extends BrandedEvent, R3>(
     t1: ScopedTransition<NarrowedState, E1, R1>,
     t2: ScopedTransition<NarrowedState, E2, R2>,
     t3: ScopedTransition<NarrowedState, E3, R3>,
-  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R>(
-    builder: MachineBuilder<FullState, FullEvent, R>,
-  ) => MachineBuilder<FullState, FullEvent, R | R1 | R2 | R3>;
+  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R, Effects extends string>(
+    builder: MachineBuilder<FullState, FullEvent, R, Effects>,
+  ) => MachineBuilder<FullState, FullEvent, R | R1 | R2 | R3, Effects>;
 
   pipe<
     E1 extends BrandedEvent,
@@ -69,9 +69,9 @@ export interface StateScope<NarrowedState extends BrandedState> {
     t2: ScopedTransition<NarrowedState, E2, R2>,
     t3: ScopedTransition<NarrowedState, E3, R3>,
     t4: ScopedTransition<NarrowedState, E4, R4>,
-  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R>(
-    builder: MachineBuilder<FullState, FullEvent, R>,
-  ) => MachineBuilder<FullState, FullEvent, R | R1 | R2 | R3 | R4>;
+  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R, Effects extends string>(
+    builder: MachineBuilder<FullState, FullEvent, R, Effects>,
+  ) => MachineBuilder<FullState, FullEvent, R | R1 | R2 | R3 | R4, Effects>;
 
   pipe<
     E1 extends BrandedEvent,
@@ -90,9 +90,9 @@ export interface StateScope<NarrowedState extends BrandedState> {
     t3: ScopedTransition<NarrowedState, E3, R3>,
     t4: ScopedTransition<NarrowedState, E4, R4>,
     t5: ScopedTransition<NarrowedState, E5, R5>,
-  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R>(
-    builder: MachineBuilder<FullState, FullEvent, R>,
-  ) => MachineBuilder<FullState, FullEvent, R | R1 | R2 | R3 | R4 | R5>;
+  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R, Effects extends string>(
+    builder: MachineBuilder<FullState, FullEvent, R, Effects>,
+  ) => MachineBuilder<FullState, FullEvent, R | R1 | R2 | R3 | R4 | R5, Effects>;
 
   pipe<
     E1 extends BrandedEvent,
@@ -114,16 +114,16 @@ export interface StateScope<NarrowedState extends BrandedState> {
     t4: ScopedTransition<NarrowedState, E4, R4>,
     t5: ScopedTransition<NarrowedState, E5, R5>,
     t6: ScopedTransition<NarrowedState, E6, R6>,
-  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R>(
-    builder: MachineBuilder<FullState, FullEvent, R>,
-  ) => MachineBuilder<FullState, FullEvent, R | R1 | R2 | R3 | R4 | R5 | R6>;
+  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R, Effects extends string>(
+    builder: MachineBuilder<FullState, FullEvent, R, Effects>,
+  ) => MachineBuilder<FullState, FullEvent, R | R1 | R2 | R3 | R4 | R5 | R6, Effects>;
 
   // Fallback for more than 6 transitions
   pipe(
     ...transitions: Array<ScopedTransition<NarrowedState, BrandedEvent, unknown>>
-  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R>(
-    builder: MachineBuilder<FullState, FullEvent, R>,
-  ) => MachineBuilder<FullState, FullEvent, R | unknown>;
+  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R, Effects extends string>(
+    builder: MachineBuilder<FullState, FullEvent, R, Effects>,
+  ) => MachineBuilder<FullState, FullEvent, R | unknown, Effects>;
 }
 
 /**
@@ -132,15 +132,15 @@ export interface StateScope<NarrowedState extends BrandedState> {
 function stateScopePipe<NarrowedState extends BrandedState>(
   this: StateScope<NarrowedState>,
   ...transitions: Array<ScopedTransition<NarrowedState, BrandedEvent, unknown>>
-): <S extends BrandedState, E extends BrandedEvent, R>(
-  builder: MachineBuilder<S, E, R>,
-) => MachineBuilder<S, E, unknown> {
+): <S extends BrandedState, E extends BrandedEvent, R, Effects extends string>(
+  builder: MachineBuilder<S, E, R, Effects>,
+) => MachineBuilder<S, E, unknown, Effects> {
   const stateTag = this.stateTag;
 
-  return <S extends BrandedState, E extends BrandedEvent, R>(
-    builder: MachineBuilder<S, E, R>,
-  ): MachineBuilder<S, E, unknown> => {
-    let result: MachineBuilder<S, E, unknown> = builder;
+  return <S extends BrandedState, E extends BrandedEvent, R, Effects extends string>(
+    builder: MachineBuilder<S, E, R, Effects>,
+  ): MachineBuilder<S, E, unknown, Effects> => {
+    let result: MachineBuilder<S, E, unknown, Effects> = builder;
     for (const scopedTransition of transitions) {
       const transition: Transition<S, E, unknown> = {
         stateTag,

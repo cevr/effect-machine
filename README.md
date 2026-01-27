@@ -94,6 +94,42 @@ Handle events from multiple states:
 Machine.on(Machine.any(MyState.Loading, MyState.Success), MyEvent.Reset, () => MyState.Idle());
 ```
 
+## Effect Slots
+
+Effects (`invoke`, `onEnter`, `onExit`) use named slots. Provide handlers via `Machine.provide`:
+
+```typescript
+// Define machine with effect slots
+const baseMachine = Machine.make<MyState, MyEvent>(MyState.Idle()).pipe(
+  Machine.on(MyState.Idle, MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url })),
+  Machine.on(MyState.Loading, MyEvent.Resolve, ({ event }) =>
+    MyState.Success({ data: event.data }),
+  ),
+  Machine.invoke(MyState.Loading, "fetchData"),
+  Machine.onEnter(MyState.Success, "notifyUser"),
+  Machine.final(MyState.Success),
+  Machine.build,
+);
+
+// Production: provide real implementations
+const machine = Machine.provide(baseMachine, {
+  fetchData: ({ state, self }) =>
+    Effect.gen(function* () {
+      const data = yield* fetchFromApi(state.url);
+      yield* self.send(MyEvent.Resolve({ data }));
+    }),
+  notifyUser: ({ state }) => Effect.log(`Success: ${state.data}`),
+});
+
+// Test: provide mock implementations
+const testMachine = Machine.provide(baseMachine, {
+  fetchData: ({ self }) => self.send(MyEvent.Resolve({ data: "mock" })),
+  notifyUser: () => Effect.void,
+});
+```
+
+`simulate()` works without providing effects (pure transitions only).
+
 ## Documentation
 
 See the [primer](./primer/) for comprehensive documentation:
@@ -120,18 +156,19 @@ See the [primer](./primer/) for comprehensive documentation:
 
 ### Combinators
 
-| Export            | Description                               |
-| ----------------- | ----------------------------------------- |
-| `Machine.from`    | Scope transitions to a source state       |
-| `Machine.any`     | Match multiple states for transitions     |
-| `Machine.always`  | Eventless transitions with guard cascade  |
-| `Machine.choose`  | Guard cascade for event transitions       |
-| `Machine.delay`   | Schedule event after duration             |
-| `Machine.assign`  | Helper for partial state updates          |
-| `Machine.update`  | Shorthand for `on` + `assign`             |
-| `Machine.invoke`  | Run effect on state entry, cancel on exit |
-| `Machine.onEnter` | Run effect on state entry                 |
-| `Machine.onExit`  | Run effect on state exit                  |
+| Export            | Description                                   |
+| ----------------- | --------------------------------------------- |
+| `Machine.from`    | Scope transitions to a source state           |
+| `Machine.any`     | Match multiple states for transitions         |
+| `Machine.always`  | Eventless transitions with guard cascade      |
+| `Machine.choose`  | Guard cascade for event transitions           |
+| `Machine.delay`   | Schedule event after duration                 |
+| `Machine.assign`  | Helper for partial state updates              |
+| `Machine.update`  | Shorthand for `on` + `assign`                 |
+| `Machine.invoke`  | Register invoke effect slot (provide handler) |
+| `Machine.onEnter` | Register entry effect slot (provide handler)  |
+| `Machine.onExit`  | Register exit effect slot (provide handler)   |
+| `Machine.provide` | Wire effect handlers to named slots           |
 
 ### Guards
 

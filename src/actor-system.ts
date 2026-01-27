@@ -32,9 +32,13 @@ export interface ActorSystem {
    * For regular machines, returns ActorRef.
    * For persistent machines (created with withPersistence), returns PersistentActorRef.
    *
+   * Note: All effect slots must be provided via `Machine.provide` before spawning.
+   * Attempting to spawn a machine with unprovided effect slots will fail.
+   *
    * @example
    * ```ts
-   * // Regular machine
+   * // Regular machine (effects provided)
+   * const machine = Machine.provide(baseMachine, { fetchData: ... })
    * const actor = yield* system.spawn("my-actor", machine);
    *
    * // Persistent machine (auto-detected)
@@ -44,10 +48,10 @@ export interface ActorSystem {
    * ```
    */
   readonly spawn: {
-    // Regular machine overload
+    // Regular machine overload - Effects must be never (all provided)
     <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
       id: string,
-      machine: Machine<S, E, R>,
+      machine: Machine<S, E, R, never>,
     ): Effect.Effect<ActorRef<S, E>, never, R | Scope.Scope>;
 
     // Persistent machine overload
@@ -184,13 +188,22 @@ const make = Effect.gen(function* () {
     R,
   >(
     id: string,
-    machine: Machine<S, E, R>,
+    machine: Machine<S, E, R, never>,
   ): Effect.Effect<ActorRef<S, E>, never, R | Scope.Scope> =>
     Effect.gen(function* () {
       // Check if actor already exists
       const existing = yield* SynchronizedRef.get(actors);
       if (existing.has(id)) {
         throw new Error(`Actor with id "${id}" already exists`);
+      }
+
+      // Validate all effect slots are provided (runtime safety net)
+      if (machine.effectSlots.size > 0) {
+        const unprovided = Array.from(machine.effectSlots.keys());
+        throw new Error(
+          `Cannot spawn machine with unprovided effect slots: ${unprovided.join(", ")}. ` +
+            `Use Machine.provide() to supply effect handlers.`,
+        );
       }
 
       // Create the actor
@@ -284,7 +297,7 @@ const make = Effect.gen(function* () {
   // Type-safe overloaded spawn implementation
   function spawn<S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
     id: string,
-    machine: Machine<S, E, R>,
+    machine: Machine<S, E, R, never>,
   ): Effect.Effect<ActorRef<S, E>, never, R | Scope.Scope>;
   function spawn<
     S extends { readonly _tag: string },
@@ -308,7 +321,7 @@ const make = Effect.gen(function* () {
     ESI,
   >(
     id: string,
-    machine: Machine<S, E, R> | PersistentMachine<S, E, R, SSI, ESI>,
+    machine: Machine<S, E, R, never> | PersistentMachine<S, E, R, SSI, ESI>,
   ):
     | Effect.Effect<ActorRef<S, E>, never, R | Scope.Scope>
     | Effect.Effect<
@@ -321,7 +334,7 @@ const make = Effect.gen(function* () {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return spawnPersistent(id, machine as PersistentMachine<S, E, R, any, any>);
     }
-    return spawnRegular(id, machine as Machine<S, E, R>);
+    return spawnRegular(id, machine as Machine<S, E, R, never>);
   }
 
   const restore = <

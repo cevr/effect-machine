@@ -54,11 +54,11 @@ export function always<NarrowedState extends BrandedState, R2 = never>(
 ) {
   const stateTag = getTag(stateConstructor);
 
-  return <State extends BrandedState, Event extends BrandedEvent, R>(
-    builder: MachineBuilder<State, Event, R>,
-  ): MachineBuilder<State, Event, R | R2> => {
+  return <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
+    builder: MachineBuilder<State, Event, R, Effects>,
+  ): MachineBuilder<State, Event, R | R2, Effects> => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let result: MachineBuilder<State, Event, any> = builder;
+    let result: MachineBuilder<State, Event, any, Effects> = builder;
 
     for (const branch of branches) {
       // A branch is a fallback if:
@@ -84,6 +84,6 @@ export function always<NarrowedState extends BrandedState, R2 = never>(
       };
     }
 
-    return result as MachineBuilder<State, Event, R | R2>;
+    return result as MachineBuilder<State, Event, R | R2, Effects>;
   };
 }

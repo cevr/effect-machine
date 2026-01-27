@@ -71,9 +71,9 @@ export function delay<NarrowedState extends BrandedState, EventType extends Bran
   // Multiple delays on same state need separate storage
   const delayKey = Symbol("delay");
 
-  return <State extends BrandedState, Event extends BrandedEvent, R>(
-    builder: MachineBuilder<State, Event, R>,
-  ): MachineBuilder<State, Event, R> => {
+  return <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
+    builder: MachineBuilder<State, Event, R, Effects>,
+  ): MachineBuilder<State, Event, R, Effects> => {
     // Per-actor, per-delay fiber storage
     const actorDelayFibers = new WeakMap<
       MachineRef<unknown>,
@@ -132,7 +132,7 @@ export function delay<NarrowedState extends BrandedState, EventType extends Bran
     };
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const b1 = addOnEnter(enterEffect)(builder) as MachineBuilder<State, Event, any>;
-    return addOnExit(exitEffect)(b1) as MachineBuilder<State, Event, R>;
+    const b1 = addOnEnter(enterEffect)(builder) as MachineBuilder<State, Event, any, Effects>;
+    return addOnExit(exitEffect)(b1) as MachineBuilder<State, Event, R, Effects>;
   };
 }

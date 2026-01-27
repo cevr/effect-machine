@@ -67,12 +67,12 @@ export function choose<
   const stateTag = getTag(stateConstructor);
   const eventTag = getTag(eventConstructor);
 
-  return <State extends BrandedState, Event extends BrandedEvent, R>(
-    builder: MachineBuilder<State, Event, R>,
-  ): MachineBuilder<State, Event, R | R2> => {
+  return <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
+    builder: MachineBuilder<State, Event, R, Effects>,
+  ): MachineBuilder<State, Event, R | R2, Effects> => {
     // Each branch becomes a separate transition, leveraging guard cascade
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let result: MachineBuilder<State, Event, any> = builder;
+    let result: MachineBuilder<State, Event, any, Effects> = builder;
 
     for (const branch of branches) {
       const transition: Transition<State, Event, R2> = {
@@ -95,6 +95,6 @@ export function choose<
       result = addTransition(transition)(result);
     }
 
-    return result as MachineBuilder<State, Event, R | R2>;
+    return result as MachineBuilder<State, Event, R | R2, Effects>;
   };
 }

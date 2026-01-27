@@ -29,16 +29,21 @@ describe("Same-state Transitions", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<FormState, FormEvent>(FormState.Form({ name: "", count: 0 })).pipe(
-            Machine.on(FormState.Form, FormEvent.SetName, ({ state, event }) =>
-              FormState.Form({ name: event.name, count: state.count + 1 }),
-            ),
-            Machine.on(FormState.Form, FormEvent.Submit, () => FormState.Submitted()),
-            Machine.onEnter(FormState.Form, () => Effect.sync(() => effects.push("enter:Form"))),
-            Machine.onExit(FormState.Form, () => Effect.sync(() => effects.push("exit:Form"))),
+        const baseMachine = Machine.make<FormState, FormEvent>(
+          FormState.Form({ name: "", count: 0 }),
+        ).pipe(
+          Machine.on(FormState.Form, FormEvent.SetName, ({ state, event }) =>
+            FormState.Form({ name: event.name, count: state.count + 1 }),
           ),
+          Machine.on(FormState.Form, FormEvent.Submit, () => FormState.Submitted()),
+          Machine.onEnter(FormState.Form, "enterForm"),
+          Machine.onExit(FormState.Form, "exitForm"),
         );
+
+        const machine = Machine.provide(Machine.build(baseMachine), {
+          enterForm: () => Effect.sync(() => effects.push("enter:Form")),
+          exitForm: () => Effect.sync(() => effects.push("exit:Form")),
+        });
 
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("form", machine);
@@ -75,15 +80,20 @@ describe("Same-state Transitions", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<FormState, FormEvent>(FormState.Form({ name: "", count: 0 })).pipe(
-            Machine.on.force(FormState.Form, FormEvent.SetName, ({ state, event }) =>
-              FormState.Form({ name: event.name, count: state.count + 1 }),
-            ),
-            Machine.onEnter(FormState.Form, () => Effect.sync(() => effects.push("enter:Form"))),
-            Machine.onExit(FormState.Form, () => Effect.sync(() => effects.push("exit:Form"))),
+        const baseMachine = Machine.make<FormState, FormEvent>(
+          FormState.Form({ name: "", count: 0 }),
+        ).pipe(
+          Machine.on.force(FormState.Form, FormEvent.SetName, ({ state, event }) =>
+            FormState.Form({ name: event.name, count: state.count + 1 }),
           ),
+          Machine.onEnter(FormState.Form, "enterForm"),
+          Machine.onExit(FormState.Form, "exitForm"),
         );
+
+        const machine = Machine.provide(Machine.build(baseMachine), {
+          enterForm: () => Effect.sync(() => effects.push("enter:Form")),
+          exitForm: () => Effect.sync(() => effects.push("exit:Form")),
+        });
 
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("form", machine);

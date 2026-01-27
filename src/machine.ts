@@ -55,21 +55,46 @@ export interface StateEffect<State, Event, R> {
 }
 
 /**
- * Machine definition
+ * Effect slot type - represents a named slot for an effect
  */
-export interface Machine<State, Event, R = never> extends Pipeable {
+export type EffectSlot =
+  | { readonly type: "invoke"; readonly stateTag: string; readonly name: string }
+  | { readonly type: "onEnter"; readonly stateTag: string; readonly name: string }
+  | { readonly type: "onExit"; readonly stateTag: string; readonly name: string };
+
+/**
+ * Machine definition
+ *
+ * The `Effects` type parameter tracks named effect slots that must be provided
+ * before the machine can be spawned. Use `Machine.provide` to supply handlers.
+ */
+export interface Machine<
+  State,
+  Event,
+  R = never,
+  _Effects extends string = never,
+> extends Pipeable {
   readonly initial: State;
   readonly transitions: ReadonlyArray<Transition<State, Event, R>>;
   readonly alwaysTransitions: ReadonlyArray<AlwaysTransition<State, R>>;
   readonly onEnter: ReadonlyArray<StateEffect<State, Event, R>>;
   readonly onExit: ReadonlyArray<StateEffect<State, Event, R>>;
   readonly finalStates: ReadonlySet<string>;
+  readonly effectSlots: ReadonlyMap<string, EffectSlot>;
 }
 
 /**
  * Machine builder for fluent API
+ *
+ * The `Effects` type parameter tracks named effect slots that must be provided
+ * before the machine can be spawned. Use `Machine.provide` to supply handlers.
  */
-export interface MachineBuilder<State, Event, R = never> extends Pipeable {
+export interface MachineBuilder<
+  State,
+  Event,
+  R = never,
+  _Effects extends string = never,
+> extends Pipeable {
   readonly _tag: "MachineBuilder";
   readonly initial: State;
   readonly transitions: ReadonlyArray<Transition<State, Event, R>>;
@@ -77,6 +102,7 @@ export interface MachineBuilder<State, Event, R = never> extends Pipeable {
   readonly onEnter: ReadonlyArray<StateEffect<State, Event, R>>;
   readonly onExit: ReadonlyArray<StateEffect<State, Event, R>>;
   readonly finalStates: ReadonlySet<string>;
+  readonly effectSlots: ReadonlyMap<string, EffectSlot>;
 }
 
 const PipeableProto: Pipeable = {
@@ -86,7 +112,12 @@ const PipeableProto: Pipeable = {
 };
 
 /** @internal Mutable version for construction */
-interface MachineBuilderMutable<State, Event, R = never> extends Pipeable {
+interface MachineBuilderMutable<
+  State,
+  Event,
+  R = never,
+  _Effects extends string = never,
+> extends Pipeable {
   _tag: "MachineBuilder";
   initial: State;
   transitions: Array<Transition<State, Event, R>>;
@@ -94,6 +125,7 @@ interface MachineBuilderMutable<State, Event, R = never> extends Pipeable {
   onEnter: Array<StateEffect<State, Event, R>>;
   onExit: Array<StateEffect<State, Event, R>>;
   finalStates: Set<string>;
+  effectSlots: Map<string, EffectSlot>;
 }
 
 /**
@@ -101,8 +133,8 @@ interface MachineBuilderMutable<State, Event, R = never> extends Pipeable {
  */
 export const make = <State extends BrandedState, Event extends BrandedEvent>(
   initial: State,
-): MachineBuilder<State, Event> => {
-  const builder: MachineBuilderMutable<State, Event> = Object.create(PipeableProto);
+): MachineBuilder<State, Event, never, never> => {
+  const builder: MachineBuilderMutable<State, Event, never, never> = Object.create(PipeableProto);
   builder._tag = "MachineBuilder";
   builder.initial = initial;
   builder.transitions = [];
@@ -110,6 +142,7 @@ export const make = <State extends BrandedState, Event extends BrandedEvent>(
   builder.onEnter = [];
   builder.onExit = [];
   builder.finalStates = new Set();
+  builder.effectSlots = new Map();
   return builder;
 };
 
@@ -117,8 +150,10 @@ export const make = <State extends BrandedState, Event extends BrandedEvent>(
  * Add a transition handler
  */
 export const addTransition =
-  <S extends BrandedState, E extends BrandedEvent, R, R2>(transition: Transition<S, E, R2>) =>
-  (builder: MachineBuilder<S, E, R>): MachineBuilder<S, E, R | R2> => ({
+  <S extends BrandedState, E extends BrandedEvent, R, Effects extends string, R2>(
+    transition: Transition<S, E, R2>,
+  ) =>
+  (builder: MachineBuilder<S, E, R, Effects>): MachineBuilder<S, E, R | R2, Effects> => ({
     ...builder,
     transitions: [...builder.transitions, transition as Transition<S, E, R | R2>],
   });
@@ -127,8 +162,10 @@ export const addTransition =
  * Add an always (eventless) transition
  */
 export const addAlwaysTransition =
-  <S extends BrandedState, E extends BrandedEvent, R, R2>(transition: AlwaysTransition<S, R2>) =>
-  (builder: MachineBuilder<S, E, R>): MachineBuilder<S, E, R | R2> => ({
+  <S extends BrandedState, E extends BrandedEvent, R, Effects extends string, R2>(
+    transition: AlwaysTransition<S, R2>,
+  ) =>
+  (builder: MachineBuilder<S, E, R, Effects>): MachineBuilder<S, E, R | R2, Effects> => ({
     ...builder,
     alwaysTransitions: [...builder.alwaysTransitions, transition as AlwaysTransition<S, R | R2>],
   });
@@ -137,8 +174,10 @@ export const addAlwaysTransition =
  * Add an entry effect
  */
 export const addOnEnter =
-  <S extends BrandedState, E extends BrandedEvent, R, R2>(effect: StateEffect<S, E, R2>) =>
-  (builder: MachineBuilder<S, E, R>): MachineBuilder<S, E, R | R2> => ({
+  <S extends BrandedState, E extends BrandedEvent, R, Effects extends string, R2>(
+    effect: StateEffect<S, E, R2>,
+  ) =>
+  (builder: MachineBuilder<S, E, R, Effects>): MachineBuilder<S, E, R | R2, Effects> => ({
     ...builder,
     onEnter: [...builder.onEnter, effect as StateEffect<S, E, R | R2>],
   });
@@ -147,8 +186,10 @@ export const addOnEnter =
  * Add an exit effect
  */
 export const addOnExit =
-  <S extends BrandedState, E extends BrandedEvent, R, R2>(effect: StateEffect<S, E, R2>) =>
-  (builder: MachineBuilder<S, E, R>): MachineBuilder<S, E, R | R2> => ({
+  <S extends BrandedState, E extends BrandedEvent, R, Effects extends string, R2>(
+    effect: StateEffect<S, E, R2>,
+  ) =>
+  (builder: MachineBuilder<S, E, R, Effects>): MachineBuilder<S, E, R | R2, Effects> => ({
     ...builder,
     onExit: [...builder.onExit, effect as StateEffect<S, E, R | R2>],
   });
@@ -157,19 +198,31 @@ export const addOnExit =
  * Mark a state as final
  */
 export const addFinal =
-  <S extends BrandedState, E extends BrandedEvent, R>(stateTag: string) =>
-  (builder: MachineBuilder<S, E, R>): MachineBuilder<S, E, R> => ({
+  <S extends BrandedState, E extends BrandedEvent, R, Effects extends string>(stateTag: string) =>
+  (builder: MachineBuilder<S, E, R, Effects>): MachineBuilder<S, E, R, Effects> => ({
     ...builder,
     finalStates: new Set([...builder.finalStates, stateTag]),
   });
 
 /**
+ * Add an effect slot
+ */
+export const addEffectSlot =
+  <S extends BrandedState, E extends BrandedEvent, R, Effects extends string, Name extends string>(
+    slot: EffectSlot,
+  ) =>
+  (builder: MachineBuilder<S, E, R, Effects>): MachineBuilder<S, E, R, Effects | Name> => ({
+    ...builder,
+    effectSlots: new Map([...builder.effectSlots, [slot.name, slot]]),
+  });
+
+/**
  * Build the machine from builder
  */
-export const build = <S extends BrandedState, E extends BrandedEvent, R>(
-  builder: MachineBuilder<S, E, R>,
-): Machine<S, E, R> => {
-  const machine: Machine<S, E, R> = Object.create(PipeableProto);
+export const build = <S extends BrandedState, E extends BrandedEvent, R, Effects extends string>(
+  builder: MachineBuilder<S, E, R, Effects>,
+): Machine<S, E, R, Effects> => {
+  const machine: Machine<S, E, R, Effects> = Object.create(PipeableProto);
   return Object.assign(machine, {
     initial: builder.initial,
     transitions: builder.transitions,
@@ -177,6 +230,7 @@ export const build = <S extends BrandedState, E extends BrandedEvent, R>(
     onEnter: builder.onEnter,
     onExit: builder.onExit,
     finalStates: builder.finalStates,
+    effectSlots: builder.effectSlots,
   });
 };
 

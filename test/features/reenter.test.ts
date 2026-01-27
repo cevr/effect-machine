@@ -30,20 +30,27 @@ describe("on.force Transitions", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<PollState, PollEvent>(PollState.Polling({ attempts: 0 })).pipe(
-            Machine.on.force(PollState.Polling, PollEvent.Reset, ({ state }) =>
-              PollState.Polling({ attempts: state.attempts + 1 }),
-            ),
-            Machine.on(PollState.Polling, PollEvent.Finish, () => PollState.Done()),
-            Machine.onEnter(PollState.Polling, ({ state }) =>
-              Effect.sync(() => effects.push(`enter:Polling:${state.attempts}`)),
-            ),
-            Machine.onExit(PollState.Polling, ({ state }) =>
-              Effect.sync(() => effects.push(`exit:Polling:${state.attempts}`)),
-            ),
+        const baseMachine = Machine.make<PollState, PollEvent>(
+          PollState.Polling({ attempts: 0 }),
+        ).pipe(
+          Machine.on.force(PollState.Polling, PollEvent.Reset, ({ state }) =>
+            PollState.Polling({ attempts: state.attempts + 1 }),
           ),
+          Machine.on(PollState.Polling, PollEvent.Finish, () => PollState.Done()),
+          Machine.onEnter(PollState.Polling, "enterPolling"),
+          Machine.onExit(PollState.Polling, "exitPolling"),
         );
+
+        const machine = Machine.provide(Machine.build(baseMachine), {
+          enterPolling: ({ state }) =>
+            Effect.sync(() =>
+              effects.push(`enter:Polling:${(state as PollState & { _tag: "Polling" }).attempts}`),
+            ),
+          exitPolling: ({ state }) =>
+            Effect.sync(() =>
+              effects.push(`exit:Polling:${(state as PollState & { _tag: "Polling" }).attempts}`),
+            ),
+        });
 
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("poller", machine);

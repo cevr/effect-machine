@@ -1,9 +1,6 @@
-import type { Effect } from "effect";
-
-import type { MachineBuilder, StateEffect } from "../machine.js";
-import { addOnExit } from "../machine.js";
+import type { MachineBuilder } from "../machine.js";
+import { addEffectSlot } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
-import type { StateEffectContext } from "../internal/types.js";
 import type { StateBrand, EventBrand } from "../internal/brands.js";
 
 // Branded type constraints
@@ -11,39 +8,36 @@ type BrandedState = { readonly _tag: string } & StateBrand;
 type BrandedEvent = { readonly _tag: string } & EventBrand;
 
 /**
- * Define an effect to run when exiting a state.
- * Handler receives a context object with { state, self }.
+ * Register a named onExit slot for a state.
+ * The actual effect handler is provided via `Machine.provide`.
  *
  * @example
  * ```ts
- * pipe(
- *   Machine.make<FetcherState, FetcherEvent>(State.Idle({})),
- *   onExit(State.Loading, ({ state, self }) =>
- *     Effect.log(`Leaving loading state for ${state.url}`)
- *   )
+ * const machine = Machine.make<FetcherState, FetcherEvent>(State.Idle({})).pipe(
+ *   Machine.on(State.Idle, Event.Fetch, () => State.Loading({ url: "/api" })),
+ *   Machine.on(State.Loading, Event.Resolve, () => State.Success({ data: "ok" })),
+ *   Machine.onExit(State.Loading, "cleanup"),
  * )
+ *
+ * // Then provide the implementation:
+ * const machineLive = Machine.provide(machine, {
+ *   cleanup: () => Effect.log("Cleaning up loading state"),
+ * })
  * ```
  */
-export function onExit<
-  NarrowedState extends BrandedState,
-  EventType extends BrandedEvent,
-  R2 = never,
->(
+export function onExit<NarrowedState extends BrandedState, Name extends string>(
   stateConstructor: { (...args: never[]): NarrowedState },
-  handler: (ctx: StateEffectContext<NarrowedState, EventType>) => Effect.Effect<void, never, R2>,
+  name: Name,
 ) {
   const stateTag = getTag(stateConstructor);
 
-  return <State extends BrandedState, Event extends BrandedEvent, R>(
-    builder: MachineBuilder<State, Event, R>,
-  ): MachineBuilder<State, Event, R | R2> => {
-    const effect: StateEffect<State, Event, R2> = {
+  return <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
+    builder: MachineBuilder<State, Event, R, Effects>,
+  ): MachineBuilder<State, Event, R, Effects | Name> => {
+    return addEffectSlot<State, Event, R, Effects, Name>({
+      type: "onExit",
       stateTag,
-      handler: handler as unknown as (
-        ctx: StateEffectContext<State, Event>,
-      ) => Effect.Effect<void, never, R2>,
-    };
-
-    return addOnExit(effect)(builder) as MachineBuilder<State, Event, R | R2>;
+      name,
+    })(builder);
   };
 }

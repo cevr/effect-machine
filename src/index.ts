@@ -8,6 +8,7 @@ export { Event } from "./event.js";
 // Core machine types and constructors
 export type {
   AlwaysTransition,
+  EffectSlot,
   Machine as MachineType,
   MachineBuilder,
   MachineRef,
@@ -17,6 +18,7 @@ export type {
 } from "./machine.js";
 export {
   addAlwaysTransition,
+  addEffectSlot,
   addFinal,
   addOnEnter,
   addOnExit,
@@ -49,6 +51,8 @@ export { on } from "./combinators/on.js";
 export type { OnForceOptions } from "./combinators/on.js";
 export { onEnter } from "./combinators/on-enter.js";
 export { onExit } from "./combinators/on-exit.js";
+export { provide } from "./combinators/provide.js";
+export type { EffectHandler, EffectHandlers } from "./combinators/provide.js";
 export { from } from "./combinators/from.js";
 export type { StateScope, ScopedTransition } from "./combinators/from.js";
 export { any } from "./combinators/any.js";

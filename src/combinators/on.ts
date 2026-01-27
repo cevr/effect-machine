@@ -63,9 +63,9 @@ function onImpl<
     ctx: TransitionContext<NarrowedState, NarrowedEvent>,
   ) => TransitionResult<ResultState, R2>,
   options?: OnOptions<NarrowedState, NarrowedEvent, R2>,
-): <State extends BrandedState, Event extends BrandedEvent, R>(
-  builder: MachineBuilder<State, Event, R>,
-) => MachineBuilder<State, Event, R | R2>;
+): <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
+  builder: MachineBuilder<State, Event, R, Effects>,
+) => MachineBuilder<State, Event, R | R2, Effects>;
 
 /**
  * Standard on: state + event signature
@@ -82,9 +82,9 @@ function onImpl<
     ctx: TransitionContext<NarrowedState, NarrowedEvent>,
   ) => TransitionResult<ResultState, R2>,
   options?: OnOptions<NarrowedState, NarrowedEvent, R2>,
-): <State extends BrandedState, Event extends BrandedEvent, R>(
-  builder: MachineBuilder<State, Event, R>,
-) => MachineBuilder<State, Event, R | R2>;
+): <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
+  builder: MachineBuilder<State, Event, R, Effects>,
+) => MachineBuilder<State, Event, R | R2, Effects>;
 
 // ============================================================================
 // Implementation
@@ -153,9 +153,9 @@ function standardOnImpl<
   const eventTag = getTag(eventConstructor);
   const normalizedOptions = normalizeOnOptions(options);
 
-  return <State extends BrandedState, Event extends BrandedEvent, R>(
-    builder: MachineBuilder<State, Event, R>,
-  ): MachineBuilder<State, Event, R | R2> => {
+  return <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
+    builder: MachineBuilder<State, Event, R, Effects>,
+  ): MachineBuilder<State, Event, R | R2, Effects> => {
     const transition: Transition<State, Event, R2> = {
       stateTag,
       eventTag,
@@ -172,7 +172,7 @@ function standardOnImpl<
       reenter: normalizedOptions?.reenter,
     };
 
-    return addTransition(transition)(builder) as MachineBuilder<State, Event, R | R2>;
+    return addTransition(transition)(builder) as MachineBuilder<State, Event, R | R2, Effects>;
   };
 }
 
@@ -195,10 +195,10 @@ function matcherOnImpl<
   const eventTag = getTag(eventConstructor);
   const normalizedOptions = normalizeOnOptions(options);
 
-  return <State extends BrandedState, Event extends BrandedEvent, R>(
-    builder: MachineBuilder<State, Event, R>,
-  ): MachineBuilder<State, Event, R | R2> => {
-    let result = builder as MachineBuilder<State, Event, R | R2>;
+  return <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
+    builder: MachineBuilder<State, Event, R, Effects>,
+  ): MachineBuilder<State, Event, R | R2, Effects> => {
+    let result = builder as MachineBuilder<State, Event, R | R2, Effects>;
 
     for (const stateTag of matcher.stateTags) {
       const transition: Transition<State, Event, R2> = {
@@ -217,7 +217,7 @@ function matcherOnImpl<
         reenter: normalizedOptions?.reenter,
       };
 
-      result = addTransition(transition)(result) as MachineBuilder<State, Event, R | R2>;
+      result = addTransition(transition)(result) as MachineBuilder<State, Event, R | R2, Effects>;
     }
 
     return result;
@@ -300,9 +300,9 @@ function forceImpl<
     ctx: TransitionContext<NarrowedState, NarrowedEvent>,
   ) => TransitionResult<ResultState, R2>,
   options?: OnForceOptions<NarrowedState, NarrowedEvent, R2>,
-): <State extends BrandedState, Event extends BrandedEvent, R>(
-  builder: MachineBuilder<State, Event, R>,
-) => MachineBuilder<State, Event, R | R2>;
+): <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
+  builder: MachineBuilder<State, Event, R, Effects>,
+) => MachineBuilder<State, Event, R | R2, Effects>;
 
 /**
  * Standard on.force: state + event signature
@@ -319,9 +319,9 @@ function forceImpl<
     ctx: TransitionContext<NarrowedState, NarrowedEvent>,
   ) => TransitionResult<ResultState, R2>,
   options?: OnForceOptions<NarrowedState, NarrowedEvent, R2>,
-): <State extends BrandedState, Event extends BrandedEvent, R>(
-  builder: MachineBuilder<State, Event, R>,
-) => MachineBuilder<State, Event, R | R2>;
+): <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
+  builder: MachineBuilder<State, Event, R, Effects>,
+) => MachineBuilder<State, Event, R | R2, Effects>;
 
 function forceImpl(first: unknown, second: unknown, third?: unknown, fourth?: unknown): unknown {
   // Re-use on() logic with reenter: true forced

@@ -23,7 +23,7 @@
 
 // Core machine
 export { make, build } from "./machine.js";
-export type { Machine, MachineBuilder, MachineRef, OnOptions } from "./machine.js";
+export type { EffectSlot, Machine, MachineBuilder, MachineRef, OnOptions } from "./machine.js";
 
 // Combinators
 export { on } from "./combinators/on.js";
@@ -39,6 +39,8 @@ export { onEnter } from "./combinators/on-enter.js";
 export { onExit } from "./combinators/on-exit.js";
 export { assign, update } from "./combinators/assign.js";
 export { invoke } from "./combinators/invoke.js";
+export { provide } from "./combinators/provide.js";
+export type { EffectHandler, EffectHandlers } from "./combinators/provide.js";
 
 // New combinators
 export { from } from "./combinators/from.js";

@@ -61,9 +61,9 @@ export function update<
   const eventTag = getTag(eventConstructor);
   const normalizedOptions = normalizeOnOptions(options);
 
-  return <State extends BrandedState, Event extends BrandedEvent, R>(
-    builder: MachineBuilder<State, Event, R>,
-  ): MachineBuilder<State, Event, R | R2> => {
+  return <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
+    builder: MachineBuilder<State, Event, R, Effects>,
+  ): MachineBuilder<State, Event, R | R2, Effects> => {
     const transition: Transition<State, Event, R2> = {
       stateTag,
       eventTag,
@@ -79,6 +79,6 @@ export function update<
         | undefined,
     };
 
-    return addTransition(transition)(builder) as MachineBuilder<State, Event, R | R2>;
+    return addTransition(transition)(builder) as MachineBuilder<State, Event, R | R2, Effects>;
   };
 }

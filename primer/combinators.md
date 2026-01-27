@@ -61,18 +61,28 @@ final(State.Error),
 
 ## State Effects
 
+Effects use **named slots** - register the slot name, then provide handlers via `Machine.provide`.
+
 ### onEnter
 
-Run effect when entering a state.
+Register entry effect slot.
 
 ```typescript
-onEnter(
-  stateConstructor,
-  handler, // (ctx) => Effect<void>
-);
+onEnter(stateConstructor, slotName);
 ```
 
-**Context:**
+**Example:**
+
+```typescript
+// Register slot
+(Machine.onEnter(State.Success, "notifyUser"),
+  // Provide handler
+  Machine.provide(machine, {
+    notifyUser: ({ state }) => Effect.log(`Success: ${state.data}`),
+  }));
+```
+
+**Handler context:**
 
 ```typescript
 type StateEffectContext<S, E> = {
@@ -81,56 +91,98 @@ type StateEffectContext<S, E> = {
 };
 ```
 
-**Example:**
-
-```typescript
-onEnter(State.Loading, ({ state, self }) =>
-  Effect.gen(function* () {
-    const data = yield* fetchData(state.url);
-    yield* self.send(Event.Resolve({ data }));
-  }),
-);
-```
-
 ### onExit
 
-Run effect when exiting a state.
+Register exit effect slot.
 
 ```typescript
-onExit(stateConstructor, handler);
+onExit(stateConstructor, slotName);
 ```
 
 **Example:**
 
 ```typescript
-onExit(State.Editing, ({ state }) => Effect.log(`Saved draft: ${state.content}`));
+// Register slot
+(Machine.onExit(State.Editing, "saveDraft"),
+  // Provide handler
+  Machine.provide(machine, {
+    saveDraft: ({ state }) => Effect.log(`Saved draft: ${state.content}`),
+  }));
 ```
 
 ### invoke
 
-Run effect on entry, auto-cancel on exit.
+Register invoke slot (runs on entry, auto-cancels on exit).
 
 ```typescript
-invoke(stateConstructor, handler);
+invoke(stateConstructor, slotName);
 ```
 
-Combines `onEnter` + `onExit` with automatic fiber cancellation.
+Combines entry/exit with automatic fiber cancellation.
 
 **Example:**
 
 ```typescript
-invoke(State.Polling, ({ state, self }) =>
-  Effect.gen(function* () {
-    while (true) {
-      yield* Effect.sleep("5 seconds");
-      const data = yield* fetchStatus(state.id);
-      yield* self.send(Event.StatusUpdate({ data }));
-    }
-  }),
-);
+// Register slot
+(Machine.invoke(State.Polling, "poll"),
+  // Provide handler
+  Machine.provide(machine, {
+    poll: ({ state, self }) =>
+      Effect.gen(function* () {
+        while (true) {
+          yield* Effect.sleep("5 seconds");
+          const data = yield* fetchStatus(state.id);
+          yield* self.send(Event.StatusUpdate({ data }));
+        }
+      }),
+  }));
 ```
 
 The polling fiber is interrupted when exiting `Polling` state.
+
+### provide
+
+Wire handlers to all effect slots. Required before spawning.
+
+```typescript
+Machine.provide(machine, {
+  slotName: (ctx) => Effect<void>,
+  ...
+})
+```
+
+**Example:**
+
+```typescript
+const baseMachine = Machine.make<State, Event>(State.Idle()).pipe(
+  Machine.on(State.Idle, Event.Fetch, ({ event }) => State.Loading({ url: event.url })),
+  Machine.invoke(State.Loading, "fetchData"),
+  Machine.onEnter(State.Success, "notify"),
+  Machine.build,
+);
+
+// Production handlers
+const liveMachine = Machine.provide(baseMachine, {
+  fetchData: ({ state, self }) =>
+    Effect.gen(function* () {
+      const data = yield* httpClient.get(state.url);
+      yield* self.send(Event.Resolve({ data }));
+    }),
+  notify: ({ state }) => Effect.log(`Done: ${state.data}`),
+});
+
+// Test handlers (mocked)
+const testMachine = Machine.provide(baseMachine, {
+  fetchData: ({ self }) => self.send(Event.Resolve({ data: "mock" })),
+  notify: () => Effect.void,
+});
+```
+
+**Notes:**
+
+- All slots must have handlers - missing keys → runtime error
+- Extra keys → runtime error
+- `simulate()` works without `provide()` (effects skipped)
 
 ## Guard Cascade
 

@@ -91,16 +91,17 @@ console.log(result.finalState._tag); // "Done"
 
 ### Combinators
 
-| Function                         | Purpose                     |
-| -------------------------------- | --------------------------- |
-| `always(state, branches)`        | Eventless transitions       |
-| `choose(state, event, branches)` | Guard cascade               |
-| `delay(state, duration, event)`  | Auto-send event after delay |
-| `assign(updater)`                | Partial state update helper |
-| `update(state, event, updater)`  | Shorthand for on + assign   |
-| `invoke(state, handler)`         | Run effect, cancel on exit  |
-| `onEnter(state, handler)`        | Effect on state entry       |
-| `onExit(state, handler)`         | Effect on state exit        |
+| Function                         | Purpose                            |
+| -------------------------------- | ---------------------------------- |
+| `always(state, branches)`        | Eventless transitions              |
+| `choose(state, event, branches)` | Guard cascade                      |
+| `delay(state, duration, event)`  | Auto-send event after delay        |
+| `assign(updater)`                | Partial state update helper        |
+| `update(state, event, updater)`  | Shorthand for on + assign          |
+| `invoke(state, name)`            | Register invoke slot (named)       |
+| `onEnter(state, name)`           | Register entry effect slot (named) |
+| `onExit(state, name)`            | Register exit effect slot (named)  |
+| `provide(machine, handlers)`     | Wire handlers to effect slots      |
 
 ### Guards
 

@@ -24,7 +24,8 @@ export function final<NarrowedState extends BrandedState>(stateConstructor: {
 }) {
   const stateTag = getTag(stateConstructor);
 
-  return <State extends BrandedState, Event extends BrandedEvent, R>(
-    builder: MachineBuilder<State, Event, R>,
-  ): MachineBuilder<State, Event, R> => addFinal<State, Event, R>(stateTag)(builder);
+  return <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
+    builder: MachineBuilder<State, Event, R, Effects>,
+  ): MachineBuilder<State, Event, R, Effects> =>
+    addFinal<State, Event, R, Effects>(stateTag)(builder);
 }
