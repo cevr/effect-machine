@@ -32,7 +32,7 @@ describe("Transition Index", () => {
     const machine = Machine.make({
       state: TestState,
       event: TestEvent,
-      initial: TestState.Idle({}),
+      initial: TestState.Idle(),
     }).pipe(
       Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
         TestState.Loading({ id: event.id }),
@@ -68,7 +68,7 @@ describe("Transition Index", () => {
     const machine = Machine.make({
       state: TestState,
       event: TestEvent,
-      initial: TestState.Idle({}),
+      initial: TestState.Idle(),
     }).pipe(
       // Multiple transitions with guards for same state/event
       Machine.on(
@@ -135,7 +135,7 @@ describe("Transition Index", () => {
     const machine = Machine.make({
       state: TestState,
       event: TestEvent,
-      initial: TestState.Idle({}),
+      initial: TestState.Idle(),
     }).pipe(
       Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
         TestState.Loading({ id: event.id }),
@@ -156,7 +156,7 @@ describe("Transition Index", () => {
     const machine1 = Machine.make({
       state: TestState,
       event: TestEvent,
-      initial: TestState.Idle({}),
+      initial: TestState.Idle(),
     }).pipe(
       Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
         TestState.Loading({ id: event.id }),
@@ -166,12 +166,12 @@ describe("Transition Index", () => {
     const machine2 = Machine.make({
       state: TestState,
       event: TestEvent,
-      initial: TestState.Idle({}),
+      initial: TestState.Idle(),
     }).pipe(
       Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
         TestState.Loading({ id: event.id }),
       ),
-      Machine.on(TestState.Idle, TestEvent.Reset, () => TestState.Idle({})),
+      Machine.on(TestState.Idle, TestEvent.Reset, () => TestState.Idle()),
     );
 
     const m1Transitions = Machine.findTransitions(machine1, "Idle", "Start");

@@ -1,7 +1,7 @@
 import { Duration, Effect, Fiber } from "effect";
 import type { DurationInput } from "effect/Duration";
 
-import type { Machine, StateEffect } from "../machine.js";
+import type { AnySlot, Machine, StateEffect } from "../machine.js";
 import { addOnEnter, addOnExit } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
 import type { BrandedState, BrandedEvent } from "../internal/brands.js";
@@ -68,9 +68,9 @@ export function delay<NarrowedState extends BrandedState, EventType extends Bran
   // Multiple delays on same state need separate storage
   const delayKey = Symbol("delay");
 
-  return <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
-    builder: Machine<State, Event, R, Effects>,
-  ): Machine<State, Event, R, Effects> => {
+  return <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
+    builder: Machine<State, Event, R, Slots>,
+  ): Machine<State, Event, R, Slots> => {
     const getFiberMap = createFiberStorage();
 
     const enterEffect: StateEffect<State, Event, never> = {
@@ -115,7 +115,7 @@ export function delay<NarrowedState extends BrandedState, EventType extends Bran
     };
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const b1 = addOnEnter(enterEffect)(builder) as Machine<State, Event, any, Effects>;
-    return addOnExit(exitEffect)(b1) as Machine<State, Event, R, Effects>;
+    const b1 = addOnEnter(enterEffect)(builder) as Machine<State, Event, any, Slots>;
+    return addOnExit(exitEffect)(b1) as Machine<State, Event, R, Slots>;
   };
 }

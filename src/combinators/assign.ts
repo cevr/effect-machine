@@ -1,6 +1,6 @@
 import type { Effect } from "effect";
 
-import type { Machine, OnOptions, Transition } from "../machine.js";
+import type { AnySlot, Machine, OnOptions, Transition } from "../machine.js";
 import { addTransition, normalizeOnOptions } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
 import type { TransitionContext } from "../internal/types.js";
@@ -57,9 +57,9 @@ export function update<
   const eventTag = getTag(eventConstructor);
   const normalizedOptions = normalizeOnOptions(options);
 
-  return <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
-    builder: Machine<State, Event, R, Effects>,
-  ): Machine<State, Event, R | R2, Effects> => {
+  return <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
+    builder: Machine<State, Event, R, Slots>,
+  ): Machine<State, Event, R | R2, Slots> => {
     const transition: Transition<State, Event, R2> = {
       stateTag,
       eventTag,
@@ -75,6 +75,6 @@ export function update<
         | undefined,
     };
 
-    return addTransition(transition)(builder) as Machine<State, Event, R | R2, Effects>;
+    return addTransition(transition)(builder) as Machine<State, Event, R | R2, Slots>;
   };
 }

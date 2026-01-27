@@ -29,10 +29,16 @@ const emit = <S, E>(inspector: Inspector<S, E> | undefined, event: InspectionEve
 /** Get current timestamp */
 const now = (): number => Date.now();
 
+/** Check if a value is an Effect */
+const isEffect = (value: unknown): value is Effect.Effect<unknown, unknown, unknown> =>
+  typeof value === "object" && value !== null && Effect.EffectTypeId in value;
+
 /**
  * Resolve which transition should fire for a given state and event.
  * Uses indexed O(1) lookup, then evaluates guards in registration order.
  * First guard pass wins.
+ *
+ * Returns Effect because guards can be async (Effect<boolean>).
  */
 export const resolveTransition = <
   S extends { readonly _tag: string },
@@ -44,41 +50,58 @@ export const resolveTransition = <
   event: E,
   actorId?: string,
   inspector?: Inspector<S, E>,
-): Machine<S, E, R>["transitions"][number] | undefined => {
-  const candidates = findTransitions(machine, currentState._tag, event._tag);
+): Effect.Effect<Machine<S, E, R>["transitions"][number] | undefined, never, R> =>
+  Effect.gen(function* () {
+    const candidates = findTransitions(machine, currentState._tag, event._tag);
 
-  let guardIndex = 0;
-  for (const transition of candidates) {
-    // If no guard, this transition wins
-    if (transition.guard === undefined) {
-      return transition;
+    let guardIndex = 0;
+    for (const transition of candidates) {
+      const guardPredicate =
+        transition.guard ??
+        (transition.guardNeedsProvision === true
+          ? (() => {
+              if (transition.guardName === undefined) {
+                throw new Error("Guard marked for provision but has no name.");
+              }
+              const handler = machine.guardHandlers.get(transition.guardName);
+              if (handler === undefined) {
+                throw new Error(`Missing guard handler for "${transition.guardName}".`);
+              }
+              return handler;
+            })()
+          : undefined);
+
+      // If no guard, this transition wins
+      if (guardPredicate === undefined) {
+        return transition;
+      }
+
+      // Evaluate guard - may be sync boolean or Effect<boolean>
+      const guardResult = guardPredicate({ state: currentState, event });
+      const result: boolean = isEffect(guardResult) ? yield* guardResult : guardResult;
+
+      if (actorId !== undefined && inspector !== undefined) {
+        emit(inspector, {
+          type: "@machine.guard",
+          actorId,
+          state: currentState,
+          event,
+          guardName: transition.guardName,
+          guardIndex,
+          result,
+          timestamp: now(),
+        });
+      }
+
+      if (result) {
+        return transition;
+      }
+
+      // Guard failed - continue to next transition (guard cascade)
+      guardIndex++;
     }
-
-    // Evaluate guard and emit inspection event
-    const result = transition.guard({ state: currentState, event });
-
-    if (actorId !== undefined && inspector !== undefined) {
-      emit(inspector, {
-        type: "@machine.guard",
-        actorId,
-        state: currentState,
-        event,
-        guardName: transition.guardName,
-        guardIndex,
-        result,
-        timestamp: now(),
-      });
-    }
-
-    if (result) {
-      return transition;
-    }
-
-    // Guard failed - continue to next transition (guard cascade)
-    guardIndex++;
-  }
-  return undefined;
-};
+    return undefined;
+  });
 
 /**
  * Resolve which always transition should fire for the current state.
@@ -167,13 +190,27 @@ const buildActorRef = <S extends { readonly _tag: string }, E extends { readonly
   matches: (tag) => Effect.map(SubscriptionRef.get(stateRef), (s) => s._tag === tag),
   matchesSync: (tag) => Effect.runSync(SubscriptionRef.get(stateRef))._tag === tag,
   can: (event) =>
-    Effect.map(
-      SubscriptionRef.get(stateRef),
-      (s) => resolveTransition(machine, s, event) !== undefined,
-    ),
+    Effect.gen(function* () {
+      const s = yield* SubscriptionRef.get(stateRef);
+      // Cast: guard requirements are provided when machine is spawned
+      const transition = yield* resolveTransition(machine, s, event) as Effect.Effect<
+        (typeof machine.transitions)[number] | undefined,
+        never,
+        never
+      >;
+      return transition !== undefined;
+    }),
   canSync: (event) => {
     const state = Effect.runSync(SubscriptionRef.get(stateRef));
-    return resolveTransition(machine, state, event) !== undefined;
+    // canSync only works with sync guards - async guards will throw
+    const transition = Effect.runSync(
+      resolveTransition(machine, state, event) as Effect.Effect<
+        (typeof machine.transitions)[number] | undefined,
+        never,
+        never
+      >,
+    );
+    return transition !== undefined;
   },
   changes: stateRef.changes,
   subscribe: (fn) => {
@@ -239,11 +276,20 @@ export const createActor = <
         send: (event) => Queue.offer(eventQueue, event),
       };
 
+      // Fork root-level invokes (run for entire machine lifetime)
+      const rootFibers: Fiber.Fiber<void, never>[] = [];
+      for (const rootInvoke of machine.rootInvokes) {
+        const fiber = yield* Effect.fork(rootInvoke.handler({ state: resolvedInitial, self }));
+        rootFibers.push(fiber);
+      }
+
       // Run initial entry effects
       yield* runEntryEffects(machine, resolvedInitial, self, id, inspectorValue);
 
       // Check if initial state (after always) is final
       if (machine.finalStates.has(resolvedInitial._tag)) {
+        // Interrupt root invokes on early stop (in parallel)
+        yield* Effect.all(rootFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
         if (inspectorValue !== undefined) {
           emit(inspectorValue, {
             type: "@machine.stop",
@@ -262,9 +308,9 @@ export const createActor = <
         );
       }
 
-      // Start the event loop
+      // Start the event loop (passes rootFibers so they can be interrupted on final state)
       const loopFiber = yield* Effect.fork(
-        eventLoop(machine, stateRef, eventQueue, self, listeners, id, inspectorValue),
+        eventLoop(machine, stateRef, eventQueue, self, listeners, rootFibers, id, inspectorValue),
       );
 
       return buildActorRef(
@@ -285,6 +331,8 @@ export const createActor = <
           }
           yield* Queue.shutdown(eventQueue);
           yield* Fiber.interrupt(loopFiber);
+          // Interrupt root-level invokes (in parallel)
+          yield* Effect.all(rootFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
         }).pipe(Effect.asVoid),
       );
     }),
@@ -299,6 +347,7 @@ const eventLoop = <S extends { readonly _tag: string }, E extends { readonly _ta
   eventQueue: Queue.Queue<E>,
   self: MachineRef<E>,
   listeners: Listeners<S>,
+  rootFibers: Fiber.Fiber<void, never>[],
   actorId: string,
   inspector?: Inspector<S, E>,
 ): Effect.Effect<void, never, R> =>
@@ -319,6 +368,8 @@ const eventLoop = <S extends { readonly _tag: string }, E extends { readonly _ta
       })(processEvent(machine, currentState, event, stateRef, self, listeners, actorId, inspector));
 
       if (shouldStop) {
+        // Interrupt root-level invokes when reaching final state (in parallel)
+        yield* Effect.all(rootFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
         return;
       }
     }
@@ -350,7 +401,7 @@ const processEvent = <S extends { readonly _tag: string }, E extends { readonly 
     }
 
     // Find matching transition using guard cascade
-    const transition = resolveTransition(machine, currentState, event, actorId, inspector);
+    const transition = yield* resolveTransition(machine, currentState, event, actorId, inspector);
 
     if (transition === undefined) {
       // No transition for this state/event pair - ignore

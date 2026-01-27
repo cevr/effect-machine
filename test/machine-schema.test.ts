@@ -45,7 +45,7 @@ describe("State (schema-first)", () => {
 
     // Invalid values
     expect(OrderState.$is("Pending")(null)).toBe(false);
-    expect(OrderState.$is("Pending")({})).toBe(false);
+    expect(OrderState.$is("Pending")(undefined)).toBe(false);
     expect(OrderState.$is("Pending")({ _tag: "Other" })).toBe(false);
   });
 
@@ -161,10 +161,10 @@ describe("State (schema-first)", () => {
     });
 
     // Construct with empty object
-    const on = ToggleState.On({});
+    const on = ToggleState.On();
     expect(on._tag).toBe("On");
 
-    const off = ToggleState.Off({});
+    const off = ToggleState.Off();
     expect(off._tag).toBe("Off");
   });
 });
@@ -231,7 +231,7 @@ describe("State/Event with Machine", () => {
     );
 
     const result = await Effect.runPromise(
-      simulate(machine, [OrderEvent.Process({}), OrderEvent.Ship({ trackingId: "TRACK-123" })]),
+      simulate(machine, [OrderEvent.Process(), OrderEvent.Ship({ trackingId: "TRACK-123" })]),
     );
 
     expect(result.finalState._tag).toBe("Shipped");

@@ -130,7 +130,7 @@ describe("Inspection", () => {
   test("emits guard evaluation events", async () => {
     const events: InspectionEvent<TestState, TestEvent>[] = [];
 
-    const canFetch = Guard.make<TestState, TestEvent>(() => true, "canFetch");
+    const canFetch = Guard.make<TestState, TestEvent>("canFetch", () => true);
 
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -314,8 +314,7 @@ describe("Inspection", () => {
   test("guard naming with Guard.named", async () => {
     const events: InspectionEvent<TestState, TestEvent>[] = [];
 
-    const baseGuard = Guard.make<TestState, TestEvent>(() => true);
-    const namedGuard = Guard.named("myGuard", baseGuard);
+    const namedGuard = Guard.make<TestState, TestEvent>("myGuard", () => true);
 
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -352,8 +351,8 @@ describe("Inspection", () => {
   });
 
   test("composite guard names", async () => {
-    const guardA = Guard.make<TestState, TestEvent>(() => true, "guardA");
-    const guardB = Guard.make<TestState, TestEvent>(() => true, "guardB");
+    const guardA = Guard.make<TestState, TestEvent>("guardA", () => true);
+    const guardB = Guard.make<TestState, TestEvent>("guardB", () => true);
     const combined = Guard.and(guardA, guardB);
 
     expect(combined.name).toBe("and(guardA, guardB)");
@@ -368,7 +367,7 @@ describe("Inspection", () => {
   test("event order is correct", async () => {
     const events: InspectionEvent<TestState, TestEvent>[] = [];
 
-    const canFetch = Guard.make<TestState, TestEvent>(() => true, "canFetch");
+    const canFetch = Guard.make<TestState, TestEvent>("canFetch", () => true);
 
     await Effect.runPromise(
       Effect.gen(function* () {

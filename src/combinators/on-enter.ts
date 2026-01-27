@@ -1,7 +1,10 @@
-import type { Machine } from "../machine.js";
+import type { AnySlot, EffectSlotType, Machine } from "../machine.js";
 import { addEffectSlot } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
 import type { BrandedState, BrandedEvent } from "../internal/brands.js";
+
+/** Type-level onEnter slot */
+type OnEnterSlot<Name extends string> = EffectSlotType<"onEnter", Name>;
 
 /**
  * Register a named onEnter slot for a state.
@@ -9,7 +12,7 @@ import type { BrandedState, BrandedEvent } from "../internal/brands.js";
  *
  * @example
  * ```ts
- * const machine = Machine.make<FetcherState, FetcherEvent>(State.Idle({})).pipe(
+ * const machine = Machine.make<FetcherState, FetcherEvent>(State.Idle()).pipe(
  *   Machine.on(State.Idle, Event.Fetch, () => State.Success({ data: "ok" })),
  *   Machine.onEnter(State.Success, "notifyUser"),
  * )
@@ -26,10 +29,10 @@ export function onEnter<NarrowedState extends BrandedState, Name extends string>
 ) {
   const stateTag = getTag(stateConstructor);
 
-  return <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
-    builder: Machine<State, Event, R, Effects>,
-  ): Machine<State, Event, R, Effects | Name> => {
-    return addEffectSlot<State, Event, R, Effects, Name>({
+  return <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
+    builder: Machine<State, Event, R, Slots>,
+  ): Machine<State, Event, R, Slots | OnEnterSlot<Name>> => {
+    return addEffectSlot<State, Event, R, OnEnterSlot<Name>>({
       type: "onEnter",
       stateTag,
       name,

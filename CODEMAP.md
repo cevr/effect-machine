@@ -61,6 +61,7 @@ test/
 │   ├── force.test.ts
 │   ├── from.test.ts
 │   ├── guards.test.ts
+│   ├── invoke.test.ts    # Root/parallel invokes
 │   └── same-state.test.ts
 ├── patterns/             # Real-world pattern tests
 │   ├── payment-flow.test.ts
@@ -111,11 +112,13 @@ type MyState = typeof MyState.Type;
 const machine = Machine.make({
   state: MyState, // required - becomes machine.stateSchema
   event: MyEvent, // required - becomes machine.eventSchema
-  initial: MyState.Idle(),
+  initial: MyState.Idle(), // empty struct: no args
 });
 ```
 
 - Types inferred from schemas - no manual type params
+- Empty structs: `State.Idle()` - no args, `State.Idle({})` is type error
+- Non-empty: `State.Loading({ url })` - args required
 - `persist()` and `toEntity()` read schemas from machine - no drift possible
 - `$match` and `$is` helpers for pattern matching
 
@@ -147,12 +150,37 @@ Index built on first access, cached per machine instance.
 `invoke`, `onEnter`, `onExit` register named slots:
 
 ```ts
-Machine.invoke(State.Loading, "fetchData")  // registers slot
+Machine.invoke(State.Loading, "fetchData")   // state-scoped invoke
+Machine.invoke("background")                  // root-level (machine lifetime)
+Machine.invoke(State.X, ["a", "b"])          // parallel invokes
 Machine.provide(machine, { fetchData: ... }) // wires handler
 ```
 
 - Spawning validates all slots have handlers (runtime check)
 - `simulate()` ignores effects - works with unprovided machines
+- Root invokes start on spawn, interrupted on stop or final state
+
+## Guard Pattern
+
+Guards can be sync or async (Effect):
+
+```ts
+Guard.make(({ state }) => state.count > 0); // anonymous sync
+Guard.make("canRetry", ({ state }) => state.retries < 3); // named sync
+Guard.make(
+  "hasPermission",
+  (
+    { state }, // named async
+  ) =>
+    Effect.gen(function* () {
+      const auth = yield* AuthService;
+      return yield* auth.check(state.userId);
+    }),
+);
+```
+
+- Async guards add R to machine type - `simulate` requires providing R
+- Composition: `Guard.and`, `Guard.or`, `Guard.not`
 
 ## Testing
 

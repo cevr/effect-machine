@@ -109,7 +109,12 @@ const buildPersistentActorRef = <
               if (persistedEvent.version > targetVersion) break;
 
               // Find transition for this event (pure state computation only)
-              const transition = resolveTransition(machine, state, persistedEvent.event);
+              // Cast: guard requirements are provided when machine is spawned
+              const transition = yield* resolveTransition(
+                machine,
+                state,
+                persistedEvent.event,
+              ) as Effect.Effect<(typeof machine.transitions)[number] | undefined, never, never>;
               if (transition !== undefined) {
                 const newStateResult = transition.handler({ state, event: persistedEvent.event });
                 // Only support synchronous handlers in replay
@@ -138,13 +143,27 @@ const buildPersistentActorRef = <
     matches: (tag) => Effect.map(SubscriptionRef.get(stateRef), (s) => s._tag === tag),
     matchesSync: (tag) => Effect.runSync(SubscriptionRef.get(stateRef))._tag === tag,
     can: (event) =>
-      Effect.map(
-        SubscriptionRef.get(stateRef),
-        (s) => resolveTransition(machine, s, event) !== undefined,
-      ),
+      Effect.gen(function* () {
+        const s = yield* SubscriptionRef.get(stateRef);
+        // Cast: guard requirements are provided when machine is spawned
+        const transition = yield* resolveTransition(machine, s, event) as Effect.Effect<
+          (typeof machine.transitions)[number] | undefined,
+          never,
+          never
+        >;
+        return transition !== undefined;
+      }),
     canSync: (event) => {
       const state = Effect.runSync(SubscriptionRef.get(stateRef));
-      return resolveTransition(machine, state, event) !== undefined;
+      // canSync only works with sync guards - async guards will throw
+      const transition = Effect.runSync(
+        resolveTransition(machine, state, event) as Effect.Effect<
+          (typeof machine.transitions)[number] | undefined,
+          never,
+          never
+        >,
+      );
+      return transition !== undefined;
     },
     changes: stateRef.changes,
     subscribe: (fn) => {
@@ -196,7 +215,11 @@ export const createPersistentActor = <
 
         // Replay events after snapshot (synchronous state computation only)
         for (const persistedEvent of initialEvents) {
-          const transition = resolveTransition(machine, resolvedInitial, persistedEvent.event);
+          const transition = yield* resolveTransition(
+            machine,
+            resolvedInitial,
+            persistedEvent.event,
+          );
           if (transition !== undefined) {
             const newStateResult = transition.handler({
               state: resolvedInitial,
@@ -364,7 +387,7 @@ const persistentEventLoop = <
       }
 
       // Find matching transition
-      const transition = resolveTransition(machine, currentState, event, id, inspector);
+      const transition = yield* resolveTransition(machine, currentState, event, id, inspector);
       if (transition === undefined) {
         continue;
       }

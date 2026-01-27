@@ -5,7 +5,7 @@
  * ```ts
  * import { Machine } from "effect-machine"
  *
- * Machine.make<State, Event>(State.Idle({})).pipe(
+ * Machine.make<State, Event>(State.Idle()).pipe(
  *   Machine.from(State.Typing).pipe(
  *     Machine.on(Event.KeyPress, h1),
  *     Machine.on(Event.Submit, h2),
@@ -13,7 +13,7 @@
  *   Machine.on(
  *     Machine.any(State.Running, State.Paused),
  *     Event.Cancel,
- *     () => State.Cancelled({})
+ *     () => State.Cancelled()
  *   ),
  * )
  * ```
@@ -23,7 +23,17 @@
 
 // Core machine
 export { make } from "./machine.js";
-export type { EffectSlot, Machine, MachineRef, MakeConfig, OnOptions } from "./machine.js";
+export type {
+  AnySlot,
+  EffectSlot,
+  EffectSlotType,
+  GuardHandler,
+  Machine,
+  MachineRef,
+  MakeConfig,
+  OnOptions,
+  RootInvoke,
+} from "./machine.js";
 
 // Combinators
 export { on } from "./combinators/on.js";
@@ -39,8 +49,9 @@ export { onEnter } from "./combinators/on-enter.js";
 export { onExit } from "./combinators/on-exit.js";
 export { assign, update } from "./combinators/assign.js";
 export { invoke } from "./combinators/invoke.js";
+export { guard } from "./combinators/guard.js";
 export { provide } from "./combinators/provide.js";
-export type { EffectHandler, EffectHandlers } from "./combinators/provide.js";
+export type { EffectHandler, EffectHandlers, GuardEffectHandler } from "./combinators/provide.js";
 
 // New combinators
 export { from } from "./combinators/from.js";

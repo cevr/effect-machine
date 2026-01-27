@@ -87,7 +87,7 @@ export const isPersistentMachine = (
  * const orderMachine = Machine.make({
  *   state: OrderState,
  *   event: OrderEvent,
- *   initial: OrderState.Idle({}),
+ *   initial: OrderState.Idle(),
  * }).pipe(
  *   Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
  *     OrderState.Pending({ orderId: event.orderId })

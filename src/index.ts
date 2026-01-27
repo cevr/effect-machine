@@ -8,11 +8,15 @@ export type { MachineStateSchema, MachineEventSchema } from "./machine-schema.js
 // Core machine types and constructors
 export type {
   AlwaysTransition,
+  AnySlot,
   EffectSlot,
+  EffectSlotType,
+  GuardHandler,
   Machine as MachineType,
   MachineRef,
   MakeConfig,
   OnOptions,
+  RootInvoke,
   StateEffect,
   Transition,
 } from "./machine.js";
@@ -45,13 +49,14 @@ export type { ChooseBranch, ChooseEntry, ChooseOtherwise } from "./combinators/c
 export { delay } from "./combinators/delay.js";
 export type { DelayOptions, DurationOrFn } from "./combinators/delay.js";
 export { final } from "./combinators/final.js";
+export { guard } from "./combinators/guard.js";
 export { invoke } from "./combinators/invoke.js";
 export { on } from "./combinators/on.js";
 export type { OnForceOptions } from "./combinators/on.js";
 export { onEnter } from "./combinators/on-enter.js";
 export { onExit } from "./combinators/on-exit.js";
 export { provide } from "./combinators/provide.js";
-export type { EffectHandler, EffectHandlers } from "./combinators/provide.js";
+export type { EffectHandler, EffectHandlers, GuardEffectHandler } from "./combinators/provide.js";
 export { from } from "./combinators/from.js";
 export type { StateScope, ScopedTransition } from "./combinators/from.js";
 export { any } from "./combinators/any.js";

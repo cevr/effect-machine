@@ -54,7 +54,7 @@ export const simulate = <
 
     for (const event of events) {
       // Use shared resolver for guard cascade support
-      const transition = resolveTransition(machine, currentState, event);
+      const transition = yield* resolveTransition(machine, currentState, event);
 
       if (transition === undefined) {
         continue;
@@ -264,7 +264,7 @@ export const createTestHarness = <
         const currentState = yield* SubscriptionRef.get(stateRef);
 
         // Use shared resolver for guard cascade support
-        const transition = resolveTransition(machine, currentState, event);
+        const transition = yield* resolveTransition(machine, currentState, event);
 
         if (transition === undefined) {
           return currentState;

@@ -103,7 +103,7 @@ describe("Cluster Integration with MachineSchema", () => {
         );
 
         const result = yield* simulate(machineWithInitial, [
-          OrderEvent.Process({}),
+          OrderEvent.Process(),
           OrderEvent.Ship({ trackingId: "TRACK-456" }),
         ]);
 
@@ -232,17 +232,21 @@ describe("Entity.makeTestClient with machine handler", () => {
               const currentState = yield* Ref.get(stateRef);
               const event = envelope.payload.event as unknown as OrderEvent;
 
-              // Use Machine.findTransitions for O(1) lookup
               const transitions = Machine.findTransitions(
                 orderMachine,
                 currentState._tag,
                 event._tag,
               );
 
-              // Find first matching transition (guard cascade)
               let transition: (typeof transitions)[number] | undefined;
               for (const t of transitions) {
-                if (t.guard === undefined || t.guard({ state: currentState, event })) {
+                if (t.guard === undefined) {
+                  transition = t;
+                  break;
+                }
+                const guardResult = t.guard({ state: currentState, event });
+                const ok = Effect.isEffect(guardResult) ? yield* guardResult : guardResult;
+                if (ok) {
                   transition = t;
                   break;
                 }
@@ -271,7 +275,7 @@ describe("Entity.makeTestClient with machine handler", () => {
         const initialState = yield* client.GetState();
         expect(initialState._tag).toBe("Pending");
 
-        const processingState = yield* client.Send({ event: OrderEvent.Process({}) });
+        const processingState = yield* client.Send({ event: OrderEvent.Process() });
         expect(processingState._tag).toBe("Processing");
 
         const shippedState = yield* client.Send({
@@ -295,17 +299,21 @@ describe("Entity.makeTestClient with machine handler", () => {
               const currentState = yield* Ref.get(stateRef);
               const event = envelope.payload.event as unknown as CounterEvent;
 
-              // Use indexed lookup
               const transitions = Machine.findTransitions(
                 counterMachine,
                 currentState._tag,
                 event._tag,
               );
 
-              // Guard cascade
               let transition: (typeof transitions)[number] | undefined;
               for (const t of transitions) {
-                if (t.guard === undefined || t.guard({ state: currentState, event })) {
+                if (t.guard === undefined) {
+                  transition = t;
+                  break;
+                }
+                const guardResult = t.guard({ state: currentState, event });
+                const ok = Effect.isEffect(guardResult) ? yield* guardResult : guardResult;
+                if (ok) {
                   transition = t;
                   break;
                 }
@@ -331,10 +339,10 @@ describe("Entity.makeTestClient with machine handler", () => {
         const client = yield* makeClient("counter-1");
 
         // Increment 4 times - only 3 should work due to guard
-        yield* client.Send({ event: CounterEvent.Increment({}) });
-        yield* client.Send({ event: CounterEvent.Increment({}) });
-        yield* client.Send({ event: CounterEvent.Increment({}) });
-        yield* client.Send({ event: CounterEvent.Increment({}) }); // blocked by guard
+        yield* client.Send({ event: CounterEvent.Increment() });
+        yield* client.Send({ event: CounterEvent.Increment() });
+        yield* client.Send({ event: CounterEvent.Increment() });
+        yield* client.Send({ event: CounterEvent.Increment() }); // blocked by guard
 
         const state = yield* client.GetState();
         expect(state._tag).toBe("Counting");

@@ -1,7 +1,7 @@
 import type { Effect } from "effect";
 
-import type { Machine, OnOptions, Transition } from "../machine.js";
-import { addTransition, normalizeOnOptions } from "../machine.js";
+import type { AnySlot, EffectSlotType, Machine, OnOptions, Transition } from "../machine.js";
+import { addEffectSlot, addTransition, normalizeOnOptions } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
 import type { TransitionContext, TransitionResult } from "../internal/types.js";
 import type { StateMatcher } from "./any.js";
@@ -55,9 +55,9 @@ function onImpl<
     ctx: TransitionContext<NarrowedState, NarrowedEvent>,
   ) => TransitionResult<ResultState, R2>,
   options?: OnOptions<NarrowedState, NarrowedEvent, R2>,
-): <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
-  builder: Machine<State, Event, R, Effects>,
-) => Machine<State, Event, R | R2, Effects>;
+): <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
+  builder: Machine<State, Event, R, Slots>,
+) => Machine<State, Event, R | R2, Slots>;
 
 /**
  * Standard on: state + event signature
@@ -74,9 +74,9 @@ function onImpl<
     ctx: TransitionContext<NarrowedState, NarrowedEvent>,
   ) => TransitionResult<ResultState, R2>,
   options?: OnOptions<NarrowedState, NarrowedEvent, R2>,
-): <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
-  builder: Machine<State, Event, R, Effects>,
-) => Machine<State, Event, R | R2, Effects>;
+): <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
+  builder: Machine<State, Event, R, Slots>,
+) => Machine<State, Event, R | R2, Slots>;
 
 // ============================================================================
 // Implementation
@@ -145,26 +145,40 @@ function standardOnImpl<
   const eventTag = getTag(eventConstructor);
   const normalizedOptions = normalizeOnOptions(options);
 
-  return <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
-    builder: Machine<State, Event, R, Effects>,
-  ): Machine<State, Event, R | R2, Effects> => {
+  return <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
+    builder: Machine<State, Event, R, Slots>,
+  ): Machine<State, Event, R | R2, Slots> => {
     const transition: Transition<State, Event, R2> = {
       stateTag,
       eventTag,
       handler: handler as unknown as (
         ctx: TransitionContext<State, Event>,
       ) => TransitionResult<State, R2>,
-      guard: normalizedOptions?.guard as unknown as
-        | ((ctx: TransitionContext<State, Event>) => boolean)
-        | undefined,
+      guard: normalizedOptions?.guard as Transition<State, Event, R2>["guard"],
       guardName: normalizedOptions?.guardName,
+      guardNeedsProvision: normalizedOptions?.guardNeedsProvision,
       effect: normalizedOptions?.effect as unknown as
         | ((ctx: TransitionContext<State, Event>) => Effect.Effect<void, never, R2>)
         | undefined,
       reenter: normalizedOptions?.reenter,
     };
 
-    return addTransition(transition)(builder) as Machine<State, Event, R | R2, Effects>;
+    // If guard needs provision, add a guard slot
+    let result = addTransition(transition)(builder) as Machine<State, Event, R | R2, Slots>;
+
+    if (
+      normalizedOptions?.guardNeedsProvision === true &&
+      normalizedOptions.guardName !== undefined
+    ) {
+      result = addEffectSlot<State, Event, R | R2, EffectSlotType<"guard", string>>({
+        type: "guard",
+        stateTag,
+        eventTag,
+        name: normalizedOptions.guardName,
+      })(result) as Machine<State, Event, R | R2, Slots>;
+    }
+
+    return result;
   };
 }
 
@@ -187,10 +201,10 @@ function matcherOnImpl<
   const eventTag = getTag(eventConstructor);
   const normalizedOptions = normalizeOnOptions(options);
 
-  return <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
-    builder: Machine<State, Event, R, Effects>,
-  ): Machine<State, Event, R | R2, Effects> => {
-    let result = builder as Machine<State, Event, R | R2, Effects>;
+  return <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
+    builder: Machine<State, Event, R, Slots>,
+  ): Machine<State, Event, R | R2, Slots> => {
+    let result = builder as Machine<State, Event, R | R2, Slots>;
 
     for (const stateTag of matcher.stateTags) {
       const transition: Transition<State, Event, R2> = {
@@ -199,17 +213,31 @@ function matcherOnImpl<
         handler: handler as unknown as (
           ctx: TransitionContext<State, Event>,
         ) => TransitionResult<State, R2>,
-        guard: normalizedOptions?.guard as unknown as
-          | ((ctx: TransitionContext<State, Event>) => boolean)
-          | undefined,
+        guard: normalizedOptions?.guard as Transition<State, Event, R2>["guard"],
         guardName: normalizedOptions?.guardName,
+        guardNeedsProvision: normalizedOptions?.guardNeedsProvision,
         effect: normalizedOptions?.effect as unknown as
           | ((ctx: TransitionContext<State, Event>) => Effect.Effect<void, never, R2>)
           | undefined,
         reenter: normalizedOptions?.reenter,
       };
 
-      result = addTransition(transition)(result) as Machine<State, Event, R | R2, Effects>;
+      result = addTransition(transition)(result) as Machine<State, Event, R | R2, Slots>;
+    }
+
+    // If guard needs provision, add a guard slot (only once, not per state)
+    if (
+      normalizedOptions?.guardNeedsProvision === true &&
+      normalizedOptions.guardName !== undefined
+    ) {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- stateTags is non-empty from any()
+      const firstStateTag = matcher.stateTags[0]!;
+      result = addEffectSlot<State, Event, R | R2, EffectSlotType<"guard", string>>({
+        type: "guard",
+        stateTag: firstStateTag,
+        eventTag,
+        name: normalizedOptions.guardName,
+      })(result) as Machine<State, Event, R | R2, Slots>;
     }
 
     return result;
@@ -240,6 +268,7 @@ function scopedOnImpl<
     handler: handler as unknown as ScopedTransition<NarrowedState, NarrowedEvent, R2>["handler"],
     guard: normalizedOptions?.guard as ScopedTransition<NarrowedState, NarrowedEvent, R2>["guard"],
     guardName: normalizedOptions?.guardName,
+    guardNeedsProvision: normalizedOptions?.guardNeedsProvision,
     effect: normalizedOptions?.effect as ScopedTransition<
       NarrowedState,
       NarrowedEvent,
@@ -292,9 +321,9 @@ function forceImpl<
     ctx: TransitionContext<NarrowedState, NarrowedEvent>,
   ) => TransitionResult<ResultState, R2>,
   options?: OnForceOptions<NarrowedState, NarrowedEvent, R2>,
-): <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
-  builder: Machine<State, Event, R, Effects>,
-) => Machine<State, Event, R | R2, Effects>;
+): <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
+  builder: Machine<State, Event, R, Slots>,
+) => Machine<State, Event, R | R2, Slots>;
 
 /**
  * Standard on.force: state + event signature
@@ -311,9 +340,9 @@ function forceImpl<
     ctx: TransitionContext<NarrowedState, NarrowedEvent>,
   ) => TransitionResult<ResultState, R2>,
   options?: OnForceOptions<NarrowedState, NarrowedEvent, R2>,
-): <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
-  builder: Machine<State, Event, R, Effects>,
-) => Machine<State, Event, R | R2, Effects>;
+): <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
+  builder: Machine<State, Event, R, Slots>,
+) => Machine<State, Event, R | R2, Slots>;
 
 function forceImpl(first: unknown, second: unknown, third?: unknown, fourth?: unknown): unknown {
   // Re-use on() logic with reenter: true forced
@@ -350,25 +379,25 @@ function forceImpl(first: unknown, second: unknown, third?: unknown, fourth?: un
  *
  * @example Standard usage
  * ```ts
- * Machine.make<State, Event>(State.Idle({})).pipe(
- *   Machine.on(State.Idle, Event.Start, () => State.Running({})),
+ * Machine.make<State, Event>(State.Idle()).pipe(
+ *   Machine.on(State.Idle, Event.Start, () => State.Running()),
  * )
  * ```
  *
  * @example Multi-state with any()
  * ```ts
- * Machine.make<State, Event>(State.Idle({})).pipe(
+ * Machine.make<State, Event>(State.Idle()).pipe(
  *   Machine.on(
  *     Machine.any(State.Running, State.Paused),
  *     Event.Stop,
- *     () => State.Stopped({})
+ *     () => State.Stopped()
  *   ),
  * )
  * ```
  *
  * @example Scoped with from()
  * ```ts
- * Machine.make<State, Event>(State.Idle({})).pipe(
+ * Machine.make<State, Event>(State.Idle()).pipe(
  *   Machine.from(State.Typing).pipe(
  *     Machine.on(Event.KeyPress, h1),
  *     Machine.on(Event.Submit, h2),

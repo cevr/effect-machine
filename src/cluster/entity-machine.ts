@@ -8,12 +8,8 @@ import type { Rpc } from "@effect/rpc";
 import { Effect, type Layer, Queue, Ref } from "effect";
 
 import type { Machine, MachineRef } from "../machine.js";
-import {
-  findTransitions,
-  findOnEnterEffects,
-  findOnExitEffects,
-} from "../internal/transition-index.js";
-import { applyAlways } from "../internal/loop.js";
+import { findOnEnterEffects, findOnExitEffects } from "../internal/transition-index.js";
+import { applyAlways, resolveTransition } from "../internal/loop.js";
 
 /**
  * Options for EntityMachine.layer
@@ -83,16 +79,8 @@ const processEvent = <S extends { readonly _tag: string }, E extends { readonly 
   Effect.gen(function* () {
     const currentState = yield* Ref.get(stateRef);
 
-    // Find matching transition using indexed lookup
-    const candidates = findTransitions(machine, currentState._tag, event._tag);
-
-    let transition: (typeof candidates)[number] | undefined;
-    for (const t of candidates) {
-      if (t.guard === undefined || t.guard({ state: currentState, event })) {
-        transition = t;
-        break;
-      }
-    }
+    // Find matching transition using guard cascade
+    const transition = yield* resolveTransition(machine, currentState, event);
 
     if (transition === undefined) {
       // No valid transition - ignore event

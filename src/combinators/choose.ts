@@ -1,6 +1,6 @@
 import type { Effect } from "effect";
 
-import type { Machine, Transition } from "../machine.js";
+import type { AnySlot, Machine, Transition } from "../machine.js";
 import { addTransition } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
 import type { TransitionContext, TransitionResult } from "../internal/types.js";
@@ -63,12 +63,12 @@ export function choose<
   const stateTag = getTag(stateConstructor);
   const eventTag = getTag(eventConstructor);
 
-  return <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
-    builder: Machine<State, Event, R, Effects>,
-  ): Machine<State, Event, R | R2, Effects> => {
+  return <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
+    builder: Machine<State, Event, R, Slots>,
+  ): Machine<State, Event, R | R2, Slots> => {
     // Each branch becomes a separate transition, leveraging guard cascade
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let result: Machine<State, Event, any, Effects> = builder;
+    let result: Machine<State, Event, any, Slots> = builder;
 
     for (const branch of branches) {
       const transition: Transition<State, Event, R2> = {
@@ -91,6 +91,6 @@ export function choose<
       result = addTransition(transition)(result);
     }
 
-    return result as Machine<State, Event, R | R2, Effects>;
+    return result as Machine<State, Event, R | R2, Slots>;
   };
 }

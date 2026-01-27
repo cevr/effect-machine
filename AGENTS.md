@@ -15,6 +15,8 @@ bun run fmt           # oxfmt
 
 - Files: kebab-case (`actor-system.ts`, `on-enter.ts`)
 - States/Events: schema-first with `State({...})` / `Event({...})` - they ARE schemas
+- Empty struct constructors: `State.Idle()` - no args, `State.Idle({})` is type error
+- Non-empty: `State.Loading({ url })` - args required
 - Machine creation: `Machine.make({ state, event, initial })` - types inferred from schemas
 - Exports: all public API via `src/index.ts`
 - Strict Effect config: see `tsconfig.json` for `@effect/language-service` rules
@@ -24,10 +26,11 @@ bun run fmt           # oxfmt
 ## Gotchas
 
 - Guards evaluated in registration order - first pass wins
+- Guards can be sync `boolean` or async `Effect<boolean>` - `simulate` requires R if async
 - `always` transitions max 100 iterations (infinite loop protection)
 - `delay` requires `Effect.scoped` + `ActorSystemDefault` layer
 - TestClock: use `Layer.merge(ActorSystemDefault, TestContext.TestContext)`
-- `simulate`/`createTestHarness` are pure - no onEnter/onExit/invoke effects
+- `simulate`/`createTestHarness` run guards but no onEnter/onExit/invoke effects
 - Actor testing needs `yieldFibers` after `send()` to let effects run
 - Same-state transitions skip exit/enter by default
 - `on.force()` runs exit/enter even on same state tag - use to restart timers/invoke
@@ -42,11 +45,21 @@ bun run fmt           # oxfmt
 
 ## Effect Slots
 
-- `invoke`, `onEnter`, `onExit` take slot name, not inline handler: `Machine.invoke(State.Loading, "fetchData")`
+- `invoke`, `onEnter`, `onExit` take slot name: `Machine.invoke(State.Loading, "fetchData")`
+- Root-level invoke: `Machine.invoke("background")` - runs for machine lifetime
+- Parallel invokes: `Machine.invoke(State.X, ["task1", "task2"])`
 - Provide handlers via `Machine.provide(machine, { fetchData: ... })` before spawning
 - Spawning machine with unprovided slots → runtime error
 - `simulate()` works without providing effects (pure transitions only)
 - Effects type param `_Effects` is phantom - TypeScript won't catch unprovided slots at compile time
+
+## Guards
+
+- `Guard.make(predicate)` - anonymous guard with inline predicate
+- `Guard.make("name", predicate)` - named guard for inspection/debugging
+- `Guard.make("name")` - slot only, provide via `Machine.provide`
+- Predicate can return `boolean` or `Effect<boolean, never, R>`
+- Composition: `Guard.and`, `Guard.or`, `Guard.not` require predicates (not slots)
 
 ## Effect Language Service
 

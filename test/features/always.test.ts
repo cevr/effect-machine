@@ -93,9 +93,9 @@ describe("Always Transitions", () => {
           initial: TestState.Input({ value: 50 }),
         }).pipe(
           Machine.always(TestState.Input, [
-            { guard: (s) => s.value >= 70, to: () => TestState.High({}) },
-            { guard: (s) => s.value >= 40, to: () => TestState.Medium({}) },
-            { to: () => TestState.Low({}) },
+            { guard: (s) => s.value >= 70, to: () => TestState.High() },
+            { guard: (s) => s.value >= 40, to: () => TestState.Medium() },
+            { to: () => TestState.Low() },
           ]),
           Machine.final(TestState.High),
           Machine.final(TestState.Medium),

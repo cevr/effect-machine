@@ -64,16 +64,19 @@ type VariantsUnion<D extends Record<string, Schema.Struct.Fields>> = {
 }[keyof D & string];
 
 /**
- * Arguments for constructing a variant (without _tag)
+ * Check if fields are empty (no required properties)
  */
-type VariantArgs<Fields extends Schema.Struct.Fields> =
-  Schema.Struct.Constructor<Fields> extends infer T ? ({} extends T ? void | {} : T) : never;
+type IsEmptyFields<Fields extends Schema.Struct.Fields> = keyof Fields extends never ? true : false;
 
 /**
- * Constructor functions for each variant
+ * Constructor functions for each variant.
+ * Empty structs take no args: `State.Idle()`
+ * Non-empty structs require args: `State.Loading({ url })`
  */
 type VariantConstructors<D extends Record<string, Schema.Struct.Fields>, Brand> = {
-  readonly [K in keyof D & string]: (args: VariantArgs<D[K]>) => TaggedStructType<K, D[K]> & Brand;
+  readonly [K in keyof D & string]: IsEmptyFields<D[K]> extends true
+    ? () => TaggedStructType<K, D[K]> & Brand
+    : (args: Schema.Struct.Constructor<D[K]>) => TaggedStructType<K, D[K]> & Brand;
 };
 
 /**
@@ -174,7 +177,6 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
     // Like Data.taggedEnum, this doesn't validate at construction time
     // Use Schema.decode for validation when needed
     // IMPORTANT: Spread args first, then override _tag to ensure correct tag
-    // when passing an existing state/event object
     constructors[tag] = (args: Record<string, unknown>) => {
       return { ...(args ?? {}), _tag: tag };
     };

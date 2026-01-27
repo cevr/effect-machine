@@ -33,7 +33,7 @@ describe("Effect Slots", () => {
   const baseMachine = Machine.make({
     state: FetchState,
     event: FetchEvent,
-    initial: FetchState.Idle({}),
+    initial: FetchState.Idle(),
   }).pipe(
     Machine.on(FetchState.Idle, FetchEvent.Fetch, ({ event }) =>
       FetchState.Loading({ url: event.url }),
@@ -197,19 +197,10 @@ describe("Effect Slots", () => {
   test("spawning unprovided machine throws runtime error", async () => {
     const built = baseMachine;
 
-    // Note: TypeScript doesn't catch this at compile time because Effects is a phantom type.
+    // Note: TypeScript doesn't catch this at compile time because Slots is a phantom type.
     // The runtime validation in spawn() will catch it.
     // We use a type assertion to bypass the type check for testing.
-    type BuiltMachineType = typeof built;
-    type ProvidedMachineType =
-      BuiltMachineType extends MachineType<
-        infer S,
-        infer E,
-        infer R,
-        string // ignore the Effects param
-      >
-        ? MachineType<S, E, R, never>
-        : never;
+    type ProvidedMachineType = MachineType<FetchState, FetchEvent, never, never>;
 
     const program = Effect.gen(function* () {
       const system = yield* ActorSystemService;
@@ -235,7 +226,7 @@ describe("Effect Slots", () => {
         const providedMachine = Machine.make({
           state: FetchState,
           event: FetchEvent,
-          initial: FetchState.Idle({}),
+          initial: FetchState.Idle(),
         }).pipe(
           Machine.on(FetchState.Idle, FetchEvent.Fetch, ({ event }) =>
             FetchState.Loading({ url: event.url }),
@@ -291,9 +282,9 @@ describe("Effect Slots", () => {
         const timerMachine = Machine.make({
           state: TimerState,
           event: TimerEvent,
-          initial: TimerState.Running({}),
+          initial: TimerState.Running(),
         }).pipe(
-          Machine.on(TimerState.Running, TimerEvent.Stop, () => TimerState.Stopped({})),
+          Machine.on(TimerState.Running, TimerEvent.Stop, () => TimerState.Stopped()),
           Machine.invoke(TimerState.Running, "runTimer"),
           Machine.final(TimerState.Stopped),
         );
@@ -322,7 +313,7 @@ describe("Effect Slots", () => {
         expect(log).toEqual(["timer:start"]);
 
         // Stop should cancel the invoke
-        yield* actor.send(TimerEvent.Stop({}));
+        yield* actor.send(TimerEvent.Stop());
         yield* yieldFibers;
 
         const state = yield* actor.snapshot;

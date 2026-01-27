@@ -22,11 +22,11 @@ type StateOf<C> = C extends StateConstructor<infer S> ? S : never;
  *
  * @example
  * ```ts
- * Machine.make<State, Event>(State.Idle({})).pipe(
+ * Machine.make<State, Event>(State.Idle()).pipe(
  *   Machine.on(
  *     Machine.any(State.SelectingMethod, State.ProcessingPayment, State.PaymentError),
  *     Event.Cancel,
- *     () => State.Cancelled({})
+ *     () => State.Cancelled()
  *   ),
  * )
  * ```

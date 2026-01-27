@@ -1,4 +1,4 @@
-import type { Machine } from "../machine.js";
+import type { AnySlot, Machine } from "../machine.js";
 import { addFinal } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
 import type { BrandedState, BrandedEvent } from "../internal/brands.js";
@@ -9,7 +9,7 @@ import type { BrandedState, BrandedEvent } from "../internal/brands.js";
  * @example
  * ```ts
  * pipe(
- *   Machine.make<FetcherState, FetcherEvent>(State.Idle({})),
+ *   Machine.make<FetcherState, FetcherEvent>(State.Idle()),
  *   final(State.Success),
  *   final(State.Failure)
  * )
@@ -20,7 +20,7 @@ export function final<NarrowedState extends BrandedState>(stateConstructor: {
 }) {
   const stateTag = getTag(stateConstructor);
 
-  return <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
-    builder: Machine<State, Event, R, Effects>,
-  ): Machine<State, Event, R, Effects> => addFinal<State, Event, R, Effects>(stateTag)(builder);
+  return <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
+    builder: Machine<State, Event, R, Slots>,
+  ): Machine<State, Event, R, Slots> => addFinal<State, Event, R>(stateTag)(builder);
 }

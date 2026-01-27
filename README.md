@@ -27,6 +27,8 @@ import { Effect, Schema } from "effect";
 import { Machine, State, Event, simulate } from "effect-machine";
 
 // Define states with schema (schema-first - no separate type definition needed)
+// Empty structs: State.Idle() - no args required
+// Non-empty: State.Loading({ url }) - args required
 const MyState = State({
   Idle: {},
   Loading: { url: Schema.String },
@@ -187,29 +189,45 @@ See the [primer](./primer/) for comprehensive documentation:
 
 ### Combinators
 
-| Export            | Description                                   |
-| ----------------- | --------------------------------------------- |
-| `Machine.from`    | Scope transitions to a source state           |
-| `Machine.any`     | Match multiple states for transitions         |
-| `Machine.always`  | Eventless transitions with guard cascade      |
-| `Machine.choose`  | Guard cascade for event transitions           |
-| `Machine.delay`   | Schedule event after duration                 |
-| `Machine.assign`  | Helper for partial state updates              |
-| `Machine.update`  | Shorthand for `on` + `assign`                 |
-| `Machine.invoke`  | Register invoke effect slot (provide handler) |
-| `Machine.onEnter` | Register entry effect slot (provide handler)  |
-| `Machine.onExit`  | Register exit effect slot (provide handler)   |
-| `Machine.provide` | Wire effect handlers to named slots           |
-| `Machine.persist` | Add persistence (schemas from machine)        |
+| Export            | Description                                  |
+| ----------------- | -------------------------------------------- |
+| `Machine.from`    | Scope transitions to a source state          |
+| `Machine.any`     | Match multiple states for transitions        |
+| `Machine.always`  | Eventless transitions with guard cascade     |
+| `Machine.choose`  | Guard cascade for event transitions          |
+| `Machine.delay`   | Schedule event after duration                |
+| `Machine.assign`  | Helper for partial state updates             |
+| `Machine.update`  | Shorthand for `on` + `assign`                |
+| `Machine.invoke`  | Register invoke slot (state-scoped or root)  |
+| `Machine.onEnter` | Register entry effect slot (provide handler) |
+| `Machine.onExit`  | Register exit effect slot (provide handler)  |
+| `Machine.provide` | Wire effect handlers to named slots          |
+| `Machine.persist` | Add persistence (schemas from machine)       |
 
 ### Guards
 
-| Export       | Description             |
-| ------------ | ----------------------- |
-| `Guard.make` | Create reusable guard   |
-| `Guard.and`  | Combine guards with AND |
-| `Guard.or`   | Combine guards with OR  |
-| `Guard.not`  | Negate a guard          |
+| Export       | Description                           |
+| ------------ | ------------------------------------- |
+| `Guard.make` | Create guard (sync or async Effect)   |
+| `Guard.and`  | Combine guards with AND               |
+| `Guard.or`   | Combine guards with OR                |
+| `Guard.not`  | Negate a guard                        |
+| `Guard.for`  | Create guard with auto-narrowed types |
+
+Guards can return `boolean` or `Effect<boolean>`:
+
+```typescript
+// Sync guard
+const canRetry = Guard.make("canRetry", ({ state }) => state.retries < 3);
+
+// Async guard (adds R to machine type)
+const hasPermission = Guard.make("hasPermission", ({ state }) =>
+  Effect.gen(function* () {
+    const auth = yield* AuthService;
+    return yield* auth.check(state.userId);
+  }),
+);
+```
 
 ### Testing
 

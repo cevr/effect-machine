@@ -3,8 +3,8 @@ import type { Pipeable } from "effect/Pipeable";
 import { pipeArguments } from "effect/Pipeable";
 
 import type {
-  GuardFn,
   GuardInput,
+  GuardPredicate,
   StateEffectContext,
   TaggedConstructor,
   TransitionContext,
@@ -32,8 +32,12 @@ export interface Transition<State, Event, R> {
   readonly stateTag: string;
   readonly eventTag: string;
   readonly handler: (ctx: TransitionContext<State, Event>) => TransitionResult<State, R>;
-  readonly guard?: GuardFn<State, Event>;
+  /** Guard predicate - sync boolean or Effect<boolean> */
+  readonly guard?: GuardPredicate<State, Event, R>;
+  /** Guard name - for effect slot lookup when guard needs provision */
   readonly guardName?: string;
+  /** Whether guard needs to be looked up from guardHandlers at runtime */
+  readonly guardNeedsProvision?: boolean;
   readonly effect?: (ctx: TransitionContext<State, Event>) => Effect.Effect<void, never, R>;
   readonly reenter?: boolean;
 }
@@ -56,32 +60,68 @@ export interface StateEffect<State, Event, R> {
 }
 
 /**
- * Effect slot type - represents a named slot for an effect
+ * Effect slot type - represents a named slot for an effect.
+ * This is both a runtime type (stored in effectSlots map) and a phantom type parameter.
  */
 export type EffectSlot =
-  | { readonly type: "invoke"; readonly stateTag: string; readonly name: string }
+  | { readonly type: "invoke"; readonly stateTag: string | null; readonly name: string }
   | { readonly type: "onEnter"; readonly stateTag: string; readonly name: string }
-  | { readonly type: "onExit"; readonly stateTag: string; readonly name: string };
+  | { readonly type: "onExit"; readonly stateTag: string; readonly name: string }
+  | {
+      readonly type: "guard";
+      readonly stateTag: string;
+      readonly eventTag: string;
+      readonly name: string;
+    };
+
+/**
+ * Type-level effect slot for phantom type tracking.
+ * Mirrors EffectSlot but with literal types for compile-time inference.
+ */
+export type EffectSlotType<
+  Type extends "invoke" | "onEnter" | "onExit" | "guard",
+  Name extends string,
+> = { readonly type: Type; readonly name: Name };
+
+/** Any effect slot type (for constraints) */
+export type AnySlot = EffectSlotType<"invoke" | "onEnter" | "onExit" | "guard", string>;
+
+/**
+ * Root invoke effect - runs for entire machine lifetime
+ */
+export interface RootInvoke<State, Event, R> {
+  readonly name: string;
+  readonly handler: (ctx: StateEffectContext<State, Event>) => Effect.Effect<void, never, R>;
+}
+
+/**
+ * Guard handler function - receives context and returns Effect<boolean>
+ */
+export type GuardHandler<State, Event, R> = (
+  ctx: TransitionContext<State, Event>,
+) => Effect.Effect<boolean, never, R>;
 
 /**
  * Machine definition
  *
- * The `Effects` type parameter tracks named effect slots that must be provided
- * before the machine can be spawned. Use `Machine.provide` to supply handlers.
+ * The `Slots` type parameter tracks effect slots as a union of structs:
+ * ```ts
+ * | { type: "invoke"; name: "fetchData" }
+ * | { type: "guard"; name: "canPrint" }
+ * ```
+ * Use `Machine.provide` to supply handlers - type enforces correct return type per slot.
  */
-export interface Machine<
-  State,
-  Event,
-  R = never,
-  _Effects extends string = never,
-> extends Pipeable {
+export interface Machine<State, Event, R = never, _Slots extends AnySlot = never> extends Pipeable {
   readonly initial: State;
   readonly transitions: ReadonlyArray<Transition<State, Event, R>>;
   readonly alwaysTransitions: ReadonlyArray<AlwaysTransition<State, R>>;
   readonly onEnter: ReadonlyArray<StateEffect<State, Event, R>>;
   readonly onExit: ReadonlyArray<StateEffect<State, Event, R>>;
+  readonly rootInvokes: ReadonlyArray<RootInvoke<State, Event, R>>;
   readonly finalStates: ReadonlySet<string>;
   readonly effectSlots: ReadonlyMap<string, EffectSlot>;
+  /** Guard effect handlers (keyed by slot name) */
+  readonly guardHandlers: ReadonlyMap<string, GuardHandler<State, Event, R>>;
   /** Schema for state (attached when using config-based make) */
   readonly stateSchema?: Schema.Schema<State, unknown, never>;
   /** Schema for events (attached when using config-based make) */
@@ -95,17 +135,14 @@ const PipeableProto: Pipeable = {
 };
 
 /** @internal Mutable version for construction */
-interface MachineMutable<
-  State,
-  Event,
-  R = never,
-  _Effects extends string = never,
-> extends Pipeable {
+interface MachineMutable<State, Event, R = never, _Slots extends AnySlot = never> extends Pipeable {
   initial: State;
   transitions: Array<Transition<State, Event, R>>;
   alwaysTransitions: Array<AlwaysTransition<State, R>>;
   onEnter: Array<StateEffect<State, Event, R>>;
   onExit: Array<StateEffect<State, Event, R>>;
+  rootInvokes: Array<RootInvoke<State, Event, R>>;
+  guardHandlers: Map<string, GuardHandler<State, Event, R>>;
   finalStates: Set<string>;
   effectSlots: Map<string, EffectSlot>;
   stateSchema?: Schema.Schema<State, unknown, never>;
@@ -165,8 +202,10 @@ export const make = <
   machine.alwaysTransitions = [];
   machine.onEnter = [];
   machine.onExit = [];
+  machine.rootInvokes = [];
   machine.finalStates = new Set();
   machine.effectSlots = new Map();
+  machine.guardHandlers = new Map();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- schema types are compatible
   machine.stateSchema = config.state as any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- schema types are compatible
@@ -178,10 +217,8 @@ export const make = <
  * Add a transition handler
  */
 export const addTransition =
-  <S extends BrandedState, E extends BrandedEvent, R, Effects extends string, R2>(
-    transition: Transition<S, E, R2>,
-  ) =>
-  (machine: Machine<S, E, R, Effects>): Machine<S, E, R | R2, Effects> => ({
+  <S extends BrandedState, E extends BrandedEvent, R, R2>(transition: Transition<S, E, R2>) =>
+  <Slots extends AnySlot>(machine: Machine<S, E, R, Slots>): Machine<S, E, R | R2, Slots> => ({
     ...machine,
     transitions: [...machine.transitions, transition as Transition<S, E, R | R2>],
   });
@@ -190,10 +227,8 @@ export const addTransition =
  * Add an always (eventless) transition
  */
 export const addAlwaysTransition =
-  <S extends BrandedState, E extends BrandedEvent, R, Effects extends string, R2>(
-    transition: AlwaysTransition<S, R2>,
-  ) =>
-  (machine: Machine<S, E, R, Effects>): Machine<S, E, R | R2, Effects> => ({
+  <S extends BrandedState, E extends BrandedEvent, R, R2>(transition: AlwaysTransition<S, R2>) =>
+  <Slots extends AnySlot>(machine: Machine<S, E, R, Slots>): Machine<S, E, R | R2, Slots> => ({
     ...machine,
     alwaysTransitions: [...machine.alwaysTransitions, transition as AlwaysTransition<S, R | R2>],
   });
@@ -202,10 +237,8 @@ export const addAlwaysTransition =
  * Add an entry effect
  */
 export const addOnEnter =
-  <S extends BrandedState, E extends BrandedEvent, R, Effects extends string, R2>(
-    effect: StateEffect<S, E, R2>,
-  ) =>
-  (machine: Machine<S, E, R, Effects>): Machine<S, E, R | R2, Effects> => ({
+  <S extends BrandedState, E extends BrandedEvent, R, R2>(effect: StateEffect<S, E, R2>) =>
+  <Slots extends AnySlot>(machine: Machine<S, E, R, Slots>): Machine<S, E, R | R2, Slots> => ({
     ...machine,
     onEnter: [...machine.onEnter, effect as StateEffect<S, E, R | R2>],
   });
@@ -214,10 +247,8 @@ export const addOnEnter =
  * Add an exit effect
  */
 export const addOnExit =
-  <S extends BrandedState, E extends BrandedEvent, R, Effects extends string, R2>(
-    effect: StateEffect<S, E, R2>,
-  ) =>
-  (machine: Machine<S, E, R, Effects>): Machine<S, E, R | R2, Effects> => ({
+  <S extends BrandedState, E extends BrandedEvent, R, R2>(effect: StateEffect<S, E, R2>) =>
+  <Slots extends AnySlot>(machine: Machine<S, E, R, Slots>): Machine<S, E, R | R2, Slots> => ({
     ...machine,
     onExit: [...machine.onExit, effect as StateEffect<S, E, R | R2>],
   });
@@ -226,8 +257,8 @@ export const addOnExit =
  * Mark a state as final
  */
 export const addFinal =
-  <S extends BrandedState, E extends BrandedEvent, R, Effects extends string>(stateTag: string) =>
-  (machine: Machine<S, E, R, Effects>): Machine<S, E, R, Effects> => ({
+  <S extends BrandedState, E extends BrandedEvent, R>(stateTag: string) =>
+  <Slots extends AnySlot>(machine: Machine<S, E, R, Slots>): Machine<S, E, R, Slots> => ({
     ...machine,
     finalStates: new Set([...machine.finalStates, stateTag]),
   });
@@ -236,10 +267,8 @@ export const addFinal =
  * Add an effect slot
  */
 export const addEffectSlot =
-  <S extends BrandedState, E extends BrandedEvent, R, Effects extends string, Name extends string>(
-    slot: EffectSlot,
-  ) =>
-  (machine: Machine<S, E, R, Effects>): Machine<S, E, R, Effects | Name> => ({
+  <S extends BrandedState, E extends BrandedEvent, R, NewSlot extends AnySlot>(slot: EffectSlot) =>
+  <Slots extends AnySlot>(machine: Machine<S, E, R, Slots>): Machine<S, E, R, Slots | NewSlot> => ({
     ...machine,
     effectSlots: new Map([...machine.effectSlots, [slot.name, slot]]),
   });
@@ -270,29 +299,38 @@ export interface OnOptions<S, E, R> {
 }
 
 /**
- * Normalize OnOptions guard to GuardFn and extract guard name
+ * Normalized guard options
+ */
+export interface NormalizedGuardOptions<S, E, R> {
+  guard?: GuardPredicate<S, E, R>;
+  guardName?: string;
+  guardNeedsProvision?: boolean;
+  effect?: (ctx: TransitionContext<S, E>) => Effect.Effect<void, never, R>;
+  reenter?: boolean;
+}
+
+/**
+ * Normalize OnOptions guard to structured form
  */
 export const normalizeOnOptions = <S, E, R>(
   options?: OnOptions<S, E, R>,
-):
-  | {
-      guard?: GuardFn<S, E>;
-      guardName?: string;
-      effect?: (ctx: TransitionContext<S, E>) => Effect.Effect<void, never, R>;
-      reenter?: boolean;
-    }
-  | undefined => {
+): NormalizedGuardOptions<S, E, R> | undefined => {
   if (options === undefined) return undefined;
 
-  // Extract guard name if it's a Guard object
-  let guardName: string | undefined;
-  if (options.guard !== undefined && typeof options.guard === "object" && "_tag" in options.guard) {
-    guardName = (options.guard as { name?: string }).name;
+  if (options.guard === undefined) {
+    return {
+      effect: options.effect,
+      reenter: options.reenter,
+    };
   }
 
+  const normalized = normalizeGuard(options.guard);
+
   return {
-    ...options,
-    guard: options.guard !== undefined ? normalizeGuard(options.guard) : undefined,
-    guardName,
+    guard: normalized.predicate,
+    guardName: normalized.name,
+    guardNeedsProvision: normalized.needsProvision,
+    effect: options.effect,
+    reenter: options.reenter,
   };
 };

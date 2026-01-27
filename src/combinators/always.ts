@@ -1,4 +1,4 @@
-import type { AlwaysTransition, Machine } from "../machine.js";
+import type { AlwaysTransition, AnySlot, Machine } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
 import type { TransitionResult } from "../internal/types.js";
 import type { BrandedState, BrandedEvent } from "../internal/brands.js";
@@ -40,11 +40,11 @@ export function always<NarrowedState extends BrandedState, R2 = never>(
 ) {
   const stateTag = getTag(stateConstructor);
 
-  return <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
-    builder: Machine<State, Event, R, Effects>,
-  ): Machine<State, Event, R | R2, Effects> => {
+  return <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
+    builder: Machine<State, Event, R, Slots>,
+  ): Machine<State, Event, R | R2, Slots> => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let result: Machine<State, Event, any, Effects> = builder;
+    let result: Machine<State, Event, any, Slots> = builder;
 
     for (const branch of branches) {
       // A branch is a fallback if it has no guard
@@ -67,6 +67,6 @@ export function always<NarrowedState extends BrandedState, R2 = never>(
       };
     }
 
-    return result as Machine<State, Event, R | R2, Effects>;
+    return result as Machine<State, Event, R | R2, Slots>;
   };
 }

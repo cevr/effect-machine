@@ -1,9 +1,9 @@
 import type { Effect } from "effect";
 
 import { getTag } from "../internal/get-tag.js";
-import type { Machine, OnOptions, Transition } from "../machine.js";
-import { addTransition, normalizeOnOptions } from "../machine.js";
-import type { TransitionContext, TransitionResult } from "../internal/types.js";
+import type { AnySlot, EffectSlotType, Machine, OnOptions, Transition } from "../machine.js";
+import { addEffectSlot, addTransition, normalizeOnOptions } from "../machine.js";
+import type { GuardPredicate, TransitionContext, TransitionResult } from "../internal/types.js";
 import type { BrandedState, BrandedEvent } from "../internal/brands.js";
 
 /**
@@ -13,8 +13,9 @@ export interface ScopedTransition<State, Event, R> {
   readonly _tag: "ScopedTransition";
   readonly eventTag: string;
   readonly handler: (ctx: TransitionContext<State, Event>) => TransitionResult<State, R>;
-  readonly guard?: (ctx: TransitionContext<State, Event>) => boolean;
+  readonly guard?: GuardPredicate<State, Event, R>;
   readonly guardName?: string;
+  readonly guardNeedsProvision?: boolean;
   readonly effect?: (ctx: TransitionContext<State, Event>) => Effect.Effect<void, never, R>;
   readonly reenter?: boolean;
 }
@@ -32,24 +33,24 @@ export interface StateScope<NarrowedState extends BrandedState> {
    */
   pipe<E1 extends BrandedEvent, R1>(
     t1: ScopedTransition<NarrowedState, E1, R1>,
-  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R, Effects extends string>(
-    builder: Machine<FullState, FullEvent, R, Effects>,
-  ) => Machine<FullState, FullEvent, R | R1, Effects>;
+  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R, Slots extends AnySlot>(
+    builder: Machine<FullState, FullEvent, R, Slots>,
+  ) => Machine<FullState, FullEvent, R | R1, Slots>;
 
   pipe<E1 extends BrandedEvent, R1, E2 extends BrandedEvent, R2>(
     t1: ScopedTransition<NarrowedState, E1, R1>,
     t2: ScopedTransition<NarrowedState, E2, R2>,
-  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R, Effects extends string>(
-    builder: Machine<FullState, FullEvent, R, Effects>,
-  ) => Machine<FullState, FullEvent, R | R1 | R2, Effects>;
+  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R, Slots extends AnySlot>(
+    builder: Machine<FullState, FullEvent, R, Slots>,
+  ) => Machine<FullState, FullEvent, R | R1 | R2, Slots>;
 
   pipe<E1 extends BrandedEvent, R1, E2 extends BrandedEvent, R2, E3 extends BrandedEvent, R3>(
     t1: ScopedTransition<NarrowedState, E1, R1>,
     t2: ScopedTransition<NarrowedState, E2, R2>,
     t3: ScopedTransition<NarrowedState, E3, R3>,
-  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R, Effects extends string>(
-    builder: Machine<FullState, FullEvent, R, Effects>,
-  ) => Machine<FullState, FullEvent, R | R1 | R2 | R3, Effects>;
+  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R, Slots extends AnySlot>(
+    builder: Machine<FullState, FullEvent, R, Slots>,
+  ) => Machine<FullState, FullEvent, R | R1 | R2 | R3, Slots>;
 
   pipe<
     E1 extends BrandedEvent,
@@ -65,9 +66,9 @@ export interface StateScope<NarrowedState extends BrandedState> {
     t2: ScopedTransition<NarrowedState, E2, R2>,
     t3: ScopedTransition<NarrowedState, E3, R3>,
     t4: ScopedTransition<NarrowedState, E4, R4>,
-  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R, Effects extends string>(
-    builder: Machine<FullState, FullEvent, R, Effects>,
-  ) => Machine<FullState, FullEvent, R | R1 | R2 | R3 | R4, Effects>;
+  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R, Slots extends AnySlot>(
+    builder: Machine<FullState, FullEvent, R, Slots>,
+  ) => Machine<FullState, FullEvent, R | R1 | R2 | R3 | R4, Slots>;
 
   pipe<
     E1 extends BrandedEvent,
@@ -86,9 +87,9 @@ export interface StateScope<NarrowedState extends BrandedState> {
     t3: ScopedTransition<NarrowedState, E3, R3>,
     t4: ScopedTransition<NarrowedState, E4, R4>,
     t5: ScopedTransition<NarrowedState, E5, R5>,
-  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R, Effects extends string>(
-    builder: Machine<FullState, FullEvent, R, Effects>,
-  ) => Machine<FullState, FullEvent, R | R1 | R2 | R3 | R4 | R5, Effects>;
+  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R, Slots extends AnySlot>(
+    builder: Machine<FullState, FullEvent, R, Slots>,
+  ) => Machine<FullState, FullEvent, R | R1 | R2 | R3 | R4 | R5, Slots>;
 
   pipe<
     E1 extends BrandedEvent,
@@ -110,16 +111,16 @@ export interface StateScope<NarrowedState extends BrandedState> {
     t4: ScopedTransition<NarrowedState, E4, R4>,
     t5: ScopedTransition<NarrowedState, E5, R5>,
     t6: ScopedTransition<NarrowedState, E6, R6>,
-  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R, Effects extends string>(
-    builder: Machine<FullState, FullEvent, R, Effects>,
-  ) => Machine<FullState, FullEvent, R | R1 | R2 | R3 | R4 | R5 | R6, Effects>;
+  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R, Slots extends AnySlot>(
+    builder: Machine<FullState, FullEvent, R, Slots>,
+  ) => Machine<FullState, FullEvent, R | R1 | R2 | R3 | R4 | R5 | R6, Slots>;
 
   // Fallback for more than 6 transitions
   pipe(
     ...transitions: Array<ScopedTransition<NarrowedState, BrandedEvent, unknown>>
-  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R, Effects extends string>(
-    builder: Machine<FullState, FullEvent, R, Effects>,
-  ) => Machine<FullState, FullEvent, R | unknown, Effects>;
+  ): <FullState extends BrandedState, FullEvent extends BrandedEvent, R, Slots extends AnySlot>(
+    builder: Machine<FullState, FullEvent, R, Slots>,
+  ) => Machine<FullState, FullEvent, R | unknown, Slots>;
 }
 
 /**
@@ -128,15 +129,15 @@ export interface StateScope<NarrowedState extends BrandedState> {
 function stateScopePipe<NarrowedState extends BrandedState>(
   this: StateScope<NarrowedState>,
   ...transitions: Array<ScopedTransition<NarrowedState, BrandedEvent, unknown>>
-): <S extends BrandedState, E extends BrandedEvent, R, Effects extends string>(
-  builder: Machine<S, E, R, Effects>,
-) => Machine<S, E, unknown, Effects> {
+): <S extends BrandedState, E extends BrandedEvent, R, Slots extends AnySlot>(
+  builder: Machine<S, E, R, Slots>,
+) => Machine<S, E, unknown, Slots> {
   const stateTag = this.stateTag;
 
-  return <S extends BrandedState, E extends BrandedEvent, R, Effects extends string>(
-    builder: Machine<S, E, R, Effects>,
-  ): Machine<S, E, unknown, Effects> => {
-    let result: Machine<S, E, unknown, Effects> = builder;
+  return <S extends BrandedState, E extends BrandedEvent, R, Slots extends AnySlot>(
+    builder: Machine<S, E, R, Slots>,
+  ): Machine<S, E, unknown, Slots> => {
+    let result: Machine<S, E, unknown, Slots> = builder;
     for (const scopedTransition of transitions) {
       const transition: Transition<S, E, unknown> = {
         stateTag,
@@ -144,10 +145,24 @@ function stateScopePipe<NarrowedState extends BrandedState>(
         handler: scopedTransition.handler as unknown as Transition<S, E, unknown>["handler"],
         guard: scopedTransition.guard as unknown as Transition<S, E, unknown>["guard"],
         guardName: scopedTransition.guardName,
+        guardNeedsProvision: scopedTransition.guardNeedsProvision,
         effect: scopedTransition.effect as unknown as Transition<S, E, unknown>["effect"],
         reenter: scopedTransition.reenter,
       };
       result = addTransition(transition)(result);
+
+      // If guard needs provision, add a guard slot
+      if (
+        scopedTransition.guardNeedsProvision === true &&
+        scopedTransition.guardName !== undefined
+      ) {
+        result = addEffectSlot<S, E, unknown, EffectSlotType<"guard", string>>({
+          type: "guard",
+          stateTag,
+          eventTag: scopedTransition.eventTag,
+          name: scopedTransition.guardName,
+        })(result) as Machine<S, E, unknown, Slots>;
+      }
     }
     return result;
   };
@@ -158,7 +173,7 @@ function stateScopePipe<NarrowedState extends BrandedState>(
  *
  * @example
  * ```ts
- * Machine.make<State, Event>(State.Idle({})).pipe(
+ * Machine.make<State, Event>(State.Idle()).pipe(
  *   Machine.from(State.Typing).pipe(
  *     Machine.on(Event.KeyPress, ({ state, event }) => State.Typing({ text: state.text + event.key })),
  *     Machine.on(Event.Backspace, ({ state }) => State.Typing({ text: state.text.slice(0, -1) })),
@@ -205,6 +220,7 @@ export const scopedOn = <
     handler: handler as unknown as ScopedTransition<NarrowedState, NarrowedEvent, R2>["handler"],
     guard: normalizedOptions?.guard as ScopedTransition<NarrowedState, NarrowedEvent, R2>["guard"],
     guardName: normalizedOptions?.guardName,
+    guardNeedsProvision: normalizedOptions?.guardNeedsProvision,
     effect: normalizedOptions?.effect as ScopedTransition<
       NarrowedState,
       NarrowedEvent,

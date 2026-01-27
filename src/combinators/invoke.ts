@@ -1,7 +1,19 @@
-import type { Machine } from "../machine.js";
+import type { AnySlot, EffectSlotType, Machine } from "../machine.js";
 import { addEffectSlot } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
 import type { BrandedState, BrandedEvent } from "../internal/brands.js";
+
+/** Type-level invoke slot */
+type InvokeSlot<Name extends string> = EffectSlotType<"invoke", Name>;
+type InvokeSlots<Names extends readonly string[]> = Names[number] extends infer Name
+  ? Name extends string
+    ? InvokeSlot<Name>
+    : never
+  : never;
+
+// ============================================================================
+// Overload 1: State + single name (existing API)
+// ============================================================================
 
 /**
  * Register a named invoke slot for a state.
@@ -9,7 +21,7 @@ import type { BrandedState, BrandedEvent } from "../internal/brands.js";
  *
  * @example
  * ```ts
- * const machine = Machine.make<FetcherState, FetcherEvent>(State.Idle({})).pipe(
+ * const machine = Machine.make({ state, event, initial }).pipe(
  *   Machine.on(State.Idle, Event.Fetch, ({ event }) => State.Loading({ url: event.url })),
  *   Machine.on(State.Loading, Event.Resolve, ({ event }) => State.Success({ data: event.data })),
  *   Machine.invoke(State.Loading, "fetchData"),
@@ -29,13 +41,118 @@ import type { BrandedState, BrandedEvent } from "../internal/brands.js";
 export function invoke<NarrowedState extends BrandedState, Name extends string>(
   stateConstructor: { (...args: never[]): NarrowedState },
   name: Name,
-) {
+): <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
+  builder: Machine<State, Event, R, Slots>,
+) => Machine<State, Event, R, Slots | InvokeSlot<Name>>;
+
+// ============================================================================
+// Overload 2: State + array of names (parallel invokes)
+// ============================================================================
+
+/**
+ * Register multiple parallel invoke slots for a state.
+ * All invokes start on state entry, all are interrupted on state exit.
+ *
+ * @example
+ * ```ts
+ * const machine = Machine.make({ state, event, initial }).pipe(
+ *   Machine.invoke(State.InUse, ["onCashMachineEvent", "waitForStatus"]),
+ * )
+ *
+ * const machineLive = Machine.provide(machine, {
+ *   onCashMachineEvent: ({ self }) => Effect.forever(listenForEvents(self)),
+ *   waitForStatus: ({ self }) => Effect.forever(pollStatus(self)),
+ * })
+ * ```
+ */
+export function invoke<NarrowedState extends BrandedState, const Names extends readonly string[]>(
+  stateConstructor: { (...args: never[]): NarrowedState },
+  names: Names,
+): <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
+  builder: Machine<State, Event, R, Slots>,
+) => Machine<State, Event, R, Slots | InvokeSlots<Names>>;
+
+// ============================================================================
+// Overload 3: Root-level invoke (no state, runs for machine lifetime)
+// ============================================================================
+
+/**
+ * Register a root-level invoke slot that runs for the machine's entire lifetime.
+ * Starts on actor spawn, interrupted on actor stop.
+ *
+ * @example
+ * ```ts
+ * const machine = Machine.make({ state, event, initial }).pipe(
+ *   Machine.invoke("stormNavigator"),
+ * )
+ *
+ * const machineLive = Machine.provide(machine, {
+ *   stormNavigator: ({ self }) =>
+ *     Effect.forever(
+ *       Effect.gen(function* () {
+ *         const event = yield* subscribeToNavEvents
+ *         yield* self.send(Event.Navigate(event))
+ *       })
+ *     ),
+ * })
+ * ```
+ */
+export function invoke<Name extends string>(
+  name: Name,
+): <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
+  builder: Machine<State, Event, R, Slots>,
+) => Machine<State, Event, R, Slots | InvokeSlot<Name>>;
+
+// ============================================================================
+// Implementation
+// ============================================================================
+
+export function invoke(
+  stateConstructorOrName: unknown,
+  nameOrNames?: string | readonly string[],
+): unknown {
+  // Root-level invoke: invoke("name")
+  if (typeof stateConstructorOrName === "string") {
+    const name = stateConstructorOrName;
+    return <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
+      builder: Machine<State, Event, R, Slots>,
+    ): Machine<State, Event, R, Slots | InvokeSlot<typeof name>> => {
+      return addEffectSlot<State, Event, R, InvokeSlot<typeof name>>({
+        type: "invoke",
+        stateTag: null,
+        name,
+      })(builder);
+    };
+  }
+
+  // State constructor case
+  const stateConstructor = stateConstructorOrName as { (...args: never[]): BrandedState };
   const stateTag = getTag(stateConstructor);
 
-  return <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
-    builder: Machine<State, Event, R, Effects>,
-  ): Machine<State, Event, R, Effects | Name> => {
-    return addEffectSlot<State, Event, R, Effects, Name>({
+  // Array of names: invoke(State.X, ["a", "b"])
+  if (Array.isArray(nameOrNames)) {
+    // Implementation casts - overload signature provides proper types
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return ((builder: any) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let result: any = builder;
+      for (const name of nameOrNames as string[]) {
+        result = addEffectSlot({
+          type: "invoke",
+          stateTag,
+          name,
+        })(result);
+      }
+      return result;
+    }) as unknown;
+  }
+
+  // Single name: invoke(State.X, "name")
+  const name = nameOrNames as string;
+  return <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
+    builder: Machine<State, Event, R, Slots>,
+  ): Machine<State, Event, R, Slots | InvokeSlot<typeof name>> => {
+    return addEffectSlot<State, Event, R, InvokeSlot<typeof name>>({
       type: "invoke",
       stateTag,
       name,

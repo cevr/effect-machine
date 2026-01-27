@@ -7,7 +7,7 @@ import { Entity } from "@effect/cluster";
 import { Rpc } from "@effect/rpc";
 import type { Schema } from "effect";
 
-import type { Machine } from "../machine.js";
+import type { AnySlot, Machine } from "../machine.js";
 
 /**
  * Options for toEntity.
@@ -74,9 +74,9 @@ export const toEntity = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
-  Effects extends string,
+  Slots extends AnySlot,
 >(
-  machine: Machine<S, E, R, Effects>,
+  machine: Machine<S, E, R, Slots>,
   options: ToEntityOptions,
 ) => {
   const stateSchema = machine.stateSchema;

@@ -44,7 +44,7 @@ describe("Assign and Update Helpers", () => {
         const result = yield* simulate(machine, [
           FormEvent.SetName({ name: "John" }),
           FormEvent.SetEmail({ email: "john@example.com" }),
-          FormEvent.Submit({}),
+          FormEvent.Submit(),
         ]);
 
         expect(result.finalState._tag).toBe("Submitted");
@@ -79,7 +79,7 @@ describe("Assign and Update Helpers", () => {
         const result = yield* simulate(machine, [
           FormEvent.SetName({ name: "Jane" }),
           FormEvent.SetEmail({ email: "jane@example.com" }),
-          FormEvent.Submit({}),
+          FormEvent.Submit(),
         ]);
 
         expect(result.finalState._tag).toBe("Submitted");
@@ -115,7 +115,7 @@ describe("Assign and Update Helpers", () => {
 
         const result = yield* simulate(machine, [
           FormEvent.SetName({ name: "A".repeat(100) }), // blocked by guard
-          FormEvent.Submit({}),
+          FormEvent.Submit(),
         ]);
 
         expect(result.finalState._tag).toBe("Submitted");
