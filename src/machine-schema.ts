@@ -9,10 +9,10 @@
  *
  * @example
  * ```ts
- * import { MachineSchema, Machine } from "effect-machine"
+ * import { State, Event, Machine } from "effect-machine"
  *
  * // Define schema-first state
- * const OrderState = MachineSchema.State({
+ * const OrderState = State({
  *   Pending: { orderId: Schema.String },
  *   Shipped: { trackingId: Schema.String },
  * })

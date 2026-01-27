@@ -6,8 +6,9 @@ import { applyAlways, resolveTransition } from "./internal/loop.js";
 /**
  * Yield to other fibers. Useful in tests to allow forked effects to run.
  *
- * @deprecated Use `Effect.yieldNow()` instead. A single yield is sufficient
- * for allowing forked effects to run.
+ * @deprecated Prefer `Effect.yieldNow().pipe(Effect.repeatN(9))` for tests
+ * that need fiber coordination. Multiple yields are needed for complex
+ * scenarios with delays or nested forks.
  */
 export const yieldFibers = Effect.gen(function* () {
   for (let i = 0; i < 10; i++) {
@@ -26,7 +27,8 @@ export interface SimulationResult<S> {
 /**
  * Simulate a sequence of events through a machine without running an actor.
  * Useful for testing state transitions in isolation.
- * Does not run onEnter/onExit effects, but does apply always transitions.
+ * Does not run onEnter/onExit/invoke effects, but does evaluate guards
+ * and apply always transitions.
  *
  * @example
  * ```ts
@@ -231,7 +233,8 @@ export interface TestHarnessOptions<S, E> {
 
 /**
  * Create a test harness for step-by-step testing.
- * Does not run onEnter/onExit effects, but does apply always transitions.
+ * Does not run onEnter/onExit/invoke effects, but does evaluate guards
+ * and apply always transitions.
  *
  * @example Basic usage
  * ```ts
