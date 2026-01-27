@@ -96,13 +96,15 @@ describe("Testing", () => {
 
   describe("assertReaches", () => {
     test("passes when state is reached", async () => {
-      await Effect.runPromise(
+      const result = await Effect.runPromise(
         assertReaches(
           testMachine,
           [TestEvent.Fetch(), TestEvent.Resolve({ data: "ok" })],
           "Success",
-        ),
+        ).pipe(Effect.either),
       );
+
+      expect(result._tag).toBe("Right");
     });
 
     test("fails when state is not reached", async () => {
@@ -116,13 +118,15 @@ describe("Testing", () => {
 
   describe("assertPath", () => {
     test("passes when path matches", async () => {
-      await Effect.runPromise(
+      const result = await Effect.runPromise(
         assertPath(
           testMachine,
           [TestEvent.Fetch(), TestEvent.Resolve({ data: "ok" })],
           ["Idle", "Loading", "Success"],
-        ),
+        ).pipe(Effect.either),
       );
+
+      expect(result._tag).toBe("Right");
     });
 
     test("fails on path mismatch", async () => {
@@ -152,13 +156,15 @@ describe("Testing", () => {
 
   describe("assertNeverReaches", () => {
     test("passes when forbidden state is not reached", async () => {
-      await Effect.runPromise(
+      const result = await Effect.runPromise(
         assertNeverReaches(
           testMachine,
           [TestEvent.Fetch(), TestEvent.Resolve({ data: "ok" })],
           "Error",
-        ),
+        ).pipe(Effect.either),
       );
+
+      expect(result._tag).toBe("Right");
     });
 
     test("fails when forbidden state is reached", async () => {

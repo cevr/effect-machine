@@ -90,7 +90,15 @@ describe("ActorSystem", () => {
         yield* actor.send(TestEvent.Start({ value: 5 }));
         yield* yieldFibers;
 
+        // Verify actor is in expected state before stopping
+        const stateBeforeStop = yield* actor.snapshot;
+        expect(stateBeforeStop._tag).toBe("Active");
+
         yield* system.stop("test-actor");
+
+        // Verify actor is no longer in system
+        const actorAfterStop = yield* system.get("test-actor");
+        expect(actorAfterStop._tag).toBe("None");
       }).pipe(Effect.scoped, Effect.provide(ActorSystemDefault)),
     );
   });

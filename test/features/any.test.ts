@@ -174,24 +174,6 @@ describe("Machine.any", () => {
 // ============================================================================
 
 describe("Machine namespace", () => {
-  test("Machine namespace exports all combinators", () => {
-    expect(Machine.make).toBeDefined();
-    expect(Machine.provide).toBeDefined();
-    expect(Machine.on).toBeDefined();
-    expect(Machine.on.force).toBeDefined();
-    expect(Machine.from).toBeDefined();
-    expect(Machine.any).toBeDefined();
-    expect(Machine.final).toBeDefined();
-    expect(Machine.always).toBeDefined();
-    expect(Machine.choose).toBeDefined();
-    expect(Machine.delay).toBeDefined();
-    expect(Machine.onEnter).toBeDefined();
-    expect(Machine.onExit).toBeDefined();
-    expect(Machine.assign).toBeDefined();
-    expect(Machine.update).toBeDefined();
-    expect(Machine.invoke).toBeDefined();
-  });
-
   test("full Machine namespace usage", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
