@@ -222,23 +222,15 @@ export const Guard = {
       _tag: "Guard",
       name: `and(${names.join(", ")})`,
       predicate: (ctx) => {
-        for (let i = 0; i < predicates.length; i++) {
-          const predicate = predicates[i];
-          if (predicate === undefined) {
-            continue;
-          }
+        for (const [i, predicate] of predicates.entries()) {
           const result = predicate(ctx);
           if (isEffect(result)) {
             return Effect.gen(function* () {
               if ((yield* result) === false) {
                 return false;
               }
-              for (let j = i + 1; j < predicates.length; j++) {
-                const predicate = predicates[j];
-                if (predicate === undefined) {
-                  continue;
-                }
-                const next = predicate(ctx);
+              for (const nextPredicate of predicates.slice(i + 1)) {
+                const next = nextPredicate(ctx);
                 if (isEffect(next)) {
                   if ((yield* next) === false) return false;
                 } else if (next === false) {
@@ -275,23 +267,15 @@ export const Guard = {
       _tag: "Guard",
       name: `or(${names.join(", ")})`,
       predicate: (ctx) => {
-        for (let i = 0; i < predicates.length; i++) {
-          const predicate = predicates[i];
-          if (predicate === undefined) {
-            continue;
-          }
+        for (const [i, predicate] of predicates.entries()) {
           const result = predicate(ctx);
           if (isEffect(result)) {
             return Effect.gen(function* () {
               if ((yield* result) === true) {
                 return true;
               }
-              for (let j = i + 1; j < predicates.length; j++) {
-                const predicate = predicates[j];
-                if (predicate === undefined) {
-                  continue;
-                }
-                const next = predicate(ctx);
+              for (const nextPredicate of predicates.slice(i + 1)) {
+                const next = nextPredicate(ctx);
                 if (isEffect(next)) {
                   if ((yield* next) === true) return true;
                 } else if (next === true) {

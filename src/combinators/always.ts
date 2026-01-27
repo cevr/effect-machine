@@ -1,4 +1,5 @@
 import type { AlwaysTransition, AnySlot, Machine } from "../machine.js";
+import { addAlwaysTransition } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
 import type { TransitionResult } from "../internal/types.js";
 import type { BrandedState, BrandedEvent } from "../internal/brands.js";
@@ -58,13 +59,10 @@ export function always<NarrowedState extends BrandedState, R2 = never>(
           : (branch.guard as unknown as ((state: State) => boolean) | undefined),
       };
 
-      result = {
-        ...result,
-        alwaysTransitions: [
-          ...result.alwaysTransitions,
-          transition as AlwaysTransition<State, R | R2>,
-        ],
-      };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      result = addAlwaysTransition(transition as AlwaysTransition<State, R | R2>)(
+        result as any,
+      ) as any;
     }
 
     return result as Machine<State, Event, R | R2, Slots>;

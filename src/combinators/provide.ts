@@ -143,16 +143,17 @@ function provideImpl<
   machine: Machine<State, Event, R, Slots>,
   handlers: EffectHandlers<State, Event, Slots, R2>,
 ): Machine<State, Event, R | NormalizeR<R2>, never> {
-  // Verify all effect slots have handlers
-  for (const [name] of machine.effectSlots) {
-    if (!(name in handlers)) {
+  // Validate handlers match slots (single pass)
+  const slotNames = new Set(machine.effectSlots.keys());
+  const handlerNames = new Set(Object.keys(handlers));
+
+  for (const name of slotNames) {
+    if (!handlerNames.has(name)) {
       throw new Error(`Missing handler for effect slot "${name}"`);
     }
   }
-
-  // Check for extra handlers that don't match any slots
-  for (const name of Object.keys(handlers)) {
-    if (!machine.effectSlots.has(name)) {
+  for (const name of handlerNames) {
+    if (!slotNames.has(name)) {
       throw new Error(`Unknown effect slot "${name}" - no slot with this name exists`);
     }
   }

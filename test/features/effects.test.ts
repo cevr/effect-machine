@@ -262,6 +262,47 @@ describe("Effect Slots", () => {
     );
   });
 
+  test("final state notifies listeners exactly once", async () => {
+    const notifications: string[] = [];
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const TestState = State({
+          Idle: {},
+          Done: {},
+        });
+
+        const TestEvent = Event({
+          Finish: {},
+        });
+
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Idle(),
+        }).pipe(
+          Machine.on(TestState.Idle, TestEvent.Finish, () => TestState.Done()),
+          Machine.final(TestState.Done),
+        );
+
+        const system = yield* ActorSystemService;
+        const actor = yield* system.spawn("test", machine);
+
+        // Subscribe to state changes
+        actor.subscribe((state) => {
+          notifications.push(state._tag);
+        });
+
+        yield* actor.send(TestEvent.Finish());
+        yield* yieldFibers;
+
+        // Should have exactly 1 "Done" notification (not 2 from the bug)
+        expect(notifications.filter((n) => n === "Done").length).toBe(1);
+        expect(notifications).toEqual(["Done"]);
+      }).pipe(Effect.scoped, Effect.provide(ActorSystemDefault)),
+    );
+  });
+
   test("invoke cancels on state exit", async () => {
     const log: string[] = [];
 

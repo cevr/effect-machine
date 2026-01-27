@@ -192,7 +192,8 @@ const buildActorRef = <S extends { readonly _tag: string }, E extends { readonly
   can: (event) =>
     Effect.gen(function* () {
       const s = yield* SubscriptionRef.get(stateRef);
-      // Cast: guard requirements are provided when machine is spawned
+      // Cast is safe: guards are resolved via Machine.provide before spawning.
+      // ActorSystem.spawn validates all effect slots are provided.
       const transition = yield* resolveTransition(machine, s, event) as Effect.Effect<
         (typeof machine.transitions)[number] | undefined,
         never,
@@ -202,7 +203,9 @@ const buildActorRef = <S extends { readonly _tag: string }, E extends { readonly
     }),
   canSync: (event) => {
     const state = Effect.runSync(SubscriptionRef.get(stateRef));
-    // canSync only works with sync guards - async guards will throw
+    // Cast is safe: guards are resolved via Machine.provide before spawning.
+    // ActorSystem.spawn validates all effect slots are provided.
+    // canSync only works with sync guards - async guards will throw.
     const transition = Effect.runSync(
       resolveTransition(machine, state, event) as Effect.Effect<
         (typeof machine.transitions)[number] | undefined,
@@ -483,7 +486,6 @@ const processEvent = <S extends { readonly _tag: string }, E extends { readonly 
             timestamp: now(),
           });
         }
-        notifyListeners(listeners, newState);
         return true; // Stop the loop
       }
     } else {

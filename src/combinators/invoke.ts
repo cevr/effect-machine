@@ -3,6 +3,18 @@ import { addEffectSlot } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
 import type { BrandedState, BrandedEvent } from "../internal/brands.js";
 
+/** Helper to add multiple invoke slots with same stateTag */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const addMultipleInvokeSlots =
+  (names: readonly string[], stateTag: string | null) => (builder: any) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let result: any = builder;
+    for (const name of names) {
+      result = addEffectSlot({ type: "invoke", stateTag, name })(result);
+    }
+    return result;
+  };
+
 /** Type-level invoke slot */
 type InvokeSlot<Name extends string> = EffectSlotType<"invoke", Name>;
 type InvokeSlots<Names extends readonly string[]> = Names[number] extends infer Name
@@ -153,20 +165,7 @@ export function invoke(
 
   // Root-level array: invoke(["a", "b"])
   if (Array.isArray(stateConstructorOrName)) {
-    const names = stateConstructorOrName as string[];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return ((builder: any) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let result: any = builder;
-      for (const name of names) {
-        result = addEffectSlot({
-          type: "invoke",
-          stateTag: null,
-          name,
-        })(result);
-      }
-      return result;
-    }) as unknown;
+    return addMultipleInvokeSlots(stateConstructorOrName as string[], null);
   }
 
   // State constructor case
@@ -175,20 +174,7 @@ export function invoke(
 
   // Array of names: invoke(State.X, ["a", "b"])
   if (Array.isArray(nameOrNames)) {
-    // Implementation casts - overload signature provides proper types
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return ((builder: any) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let result: any = builder;
-      for (const name of nameOrNames as string[]) {
-        result = addEffectSlot({
-          type: "invoke",
-          stateTag,
-          name,
-        })(result);
-      }
-      return result;
-    }) as unknown;
+    return addMultipleInvokeSlots(nameOrNames as string[], stateTag);
   }
 
   // Single name: invoke(State.X, "name")
