@@ -4,7 +4,7 @@ import type { AnySlot, Machine, Transition } from "../machine.js";
 import { addTransition } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
 import type { TransitionContext, TransitionResult } from "../internal/types.js";
-import type { BrandedState, BrandedEvent } from "../internal/brands.js";
+import type { BrandedState, BrandedEvent, TaggedOrConstructor } from "../internal/brands.js";
 
 /**
  * A single branch in a choose transition cascade
@@ -56,12 +56,12 @@ export function choose<
   NarrowedEvent extends BrandedEvent,
   R2 = never,
 >(
-  stateConstructor: { (...args: never[]): NarrowedState },
-  eventConstructor: { (...args: never[]): NarrowedEvent },
+  state: TaggedOrConstructor<NarrowedState>,
+  event: TaggedOrConstructor<NarrowedEvent>,
   branches: ReadonlyArray<ChooseEntry<NarrowedState, NarrowedEvent, R2>>,
 ) {
-  const stateTag = getTag(stateConstructor);
-  const eventTag = getTag(eventConstructor);
+  const stateTag = getTag(state);
+  const eventTag = getTag(event);
 
   return <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
     builder: Machine<State, Event, R, Slots>,

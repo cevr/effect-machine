@@ -170,7 +170,7 @@ export const Guard = {
   },
 
   /**
-   * Create a guard with auto-narrowed types from state/event constructors.
+   * Create a guard with auto-narrowed types from state/event values or constructors.
    *
    * @example Named guard
    * ```ts
@@ -191,8 +191,8 @@ export const Guard = {
     NarrowedState extends { readonly _tag: string },
     NarrowedEvent extends { readonly _tag: string },
   >(
-    _stateConstructor: { (...args: never[]): NarrowedState },
-    _eventConstructor: { (...args: never[]): NarrowedEvent },
+    _state: NarrowedState | ((...args: never[]) => NarrowedState),
+    _event: NarrowedEvent | ((...args: never[]) => NarrowedEvent),
   ) => {
     return <R = never>(
       nameOrPredicate: string | GuardPredicate<NarrowedState, NarrowedEvent, R>,

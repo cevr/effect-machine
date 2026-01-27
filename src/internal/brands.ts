@@ -17,3 +17,11 @@ export interface EventBrand extends Brand.Brand<EventTypeId> {}
 // Shared branded type constraints used across all combinators
 export type BrandedState = { readonly _tag: string } & StateBrand;
 export type BrandedEvent = { readonly _tag: string } & EventBrand;
+
+/**
+ * Value or constructor for a tagged type.
+ * Accepts both plain values (empty structs) and constructor functions (non-empty structs).
+ */
+export type TaggedOrConstructor<T extends { readonly _tag: string }> =
+  | T
+  | ((...args: never[]) => T);

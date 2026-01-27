@@ -124,7 +124,7 @@ describe("Menu Navigation Pattern", () => {
       Machine.on(MenuEvent.GoToCheckout, () => MenuState.Checkout({ items: [...cart] })),
 
       // Close menu
-      Machine.on(MenuEvent.Close, () => MenuState.Closed()),
+      Machine.on(MenuEvent.Close, () => MenuState.Closed),
     ),
 
     // ItemSelected state handlers
@@ -150,7 +150,7 @@ describe("Menu Navigation Pattern", () => {
     ),
 
     // Close from Checkout
-    Machine.on(MenuState.Checkout, MenuEvent.Close, () => MenuState.Closed()),
+    Machine.on(MenuState.Checkout, MenuEvent.Close, () => MenuState.Closed),
 
     Machine.final(MenuState.Closed),
   );
@@ -224,7 +224,7 @@ describe("Menu Navigation Pattern", () => {
     await Effect.runPromise(
       assertPath(
         menuMachine,
-        [MenuEvent.SelectItem({ itemId: "burger" }), MenuEvent.AddToCart()],
+        [MenuEvent.SelectItem({ itemId: "burger" }), MenuEvent.AddToCart],
         ["Browsing", "ItemSelected", "Browsing"],
       ),
     );
@@ -236,7 +236,7 @@ describe("Menu Navigation Pattern", () => {
         const result = yield* simulate(menuMachine, [
           MenuEvent.ScrollToSection({ sectionIndex: 1 }),
           MenuEvent.SelectItem({ itemId: "burger" }),
-          MenuEvent.Close(),
+          MenuEvent.Close,
         ]);
 
         expect(result.finalState._tag).toBe("Browsing");
@@ -250,18 +250,14 @@ describe("Menu Navigation Pattern", () => {
     await Effect.runPromise(
       assertPath(
         menuMachine,
-        [
-          MenuEvent.SelectItem({ itemId: "fries" }),
-          MenuEvent.AddToCart(),
-          MenuEvent.GoToCheckout(),
-        ],
+        [MenuEvent.SelectItem({ itemId: "fries" }), MenuEvent.AddToCart, MenuEvent.GoToCheckout],
         ["Browsing", "ItemSelected", "Browsing", "Checkout"],
       ),
     );
   });
 
   test("close menu from browsing", async () => {
-    await Effect.runPromise(assertPath(menuMachine, [MenuEvent.Close()], ["Browsing", "Closed"]));
+    await Effect.runPromise(assertPath(menuMachine, [MenuEvent.Close], ["Browsing", "Closed"]));
   });
 
   test("navigation never reaches checkout without explicit action", async () => {
@@ -285,11 +281,11 @@ describe("Menu Navigation Pattern", () => {
           MenuEvent.NavigateToPage({ pageId: "drinks" }),
           MenuEvent.ScrollToSection({ sectionIndex: 1 }),
           MenuEvent.SelectItem({ itemId: "beer" }),
-          MenuEvent.Close(), // Cancel, back to browsing
+          MenuEvent.Close, // Cancel, back to browsing
           MenuEvent.NavigateToPage({ pageId: "food" }),
           MenuEvent.SelectItem({ itemId: "burger" }),
-          MenuEvent.AddToCart(),
-          MenuEvent.GoToCheckout(),
+          MenuEvent.AddToCart,
+          MenuEvent.GoToCheckout,
         ]);
 
         expect(result.finalState._tag).toBe("Checkout");

@@ -53,10 +53,10 @@ describe("Machine", () => {
         );
 
         const result = yield* simulate(machine, [
-          CounterEvent.Start(),
-          CounterEvent.Increment(),
-          CounterEvent.Increment(),
-          CounterEvent.Stop(),
+          CounterEvent.Start,
+          CounterEvent.Increment,
+          CounterEvent.Increment,
+          CounterEvent.Stop,
         ]);
 
         expect(result.finalState._tag).toBe("Done");
@@ -88,11 +88,11 @@ describe("Machine", () => {
         );
 
         const result = yield* simulate(machine, [
-          CounterEvent.Increment(),
-          CounterEvent.Increment(),
-          CounterEvent.Increment(),
-          CounterEvent.Increment(), // blocked
-          CounterEvent.Stop(),
+          CounterEvent.Increment,
+          CounterEvent.Increment,
+          CounterEvent.Increment,
+          CounterEvent.Increment, // blocked
+          CounterEvent.Stop,
         ]);
 
         expect(result.finalState.count).toBe(3);
@@ -127,7 +127,7 @@ describe("Machine", () => {
           Machine.final(CounterState.Done),
         );
 
-        yield* simulate(machine, [CounterEvent.Start(), CounterEvent.Stop()]);
+        yield* simulate(machine, [CounterEvent.Start, CounterEvent.Stop]);
         expect(logs).toEqual(["Starting from count 0"]);
       }),
     );

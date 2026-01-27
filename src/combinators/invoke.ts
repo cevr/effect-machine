@@ -1,7 +1,7 @@
 import type { AnySlot, EffectSlotType, Machine } from "../machine.js";
 import { addEffectSlot } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
-import type { BrandedState, BrandedEvent } from "../internal/brands.js";
+import type { BrandedState, BrandedEvent, TaggedOrConstructor } from "../internal/brands.js";
 
 /** Helper to add multiple invoke slots with same stateTag */
 const addMultipleInvokeSlots =
@@ -55,7 +55,7 @@ type InvokeSlots<Names extends readonly string[]> = Names[number] extends infer 
  * ```
  */
 export function invoke<NarrowedState extends BrandedState, Name extends string>(
-  stateConstructor: { (...args: never[]): NarrowedState },
+  state: TaggedOrConstructor<NarrowedState>,
   name: Name,
 ): <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
   builder: Machine<State, Event, R, Slots>,
@@ -82,7 +82,7 @@ export function invoke<NarrowedState extends BrandedState, Name extends string>(
  * ```
  */
 export function invoke<NarrowedState extends BrandedState, const Names extends readonly string[]>(
-  stateConstructor: { (...args: never[]): NarrowedState },
+  state: TaggedOrConstructor<NarrowedState>,
   names: Names,
 ): <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
   builder: Machine<State, Event, R, Slots>,
@@ -172,9 +172,9 @@ export function invoke(
     return addMultipleInvokeSlots(stateConstructorOrName as string[], null);
   }
 
-  // State constructor case
-  const stateConstructor = stateConstructorOrName as { (...args: never[]): BrandedState };
-  const stateTag = getTag(stateConstructor);
+  // State value or constructor case
+  const state = stateConstructorOrName as TaggedOrConstructor<BrandedState>;
+  const stateTag = getTag(state);
 
   // Array of names: invoke(State.X, ["a", "b"])
   if (Array.isArray(nameOrNames)) {

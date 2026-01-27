@@ -30,9 +30,9 @@ type TestEvent = typeof TestEvent.Type;
 const testMachine = Machine.make({
   state: TestState,
   event: TestEvent,
-  initial: TestState.Idle(),
+  initial: TestState.Idle,
 }).pipe(
-  Machine.on(TestState.Idle, TestEvent.Fetch, () => TestState.Loading()),
+  Machine.on(TestState.Idle, TestEvent.Fetch, () => TestState.Loading),
   Machine.on(TestState.Loading, TestEvent.Resolve, ({ event }) =>
     TestState.Success({ data: event.data }),
   ),
@@ -49,7 +49,7 @@ describe("Testing", () => {
       await Effect.runPromise(
         Effect.gen(function* () {
           const result = yield* simulate(testMachine, [
-            TestEvent.Fetch(),
+            TestEvent.Fetch,
             TestEvent.Resolve({ data: "hello" }),
           ]);
 
@@ -82,7 +82,7 @@ describe("Testing", () => {
           let current = yield* harness.getState;
           expect(current._tag).toBe("Idle");
 
-          yield* harness.send(TestEvent.Fetch());
+          yield* harness.send(TestEvent.Fetch);
           current = yield* harness.getState;
           expect(current._tag).toBe("Loading");
 
@@ -99,7 +99,7 @@ describe("Testing", () => {
       const result = await Effect.runPromise(
         assertReaches(
           testMachine,
-          [TestEvent.Fetch(), TestEvent.Resolve({ data: "ok" })],
+          [TestEvent.Fetch, TestEvent.Resolve({ data: "ok" })],
           "Success",
         ).pipe(Effect.either),
       );
@@ -109,7 +109,7 @@ describe("Testing", () => {
 
     test("fails when state is not reached", async () => {
       const result = await Effect.runPromise(
-        assertReaches(testMachine, [TestEvent.Fetch()], "Success").pipe(Effect.either),
+        assertReaches(testMachine, [TestEvent.Fetch], "Success").pipe(Effect.either),
       );
 
       expect(result._tag).toBe("Left");
@@ -121,7 +121,7 @@ describe("Testing", () => {
       const result = await Effect.runPromise(
         assertPath(
           testMachine,
-          [TestEvent.Fetch(), TestEvent.Resolve({ data: "ok" })],
+          [TestEvent.Fetch, TestEvent.Resolve({ data: "ok" })],
           ["Idle", "Loading", "Success"],
         ).pipe(Effect.either),
       );
@@ -133,7 +133,7 @@ describe("Testing", () => {
       const result = await Effect.runPromise(
         assertPath(
           testMachine,
-          [TestEvent.Fetch(), TestEvent.Resolve({ data: "ok" })],
+          [TestEvent.Fetch, TestEvent.Resolve({ data: "ok" })],
           ["Idle", "Success"], // Wrong path
         ).pipe(Effect.either),
       );
@@ -145,7 +145,7 @@ describe("Testing", () => {
       const result = await Effect.runPromise(
         assertPath(
           testMachine,
-          [TestEvent.Fetch(), TestEvent.Resolve({ data: "ok" })],
+          [TestEvent.Fetch, TestEvent.Resolve({ data: "ok" })],
           ["Idle", "Loading", "Error"], // Wrong final state
         ).pipe(Effect.either),
       );
@@ -159,7 +159,7 @@ describe("Testing", () => {
       const result = await Effect.runPromise(
         assertNeverReaches(
           testMachine,
-          [TestEvent.Fetch(), TestEvent.Resolve({ data: "ok" })],
+          [TestEvent.Fetch, TestEvent.Resolve({ data: "ok" })],
           "Error",
         ).pipe(Effect.either),
       );
@@ -171,7 +171,7 @@ describe("Testing", () => {
       const result = await Effect.runPromise(
         assertNeverReaches(
           testMachine,
-          [TestEvent.Fetch(), TestEvent.Reject({ message: "oops" })],
+          [TestEvent.Fetch, TestEvent.Reject({ message: "oops" })],
           "Error",
         ).pipe(Effect.either),
       );
@@ -191,7 +191,7 @@ describe("Testing", () => {
               transitions.push({ from: from._tag, event: event._tag, to: to._tag }),
           });
 
-          yield* harness.send(TestEvent.Fetch());
+          yield* harness.send(TestEvent.Fetch);
           yield* harness.send(TestEvent.Resolve({ data: "test" }));
 
           expect(transitions).toEqual([

@@ -23,11 +23,11 @@ describe("Dynamic Delay Duration", () => {
         event: WaitEvent,
         initial: WaitState.Waiting({ timeout: 5 }),
       }).pipe(
-        Machine.on(WaitState.Waiting, WaitEvent.Timeout, () => WaitState.TimedOut()),
+        Machine.on(WaitState.Waiting, WaitEvent.Timeout, () => WaitState.TimedOut),
         Machine.delay(
           WaitState.Waiting,
           (state) => Duration.seconds(state.timeout),
-          WaitEvent.Timeout(),
+          WaitEvent.Timeout,
         ),
         Machine.final(WaitState.TimedOut),
       );
@@ -78,12 +78,12 @@ describe("Dynamic Delay Duration", () => {
         Machine.on.force(RetryState.Retrying, RetryEvent.Retry, ({ state }) =>
           RetryState.Retrying({ attempt: state.attempt + 1, backoff: state.backoff * 2 }),
         ),
-        Machine.on(RetryState.Retrying, RetryEvent.GiveUp, () => RetryState.Failed()),
+        Machine.on(RetryState.Retrying, RetryEvent.GiveUp, () => RetryState.Failed),
         // Exponential backoff based on state
         Machine.delay(
           RetryState.Retrying,
           (state) => Duration.seconds(state.backoff),
-          RetryEvent.GiveUp(),
+          RetryEvent.GiveUp,
         ),
         Machine.final(RetryState.Failed),
       );
@@ -98,7 +98,7 @@ describe("Dynamic Delay Duration", () => {
 
       // Advance 0.5 seconds, then manual retry (cancels old timer, starts new with 2s)
       yield* TestClock.adjust("500 millis");
-      yield* actor.send(RetryEvent.Retry());
+      yield* actor.send(RetryEvent.Retry);
       yield* yieldFibers;
 
       // Now backoff is 2 seconds, new timer started
@@ -126,9 +126,9 @@ describe("Dynamic Delay Duration", () => {
         event: WaitEvent,
         initial: WaitState.Waiting({ timeout: 999 }),
       }).pipe(
-        Machine.on(WaitState.Waiting, WaitEvent.Timeout, () => WaitState.TimedOut()),
+        Machine.on(WaitState.Waiting, WaitEvent.Timeout, () => WaitState.TimedOut),
         // Static "3 seconds" ignores state.timeout
-        Machine.delay(WaitState.Waiting, "3 seconds", WaitEvent.Timeout()),
+        Machine.delay(WaitState.Waiting, "3 seconds", WaitEvent.Timeout),
         Machine.final(WaitState.TimedOut),
       );
 

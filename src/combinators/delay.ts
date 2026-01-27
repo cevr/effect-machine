@@ -4,7 +4,7 @@ import type { DurationInput } from "effect/Duration";
 import type { AnySlot, Machine, StateEffect } from "../machine.js";
 import { addOnEnter, addOnExit } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
-import type { BrandedState, BrandedEvent } from "../internal/brands.js";
+import type { BrandedState, BrandedEvent, TaggedOrConstructor } from "../internal/brands.js";
 import { createFiberStorage } from "../internal/fiber-storage.js";
 
 /**
@@ -54,12 +54,17 @@ export type DurationOrFn<S> = DurationInput | ((state: S) => DurationInput);
  * ```
  */
 export function delay<NarrowedState extends BrandedState, EventType extends BrandedEvent>(
-  stateConstructor: { (...args: never[]): NarrowedState },
+  state: TaggedOrConstructor<NarrowedState>,
   duration: DurationOrFn<NarrowedState>,
-  event: EventType,
+  event: TaggedOrConstructor<EventType>,
   options?: DelayOptions<NarrowedState>,
 ) {
-  const stateTag = getTag(stateConstructor);
+  const stateTag = getTag(state);
+  // For events, we need the actual value - if it's a constructor, that's an error
+  // but we'll just pass through; the user should pass a value
+  const eventValue = (
+    typeof event === "function" ? (event as () => EventType)() : event
+  ) as EventType;
 
   // Pre-decode if static duration
   const staticDuration = typeof duration !== "function" ? Duration.decode(duration) : null;
@@ -92,7 +97,7 @@ export function delay<NarrowedState extends BrandedState, EventType extends Bran
           const fiber = yield* Effect.fork(
             Effect.gen(function* () {
               yield* Effect.sleep(resolvedDuration);
-              yield* self.send(event as unknown as Event);
+              yield* self.send(eventValue as unknown as Event);
             }),
           );
           getFiberMap(self).set(delayKey, fiber);

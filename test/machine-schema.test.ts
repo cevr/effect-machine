@@ -160,11 +160,11 @@ describe("State (schema-first)", () => {
       Off: {},
     });
 
-    // Construct with empty object
-    const on = ToggleState.On();
+    // Empty variants are values, not constructors
+    const on = ToggleState.On;
     expect(on._tag).toBe("On");
 
-    const off = ToggleState.Off();
+    const off = ToggleState.Off;
     expect(off._tag).toBe("Off");
   });
 });
@@ -231,7 +231,7 @@ describe("State/Event with Machine", () => {
     );
 
     const result = await Effect.runPromise(
-      simulate(machine, [OrderEvent.Process(), OrderEvent.Ship({ trackingId: "TRACK-123" })]),
+      simulate(machine, [OrderEvent.Process, OrderEvent.Ship({ trackingId: "TRACK-123" })]),
     );
 
     expect(result.finalState._tag).toBe("Shipped");

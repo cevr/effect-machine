@@ -24,7 +24,7 @@ describe("ActorSystem", () => {
       const machine = Machine.make({
         state: TestState,
         event: TestEvent,
-        initial: TestState.Idle(),
+        initial: TestState.Idle,
       }).pipe(
         Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
           TestState.Active({ value: event.value }),
@@ -32,7 +32,7 @@ describe("ActorSystem", () => {
         Machine.on(TestState.Active, TestEvent.Update, ({ event }) =>
           TestState.Active({ value: event.value }),
         ),
-        Machine.on(TestState.Active, TestEvent.Stop, () => TestState.Done()),
+        Machine.on(TestState.Active, TestEvent.Stop, () => TestState.Done),
         Machine.final(TestState.Done),
       );
 
@@ -54,7 +54,7 @@ describe("ActorSystem", () => {
         expect(state2.value).toBe(20);
       }
 
-      yield* actor.send(TestEvent.Stop());
+      yield* actor.send(TestEvent.Stop);
       yield* yieldFibers;
 
       const state3 = yield* actor.state.get;
@@ -67,7 +67,7 @@ describe("ActorSystem", () => {
       const machine = Machine.make({
         state: TestState,
         event: TestEvent,
-        initial: TestState.Idle(),
+        initial: TestState.Idle,
       }).pipe(
         Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
           TestState.Active({ value: event.value }),

@@ -12,10 +12,11 @@ import type { ScopedTransition } from "./from.js";
 // Type helpers
 // ============================================================================
 
-import type { BrandedState, BrandedEvent } from "../internal/brands.js";
+import type { BrandedState, BrandedEvent, TaggedOrConstructor } from "../internal/brands.js";
 
-// Constructor type that works with both branded and unbranded types
-type Constructor<T extends { readonly _tag: string }> = { (...args: never[]): T };
+/** Check if value is a tagged value or constructor (has _tag property) */
+const isTagged = (x: unknown): boolean =>
+  (typeof x === "object" && x !== null && "_tag" in x) || (typeof x === "function" && "_tag" in x);
 
 // ============================================================================
 // Overload signatures
@@ -33,7 +34,7 @@ function onImpl<
   ResultState extends BrandedState,
   R2 = never,
 >(
-  eventConstructor: Constructor<NarrowedEvent>,
+  event: TaggedOrConstructor<NarrowedEvent>,
   handler: (
     ctx: TransitionContext<NarrowedState, NarrowedEvent>,
   ) => TransitionResult<ResultState, R2>,
@@ -50,7 +51,7 @@ function onImpl<
   R2 = never,
 >(
   matcher: StateMatcher<NarrowedState>,
-  eventConstructor: Constructor<NarrowedEvent>,
+  event: TaggedOrConstructor<NarrowedEvent>,
   handler: (
     ctx: TransitionContext<NarrowedState, NarrowedEvent>,
   ) => TransitionResult<ResultState, R2>,
@@ -68,8 +69,8 @@ function onImpl<
   ResultState extends BrandedState,
   R2 = never,
 >(
-  stateConstructor: Constructor<NarrowedState>,
-  eventConstructor: Constructor<NarrowedEvent>,
+  state: TaggedOrConstructor<NarrowedState>,
+  event: TaggedOrConstructor<NarrowedEvent>,
   handler: (
     ctx: TransitionContext<NarrowedState, NarrowedEvent>,
   ) => TransitionResult<ResultState, R2>,
@@ -83,42 +84,35 @@ function onImpl<
 // ============================================================================
 
 function onImpl(first: unknown, second: unknown, third?: unknown, fourth?: unknown): unknown {
-  // Scoped on: first arg is event constructor (function), second is handler (function)
-  // We detect this by checking if second is a function and third is undefined or options object
-  if (
-    typeof first === "function" &&
-    typeof second === "function" &&
-    (third === undefined || (typeof third === "object" && third !== null && !("_tag" in third)))
-  ) {
-    // Cast through unknown to bypass brand checks - runtime doesn't have brands
-    return scopedOnImpl(
-      first as unknown as Constructor<BrandedEvent>,
-      second as unknown as (
-        ctx: TransitionContext<BrandedState, BrandedEvent>,
-      ) => TransitionResult<BrandedState, unknown>,
-      third as OnOptions<BrandedState, BrandedEvent, unknown> | undefined,
-    );
-  }
-
   // StateMatcher on: first arg has _tag: "StateMatcher"
   if (isStateMatcher(first)) {
-    // Cast through unknown to bypass brand checks - runtime doesn't have brands
     return matcherOnImpl(
       first as StateMatcher<BrandedState>,
-      second as unknown as Constructor<BrandedEvent>,
-      third as unknown as (
+      second as TaggedOrConstructor<BrandedEvent>,
+      third as (
         ctx: TransitionContext<BrandedState, BrandedEvent>,
       ) => TransitionResult<BrandedState, unknown>,
       fourth as OnOptions<BrandedState, BrandedEvent, unknown> | undefined,
     );
   }
 
-  // Standard on: first and second are both constructors
-  // Cast through unknown to bypass brand checks - runtime doesn't have brands
+  // Scoped on: first is tagged (event), second is handler function
+  // Detected by: second is a function but NOT tagged (it's the handler)
+  if (isTagged(first) && typeof second === "function" && !isTagged(second)) {
+    return scopedOnImpl(
+      first as TaggedOrConstructor<BrandedEvent>,
+      second as (
+        ctx: TransitionContext<BrandedState, BrandedEvent>,
+      ) => TransitionResult<BrandedState, unknown>,
+      third as OnOptions<BrandedState, BrandedEvent, unknown> | undefined,
+    );
+  }
+
+  // Standard on: first (state) and second (event) are both tagged
   return standardOnImpl(
-    first as unknown as Constructor<BrandedState>,
-    second as unknown as Constructor<BrandedEvent>,
-    third as unknown as (
+    first as TaggedOrConstructor<BrandedState>,
+    second as TaggedOrConstructor<BrandedEvent>,
+    third as (
       ctx: TransitionContext<BrandedState, BrandedEvent>,
     ) => TransitionResult<BrandedState, unknown>,
     fourth as OnOptions<BrandedState, BrandedEvent, unknown> | undefined,
@@ -134,15 +128,15 @@ function standardOnImpl<
   ResultState extends BrandedState,
   R2 = never,
 >(
-  stateConstructor: Constructor<NarrowedState>,
-  eventConstructor: Constructor<NarrowedEvent>,
+  state: TaggedOrConstructor<NarrowedState>,
+  event: TaggedOrConstructor<NarrowedEvent>,
   handler: (
     ctx: TransitionContext<NarrowedState, NarrowedEvent>,
   ) => TransitionResult<ResultState, R2>,
   options?: OnOptions<NarrowedState, NarrowedEvent, R2>,
 ) {
-  const stateTag = getTag(stateConstructor);
-  const eventTag = getTag(eventConstructor);
+  const stateTag = getTag(state);
+  const eventTag = getTag(event);
   const normalizedOptions = normalizeOnOptions(options);
 
   return <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
@@ -192,13 +186,13 @@ function matcherOnImpl<
   R2 = never,
 >(
   matcher: StateMatcher<NarrowedState>,
-  eventConstructor: Constructor<NarrowedEvent>,
+  event: TaggedOrConstructor<NarrowedEvent>,
   handler: (
     ctx: TransitionContext<NarrowedState, NarrowedEvent>,
   ) => TransitionResult<ResultState, R2>,
   options?: OnOptions<NarrowedState, NarrowedEvent, R2>,
 ) {
-  const eventTag = getTag(eventConstructor);
+  const eventTag = getTag(event);
   const normalizedOptions = normalizeOnOptions(options);
 
   return <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
@@ -246,20 +240,21 @@ function matcherOnImpl<
 
 /**
  * Scoped on implementation (event-only, for use inside from().pipe())
+ * Exported for reuse in from.ts
  */
-function scopedOnImpl<
+export function scopedOnImpl<
   NarrowedState extends BrandedState,
   NarrowedEvent extends BrandedEvent,
   ResultState extends BrandedState,
   R2 = never,
 >(
-  eventConstructor: Constructor<NarrowedEvent>,
+  event: TaggedOrConstructor<NarrowedEvent>,
   handler: (
     ctx: TransitionContext<NarrowedState, NarrowedEvent>,
   ) => TransitionResult<ResultState, R2>,
   options?: OnOptions<NarrowedState, NarrowedEvent, R2>,
 ): ScopedTransition<NarrowedState, NarrowedEvent, R2> {
-  const eventTag = getTag(eventConstructor);
+  const eventTag = getTag(event);
   const normalizedOptions = normalizeOnOptions(options);
 
   return {
@@ -299,7 +294,7 @@ function forceImpl<
   ResultState extends BrandedState,
   R2 = never,
 >(
-  eventConstructor: Constructor<NarrowedEvent>,
+  event: TaggedOrConstructor<NarrowedEvent>,
   handler: (
     ctx: TransitionContext<NarrowedState, NarrowedEvent>,
   ) => TransitionResult<ResultState, R2>,
@@ -316,7 +311,7 @@ function forceImpl<
   R2 = never,
 >(
   matcher: StateMatcher<NarrowedState>,
-  eventConstructor: Constructor<NarrowedEvent>,
+  event: TaggedOrConstructor<NarrowedEvent>,
   handler: (
     ctx: TransitionContext<NarrowedState, NarrowedEvent>,
   ) => TransitionResult<ResultState, R2>,
@@ -334,8 +329,8 @@ function forceImpl<
   ResultState extends BrandedState,
   R2 = never,
 >(
-  stateConstructor: Constructor<NarrowedState>,
-  eventConstructor: Constructor<NarrowedEvent>,
+  state: TaggedOrConstructor<NarrowedState>,
+  event: TaggedOrConstructor<NarrowedEvent>,
   handler: (
     ctx: TransitionContext<NarrowedState, NarrowedEvent>,
   ) => TransitionResult<ResultState, R2>,
@@ -346,19 +341,16 @@ function forceImpl<
 
 function forceImpl(first: unknown, second: unknown, third?: unknown, fourth?: unknown): unknown {
   // Re-use on() logic with reenter: true forced
-  if (
-    typeof first === "function" &&
-    typeof second === "function" &&
-    (third === undefined || (typeof third === "object" && third !== null && !("_tag" in third)))
-  ) {
-    return onImpl(first as never, second as never, { ...(third as object), reenter: true });
-  }
-
+  // Same dispatch logic as onImpl
   if (isStateMatcher(first)) {
     return onImpl(first as never, second as never, third as never, {
       ...(fourth as object),
       reenter: true,
     });
+  }
+
+  if (isTagged(first) && typeof second === "function" && !isTagged(second)) {
+    return onImpl(first as never, second as never, { ...(third as object), reenter: true });
   }
 
   return onImpl(first as never, second as never, third as never, {

@@ -37,7 +37,7 @@ describe("Machine.from", () => {
         const machine = Machine.make({
           state: EditorState,
           event: EditorEvent,
-          initial: EditorState.Idle(),
+          initial: EditorState.Idle,
         }).pipe(
           Machine.on(EditorState.Idle, EditorEvent.Focus, () => EditorState.Typing({ text: "" })),
           Machine.from(EditorState.Typing).pipe(
@@ -54,10 +54,10 @@ describe("Machine.from", () => {
         );
 
         const result = yield* simulate(machine, [
-          EditorEvent.Focus(),
+          EditorEvent.Focus,
           EditorEvent.KeyPress({ key: "h" }),
           EditorEvent.KeyPress({ key: "i" }),
-          EditorEvent.Submit(),
+          EditorEvent.Submit,
         ]);
 
         expect(result.finalState._tag).toBe("Submitted");
@@ -93,7 +93,7 @@ describe("Machine.from", () => {
           EditorEvent.KeyPress({ key: "b" }),
           EditorEvent.KeyPress({ key: "c" }),
           EditorEvent.KeyPress({ key: "d" }), // blocked by guard
-          EditorEvent.Submit(),
+          EditorEvent.Submit,
         ]);
 
         expect(result.finalState._tag).toBe("Submitted");
@@ -134,7 +134,7 @@ describe("Machine.from", () => {
         yield* simulate(machine, [
           EditorEvent.KeyPress({ key: "h" }),
           EditorEvent.KeyPress({ key: "i" }),
-          EditorEvent.Submit(),
+          EditorEvent.Submit,
         ]);
 
         expect(logs).toEqual(["key: h", "key: i"]);
@@ -148,7 +148,7 @@ describe("Machine.from", () => {
         const machine = Machine.make({
           state: EditorState,
           event: EditorEvent,
-          initial: EditorState.Idle(),
+          initial: EditorState.Idle,
         }).pipe(
           Machine.from(EditorState.Idle).pipe(
             Machine.on(EditorEvent.Focus, () => EditorState.Typing({ text: "" })),
@@ -169,10 +169,10 @@ describe("Machine.from", () => {
         );
 
         const result = yield* simulate(machine, [
-          EditorEvent.Focus(),
+          EditorEvent.Focus,
           EditorEvent.KeyPress({ key: "x" }),
-          EditorEvent.Submit(),
-          EditorEvent.Success(),
+          EditorEvent.Submit,
+          EditorEvent.Success,
         ]);
 
         expect(result.finalState._tag).toBe("Submitted");

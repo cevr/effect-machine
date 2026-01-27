@@ -103,7 +103,7 @@ describe("Cluster Integration with MachineSchema", () => {
         );
 
         const result = yield* simulate(machineWithInitial, [
-          OrderEvent.Process(),
+          OrderEvent.Process,
           OrderEvent.Ship({ trackingId: "TRACK-456" }),
         ]);
 
@@ -275,7 +275,7 @@ describe("Entity.makeTestClient with machine handler", () => {
         const initialState = yield* client.GetState();
         expect(initialState._tag).toBe("Pending");
 
-        const processingState = yield* client.Send({ event: OrderEvent.Process() });
+        const processingState = yield* client.Send({ event: OrderEvent.Process });
         expect(processingState._tag).toBe("Processing");
 
         const shippedState = yield* client.Send({
@@ -339,10 +339,10 @@ describe("Entity.makeTestClient with machine handler", () => {
         const client = yield* makeClient("counter-1");
 
         // Increment 4 times - only 3 should work due to guard
-        yield* client.Send({ event: CounterEvent.Increment() });
-        yield* client.Send({ event: CounterEvent.Increment() });
-        yield* client.Send({ event: CounterEvent.Increment() });
-        yield* client.Send({ event: CounterEvent.Increment() }); // blocked by guard
+        yield* client.Send({ event: CounterEvent.Increment });
+        yield* client.Send({ event: CounterEvent.Increment });
+        yield* client.Send({ event: CounterEvent.Increment });
+        yield* client.Send({ event: CounterEvent.Increment }); // blocked by guard
 
         const state = yield* client.GetState();
         expect(state._tag).toBe("Counting");

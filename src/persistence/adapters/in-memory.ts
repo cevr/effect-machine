@@ -173,13 +173,11 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const actorStorage = yield* getOrCreateStorage(id);
 
-        const filteredEvents =
-          afterVersion !== undefined
-            ? actorStorage.events.filter((e) => e.version > afterVersion)
-            : actorStorage.events;
-
+        // Single pass - skip filtered events inline instead of creating intermediate array
         const decoded: PersistedEvent<E>[] = [];
-        for (const stored of filteredEvents) {
+        for (const stored of actorStorage.events) {
+          if (afterVersion !== undefined && stored.version <= afterVersion) continue;
+
           const event = yield* Schema.decode(schema)(stored.data as EI).pipe(
             Effect.mapError(
               (cause) =>

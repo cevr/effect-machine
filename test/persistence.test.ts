@@ -39,7 +39,7 @@ describe("Persistence", () => {
     Machine.make({
       state: OrderState,
       event: OrderEvent,
-      initial: OrderState.Idle(),
+      initial: OrderState.Idle,
     }).pipe(
       Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
         OrderState.Pending({ orderId: event.orderId }),
@@ -47,7 +47,7 @@ describe("Persistence", () => {
       Machine.on(OrderState.Pending, OrderEvent.Pay, ({ state, event }) =>
         OrderState.Paid({ orderId: state.orderId, amount: event.amount }),
       ),
-      Machine.on(OrderState.Paid, OrderEvent.Complete, () => OrderState.Done()),
+      Machine.on(OrderState.Paid, OrderEvent.Complete, () => OrderState.Done),
       Machine.final(OrderState.Done),
       Machine.persist({
         snapshotSchedule: Schedule.forever,
@@ -201,7 +201,7 @@ describe("Persistence", () => {
           const noAutoSnapshotMachine = Machine.make({
             state: OrderState,
             event: OrderEvent,
-            initial: OrderState.Idle(),
+            initial: OrderState.Idle,
           }).pipe(
             Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
               OrderState.Pending({ orderId: event.orderId }),
@@ -265,7 +265,7 @@ describe("Persistence", () => {
           const infrequentSnapshotMachine = Machine.make({
             state: OrderState,
             event: OrderEvent,
-            initial: OrderState.Idle(),
+            initial: OrderState.Idle,
           }).pipe(
             Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
               OrderState.Pending({ orderId: event.orderId }),
@@ -418,7 +418,7 @@ describe("Persistence", () => {
       yield* yieldFibers;
       yield* actor.send(OrderEvent.Pay({ amount: 100 }));
       yield* yieldFibers;
-      yield* actor.send(OrderEvent.Complete());
+      yield* actor.send(OrderEvent.Complete);
       yield* yieldFibers;
 
       const state = yield* actor.snapshot;
@@ -432,7 +432,7 @@ describe("Persistence Registry", () => {
     Machine.make({
       state: OrderState,
       event: OrderEvent,
-      initial: OrderState.Idle(),
+      initial: OrderState.Idle,
     }).pipe(
       Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
         OrderState.Pending({ orderId: event.orderId }),
@@ -440,7 +440,7 @@ describe("Persistence Registry", () => {
       Machine.on(OrderState.Pending, OrderEvent.Pay, ({ state, event }) =>
         OrderState.Paid({ orderId: state.orderId, amount: event.amount }),
       ),
-      Machine.on(OrderState.Paid, OrderEvent.Complete, () => OrderState.Done()),
+      Machine.on(OrderState.Paid, OrderEvent.Complete, () => OrderState.Done),
       Machine.final(OrderState.Done),
       Machine.persist({
         snapshotSchedule: Schedule.forever,

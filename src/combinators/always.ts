@@ -2,7 +2,7 @@ import type { AlwaysTransition, AnySlot, Machine } from "../machine.js";
 import { addAlwaysTransition } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
 import type { TransitionResult } from "../internal/types.js";
-import type { BrandedState, BrandedEvent } from "../internal/brands.js";
+import type { BrandedState, BrandedEvent, TaggedOrConstructor } from "../internal/brands.js";
 
 /**
  * A single branch in an always transition cascade.
@@ -36,10 +36,10 @@ export type AlwaysEntry<S, R> = AlwaysBranch<S, R>;
  * ```
  */
 export function always<NarrowedState extends BrandedState, R2 = never>(
-  stateConstructor: { (...args: never[]): NarrowedState },
+  state: TaggedOrConstructor<NarrowedState>,
   branches: ReadonlyArray<AlwaysEntry<NarrowedState, R2>>,
 ) {
-  const stateTag = getTag(stateConstructor);
+  const stateTag = getTag(state);
 
   return <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
     builder: Machine<State, Event, R, Slots>,

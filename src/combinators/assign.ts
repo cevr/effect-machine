@@ -4,7 +4,7 @@ import type { AnySlot, Machine, OnOptions, Transition } from "../machine.js";
 import { addTransition, normalizeOnOptions } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
 import type { TransitionContext } from "../internal/types.js";
-import type { BrandedState, BrandedEvent } from "../internal/brands.js";
+import type { BrandedState, BrandedEvent, TaggedOrConstructor } from "../internal/brands.js";
 
 /**
  * Create a handler function that merges partial updates into the current state.
@@ -46,15 +46,15 @@ export function update<
   NarrowedEvent extends BrandedEvent,
   R2 = never,
 >(
-  stateConstructor: { (...args: never[]): NarrowedState },
-  eventConstructor: { (...args: never[]): NarrowedEvent },
+  state: TaggedOrConstructor<NarrowedState>,
+  event: TaggedOrConstructor<NarrowedEvent>,
   updater: (
     ctx: TransitionContext<NarrowedState, NarrowedEvent>,
   ) => Partial<Omit<NarrowedState, "_tag">>,
   options?: OnOptions<NarrowedState, NarrowedEvent, R2>,
 ) {
-  const stateTag = getTag(stateConstructor);
-  const eventTag = getTag(eventConstructor);
+  const stateTag = getTag(state);
+  const eventTag = getTag(event);
   const normalizedOptions = normalizeOnOptions(options);
 
   return <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(

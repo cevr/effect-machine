@@ -133,8 +133,8 @@ describe("Named Guards (Effect Slots)", () => {
     }).pipe(
       Machine.guard(TestState.Ready, TestEvent.Print, "canPrint"),
       Machine.invoke(TestState.Printing, "doPrint"),
-      Machine.on(TestState.Ready, TestEvent.Print, () => TestState.Printing()),
-      Machine.on(TestState.Printing, TestEvent.Finish, () => TestState.Done()),
+      Machine.on(TestState.Ready, TestEvent.Print, () => TestState.Printing),
+      Machine.on(TestState.Printing, TestEvent.Finish, () => TestState.Done),
       Machine.final(TestState.Done),
     );
 
@@ -169,7 +169,7 @@ describe("Named Guards (Effect Slots)", () => {
           event: TestEvent,
           initial: TestState.Ready({ canPrint: false }),
         }).pipe(
-          Machine.on(TestState.Ready, TestEvent.Print, () => TestState.Printing(), {
+          Machine.on(TestState.Ready, TestEvent.Print, () => TestState.Printing, {
             guard: canPrint,
           }),
         );
@@ -179,7 +179,7 @@ describe("Named Guards (Effect Slots)", () => {
             Effect.succeed(state._tag === "Ready" ? state.canPrint : false),
         });
 
-        const result = yield* simulate(provided, [TestEvent.Print()]);
+        const result = yield* simulate(provided, [TestEvent.Print]);
         expect(result.finalState._tag).toBe("Ready");
       }),
     );
@@ -215,13 +215,13 @@ describe("Guard Composition", () => {
           event: AuthEvent,
           initial: AuthState.Idle({ role: "admin", age: 25 }),
         }).pipe(
-          Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed(), {
+          Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed, {
             guard: Guard.and(isAdmin, isAdult),
           }),
           Machine.final(AuthState.Allowed),
         );
 
-        const result = yield* simulate(machine, [AuthEvent.Access()]);
+        const result = yield* simulate(machine, [AuthEvent.Access]);
         expect(result.finalState._tag).toBe("Allowed");
       }),
     );
@@ -234,13 +234,13 @@ describe("Guard Composition", () => {
           event: AuthEvent,
           initial: AuthState.Idle({ role: "admin", age: 16 }),
         }).pipe(
-          Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed(), {
+          Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed, {
             guard: Guard.and(isAdmin, isAdult),
           }),
           Machine.final(AuthState.Allowed),
         );
 
-        const result = yield* simulate(machine, [AuthEvent.Access()]);
+        const result = yield* simulate(machine, [AuthEvent.Access]);
         expect(result.finalState._tag).toBe("Idle");
       }),
     );
@@ -259,13 +259,13 @@ describe("Guard Composition", () => {
           event: AuthEvent,
           initial: AuthState.Idle({ role: "moderator", age: 20 }),
         }).pipe(
-          Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed(), {
+          Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed, {
             guard: Guard.or(isAdmin, isModerator),
           }),
           Machine.final(AuthState.Allowed),
         );
 
-        const result = yield* simulate(machine, [AuthEvent.Access()]);
+        const result = yield* simulate(machine, [AuthEvent.Access]);
         expect(result.finalState._tag).toBe("Allowed");
       }),
     );
@@ -281,13 +281,13 @@ describe("Guard Composition", () => {
           event: AuthEvent,
           initial: AuthState.Idle({ role: "user", age: 20 }),
         }).pipe(
-          Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed(), {
+          Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed, {
             guard: Guard.not(isGuest),
           }),
           Machine.final(AuthState.Allowed),
         );
 
-        const result = yield* simulate(machine, [AuthEvent.Access()]);
+        const result = yield* simulate(machine, [AuthEvent.Access]);
         expect(result.finalState._tag).toBe("Allowed");
       }),
     );
@@ -308,13 +308,13 @@ describe("Guard Composition", () => {
           event: AuthEvent,
           initial: AuthState.Idle({ role: "admin", age: 25 }),
         }).pipe(
-          Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed(), {
+          Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed, {
             guard: Guard.and(isAdmin, isAdult),
           }),
           Machine.final(AuthState.Allowed),
         );
 
-        const result = yield* simulate(machine, [AuthEvent.Access()]);
+        const result = yield* simulate(machine, [AuthEvent.Access]);
         expect(result.finalState._tag).toBe("Allowed");
       }),
     );

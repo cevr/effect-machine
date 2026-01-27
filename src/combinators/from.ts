@@ -2,9 +2,10 @@ import type { Effect } from "effect";
 
 import { getTag } from "../internal/get-tag.js";
 import type { AnySlot, EffectSlotType, Machine, OnOptions, Transition } from "../machine.js";
-import { addEffectSlot, addTransition, normalizeOnOptions } from "../machine.js";
+import { addEffectSlot, addTransition } from "../machine.js";
 import type { GuardPredicate, TransitionContext, TransitionResult } from "../internal/types.js";
-import type { BrandedState, BrandedEvent } from "../internal/brands.js";
+import type { BrandedState, BrandedEvent, TaggedOrConstructor } from "../internal/brands.js";
+import { scopedOnImpl } from "./on.js";
 
 /**
  * A partial transition created inside `from().pipe()` - missing the stateTag
@@ -182,12 +183,12 @@ function stateScopePipe<NarrowedState extends BrandedState>(
  * )
  * ```
  */
-export const from = <NarrowedState extends BrandedState>(stateConstructor: {
-  (...args: never[]): NarrowedState;
-}): StateScope<NarrowedState> => {
+export const from = <NarrowedState extends BrandedState>(
+  state: TaggedOrConstructor<NarrowedState>,
+): StateScope<NarrowedState> => {
   const scope: StateScope<NarrowedState> = {
     _tag: "StateScope",
-    stateTag: getTag(stateConstructor),
+    stateTag: getTag(state),
     pipe: stateScopePipe,
   };
   return scope;
@@ -199,36 +200,7 @@ export const from = <NarrowedState extends BrandedState>(stateConstructor: {
  *
  * @internal
  */
-export const scopedOn = <
-  NarrowedState extends BrandedState,
-  NarrowedEvent extends BrandedEvent,
-  ResultState extends BrandedState,
-  R2 = never,
->(
-  eventConstructor: { (...args: never[]): NarrowedEvent },
-  handler: (
-    ctx: TransitionContext<NarrowedState, NarrowedEvent>,
-  ) => TransitionResult<ResultState, R2>,
-  options?: OnOptions<NarrowedState, NarrowedEvent, R2>,
-): ScopedTransition<NarrowedState, NarrowedEvent, R2> => {
-  const eventTag = getTag(eventConstructor);
-  const normalizedOptions = normalizeOnOptions(options);
-
-  return {
-    _tag: "ScopedTransition",
-    eventTag,
-    handler: handler as unknown as ScopedTransition<NarrowedState, NarrowedEvent, R2>["handler"],
-    guard: normalizedOptions?.guard as ScopedTransition<NarrowedState, NarrowedEvent, R2>["guard"],
-    guardName: normalizedOptions?.guardName,
-    guardNeedsProvision: normalizedOptions?.guardNeedsProvision,
-    effect: normalizedOptions?.effect as ScopedTransition<
-      NarrowedState,
-      NarrowedEvent,
-      R2
-    >["effect"],
-    reenter: normalizedOptions?.reenter,
-  };
-};
+export const scopedOn = scopedOnImpl;
 
 /**
  * Force variant for scoped transitions
@@ -241,10 +213,10 @@ export const scopedOnForce = <
   ResultState extends BrandedState,
   R2 = never,
 >(
-  eventConstructor: { (...args: never[]): NarrowedEvent },
+  event: TaggedOrConstructor<NarrowedEvent>,
   handler: (
     ctx: TransitionContext<NarrowedState, NarrowedEvent>,
   ) => TransitionResult<ResultState, R2>,
   options?: Omit<OnOptions<NarrowedState, NarrowedEvent, R2>, "reenter">,
 ): ScopedTransition<NarrowedState, NarrowedEvent, R2> =>
-  scopedOn(eventConstructor, handler, { ...options, reenter: true });
+  scopedOnImpl(event, handler, { ...options, reenter: true });

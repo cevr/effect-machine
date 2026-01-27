@@ -24,7 +24,7 @@ const createTestMachine = () =>
   Machine.make({
     state: TestState,
     event: TestEvent,
-    initial: TestState.Idle(),
+    initial: TestState.Idle,
   }).pipe(
     Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
       TestState.Loading({ value: event.value }),
@@ -35,7 +35,7 @@ const createTestMachine = () =>
     Machine.on(TestState.Active, TestEvent.Update, ({ event }) =>
       TestState.Active({ value: event.value }),
     ),
-    Machine.on(TestState.Active, TestEvent.Stop, () => TestState.Done()),
+    Machine.on(TestState.Active, TestEvent.Stop, () => TestState.Done),
     Machine.on(
       TestState.Active,
       TestEvent.Update,
@@ -140,7 +140,7 @@ describe("ActorRef ergonomics", () => {
         expect(canStart).toBe(true);
 
         // In Idle state, cannot Complete
-        const canComplete = yield* actor.can(TestEvent.Complete());
+        const canComplete = yield* actor.can(TestEvent.Complete);
         expect(canComplete).toBe(false);
       }).pipe(Effect.provide(ActorSystemDefault)),
     );
@@ -152,7 +152,7 @@ describe("ActorRef ergonomics", () => {
         const actor = yield* system.spawn("test", machine);
 
         expect(actor.canSync(TestEvent.Start({ value: 1 }))).toBe(true);
-        expect(actor.canSync(TestEvent.Complete())).toBe(false);
+        expect(actor.canSync(TestEvent.Complete)).toBe(false);
       }).pipe(Effect.provide(ActorSystemDefault)),
     );
 
@@ -165,7 +165,7 @@ describe("ActorRef ergonomics", () => {
         // Transition to Active state
         yield* actor.send(TestEvent.Start({ value: 10 }));
         yield* yieldFibers;
-        yield* actor.send(TestEvent.Complete());
+        yield* actor.send(TestEvent.Complete);
         yield* yieldFibers;
 
         // Update with value <= 100 uses first handler (no guard)
@@ -216,9 +216,9 @@ describe("ActorRef ergonomics", () => {
         // Make transitions
         yield* actor.send(TestEvent.Start({ value: 1 }));
         yield* yieldFibers;
-        yield* actor.send(TestEvent.Complete());
+        yield* actor.send(TestEvent.Complete);
         yield* yieldFibers;
-        yield* actor.send(TestEvent.Stop());
+        yield* actor.send(TestEvent.Stop);
         yield* yieldFibers;
 
         // Should have captured the transitions
@@ -241,7 +241,7 @@ describe("ActorRef ergonomics", () => {
 
         yield* actor.send(TestEvent.Start({ value: 1 }));
         yield* yieldFibers;
-        yield* actor.send(TestEvent.Complete());
+        yield* actor.send(TestEvent.Complete);
         yield* yieldFibers;
 
         expect(states).toContain("Loading");
@@ -265,7 +265,7 @@ describe("ActorRef ergonomics", () => {
 
         unsubscribe();
 
-        yield* actor.send(TestEvent.Complete());
+        yield* actor.send(TestEvent.Complete);
         yield* yieldFibers;
 
         // Should only have Loading, not Active

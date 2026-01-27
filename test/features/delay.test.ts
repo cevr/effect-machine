@@ -23,8 +23,8 @@ describe("Delay Transitions", () => {
         event: NotifEvent,
         initial: NotifState.Showing({ message: "Hello" }),
       }).pipe(
-        Machine.on(NotifState.Showing, NotifEvent.Dismiss, () => NotifState.Dismissed()),
-        Machine.delay(NotifState.Showing, "3 seconds", NotifEvent.Dismiss()),
+        Machine.on(NotifState.Showing, NotifEvent.Dismiss, () => NotifState.Dismissed),
+        Machine.delay(NotifState.Showing, "3 seconds", NotifEvent.Dismiss),
         Machine.final(NotifState.Dismissed),
       );
 
@@ -54,8 +54,8 @@ describe("Delay Transitions", () => {
         event: NotifEvent,
         initial: NotifState.Showing({ message: "Hello" }),
       }).pipe(
-        Machine.on(NotifState.Showing, NotifEvent.Dismiss, () => NotifState.Dismissed()),
-        Machine.delay(NotifState.Showing, "3 seconds", NotifEvent.Dismiss()),
+        Machine.on(NotifState.Showing, NotifEvent.Dismiss, () => NotifState.Dismissed),
+        Machine.delay(NotifState.Showing, "3 seconds", NotifEvent.Dismiss),
         Machine.final(NotifState.Dismissed),
       );
 
@@ -63,7 +63,7 @@ describe("Delay Transitions", () => {
       const actor = yield* system.spawn("notification", machine);
 
       // Manual dismiss before timer
-      yield* actor.send(NotifEvent.Dismiss());
+      yield* actor.send(NotifEvent.Dismiss);
       yield* yieldFibers;
 
       let current = yield* actor.state.get;

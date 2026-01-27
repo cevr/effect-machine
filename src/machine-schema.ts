@@ -71,12 +71,12 @@ type IsEmptyFields<Fields extends Schema.Struct.Fields> = keyof Fields extends n
 
 /**
  * Constructor functions for each variant.
- * Empty structs take no args: `State.Idle()`
+ * Empty structs: plain values with `_tag`: `State.Idle`
  * Non-empty structs require args: `State.Loading({ url })`
  */
 type VariantConstructors<D extends Record<string, Schema.Struct.Fields>, Brand> = {
   readonly [K in keyof D & string]: IsEmptyFields<D[K]> extends true
-    ? () => TaggedStructType<K, D[K]> & Brand
+    ? TaggedStructType<K, D[K]> & Brand
     : (args: Schema.Struct.Constructor<D[K]>) => TaggedStructType<K, D[K]> & Brand;
 };
 
@@ -177,10 +177,17 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
     // Create constructor that builds tagged struct directly
     // Like Data.taggedEnum, this doesn't validate at construction time
     // Use Schema.decode for validation when needed
-    // IMPORTANT: Spread args first, then override _tag to ensure correct tag
-    constructors[tag] = (args: Record<string, unknown>) => {
-      return { ...(args ?? {}), _tag: tag };
-    };
+    const hasFields = Object.keys(fields).length > 0;
+
+    if (hasFields) {
+      // Non-empty: constructor function requiring args
+      const constructor = (args: Record<string, unknown>) => ({ ...args, _tag: tag });
+      constructor._tag = tag;
+      constructors[tag] = constructor;
+    } else {
+      // Empty: plain value, not callable
+      constructors[tag] = { _tag: tag } as never;
+    }
   }
 
   // Build union schema from all variants

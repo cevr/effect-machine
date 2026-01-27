@@ -94,7 +94,7 @@ describe("Keyboard Input Pattern", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const result = yield* simulate(keyboardMachine, [
-          KeyboardEvent.Focus(),
+          KeyboardEvent.Focus,
           KeyboardEvent.KeyPress({ key: "1" }),
           KeyboardEvent.KeyPress({ key: "2" }),
           KeyboardEvent.KeyPress({ key: "3" }),
@@ -110,11 +110,11 @@ describe("Keyboard Input Pattern", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const result = yield* simulate(keyboardMachine, [
-          KeyboardEvent.Focus(),
+          KeyboardEvent.Focus,
           KeyboardEvent.KeyPress({ key: "1" }),
           KeyboardEvent.KeyPress({ key: "2" }),
           KeyboardEvent.KeyPress({ key: "3" }),
-          KeyboardEvent.Backspace(),
+          KeyboardEvent.Backspace,
         ]);
 
         expect((result.finalState as KeyboardState & { _tag: "Typing" }).value).toBe("12");
@@ -126,12 +126,12 @@ describe("Keyboard Input Pattern", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const result = yield* simulate(keyboardMachine, [
-          KeyboardEvent.Focus(),
+          KeyboardEvent.Focus,
           KeyboardEvent.KeyPress({ key: "a" }),
           KeyboardEvent.KeyPress({ key: "b" }),
-          KeyboardEvent.Backspace(),
-          KeyboardEvent.Backspace(),
-          KeyboardEvent.Backspace(), // Extra backspace on empty string
+          KeyboardEvent.Backspace,
+          KeyboardEvent.Backspace,
+          KeyboardEvent.Backspace, // Extra backspace on empty string
         ]);
 
         expect((result.finalState as KeyboardState & { _tag: "Typing" }).value).toBe("");
@@ -143,11 +143,11 @@ describe("Keyboard Input Pattern", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const result = yield* simulate(keyboardMachine, [
-          KeyboardEvent.Focus(),
+          KeyboardEvent.Focus,
           KeyboardEvent.KeyPress({ key: "1" }),
           KeyboardEvent.KeyPress({ key: "2" }),
           KeyboardEvent.KeyPress({ key: "3" }),
-          KeyboardEvent.Clear(),
+          KeyboardEvent.Clear,
         ]);
 
         expect((result.finalState as KeyboardState & { _tag: "Typing" }).value).toBe("");
@@ -159,7 +159,7 @@ describe("Keyboard Input Pattern", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const result = yield* simulate(keyboardMachine, [
-          KeyboardEvent.Focus(),
+          KeyboardEvent.Focus,
           KeyboardEvent.KeyPress({ key: "a" }),
           KeyboardEvent.KeyPress({ key: "b" }),
           KeyboardEvent.SwitchMode({ mode: "replace" }),
@@ -177,11 +177,11 @@ describe("Keyboard Input Pattern", () => {
       assertPath(
         keyboardMachine,
         [
-          KeyboardEvent.Focus(),
+          KeyboardEvent.Focus,
           KeyboardEvent.KeyPress({ key: "1" }),
           KeyboardEvent.KeyPress({ key: "0" }),
           KeyboardEvent.KeyPress({ key: "0" }),
-          KeyboardEvent.Submit(),
+          KeyboardEvent.Submit,
         ],
         ["Idle", "Typing", "Typing", "Typing", "Typing", "Confirming"],
       ),
@@ -192,9 +192,9 @@ describe("Keyboard Input Pattern", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const result = yield* simulate(keyboardMachine, [
-          KeyboardEvent.Focus(),
+          KeyboardEvent.Focus,
           KeyboardEvent.KeyPress({ key: "x" }),
-          KeyboardEvent.Cancel(),
+          KeyboardEvent.Cancel,
         ]);
 
         expect(result.finalState._tag).toBe("Idle");
@@ -208,10 +208,10 @@ describe("Keyboard Input Pattern", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const result = yield* simulate(keyboardMachine, [
-          KeyboardEvent.Focus(),
+          KeyboardEvent.Focus,
           KeyboardEvent.KeyPress({ key: "1" }),
-          KeyboardEvent.Submit(),
-          KeyboardEvent.Cancel(),
+          KeyboardEvent.Submit,
+          KeyboardEvent.Cancel,
         ]);
 
         expect(result.finalState._tag).toBe("Typing");
@@ -224,10 +224,10 @@ describe("Keyboard Input Pattern", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const result = yield* simulate(keyboardMachine, [
-          KeyboardEvent.Focus(),
+          KeyboardEvent.Focus,
           KeyboardEvent.SwitchMode({ mode: "append" }),
           KeyboardEvent.KeyPress({ key: "a" }),
-          KeyboardEvent.Clear(),
+          KeyboardEvent.Clear,
           KeyboardEvent.KeyPress({ key: "b" }),
         ]);
 

@@ -29,7 +29,7 @@ describe("Same-state Transitions", () => {
         Machine.on(FormState.Form, FormEvent.SetName, ({ state, event }) =>
           FormState.Form({ name: event.name, count: state.count + 1 }),
         ),
-        Machine.on(FormState.Form, FormEvent.Submit, () => FormState.Submitted()),
+        Machine.on(FormState.Form, FormEvent.Submit, () => FormState.Submitted),
         Machine.onEnter(FormState.Form, "enterForm"),
         Machine.onExit(FormState.Form, "exitForm"),
       );
@@ -61,7 +61,7 @@ describe("Same-state Transitions", () => {
       expect(effects).toEqual(["enter:Form"]);
 
       // Different state tag - runs exit
-      yield* actor.send(FormEvent.Submit());
+      yield* actor.send(FormEvent.Submit);
       yield* yieldFibers;
 
       expect(effects).toEqual(["enter:Form", "exit:Form"]);

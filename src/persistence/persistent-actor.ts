@@ -108,8 +108,10 @@ const buildPersistentActorRef = <
             for (const persistedEvent of events) {
               if (persistedEvent.version > targetVersion) break;
 
-              // Find transition for this event (pure state computation only)
-              // Cast: guard requirements are provided when machine is spawned
+              /**
+               * INVARIANT: R=never for machines passed to persistent actors.
+               * Machine.provide eliminates R requirements before spawning.
+               */
               const transition = yield* resolveTransition(
                 machine,
                 state,
@@ -145,7 +147,10 @@ const buildPersistentActorRef = <
     can: (event) =>
       Effect.gen(function* () {
         const s = yield* SubscriptionRef.get(stateRef);
-        // Cast: guard requirements are provided when machine is spawned
+        /**
+         * INVARIANT: R=never for machines passed to persistent actors.
+         * Machine.provide eliminates R requirements before spawning.
+         */
         const transition = yield* resolveTransition(machine, s, event) as Effect.Effect<
           (typeof machine.transitions)[number] | undefined,
           never,
@@ -155,7 +160,10 @@ const buildPersistentActorRef = <
       }),
     canSync: (event) => {
       const state = Effect.runSync(SubscriptionRef.get(stateRef));
-      // canSync only works with sync guards - async guards will throw
+      /**
+       * INVARIANT: R=never for machines passed to persistent actors.
+       * canSync only works with sync guards - async guards will throw.
+       */
       const transition = Effect.runSync(
         resolveTransition(machine, state, event) as Effect.Effect<
           (typeof machine.transitions)[number] | undefined,

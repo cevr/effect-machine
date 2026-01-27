@@ -15,8 +15,8 @@ bun run fmt           # oxfmt
 
 - Files: kebab-case (`actor-system.ts`, `on-enter.ts`)
 - States/Events: schema-first with `State({...})` / `Event({...})` - they ARE schemas
-- Empty struct constructors: `State.Idle()` - no args, `State.Idle({})` is type error
-- Non-empty: `State.Loading({ url })` - args required
+- Empty structs: plain values - `State.Idle` (not callable)
+- Non-empty: `State.Loading({ url })` - constructor requiring args
 - Machine creation: `Machine.make({ state, event, initial })` - types inferred from schemas
 - Exports: all public API via `src/index.ts`
 - Strict Effect config: see `tsconfig.json` for `@effect/language-service` rules

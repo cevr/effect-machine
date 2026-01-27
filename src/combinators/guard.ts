@@ -1,7 +1,7 @@
 import type { AnySlot, EffectSlotType, Machine } from "../machine.js";
 import { addEffectSlot } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
-import type { BrandedState, BrandedEvent } from "../internal/brands.js";
+import type { BrandedState, BrandedEvent, TaggedOrConstructor } from "../internal/brands.js";
 
 /** Type-level guard slot */
 type GuardSlot<Name extends string> = EffectSlotType<"guard", Name>;
@@ -49,12 +49,12 @@ export function guard<
   NarrowedEvent extends BrandedEvent,
   Name extends string,
 >(
-  stateConstructor: { (...args: never[]): NarrowedState },
-  eventConstructor: { (...args: never[]): NarrowedEvent },
+  state: TaggedOrConstructor<NarrowedState>,
+  event: TaggedOrConstructor<NarrowedEvent>,
   name: Name,
 ) {
-  const stateTag = getTag(stateConstructor);
-  const eventTag = getTag(eventConstructor);
+  const stateTag = getTag(state);
+  const eventTag = getTag(event);
 
   return <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
     builder: Machine<State, Event, R, Slots>,

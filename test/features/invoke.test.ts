@@ -25,7 +25,7 @@ describe("invoke", () => {
       const machine = Machine.make({
         state: TestState,
         event: TestEvent,
-        initial: TestState.Idle(),
+        initial: TestState.Idle,
       }).pipe(Machine.invoke(TestState.Running, ["firstTask", "secondTask"] as const));
 
       expect(machine.effectSlots.size).toBe(2);
@@ -48,10 +48,10 @@ describe("invoke", () => {
         const machine = Machine.make({
           state: TestState,
           event: TestEvent,
-          initial: TestState.Idle(),
+          initial: TestState.Idle,
         }).pipe(
-          Machine.on(TestState.Idle, TestEvent.Start, () => TestState.Running()),
-          Machine.on(TestState.Running, TestEvent.Stop, () => TestState.Done()),
+          Machine.on(TestState.Idle, TestEvent.Start, () => TestState.Running),
+          Machine.on(TestState.Running, TestEvent.Stop, () => TestState.Done),
           Machine.invoke(TestState.Running, ["firstTask", "secondTask"]),
           Machine.final(TestState.Done),
         );
@@ -74,7 +74,7 @@ describe("invoke", () => {
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("test", provided);
 
-        yield* actor.send(TestEvent.Start());
+        yield* actor.send(TestEvent.Start);
         yield* yieldFibers;
 
         // Both should have started
@@ -89,10 +89,10 @@ describe("invoke", () => {
         const machine = Machine.make({
           state: TestState,
           event: TestEvent,
-          initial: TestState.Idle(),
+          initial: TestState.Idle,
         }).pipe(
-          Machine.on(TestState.Idle, TestEvent.Start, () => TestState.Running()),
-          Machine.on(TestState.Running, TestEvent.Stop, () => TestState.Done()),
+          Machine.on(TestState.Idle, TestEvent.Start, () => TestState.Running),
+          Machine.on(TestState.Running, TestEvent.Stop, () => TestState.Done),
           Machine.invoke(TestState.Running, ["firstTask", "secondTask"] as const),
           Machine.final(TestState.Done),
         );
@@ -115,12 +115,12 @@ describe("invoke", () => {
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("test", provided);
 
-        yield* actor.send(TestEvent.Start());
+        yield* actor.send(TestEvent.Start);
         yield* yieldFibers;
 
         expect(log).toEqual(["first:start", "second:start"]);
 
-        yield* actor.send(TestEvent.Stop());
+        yield* actor.send(TestEvent.Stop);
         yield* yieldFibers;
 
         expect(log).toContain("first:interrupted");
@@ -150,7 +150,7 @@ describe("invoke", () => {
       const machine = Machine.make({
         state: TestState,
         event: TestEvent,
-        initial: TestState.Idle(),
+        initial: TestState.Idle,
       }).pipe(Machine.invoke("backgroundTask"));
 
       expect(machine.effectSlots.size).toBe(1);
@@ -166,9 +166,9 @@ describe("invoke", () => {
         const machine = Machine.make({
           state: TestState,
           event: TestEvent,
-          initial: TestState.Idle(),
+          initial: TestState.Idle,
         }).pipe(
-          Machine.on(TestState.Idle, TestEvent.Activate, () => TestState.Active()),
+          Machine.on(TestState.Idle, TestEvent.Activate, () => TestState.Active),
           Machine.invoke("backgroundTask"),
         );
 
@@ -197,10 +197,10 @@ describe("invoke", () => {
         const machine = Machine.make({
           state: TestState,
           event: TestEvent,
-          initial: TestState.Idle(),
+          initial: TestState.Idle,
         }).pipe(
-          Machine.on(TestState.Idle, TestEvent.Activate, () => TestState.Active()),
-          Machine.on(TestState.Active, TestEvent.Finish, () => TestState.Done()),
+          Machine.on(TestState.Idle, TestEvent.Activate, () => TestState.Active),
+          Machine.on(TestState.Active, TestEvent.Finish, () => TestState.Done),
           Machine.invoke("counter"),
           Machine.final(TestState.Done),
         );
@@ -223,7 +223,7 @@ describe("invoke", () => {
         yield* Effect.sleep("10 millis");
 
         // Transition states
-        yield* actor.send(TestEvent.Activate());
+        yield* actor.send(TestEvent.Activate);
         yield* yieldFibers;
 
         yield* Effect.sleep("10 millis");
@@ -231,7 +231,7 @@ describe("invoke", () => {
         const countBeforeFinish = yield* Ref.get(counterRef);
 
         // Finish (final state)
-        yield* actor.send(TestEvent.Finish());
+        yield* actor.send(TestEvent.Finish);
         yield* yieldFibers;
 
         // Should have accumulated counts through both states
@@ -246,9 +246,9 @@ describe("invoke", () => {
         const machine = Machine.make({
           state: TestState,
           event: TestEvent,
-          initial: TestState.Idle(),
+          initial: TestState.Idle,
         }).pipe(
-          Machine.on(TestState.Idle, TestEvent.Finish, () => TestState.Done()),
+          Machine.on(TestState.Idle, TestEvent.Finish, () => TestState.Done),
           Machine.invoke("backgroundTask"),
           Machine.final(TestState.Done),
         );
@@ -285,13 +285,13 @@ describe("invoke", () => {
         const machine = Machine.make({
           state: TestState,
           event: TestEvent,
-          initial: TestState.Idle(),
+          initial: TestState.Idle,
         }).pipe(
           Machine.on(TestState.Idle, TestEvent.BackgroundEvent, ({ event }) => {
             receivedData.push(event.data);
-            return TestState.Idle();
+            return TestState.Idle;
           }),
-          Machine.on(TestState.Idle, TestEvent.Finish, () => TestState.Done()),
+          Machine.on(TestState.Idle, TestEvent.Finish, () => TestState.Done),
           Machine.invoke("emitter"),
           Machine.final(TestState.Done),
         );
@@ -316,7 +316,7 @@ describe("invoke", () => {
 
         expect(receivedData).toEqual(["first", "second", "third"]);
 
-        yield* actor.send(TestEvent.Finish());
+        yield* actor.send(TestEvent.Finish);
         yield* yieldFibers;
       }).pipe(Effect.provide(ActorSystemDefault)),
     );
@@ -328,9 +328,9 @@ describe("invoke", () => {
         const machine = Machine.make({
           state: TestState,
           event: TestEvent,
-          initial: TestState.Idle(),
+          initial: TestState.Idle,
         }).pipe(
-          Machine.on(TestState.Idle, TestEvent.Finish, () => TestState.Done()),
+          Machine.on(TestState.Idle, TestEvent.Finish, () => TestState.Done),
           Machine.invoke("backgroundTask"),
           Machine.final(TestState.Done),
         );
@@ -353,7 +353,7 @@ describe("invoke", () => {
         expect(log).toEqual(["background:start"]);
 
         // Transition to final state
-        yield* actor.send(TestEvent.Finish());
+        yield* actor.send(TestEvent.Finish);
         yield* yieldFibers;
 
         const state = yield* actor.snapshot;
@@ -384,10 +384,10 @@ describe("invoke", () => {
         const machine = Machine.make({
           state: TestState,
           event: TestEvent,
-          initial: TestState.Idle(),
+          initial: TestState.Idle,
         }).pipe(
-          Machine.on(TestState.Idle, TestEvent.Start, () => TestState.Loading()),
-          Machine.on(TestState.Loading, TestEvent.Finish, () => TestState.Done()),
+          Machine.on(TestState.Idle, TestEvent.Start, () => TestState.Loading),
+          Machine.on(TestState.Loading, TestEvent.Finish, () => TestState.Done),
           Machine.invoke("rootTask"),
           Machine.invoke(TestState.Loading, "loadingTask"),
           Machine.final(TestState.Done),
@@ -414,7 +414,7 @@ describe("invoke", () => {
         expect(log).toEqual(["root:start"]);
 
         // Enter Loading state
-        yield* actor.send(TestEvent.Start());
+        yield* actor.send(TestEvent.Start);
         yield* yieldFibers;
 
         // Both root and loading tasks running
@@ -422,7 +422,7 @@ describe("invoke", () => {
         expect(log).toContain("loading:start");
 
         // Finish to Done
-        yield* actor.send(TestEvent.Finish());
+        yield* actor.send(TestEvent.Finish);
         yield* yieldFibers;
 
         // Loading task interrupted, root still running until actor stops
@@ -453,7 +453,7 @@ describe("invoke", () => {
       const machine = Machine.make({
         state: TestState,
         event: TestEvent,
-        initial: TestState.Idle(),
+        initial: TestState.Idle,
       }).pipe(Machine.invoke(["firstRoot", "secondRoot"] as const));
 
       expect(machine.effectSlots.size).toBe(2);
@@ -476,9 +476,9 @@ describe("invoke", () => {
         const machine = Machine.make({
           state: TestState,
           event: TestEvent,
-          initial: TestState.Idle(),
+          initial: TestState.Idle,
         }).pipe(
-          Machine.on(TestState.Idle, TestEvent.Finish, () => TestState.Done()),
+          Machine.on(TestState.Idle, TestEvent.Finish, () => TestState.Done),
           Machine.invoke(["firstRoot", "secondRoot"] as const),
           Machine.final(TestState.Done),
         );
@@ -513,9 +513,9 @@ describe("invoke", () => {
         const machine = Machine.make({
           state: TestState,
           event: TestEvent,
-          initial: TestState.Idle(),
+          initial: TestState.Idle,
         }).pipe(
-          Machine.on(TestState.Idle, TestEvent.Finish, () => TestState.Done()),
+          Machine.on(TestState.Idle, TestEvent.Finish, () => TestState.Done),
           Machine.invoke(["firstRoot", "secondRoot"] as const),
           Machine.final(TestState.Done),
         );

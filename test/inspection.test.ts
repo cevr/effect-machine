@@ -36,7 +36,7 @@ describe("Inspection", () => {
       const machine = Machine.make({
         state: TestState,
         event: TestEvent,
-        initial: TestState.Idle(),
+        initial: TestState.Idle,
       }).pipe(
         Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
           TestState.Loading({ url: event.url }),
@@ -64,7 +64,7 @@ describe("Inspection", () => {
       const machine = Machine.make({
         state: TestState,
         event: TestEvent,
-        initial: TestState.Idle(),
+        initial: TestState.Idle,
       }).pipe(
         Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
           TestState.Loading({ url: event.url }),
@@ -94,7 +94,7 @@ describe("Inspection", () => {
       const machine = Machine.make({
         state: TestState,
         event: TestEvent,
-        initial: TestState.Idle(),
+        initial: TestState.Idle,
       }).pipe(
         Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
           TestState.Loading({ url: event.url }),
@@ -125,7 +125,7 @@ describe("Inspection", () => {
       const machine = Machine.make({
         state: TestState,
         event: TestEvent,
-        initial: TestState.Idle(),
+        initial: TestState.Idle,
       }).pipe(
         Machine.on(
           TestState.Idle,
@@ -160,7 +160,7 @@ describe("Inspection", () => {
       const baseMachine = Machine.make({
         state: TestState,
         event: TestEvent,
-        initial: TestState.Idle(),
+        initial: TestState.Idle,
       }).pipe(
         Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
           TestState.Loading({ url: event.url }),
@@ -206,7 +206,7 @@ describe("Inspection", () => {
       const machine = Machine.make({
         state: TestState,
         event: TestEvent,
-        initial: TestState.Idle(),
+        initial: TestState.Idle,
       }).pipe(
         Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
           TestState.Loading({ url: event.url }),
@@ -241,7 +241,7 @@ describe("Inspection", () => {
       const machine = Machine.make({
         state: TestState,
         event: TestEvent,
-        initial: TestState.Idle(),
+        initial: TestState.Idle,
       }).pipe(
         Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
           TestState.Loading({ url: event.url }),
@@ -267,7 +267,7 @@ describe("Inspection", () => {
       const machine = Machine.make({
         state: TestState,
         event: TestEvent,
-        initial: TestState.Idle(),
+        initial: TestState.Idle,
       }).pipe(
         Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
           TestState.Loading({ url: event.url }),
@@ -293,7 +293,7 @@ describe("Inspection", () => {
       const machine = Machine.make({
         state: TestState,
         event: TestEvent,
-        initial: TestState.Idle(),
+        initial: TestState.Idle,
       }).pipe(
         Machine.on(
           TestState.Idle,
@@ -342,7 +342,7 @@ describe("Inspection", () => {
       const baseMachine = Machine.make({
         state: TestState,
         event: TestEvent,
-        initial: TestState.Idle(),
+        initial: TestState.Idle,
       }).pipe(
         Machine.on(
           TestState.Idle,

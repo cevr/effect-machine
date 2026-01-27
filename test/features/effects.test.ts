@@ -35,7 +35,7 @@ describe("Effect Slots", () => {
   const baseMachine = Machine.make({
     state: FetchState,
     event: FetchEvent,
-    initial: FetchState.Idle(),
+    initial: FetchState.Idle,
   }).pipe(
     Machine.on(FetchState.Idle, FetchEvent.Fetch, ({ event }) =>
       FetchState.Loading({ url: event.url }),
@@ -230,7 +230,7 @@ describe("Effect Slots", () => {
       const providedMachine = Machine.make({
         state: FetchState,
         event: FetchEvent,
-        initial: FetchState.Idle(),
+        initial: FetchState.Idle,
       }).pipe(
         Machine.on(FetchState.Idle, FetchEvent.Fetch, ({ event }) =>
           FetchState.Loading({ url: event.url }),
@@ -281,9 +281,9 @@ describe("Effect Slots", () => {
       const machine = Machine.make({
         state: TestState,
         event: TestEvent,
-        initial: TestState.Idle(),
+        initial: TestState.Idle,
       }).pipe(
-        Machine.on(TestState.Idle, TestEvent.Finish, () => TestState.Done()),
+        Machine.on(TestState.Idle, TestEvent.Finish, () => TestState.Done),
         Machine.final(TestState.Done),
       );
 
@@ -295,7 +295,7 @@ describe("Effect Slots", () => {
         notifications.push(state._tag);
       });
 
-      yield* actor.send(TestEvent.Finish());
+      yield* actor.send(TestEvent.Finish);
       yield* yieldFibers;
 
       // Should have exactly 1 "Done" notification (not 2 from the bug)
@@ -323,9 +323,9 @@ describe("Effect Slots", () => {
       const timerMachine = Machine.make({
         state: TimerState,
         event: TimerEvent,
-        initial: TimerState.Running(),
+        initial: TimerState.Running,
       }).pipe(
-        Machine.on(TimerState.Running, TimerEvent.Stop, () => TimerState.Stopped()),
+        Machine.on(TimerState.Running, TimerEvent.Stop, () => TimerState.Stopped),
         Machine.invoke(TimerState.Running, "runTimer"),
         Machine.final(TimerState.Stopped),
       );
@@ -354,7 +354,7 @@ describe("Effect Slots", () => {
       expect(log).toEqual(["timer:start"]);
 
       // Stop should cancel the invoke
-      yield* actor.send(TimerEvent.Stop());
+      yield* actor.send(TimerEvent.Stop);
       yield* yieldFibers;
 
       const state = yield* actor.snapshot;
