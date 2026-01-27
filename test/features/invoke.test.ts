@@ -462,4 +462,123 @@ describe("invoke", () => {
       );
     });
   });
+
+  describe("parallel root invokes", () => {
+    const TestState = State({
+      Idle: {},
+      Done: {},
+    });
+    type TestState = typeof TestState.Type;
+
+    const TestEvent = Event({
+      Finish: {},
+    });
+    type TestEvent = typeof TestEvent.Type;
+
+    test("array syntax registers multiple root slots", () => {
+      const machine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle(),
+      }).pipe(Machine.invoke(["firstRoot", "secondRoot"] as const));
+
+      expect(machine.effectSlots.size).toBe(2);
+      expect(machine.effectSlots.has("firstRoot")).toBe(true);
+      expect(machine.effectSlots.has("secondRoot")).toBe(true);
+
+      const firstSlot = machine.effectSlots.get("firstRoot");
+      expect(firstSlot?.type).toBe("invoke");
+      expect(firstSlot?.stateTag).toBeNull();
+
+      const secondSlot = machine.effectSlots.get("secondRoot");
+      expect(secondSlot?.type).toBe("invoke");
+      expect(secondSlot?.stateTag).toBeNull();
+    });
+
+    test("parallel root invokes both start on spawn", async () => {
+      const log: string[] = [];
+
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const machine = Machine.make({
+            state: TestState,
+            event: TestEvent,
+            initial: TestState.Idle(),
+          }).pipe(
+            Machine.on(TestState.Idle, TestEvent.Finish, () => TestState.Done()),
+            Machine.invoke(["firstRoot", "secondRoot"] as const),
+            Machine.final(TestState.Done),
+          );
+
+          const provided = Machine.provide(machine, {
+            firstRoot: () =>
+              Effect.gen(function* () {
+                log.push("first:start");
+                yield* Effect.sleep("10 seconds");
+                log.push("first:done");
+              }),
+            secondRoot: () =>
+              Effect.gen(function* () {
+                log.push("second:start");
+                yield* Effect.sleep("10 seconds");
+                log.push("second:done");
+              }),
+          });
+
+          const system = yield* ActorSystemService;
+          yield* system.spawn("test", provided);
+          yield* yieldFibers;
+
+          expect(log).toEqual(["first:start", "second:start"]);
+        }).pipe(Effect.scoped, Effect.provide(ActorSystemDefault)),
+      );
+    });
+
+    test("parallel root invokes both interrupted on stop", async () => {
+      const log: string[] = [];
+
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const machine = Machine.make({
+            state: TestState,
+            event: TestEvent,
+            initial: TestState.Idle(),
+          }).pipe(
+            Machine.on(TestState.Idle, TestEvent.Finish, () => TestState.Done()),
+            Machine.invoke(["firstRoot", "secondRoot"] as const),
+            Machine.final(TestState.Done),
+          );
+
+          const provided = Machine.provide(machine, {
+            firstRoot: () =>
+              Effect.gen(function* () {
+                log.push("first:start");
+                yield* Effect.sleep("10 seconds");
+                log.push("first:done");
+              }).pipe(Effect.onInterrupt(() => Effect.sync(() => log.push("first:interrupted")))),
+            secondRoot: () =>
+              Effect.gen(function* () {
+                log.push("second:start");
+                yield* Effect.sleep("10 seconds");
+                log.push("second:done");
+              }).pipe(Effect.onInterrupt(() => Effect.sync(() => log.push("second:interrupted")))),
+          });
+
+          const system = yield* ActorSystemService;
+          const actor = yield* system.spawn("test", provided);
+          yield* yieldFibers;
+
+          expect(log).toEqual(["first:start", "second:start"]);
+
+          yield* actor.stop;
+          yield* yieldFibers;
+
+          expect(log).toContain("first:interrupted");
+          expect(log).toContain("second:interrupted");
+          expect(log).not.toContain("first:done");
+          expect(log).not.toContain("second:done");
+        }).pipe(Effect.scoped, Effect.provide(ActorSystemDefault)),
+      );
+    });
+  });
 });

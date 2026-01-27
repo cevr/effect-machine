@@ -152,7 +152,8 @@ Index built on first access, cached per machine instance.
 ```ts
 Machine.invoke(State.Loading, "fetchData")   // state-scoped invoke
 Machine.invoke("background")                  // root-level (machine lifetime)
-Machine.invoke(State.X, ["a", "b"])          // parallel invokes
+Machine.invoke(State.X, ["a", "b"])          // parallel state invokes
+Machine.invoke(["a", "b"])                    // parallel root invokes
 Machine.provide(machine, { fetchData: ... }) // wires handler
 ```
 

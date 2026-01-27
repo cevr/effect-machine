@@ -47,7 +47,8 @@ bun run fmt           # oxfmt
 
 - `invoke`, `onEnter`, `onExit` take slot name: `Machine.invoke(State.Loading, "fetchData")`
 - Root-level invoke: `Machine.invoke("background")` - runs for machine lifetime
-- Parallel invokes: `Machine.invoke(State.X, ["task1", "task2"])`
+- Parallel state invokes: `Machine.invoke(State.X, ["task1", "task2"])`
+- Parallel root invokes: `Machine.invoke(["task1", "task2"])`
 - Provide handlers via `Machine.provide(machine, { fetchData: ... })` before spawning
 - Spawning machine with unprovided slots → runtime error
 - `simulate()` works without providing effects (pure transitions only)

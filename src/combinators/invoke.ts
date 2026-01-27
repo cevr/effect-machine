@@ -104,6 +104,32 @@ export function invoke<Name extends string>(
 ) => Machine<State, Event, R, Slots | InvokeSlot<Name>>;
 
 // ============================================================================
+// Overload 4: Root-level array of names (parallel root invokes)
+// ============================================================================
+
+/**
+ * Register multiple root-level invoke slots that run for the machine's entire lifetime.
+ * All start on actor spawn, all interrupted on actor stop.
+ *
+ * @example
+ * ```ts
+ * const machine = Machine.make({ state, event, initial }).pipe(
+ *   Machine.invoke(["eventListener", "healthCheck"]),
+ * )
+ *
+ * const machineLive = Machine.provide(machine, {
+ *   eventListener: ({ self }) => Effect.forever(listenForEvents(self)),
+ *   healthCheck: ({ self }) => Effect.forever(checkHealth(self)),
+ * })
+ * ```
+ */
+export function invoke<const Names extends readonly string[]>(
+  names: Names,
+): <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
+  builder: Machine<State, Event, R, Slots>,
+) => Machine<State, Event, R, Slots | InvokeSlots<Names>>;
+
+// ============================================================================
 // Implementation
 // ============================================================================
 
@@ -123,6 +149,24 @@ export function invoke(
         name,
       })(builder);
     };
+  }
+
+  // Root-level array: invoke(["a", "b"])
+  if (Array.isArray(stateConstructorOrName)) {
+    const names = stateConstructorOrName as string[];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return ((builder: any) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let result: any = builder;
+      for (const name of names) {
+        result = addEffectSlot({
+          type: "invoke",
+          stateTag: null,
+          name,
+        })(result);
+      }
+      return result;
+    }) as unknown;
   }
 
   // State constructor case
