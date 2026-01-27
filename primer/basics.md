@@ -4,57 +4,57 @@ Core concepts for building state machines with effect-machine.
 
 ## States and Events
 
-States and events are tagged enums using Effect's `Data.TaggedEnum`:
+States and events are branded types using `State<T>` and `Event<T>`:
 
 ```typescript
-import { Data } from "effect";
+import { State, Event } from "effect-machine";
 
 // States - what the machine can be
-type State = Data.TaggedEnum<{
+type MyState = State<{
   Idle: {};
   Loading: { url: string };
   Success: { data: string };
   Error: { message: string };
 }>;
-const State = Data.taggedEnum<State>();
+const MyState = State<MyState>();
 
 // Events - what can happen
-type Event = Data.TaggedEnum<{
+type MyEvent = Event<{
   Fetch: { url: string };
   Resolve: { data: string };
   Reject: { message: string };
 }>;
-const Event = Data.taggedEnum<Event>();
+const MyEvent = Event<MyEvent>();
 ```
 
-**Why tagged enums?**
+**Why branded types?**
 
 - Exhaustive pattern matching
 - Type narrowing in handlers
 - Structural equality for testing
+- Compile-time prevention of state/event mixups
 
 ## Building Machines
 
-Use `pipe` to compose a machine definition:
+Use `Machine.make().pipe()` to compose a machine definition:
 
 ```typescript
-import { pipe } from "effect";
-import { build, final, make, on } from "effect-machine";
+import { Effect } from "effect";
+import { Machine, State, Event } from "effect-machine";
 
-const machine = build(
-  pipe(
-    // Initial state
-    make<State, Event>(State.Idle()),
-
-    // Transitions: from state + event → new state
-    on(State.Idle, Event.Fetch, ({ event }) => State.Loading({ url: event.url })),
-    on(State.Loading, Event.Resolve, ({ event }) => State.Success({ data: event.data })),
-    on(State.Loading, Event.Reject, ({ event }) => State.Error({ message: event.message })),
-
-    // Final states (no transitions out)
-    final(State.Success),
-    final(State.Error),
+const machine = Machine.make<MyState, MyEvent>(MyState.Idle()).pipe(
+  // Transitions: from state + event → new state
+  Machine.on(MyState.Idle, MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url })),
+  Machine.on(MyState.Loading, MyEvent.Resolve, ({ event }) =>
+    MyState.Success({ data: event.data }),
   ),
+  Machine.on(MyState.Loading, MyEvent.Reject, ({ event }) =>
+    MyState.Error({ message: event.message }),
+  ),
+
+  // Final states (no transitions out)
+  Machine.final(MyState.Success),
+  Machine.final(MyState.Error),
 );
 ```
 
@@ -63,10 +63,10 @@ const machine = build(
 Handlers receive a context object with `state` and `event`:
 
 ```typescript
-on(State.Loading, Event.Resolve, ({ state, event }) => {
+Machine.on(MyState.Loading, MyEvent.Resolve, ({ state, event }) => {
   // state is narrowed to Loading
   // event is narrowed to Resolve
-  return State.Success({ data: event.data });
+  return MyState.Success({ data: event.data });
 });
 ```
 
@@ -75,10 +75,10 @@ on(State.Loading, Event.Resolve, ({ state, event }) => {
 Handlers can return an Effect for async transitions:
 
 ```typescript
-on(State.Idle, Event.Fetch, ({ event }) =>
+Machine.on(MyState.Idle, MyEvent.Fetch, ({ event }) =>
   Effect.gen(function* () {
     const data = yield* fetchData(event.url);
-    return State.Success({ data });
+    return MyState.Success({ data });
   }),
 );
 ```
@@ -88,7 +88,7 @@ on(State.Idle, Event.Fetch, ({ event }) =>
 Conditionally enable transitions:
 
 ```typescript
-on(State.Form, Event.Submit, ({ state }) => State.Submitting(), {
+Machine.on(MyState.Form, MyEvent.Submit, ({ state }) => MyState.Submitting(), {
   guard: ({ state }) => state.isValid,
 });
 ```
@@ -100,7 +100,7 @@ If guard returns `false`, the transition is skipped and state remains unchanged.
 Run side effects on transitions:
 
 ```typescript
-on(State.Idle, Event.Start, () => State.Running(), {
+Machine.on(MyState.Idle, MyEvent.Start, () => MyState.Running(), {
   effect: ({ state, event }) => Effect.log(`Starting from ${state._tag} with ${event._tag}`),
 });
 ```
@@ -112,8 +112,8 @@ Effects run after the state change is committed.
 Mark states as terminal:
 
 ```typescript
-final(State.Success),
-final(State.Error),
+Machine.final(MyState.Success),
+Machine.final(MyState.Error),
 ```
 
 Once in a final state:
@@ -121,23 +121,32 @@ Once in a final state:
 - No transitions are processed
 - Actor stops automatically
 
-## State Entry/Exit
+## State Entry/Exit (Effect Slots)
 
-Run effects when entering or exiting states:
+Register effect slots for state entry/exit, then provide handlers:
 
 ```typescript
-import { onEnter, onExit } from "effect-machine";
+import { Machine, State, Event } from "effect-machine";
 
-pipe(
-  make<State, Event>(State.Idle()),
-  onEnter(State.Loading, ({ state, self }) =>
+const baseMachine = Machine.make<MyState, MyEvent>(MyState.Idle()).pipe(
+  Machine.on(MyState.Idle, MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url })),
+  Machine.on(MyState.Loading, MyEvent.Resolve, ({ event }) =>
+    MyState.Success({ data: event.data }),
+  ),
+  // Register effect slots
+  Machine.onEnter(MyState.Loading, "startLoading"),
+  Machine.onExit(MyState.Loading, "cleanupLoading"),
+);
+
+// Provide handlers
+const machine = Machine.provide(baseMachine, {
+  startLoading: ({ state, self }) =>
     Effect.gen(function* () {
       const data = yield* fetchData(state.url);
-      yield* self.send(Event.Resolve({ data }));
+      yield* self.send(MyEvent.Resolve({ data }));
     }),
-  ),
-  onExit(State.Loading, () => Effect.log("Leaving Loading")),
-);
+  cleanupLoading: () => Effect.log("Leaving Loading"),
+});
 ```
 
 `self.send` lets you send events back to the machine from effects.
@@ -147,14 +156,11 @@ pipe(
 Transitions that fire immediately based on state:
 
 ```typescript
-import { always } from "effect-machine";
-
-pipe(
-  make<State, Event>(State.Calculating({ value: 75 })),
-  always(State.Calculating, [
-    { guard: (s) => s.value >= 70, to: (s) => State.High({ value: s.value }) },
-    { guard: (s) => s.value >= 40, to: (s) => State.Medium({ value: s.value }) },
-    { otherwise: true, to: (s) => State.Low({ value: s.value }) },
+Machine.make<MyState, MyEvent>(MyState.Calculating({ value: 75 })).pipe(
+  Machine.always(MyState.Calculating, [
+    { guard: (s) => s.value >= 70, to: (s) => MyState.High({ value: s.value }) },
+    { guard: (s) => s.value >= 40, to: (s) => MyState.Medium({ value: s.value }) },
+    { to: (s) => MyState.Low({ value: s.value }) }, // Fallback (no guard)
   ]),
 );
 ```
@@ -166,12 +172,9 @@ Branches are evaluated top-to-bottom. First match wins.
 Auto-send events after a duration:
 
 ```typescript
-import { delay } from "effect-machine";
-
-pipe(
-  make<State, Event>(State.Success({ message: "Done" })),
-  on(State.Success, Event.Dismiss, () => State.Dismissed()),
-  delay(State.Success, "3 seconds", Event.Dismiss()),
+Machine.make<MyState, MyEvent>(MyState.Success({ message: "Done" })).pipe(
+  Machine.on(MyState.Success, MyEvent.Dismiss, () => MyState.Dismissed()),
+  Machine.delay(MyState.Success, "3 seconds", MyEvent.Dismiss()),
 );
 ```
 

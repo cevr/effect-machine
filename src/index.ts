@@ -37,7 +37,7 @@ export {
 
 // Combinators
 export { always } from "./combinators/always.js";
-export type { AlwaysBranch, AlwaysEntry, AlwaysOtherwise } from "./combinators/always.js";
+export type { AlwaysBranch, AlwaysEntry } from "./combinators/always.js";
 export { assign, update } from "./combinators/assign.js";
 export { choose } from "./combinators/choose.js";
 export type { ChooseBranch, ChooseEntry, ChooseOtherwise } from "./combinators/choose.js";
@@ -81,7 +81,6 @@ export type {
   TransitionResult,
 } from "./internal/types.js";
 export { Guard, normalizeGuard } from "./internal/types.js";
-export type { Guard as GuardType } from "./internal/types.js";
 
 // Inspection / introspection
 export type {

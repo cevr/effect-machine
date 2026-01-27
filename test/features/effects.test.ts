@@ -11,7 +11,7 @@ import {
   simulate,
   State,
   yieldFibers,
-} from "../src/index.js";
+} from "../../src/index.js";
 
 describe("Effect Slots", () => {
   type FetchState = State<{

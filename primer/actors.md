@@ -19,7 +19,7 @@ The `ActorSystem` service manages actor lifecycles.
 
 ```typescript
 import { Effect } from "effect";
-import { ActorSystemDefault, ActorSystemService, build, make, on } from "effect-machine";
+import { ActorSystemDefault, ActorSystemService, Machine, State, Event } from "effect-machine";
 
 const program = Effect.gen(function* () {
   const system = yield* ActorSystemService;
@@ -42,7 +42,7 @@ const actor = yield * system.spawn(id, machine);
 ```
 
 - `id` - Unique identifier (throws if duplicate)
-- `machine` - Built machine definition
+- `machine` - Machine definition with effects provided
 - Returns `ActorRef<State, Event>`
 
 ## ActorRef API
@@ -66,7 +66,7 @@ interface ActorRef<State, Event> {
 ### Sending Events
 
 ```typescript
-yield * actor.send(Event.Start());
+yield * actor.send(MyEvent.Start());
 ```
 
 Events are queued and processed sequentially.
@@ -110,7 +110,7 @@ const actor1 = yield * system.spawn("player-1", playerMachine);
 const actor2 = yield * system.spawn("player-2", playerMachine);
 
 // Communicate between actors
-yield * actor1.send(Event.Attack({ target: actor2.id }));
+yield * actor1.send(MyEvent.Attack({ target: actor2.id }));
 ```
 
 ## Looking Up Actors
@@ -119,7 +119,7 @@ yield * actor1.send(Event.Attack({ target: actor2.id }));
 const maybeActor = yield * system.get("player-1");
 
 if (Option.isSome(maybeActor)) {
-  yield * maybeActor.value.send(Event.Heal());
+  yield * maybeActor.value.send(MyEvent.Heal());
 }
 ```
 
@@ -150,24 +150,40 @@ spawn() called
 
 ## Entry/Exit Effects with Actors
 
-Effects have access to `self` for sending events:
+Effects are registered as slots and provided before spawning:
 
 ```typescript
-import { onEnter, invoke } from "effect-machine";
+import { Machine, State, Event } from "effect-machine";
 
-const machine = build(
-  pipe(
-    make<State, Event>(State.Idle()),
-    on(State.Idle, Event.Start, () => State.Loading()),
-    onEnter(State.Loading, ({ state, self }) =>
-      Effect.gen(function* () {
-        const data = yield* fetchData(state.url);
-        yield* self.send(Event.Done({ data }));
-      }),
-    ),
-    on(State.Loading, Event.Done, ({ event }) => State.Success({ data: event.data })),
-  ),
+type MyState = State<{
+  Idle: {};
+  Loading: { url: string };
+  Success: { data: string };
+}>;
+const MyState = State<MyState>();
+
+type MyEvent = Event<{
+  Start: { url: string };
+  Done: { data: string };
+}>;
+const MyEvent = Event<MyEvent>();
+
+// Define machine with effect slots
+const baseMachine = Machine.make<MyState, MyEvent>(MyState.Idle()).pipe(
+  Machine.on(MyState.Idle, MyEvent.Start, ({ event }) => MyState.Loading({ url: event.url })),
+  Machine.on(MyState.Loading, MyEvent.Done, ({ event }) => MyState.Success({ data: event.data })),
+  Machine.onEnter(MyState.Loading, "fetchData"),
+  Machine.final(MyState.Success),
 );
+
+// Provide handlers before spawning
+const machine = Machine.provide(baseMachine, {
+  fetchData: ({ state, self }) =>
+    Effect.gen(function* () {
+      const data = yield* fetchFromApi(state.url);
+      yield* self.send(MyEvent.Done({ data }));
+    }),
+});
 ```
 
 ## Invoke for Auto-Cancel
@@ -175,22 +191,35 @@ const machine = build(
 `invoke` runs an effect on entry and cancels it on exit:
 
 ```typescript
-const machine = build(
-  pipe(
-    make<State, Event>(State.Idle()),
-    on(State.Idle, Event.StartPolling, () => State.Polling()),
-    invoke(State.Polling, ({ state, self }) =>
-      Effect.gen(function* () {
-        while (true) {
-          yield* Effect.sleep("5 seconds");
-          const status = yield* checkStatus(state.id);
-          yield* self.send(Event.StatusUpdate({ status }));
-        }
-      }),
-    ),
-    on(State.Polling, Event.Stop, () => State.Idle()),
-  ),
+type MyState = State<{
+  Idle: {};
+  Polling: { id: string };
+}>;
+const MyState = State<MyState>();
+
+type MyEvent = Event<{
+  StartPolling: { id: string };
+  StatusUpdate: { status: string };
+  Stop: {};
+}>;
+const MyEvent = Event<MyEvent>();
+
+const baseMachine = Machine.make<MyState, MyEvent>(MyState.Idle()).pipe(
+  Machine.on(MyState.Idle, MyEvent.StartPolling, ({ event }) => MyState.Polling({ id: event.id })),
+  Machine.invoke(MyState.Polling, "poll"),
+  Machine.on(MyState.Polling, MyEvent.Stop, () => MyState.Idle()),
 );
+
+const machine = Machine.provide(baseMachine, {
+  poll: ({ state, self }) =>
+    Effect.gen(function* () {
+      while (true) {
+        yield* Effect.sleep("5 seconds");
+        const status = yield* checkStatus(state.id);
+        yield* self.send(MyEvent.StatusUpdate({ status }));
+      }
+    }),
+});
 ```
 
 When transitioning out of `Polling`, the polling fiber is automatically interrupted.
@@ -206,11 +235,11 @@ test("actor processes events", async () => {
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
 
-      yield* actor.send(Event.Start());
+      yield* actor.send(MyEvent.Start({ url: "/api" }));
       yield* yieldFibers; // Let async effects run
 
       const state = yield* actor.state.get;
-      expect(state._tag).toBe("Running");
+      expect(state._tag).toBe("Loading");
     }).pipe(Effect.scoped, Effect.provide(ActorSystemDefault)),
   );
 });
@@ -245,14 +274,15 @@ test("delayed transition", async () => {
 Unhandled errors in effects will cause the fiber to fail. Use Effect error handling:
 
 ```typescript
-onEnter(State.Loading, ({ state, self }) =>
-  Effect.gen(function* () {
-    const result = yield* fetchData(state.url).pipe(
-      Effect.catchAll((error) => self.send(Event.Error({ message: String(error) }))),
-    );
-    yield* self.send(Event.Done({ data: result }));
-  }),
-);
+const machine = Machine.provide(baseMachine, {
+  fetchData: ({ state, self }) =>
+    Effect.gen(function* () {
+      const result = yield* fetchFromApi(state.url).pipe(
+        Effect.catchAll((error) => self.send(MyEvent.Error({ message: String(error) }))),
+      );
+      yield* self.send(MyEvent.Done({ data: result }));
+    }),
+});
 ```
 
 ## See Also

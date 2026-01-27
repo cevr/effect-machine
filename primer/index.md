@@ -35,34 +35,33 @@ What are you doing?
 ## Quick Example
 
 ```typescript
-import { Data, Effect, pipe } from "effect";
-import { build, final, make, on, simulate } from "effect-machine";
+import { Effect } from "effect";
+import { Machine, State, Event, simulate } from "effect-machine";
 
-type State = Data.TaggedEnum<{
+type MyState = State<{
   Idle: {};
   Loading: {};
   Done: { result: string };
 }>;
-const State = Data.taggedEnum<State>();
+const MyState = State<MyState>();
 
-type Event = Data.TaggedEnum<{
+type MyEvent = Event<{
   Start: {};
   Complete: { result: string };
 }>;
-const Event = Data.taggedEnum<Event>();
+const MyEvent = Event<MyEvent>();
 
-const machine = build(
-  pipe(
-    make<State, Event>(State.Idle()),
-    on(State.Idle, Event.Start, () => State.Loading()),
-    on(State.Loading, Event.Complete, ({ event }) => State.Done({ result: event.result })),
-    final(State.Done),
+const machine = Machine.make<MyState, MyEvent>(MyState.Idle()).pipe(
+  Machine.on(MyState.Idle, MyEvent.Start, () => MyState.Loading()),
+  Machine.on(MyState.Loading, MyEvent.Complete, ({ event }) =>
+    MyState.Done({ result: event.result }),
   ),
+  Machine.final(MyState.Done),
 );
 
 // Test it
 const result = await Effect.runPromise(
-  simulate(machine, [Event.Start(), Event.Complete({ result: "ok" })]),
+  simulate(machine, [MyEvent.Start(), MyEvent.Complete({ result: "ok" })]),
 );
 console.log(result.finalState._tag); // "Done"
 ```
@@ -71,8 +70,8 @@ console.log(result.finalState._tag); // "Done"
 
 | Concept        | Description                                         |
 | -------------- | --------------------------------------------------- |
-| **State**      | Tagged enum representing machine state              |
-| **Event**      | Tagged enum representing inputs                     |
+| **State**      | Branded type representing machine state             |
+| **Event**      | Branded type representing inputs                    |
 | **Transition** | State + Event → New State                           |
 | **Guard**      | Boolean predicate that enables/disables transitions |
 | **Effect**     | Side effect run on transition or state entry/exit   |
@@ -82,26 +81,25 @@ console.log(result.finalState._tag); // "Done"
 
 ### Building
 
-| Function                              | Purpose                          |
-| ------------------------------------- | -------------------------------- |
-| `make(initial)`                       | Start builder with initial state |
-| `build(builder)`                      | Finalize machine definition      |
-| `on(state, event, handler, options?)` | Add transition                   |
-| `final(state)`                        | Mark state as final              |
+| Function                | Purpose                          |
+| ----------------------- | -------------------------------- |
+| `Machine.make(initial)` | Start machine with initial state |
+| `Machine.on(...)`       | Add transition                   |
+| `Machine.final(state)`  | Mark state as final              |
 
 ### Combinators
 
-| Function                         | Purpose                            |
-| -------------------------------- | ---------------------------------- |
-| `always(state, branches)`        | Eventless transitions              |
-| `choose(state, event, branches)` | Guard cascade                      |
-| `delay(state, duration, event)`  | Auto-send event after delay        |
-| `assign(updater)`                | Partial state update helper        |
-| `update(state, event, updater)`  | Shorthand for on + assign          |
-| `invoke(state, name)`            | Register invoke slot (named)       |
-| `onEnter(state, name)`           | Register entry effect slot (named) |
-| `onExit(state, name)`            | Register exit effect slot (named)  |
-| `provide(machine, handlers)`     | Wire handlers to effect slots      |
+| Function                                 | Purpose                            |
+| ---------------------------------------- | ---------------------------------- |
+| `Machine.always(state, branches)`        | Eventless transitions              |
+| `Machine.choose(state, event, branches)` | Guard cascade                      |
+| `Machine.delay(state, duration, event)`  | Auto-send event after delay        |
+| `Machine.assign(updater)`                | Partial state update helper        |
+| `Machine.update(state, event, updater)`  | Shorthand for on + assign          |
+| `Machine.invoke(state, name)`            | Register invoke slot (named)       |
+| `Machine.onEnter(state, name)`           | Register entry effect slot (named) |
+| `Machine.onExit(state, name)`            | Register exit effect slot (named)  |
+| `Machine.provide(machine, handlers)`     | Wire handlers to effect slots      |
 
 ### Guards
 

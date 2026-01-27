@@ -8,28 +8,18 @@ type BrandedState = { readonly _tag: string } & StateBrand;
 type BrandedEvent = { readonly _tag: string } & EventBrand;
 
 /**
- * A single branch in an always transition cascade
+ * A single branch in an always transition cascade.
+ * Last branch without guard is automatically a fallback.
  */
 export interface AlwaysBranch<S, R> {
   readonly guard?: (state: S) => boolean;
   readonly to: (state: S) => TransitionResult<{ readonly _tag: string }, R>;
-  /** @deprecated Last branch without guard is automatically a fallback */
-  readonly otherwise?: true;
-}
-
-/**
- * @deprecated Use AlwaysBranch without guard for fallback
- */
-export interface AlwaysOtherwise<S, R> {
-  readonly otherwise: true;
-  readonly to: (state: S) => TransitionResult<{ readonly _tag: string }, R>;
-  readonly guard?: never;
 }
 
 /**
  * Branch type for always transitions
  */
-export type AlwaysEntry<S, R> = AlwaysBranch<S, R> | AlwaysOtherwise<S, R>;
+export type AlwaysEntry<S, R> = AlwaysBranch<S, R>;
 
 /**
  * Define eventless (always) transitions with guard cascade.
@@ -61,11 +51,8 @@ export function always<NarrowedState extends BrandedState, R2 = never>(
     let result: Machine<State, Event, any, Effects> = builder;
 
     for (const branch of branches) {
-      // A branch is a fallback if:
-      // - It has `otherwise: true` (deprecated)
-      // - It has no guard
-      const isFallback =
-        ("otherwise" in branch && branch.otherwise === true) || branch.guard === undefined;
+      // A branch is a fallback if it has no guard
+      const isFallback = branch.guard === undefined;
 
       const transition: AlwaysTransition<State, R2> = {
         stateTag,

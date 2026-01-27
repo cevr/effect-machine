@@ -30,7 +30,7 @@ export { on } from "./combinators/on.js";
 export type { OnForceOptions } from "./combinators/on.js";
 export { final } from "./combinators/final.js";
 export { always } from "./combinators/always.js";
-export type { AlwaysBranch, AlwaysEntry, AlwaysOtherwise } from "./combinators/always.js";
+export type { AlwaysBranch, AlwaysEntry } from "./combinators/always.js";
 export { choose } from "./combinators/choose.js";
 export type { ChooseBranch, ChooseEntry, ChooseOtherwise } from "./combinators/choose.js";
 export { delay } from "./combinators/delay.js";

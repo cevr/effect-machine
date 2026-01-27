@@ -17,14 +17,14 @@ Run a sequence of events and get all intermediate states.
 
 ```typescript
 import { Effect } from "effect";
-import { simulate } from "effect-machine";
+import { simulate, Machine, State, Event } from "effect-machine";
 
 test("transitions through states", async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
       const result = yield* simulate(machine, [
-        Event.Fetch({ url: "/api" }),
-        Event.Resolve({ data: "hello" }),
+        MyEvent.Fetch({ url: "/api" }),
+        MyEvent.Resolve({ data: "hello" }),
       ]);
 
       // All states visited
@@ -64,14 +64,14 @@ test("step-by-step testing", async () => {
       expect(state._tag).toBe("Idle");
 
       // Send event
-      yield* harness.send(Event.Fetch({ url: "/api" }));
+      yield* harness.send(MyEvent.Fetch({ url: "/api" }));
 
       // Check intermediate state
       state = yield* harness.getState;
       expect(state._tag).toBe("Loading");
 
       // Continue...
-      yield* harness.send(Event.Resolve({ data: "ok" }));
+      yield* harness.send(MyEvent.Resolve({ data: "ok" }));
       state = yield* harness.getState;
       expect(state._tag).toBe("Success");
     }),
@@ -97,7 +97,7 @@ test("fetch succeeds", async () => {
     Effect.gen(function* () {
       yield* assertReaches(
         machine,
-        [Event.Fetch({ url: "/api" }), Event.Resolve({ data: "ok" })],
+        [MyEvent.Fetch({ url: "/api" }), MyEvent.Resolve({ data: "ok" })],
         "Success",
       );
     }),
@@ -108,7 +108,7 @@ test("fetch fails", async () => {
   const result = await Effect.runPromise(
     assertReaches(
       machine,
-      [Event.Fetch({ url: "/api" })],
+      [MyEvent.Fetch({ url: "/api" })],
       "Success", // Won't reach
     ).pipe(Effect.either),
   );
@@ -132,7 +132,7 @@ test("actor with effects", async () => {
       const actor = yield* system.spawn("test", machine);
 
       // Send event
-      yield* actor.send(Event.Start());
+      yield* actor.send(MyEvent.Start());
 
       // Let effects run
       yield* yieldFibers;
@@ -183,7 +183,7 @@ Let background fibers execute:
 import { yieldFibers } from "effect-machine";
 
 // After sending event that triggers async effect
-yield * actor.send(Event.Start());
+yield * actor.send(MyEvent.Start());
 yield * yieldFibers; // Effects run here
 const state = yield * actor.state.get;
 ```
@@ -197,12 +197,12 @@ const isAdmin = Guard.make<UserState, AccessEvent>(({ state }) => state.role ===
 
 test("isAdmin guard", () => {
   const adminCtx = {
-    state: State.User({ role: "admin" }),
-    event: Event.Access(),
+    state: MyState.User({ role: "admin" }),
+    event: MyEvent.Access(),
   };
   const userCtx = {
-    state: State.User({ role: "user" }),
-    event: Event.Access(),
+    state: MyState.User({ role: "user" }),
+    event: MyEvent.Access(),
   };
 
   expect(isAdmin(adminCtx)).toBe(true);
@@ -216,16 +216,23 @@ test("isAdmin guard", () => {
 
 ```typescript
 test("always transitions fire immediately", async () => {
-  const machine = build(
-    pipe(
-      make<State, Event>(State.Calculating({ value: 75 })),
-      always(State.Calculating, [
-        { guard: (s) => s.value >= 70, to: () => State.High() },
-        { otherwise: true, to: () => State.Low() },
-      ]),
-      final(State.High),
-      final(State.Low),
-    ),
+  type MyState = State<{
+    Calculating: { value: number };
+    High: {};
+    Low: {};
+  }>;
+  const MyState = State<MyState>();
+
+  type MyEvent = Event<{ Check: {} }>;
+  const MyEvent = Event<MyEvent>();
+
+  const machine = Machine.make<MyState, MyEvent>(MyState.Calculating({ value: 75 })).pipe(
+    Machine.always(MyState.Calculating, [
+      { guard: (s) => s.value >= 70, to: () => MyState.High() },
+      { to: () => MyState.Low() }, // Fallback
+    ]),
+    Machine.final(MyState.High),
+    Machine.final(MyState.Low),
   );
 
   await Effect.runPromise(
@@ -242,23 +249,31 @@ test("always transitions fire immediately", async () => {
 
 ```typescript
 test("choose cascade - first match wins", async () => {
-  const machine = build(
-    pipe(
-      make<State, Event>(State.Input({ value: 50 })),
-      choose(State.Input, Event.Classify, [
-        { guard: ({ state }) => state.value >= 70, to: () => State.High() },
-        { guard: ({ state }) => state.value >= 40, to: () => State.Medium() },
-        { otherwise: true, to: () => State.Low() },
-      ]),
-      final(State.High),
-      final(State.Medium),
-      final(State.Low),
-    ),
+  type MyState = State<{
+    Input: { value: number };
+    High: {};
+    Medium: {};
+    Low: {};
+  }>;
+  const MyState = State<MyState>();
+
+  type MyEvent = Event<{ Classify: {} }>;
+  const MyEvent = Event<MyEvent>();
+
+  const machine = Machine.make<MyState, MyEvent>(MyState.Input({ value: 50 })).pipe(
+    Machine.choose(MyState.Input, MyEvent.Classify, [
+      { guard: ({ state }) => state.value >= 70, to: () => MyState.High() },
+      { guard: ({ state }) => state.value >= 40, to: () => MyState.Medium() },
+      { to: () => MyState.Low() }, // Fallback
+    ]),
+    Machine.final(MyState.High),
+    Machine.final(MyState.Medium),
+    Machine.final(MyState.Low),
   );
 
   await Effect.runPromise(
     Effect.gen(function* () {
-      const result = yield* simulate(machine, [Event.Classify()]);
+      const result = yield* simulate(machine, [MyEvent.Classify()]);
       expect(result.finalState._tag).toBe("Medium"); // 50 >= 40
     }),
   );
