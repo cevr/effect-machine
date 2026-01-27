@@ -44,27 +44,26 @@ export function always<NarrowedState extends BrandedState, R2 = never>(
   return <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
     builder: Machine<State, Event, R, Slots>,
   ): Machine<State, Event, R | R2, Slots> => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let result: Machine<State, Event, any, Slots> = builder;
+    // Cast needed: addAlwaysTransition has invariant State/Event params but we need covariance here
+    let result = builder as Machine<State, Event, R | R2, Slots>;
 
     for (const branch of branches) {
       // A branch is a fallback if it has no guard
       const isFallback = branch.guard === undefined;
 
-      const transition: AlwaysTransition<State, R2> = {
+      const transition: AlwaysTransition<State, R | R2> = {
         stateTag,
-        handler: branch.to as unknown as (state: State) => TransitionResult<State, R2>,
+        handler: branch.to as unknown as (state: State) => TransitionResult<State, R | R2>,
         guard: isFallback
           ? undefined
           : (branch.guard as unknown as ((state: State) => boolean) | undefined),
       };
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      result = addAlwaysTransition(transition as AlwaysTransition<State, R | R2>)(
-        result as any,
-      ) as any;
+      result = addAlwaysTransition(transition)(
+        result as unknown as Machine<State, BrandedEvent, R | R2, Slots>,
+      ) as unknown as Machine<State, Event, R | R2, Slots>;
     }
 
-    return result as Machine<State, Event, R | R2, Slots>;
+    return result;
   };
 }

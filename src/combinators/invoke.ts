@@ -4,13 +4,17 @@ import { getTag } from "../internal/get-tag.js";
 import type { BrandedState, BrandedEvent } from "../internal/brands.js";
 
 /** Helper to add multiple invoke slots with same stateTag */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const addMultipleInvokeSlots =
-  (names: readonly string[], stateTag: string | null) => (builder: any) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let result: any = builder;
+  (names: readonly string[], stateTag: string | null) =>
+  <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
+    builder: Machine<State, Event, R, Slots>,
+  ): Machine<State, Event, R, Slots> => {
+    // Cast needed: addEffectSlot has invariant State/Event params but we need covariance here
+    let result = builder;
     for (const name of names) {
-      result = addEffectSlot({ type: "invoke", stateTag, name })(result);
+      result = addEffectSlot({ type: "invoke", stateTag, name })(
+        result as unknown as Machine<BrandedState, BrandedEvent, R, Slots>,
+      ) as unknown as Machine<State, Event, R, Slots>;
     }
     return result;
   };
