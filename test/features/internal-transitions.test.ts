@@ -12,17 +12,17 @@ import {
 } from "../../src/index.js";
 
 describe("Same-state Transitions", () => {
-  type FormState = State.TaggedEnum<{
+  type FormState = State<{
     Form: { name: string; count: number };
     Submitted: {};
   }>;
-  const FormState = State.taggedEnum<FormState>();
+  const FormState = State<FormState>();
 
-  type FormEvent = Event.TaggedEnum<{
+  type FormEvent = Event<{
     SetName: { name: string };
     Submit: {};
   }>;
-  const FormEvent = Event.taggedEnum<FormEvent>();
+  const FormEvent = Event<FormEvent>();
 
   test("default: same state tag skips exit/enter effects", async () => {
     const effects: string[] = [];

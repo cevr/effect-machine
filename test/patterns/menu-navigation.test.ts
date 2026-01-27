@@ -20,15 +20,15 @@ describe("Menu Navigation Pattern", () => {
   type Section = { id: string; items: Item[] };
   type Item = { id: string; name: string; available: boolean };
 
-  type MenuState = State.TaggedEnum<{
+  type MenuState = State<{
     Browsing: { pageId: string; sectionIndex: number; itemIndex: number | null };
     ItemSelected: { pageId: string; sectionIndex: number; itemId: string };
     Checkout: { items: string[] };
     Closed: {};
   }>;
-  const MenuState = State.taggedEnum<MenuState>();
+  const MenuState = State<MenuState>();
 
-  type MenuEvent = Event.TaggedEnum<{
+  type MenuEvent = Event<{
     NavigateToPage: { pageId: string };
     ScrollToSection: { sectionIndex: number };
     SelectItem: { itemId: string };
@@ -36,7 +36,7 @@ describe("Menu Navigation Pattern", () => {
     GoToCheckout: {};
     Close: {};
   }>;
-  const MenuEvent = Event.taggedEnum<MenuEvent>();
+  const MenuEvent = Event<MenuEvent>();
 
   // State/Event type aliases for guards
   type BrowsingState = MenuState & { _tag: "Browsing" };

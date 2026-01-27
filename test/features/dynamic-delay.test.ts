@@ -12,16 +12,16 @@ import {
 } from "../../src/index.js";
 
 describe("Dynamic Delay Duration", () => {
-  type WaitState = State.TaggedEnum<{
+  type WaitState = State<{
     Waiting: { timeout: number };
     TimedOut: {};
   }>;
-  const WaitState = State.taggedEnum<WaitState>();
+  const WaitState = State<WaitState>();
 
-  type WaitEvent = Event.TaggedEnum<{
+  type WaitEvent = Event<{
     Timeout: {};
   }>;
-  const WaitEvent = Event.taggedEnum<WaitEvent>();
+  const WaitEvent = Event<WaitEvent>();
 
   test("dynamic duration computed from state", async () => {
     await Effect.runPromise(
@@ -66,18 +66,18 @@ describe("Dynamic Delay Duration", () => {
   });
 
   test("dynamic duration with different state values", async () => {
-    type RetryState = State.TaggedEnum<{
+    type RetryState = State<{
       Retrying: { attempt: number; backoff: number };
       Failed: {};
       Success: {};
     }>;
-    const RetryState = State.taggedEnum<RetryState>();
+    const RetryState = State<RetryState>();
 
-    type RetryEvent = Event.TaggedEnum<{
+    type RetryEvent = Event<{
       Retry: {};
       GiveUp: {};
     }>;
-    const RetryEvent = Event.taggedEnum<RetryEvent>();
+    const RetryEvent = Event<RetryEvent>();
 
     await Effect.runPromise(
       Effect.gen(function* () {

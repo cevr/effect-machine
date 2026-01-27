@@ -12,20 +12,20 @@ import {
   Event,
 } from "../src/index.js";
 
-type TestState = State.TaggedEnum<{
+type TestState = State<{
   Idle: {};
   Loading: {};
   Success: { data: string };
   Error: { message: string };
 }>;
-const TestState = State.taggedEnum<TestState>();
+const TestState = State<TestState>();
 
-type TestEvent = Event.TaggedEnum<{
+type TestEvent = Event<{
   Fetch: {};
   Resolve: { data: string };
   Reject: { message: string };
 }>;
-const TestEvent = Event.taggedEnum<TestEvent>();
+const TestEvent = Event<TestEvent>();
 
 const testMachine = Machine.build(
   Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(

@@ -4,17 +4,17 @@ import { describe, expect, test } from "bun:test";
 import { Event, Guard, Machine, simulate, State } from "../../src/index.js";
 
 describe("Guard Composition", () => {
-  type AuthState = State.TaggedEnum<{
+  type AuthState = State<{
     Idle: { role: string; age: number };
     Allowed: {};
     Denied: {};
   }>;
-  const AuthState = State.taggedEnum<AuthState>();
+  const AuthState = State<AuthState>();
 
-  type AuthEvent = Event.TaggedEnum<{
+  type AuthEvent = Event<{
     Access: {};
   }>;
-  const AuthEvent = Event.taggedEnum<AuthEvent>();
+  const AuthEvent = Event<AuthEvent>();
 
   // Define narrowed types for the Idle state
   type IdleState = AuthState & { readonly _tag: "Idle" };

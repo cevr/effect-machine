@@ -10,14 +10,14 @@ import { assertPath, Event, Machine, simulate, State } from "../../src/index.js"
 describe("Keyboard Input Pattern", () => {
   type InputMode = "insert" | "append" | "replace";
 
-  type KeyboardState = State.TaggedEnum<{
+  type KeyboardState = State<{
     Idle: { value: string; mode: InputMode };
     Typing: { value: string; mode: InputMode };
     Confirming: { value: string };
   }>;
-  const KeyboardState = State.taggedEnum<KeyboardState>();
+  const KeyboardState = State<KeyboardState>();
 
-  type KeyboardEvent = Event.TaggedEnum<{
+  type KeyboardEvent = Event<{
     Focus: {};
     KeyPress: { key: string };
     Backspace: {};
@@ -26,7 +26,7 @@ describe("Keyboard Input Pattern", () => {
     Submit: {};
     Cancel: {};
   }>;
-  const KeyboardEvent = Event.taggedEnum<KeyboardEvent>();
+  const KeyboardEvent = Event<KeyboardEvent>();
 
   const keyboardMachine = Machine.build(
     Machine.make<KeyboardState, KeyboardEvent>(

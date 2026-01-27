@@ -15,19 +15,19 @@ import {
   Event,
 } from "../src/index.js";
 
-type TestState = State.TaggedEnum<{
+type TestState = State<{
   Idle: {};
   Loading: { url: string };
   Done: { result: string };
 }>;
-const TestState = State.taggedEnum<TestState>();
+const TestState = State<TestState>();
 
-type TestEvent = Event.TaggedEnum<{
+type TestEvent = Event<{
   Fetch: { url: string };
   Success: { result: string };
   Reset: {};
 }>;
-const TestEvent = Event.taggedEnum<TestEvent>();
+const TestEvent = Event<TestEvent>();
 
 describe("Inspection", () => {
   test("emits spawn event on actor creation", async () => {

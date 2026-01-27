@@ -3,19 +3,19 @@ import { describe, expect, test } from "bun:test";
 
 import { Machine, simulate, State, Event } from "../src/index.js";
 
-type CounterState = State.TaggedEnum<{
+type CounterState = State<{
   Idle: { count: number };
   Counting: { count: number };
   Done: { count: number };
 }>;
-const CounterState = State.taggedEnum<CounterState>();
+const CounterState = State<CounterState>();
 
-type CounterEvent = Event.TaggedEnum<{
+type CounterEvent = Event<{
   Start: {};
   Increment: {};
   Stop: {};
 }>;
-const CounterEvent = Event.taggedEnum<CounterEvent>();
+const CounterEvent = Event<CounterEvent>();
 
 describe("Machine", () => {
   test("creates machine with initial state using .pipe() syntax", () => {

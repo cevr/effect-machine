@@ -2,8 +2,8 @@
 export * as Machine from "./namespace.js";
 
 // Branded State and Event types
-export * as State from "./state.js";
-export * as Event from "./event.js";
+export { State } from "./state.js";
+export { Event } from "./event.js";
 
 // Core machine types and constructors
 export type {

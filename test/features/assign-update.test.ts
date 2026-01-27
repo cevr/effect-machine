@@ -4,18 +4,18 @@ import { describe, expect, test } from "bun:test";
 import { Event, Machine, simulate, State } from "../../src/index.js";
 
 describe("Assign and Update Helpers", () => {
-  type FormState = State.TaggedEnum<{
+  type FormState = State<{
     Editing: { name: string; email: string };
     Submitted: { name: string; email: string };
   }>;
-  const FormState = State.taggedEnum<FormState>();
+  const FormState = State<FormState>();
 
-  type FormEvent = Event.TaggedEnum<{
+  type FormEvent = Event<{
     SetName: { name: string };
     SetEmail: { email: string };
     Submit: {};
   }>;
-  const FormEvent = Event.taggedEnum<FormEvent>();
+  const FormEvent = Event<FormEvent>();
 
   test("assign helper updates partial state", async () => {
     await Effect.runPromise(

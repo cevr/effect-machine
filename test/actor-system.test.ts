@@ -11,19 +11,19 @@ import {
   Event,
 } from "../src/index.js";
 
-type TestState = State.TaggedEnum<{
+type TestState = State<{
   Idle: {};
   Active: { value: number };
   Done: {};
 }>;
-const TestState = State.taggedEnum<TestState>();
+const TestState = State<TestState>();
 
-type TestEvent = Event.TaggedEnum<{
+type TestEvent = Event<{
   Start: { value: number };
   Update: { value: number };
   Stop: {};
 }>;
-const TestEvent = Event.taggedEnum<TestEvent>();
+const TestEvent = Event<TestEvent>();
 
 describe("ActorSystem", () => {
   test("spawns actors and processes events", async () => {

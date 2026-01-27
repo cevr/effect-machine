@@ -5,17 +5,17 @@ import { Event, Machine, simulate, State } from "../../src/index.js";
 
 describe("Always Transitions", () => {
   test("applies eventless transition on state entry", async () => {
-    type TestState = State.TaggedEnum<{
+    type TestState = State<{
       Calculating: { value: number };
       High: { value: number };
       Low: { value: number };
     }>;
-    const TestState = State.taggedEnum<TestState>();
+    const TestState = State<TestState>();
 
-    type TestEvent = Event.TaggedEnum<{
+    type TestEvent = Event<{
       SetValue: { value: number };
     }>;
-    const TestEvent = Event.taggedEnum<TestEvent>();
+    const TestEvent = Event<TestEvent>();
 
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -38,16 +38,16 @@ describe("Always Transitions", () => {
   });
 
   test("cascades through multiple always transitions", async () => {
-    type TestState = State.TaggedEnum<{
+    type TestState = State<{
       A: { n: number };
       B: { n: number };
       C: { n: number };
       Done: { n: number };
     }>;
-    const TestState = State.taggedEnum<TestState>();
+    const TestState = State<TestState>();
 
-    type TestEvent = Event.TaggedEnum<{ Start: {} }>;
-    const TestEvent = Event.taggedEnum<TestEvent>();
+    type TestEvent = Event<{ Start: {} }>;
+    const TestEvent = Event<TestEvent>();
 
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -76,16 +76,16 @@ describe("Always Transitions", () => {
   });
 
   test("guard cascade - first match wins", async () => {
-    type TestState = State.TaggedEnum<{
+    type TestState = State<{
       Input: { value: number };
       High: {};
       Medium: {};
       Low: {};
     }>;
-    const TestState = State.taggedEnum<TestState>();
+    const TestState = State<TestState>();
 
-    type TestEvent = Event.TaggedEnum<{ Process: {} }>;
-    const TestEvent = Event.taggedEnum<TestEvent>();
+    type TestEvent = Event<{ Process: {} }>;
+    const TestEvent = Event<TestEvent>();
 
     await Effect.runPromise(
       Effect.gen(function* () {

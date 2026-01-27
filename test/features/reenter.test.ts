@@ -12,18 +12,18 @@ import {
 } from "../../src/index.js";
 
 describe("on.force Transitions", () => {
-  type PollState = State.TaggedEnum<{
+  type PollState = State<{
     Polling: { attempts: number };
     Done: {};
   }>;
-  const PollState = State.taggedEnum<PollState>();
+  const PollState = State<PollState>();
 
-  type PollEvent = Event.TaggedEnum<{
+  type PollEvent = Event<{
     Poll: {};
     Reset: {};
     Finish: {};
   }>;
-  const PollEvent = Event.taggedEnum<PollEvent>();
+  const PollEvent = Event<PollEvent>();
 
   test("on.force runs exit/enter for same state tag", async () => {
     const effects: string[] = [];

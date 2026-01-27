@@ -18,20 +18,20 @@ import {
 } from "../src/index.js";
 
 // Test state and event types
-type OrderState = State.TaggedEnum<{
+type OrderState = State<{
   Idle: {};
   Pending: { orderId: string };
   Paid: { orderId: string; amount: number };
   Done: {};
 }>;
-const OrderState = State.taggedEnum<OrderState>();
+const OrderState = State<OrderState>();
 
-type OrderEvent = Event.TaggedEnum<{
+type OrderEvent = Event<{
   Submit: { orderId: string };
   Pay: { amount: number };
   Complete: {};
 }>;
-const OrderEvent = Event.taggedEnum<OrderEvent>();
+const OrderEvent = Event<OrderEvent>();
 
 // Schemas for persistence
 const StateSchema = Schema.Union(

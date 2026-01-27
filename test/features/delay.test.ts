@@ -12,16 +12,16 @@ import {
 } from "../../src/index.js";
 
 describe("Delay Transitions", () => {
-  type NotifState = State.TaggedEnum<{
+  type NotifState = State<{
     Showing: { message: string };
     Dismissed: {};
   }>;
-  const NotifState = State.taggedEnum<NotifState>();
+  const NotifState = State<NotifState>();
 
-  type NotifEvent = Event.TaggedEnum<{
+  type NotifEvent = Event<{
     Dismiss: {};
   }>;
-  const NotifEvent = Event.taggedEnum<NotifEvent>();
+  const NotifEvent = Event<NotifEvent>();
 
   test("schedules event after duration with TestClock", async () => {
     await Effect.runPromise(

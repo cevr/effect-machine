@@ -8,16 +8,16 @@ import { Event, Machine, build, simulate, State } from "../../src/index.js";
 // Test fixtures
 // ============================================================================
 
-type EditorState = State.TaggedEnum<{
+type EditorState = State<{
   Idle: {};
   Typing: { text: string };
   Submitting: { text: string };
   Submitted: { text: string };
   Cancelled: {};
 }>;
-const EditorState = State.taggedEnum<EditorState>();
+const EditorState = State<EditorState>();
 
-type EditorEvent = Event.TaggedEnum<{
+type EditorEvent = Event<{
   Focus: {};
   KeyPress: { key: string };
   Backspace: {};
@@ -25,7 +25,7 @@ type EditorEvent = Event.TaggedEnum<{
   Cancel: {};
   Success: {};
 }>;
-const EditorEvent = Event.taggedEnum<EditorEvent>();
+const EditorEvent = Event<EditorEvent>();
 
 // ============================================================================
 // from() tests
@@ -268,20 +268,20 @@ describe("Machine.any", () => {
   });
 
   test("any() creates separate transitions (3+ states)", async () => {
-    type MultiState = State.TaggedEnum<{
+    type MultiState = State<{
       A: {};
       B: {};
       C: {};
       D: {};
       Done: {};
     }>;
-    const S = State.taggedEnum<MultiState>();
+    const S = State<MultiState>();
 
-    type MultiEvent = Event.TaggedEnum<{
+    type MultiEvent = Event<{
       Next: {};
       Finish: {};
     }>;
-    const E = Event.taggedEnum<MultiEvent>();
+    const E = Event<MultiEvent>();
 
     await Effect.runPromise(
       Effect.gen(function* () {

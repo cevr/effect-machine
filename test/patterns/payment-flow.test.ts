@@ -21,7 +21,7 @@ import {
 describe("Payment Flow Pattern", () => {
   type PaymentMethod = "card" | "bridge" | "cash";
 
-  type PaymentState = State.TaggedEnum<{
+  type PaymentState = State<{
     Idle: {};
     SelectingMethod: { amount: number };
     ProcessingPayment: { method: PaymentMethod; amount: number; attempts: number };
@@ -30,9 +30,9 @@ describe("Payment Flow Pattern", () => {
     PaymentSuccess: { receiptId: string };
     PaymentCancelled: {};
   }>;
-  const PaymentState = State.taggedEnum<PaymentState>();
+  const PaymentState = State<PaymentState>();
 
-  type PaymentEvent = Event.TaggedEnum<{
+  type PaymentEvent = Event<{
     StartCheckout: { amount: number };
     SelectMethod: { method: PaymentMethod };
     PaymentSucceeded: { receiptId: string };
@@ -43,7 +43,7 @@ describe("Payment Flow Pattern", () => {
     Cancel: {};
     AutoDismissError: {};
   }>;
-  const PaymentEvent = Event.taggedEnum<PaymentEvent>();
+  const PaymentEvent = Event<PaymentEvent>();
 
   // Type aliases for guards
   type SelectingMethodState = PaymentState & { _tag: "SelectingMethod" };

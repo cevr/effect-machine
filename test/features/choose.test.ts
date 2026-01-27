@@ -5,18 +5,18 @@ import { Event, Machine, simulate, State } from "../../src/index.js";
 
 describe("Choose Combinator", () => {
   test("first matching guard wins", async () => {
-    type TestState = State.TaggedEnum<{
+    type TestState = State<{
       Idle: { value: number };
       High: {};
       Medium: {};
       Low: {};
     }>;
-    const TestState = State.taggedEnum<TestState>();
+    const TestState = State<TestState>();
 
-    type TestEvent = Event.TaggedEnum<{
+    type TestEvent = Event<{
       Check: {};
     }>;
-    const TestEvent = Event.taggedEnum<TestEvent>();
+    const TestEvent = Event<TestEvent>();
 
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -40,17 +40,17 @@ describe("Choose Combinator", () => {
   });
 
   test("otherwise branch catches all", async () => {
-    type TestState = State.TaggedEnum<{
+    type TestState = State<{
       Idle: { value: number };
       High: {};
       Low: {};
     }>;
-    const TestState = State.taggedEnum<TestState>();
+    const TestState = State<TestState>();
 
-    type TestEvent = Event.TaggedEnum<{
+    type TestEvent = Event<{
       Check: {};
     }>;
-    const TestEvent = Event.taggedEnum<TestEvent>();
+    const TestEvent = Event<TestEvent>();
 
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -72,16 +72,16 @@ describe("Choose Combinator", () => {
   });
 
   test("runs effect on matching branch", async () => {
-    type TestState = State.TaggedEnum<{
+    type TestState = State<{
       Idle: {};
       Done: {};
     }>;
-    const TestState = State.taggedEnum<TestState>();
+    const TestState = State<TestState>();
 
-    type TestEvent = Event.TaggedEnum<{
+    type TestEvent = Event<{
       Go: {};
     }>;
-    const TestEvent = Event.taggedEnum<TestEvent>();
+    const TestEvent = Event<TestEvent>();
 
     await Effect.runPromise(
       Effect.gen(function* () {

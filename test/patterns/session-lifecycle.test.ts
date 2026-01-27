@@ -19,7 +19,7 @@ import {
 describe("Session Lifecycle Pattern", () => {
   type UserRole = "guest" | "user" | "admin";
 
-  type SessionState = State.TaggedEnum<{
+  type SessionState = State<{
     Initializing: { token: string | null };
     Guest: {};
     Active: { userId: string; role: UserRole; lastActivity: number };
@@ -27,9 +27,9 @@ describe("Session Lifecycle Pattern", () => {
     SessionExpired: {};
     LoggedOut: {};
   }>;
-  const SessionState = State.taggedEnum<SessionState>();
+  const SessionState = State<SessionState>();
 
-  type SessionEvent = Event.TaggedEnum<{
+  type SessionEvent = Event<{
     TokenValidated: { userId: string; role: UserRole };
     TokenInvalid: {};
     Activity: {};
@@ -38,7 +38,7 @@ describe("Session Lifecycle Pattern", () => {
     SessionTimeout: {};
     Logout: {};
   }>;
-  const SessionEvent = Event.taggedEnum<SessionEvent>();
+  const SessionEvent = Event<SessionEvent>();
 
   const sessionMachine = Machine.build(
     Machine.make<SessionState, SessionEvent>(SessionState.Initializing({ token: null })).pipe(
