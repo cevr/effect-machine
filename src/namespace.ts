@@ -22,8 +22,8 @@
  */
 
 // Core machine
-export { make, build } from "./machine.js";
-export type { EffectSlot, Machine, MachineBuilder, MachineRef, OnOptions } from "./machine.js";
+export { make } from "./machine.js";
+export type { EffectSlot, Machine, MachineRef, OnOptions } from "./machine.js";
 
 // Combinators
 export { on } from "./combinators/on.js";
@@ -47,3 +47,7 @@ export { from } from "./combinators/from.js";
 export type { StateScope, ScopedTransition } from "./combinators/from.js";
 export { any } from "./combinators/any.js";
 export type { StateMatcher } from "./combinators/any.js";
+
+// Persistence
+export { persist } from "./persistence/index.js";
+export type { PersistenceConfig, PersistentMachine } from "./persistence/index.js";

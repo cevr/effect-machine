@@ -1,6 +1,6 @@
 import type { Effect } from "effect";
 
-import type { MachineBuilder, OnOptions, Transition } from "../machine.js";
+import type { Machine, OnOptions, Transition } from "../machine.js";
 import { addTransition, normalizeOnOptions } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
 import type { TransitionContext } from "../internal/types.js";
@@ -62,8 +62,8 @@ export function update<
   const normalizedOptions = normalizeOnOptions(options);
 
   return <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
-    builder: MachineBuilder<State, Event, R, Effects>,
-  ): MachineBuilder<State, Event, R | R2, Effects> => {
+    builder: Machine<State, Event, R, Effects>,
+  ): Machine<State, Event, R | R2, Effects> => {
     const transition: Transition<State, Event, R2> = {
       stateTag,
       eventTag,
@@ -79,6 +79,6 @@ export function update<
         | undefined,
     };
 
-    return addTransition(transition)(builder) as MachineBuilder<State, Event, R | R2, Effects>;
+    return addTransition(transition)(builder) as Machine<State, Event, R | R2, Effects>;
   };
 }

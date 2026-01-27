@@ -87,22 +87,16 @@ export const isPersistentMachine = (
 
 /**
  * Attach persistence configuration to a machine.
- * Use after build() to create a PersistentMachine.
  *
  * Note: The schema types don't need to include brands - they work with the
  * structural shape of the types. Brands are type-level only.
  *
  * @example
  * ```ts
- * const orderMachine = pipe(
- *   build(
- *     pipe(
- *       make<State, Event>(State.Idle()),
- *       on(State.Idle, Event.Submit, ({ event }) => State.Pending({ orderId: event.orderId })),
- *       final(State.Paid),
- *     ),
- *   ),
- *   withPersistence({
+ * const orderMachine = Machine.make<State, Event>(State.Idle()).pipe(
+ *   Machine.on(State.Idle, Event.Submit, ({ event }) => State.Pending({ orderId: event.orderId })),
+ *   Machine.final(State.Paid),
+ *   Machine.persist({
  *     snapshotSchedule: Schedule.forever,
  *     journalEvents: true,
  *     stateSchema: StateSchema,
@@ -122,7 +116,7 @@ interface WithPersistenceConfig<SSI, ESI> {
   readonly machineType?: string;
 }
 
-export const withPersistence =
+export const persist =
   <SSI = unknown, ESI = unknown>(config: WithPersistenceConfig<SSI, ESI>) =>
   <S extends BrandedState, E extends BrandedEvent, R>(
     machine: Machine<S, E, R>,

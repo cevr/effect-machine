@@ -35,11 +35,9 @@ describe("Inspection", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
-            Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
-              TestState.Loading({ url: event.url }),
-            ),
+        const machine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+          Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
+            TestState.Loading({ url: event.url }),
           ),
         );
 
@@ -64,11 +62,9 @@ describe("Inspection", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
-            Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
-              TestState.Loading({ url: event.url }),
-            ),
+        const machine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+          Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
+            TestState.Loading({ url: event.url }),
           ),
         );
 
@@ -95,11 +91,9 @@ describe("Inspection", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
-            Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
-              TestState.Loading({ url: event.url }),
-            ),
+        const machine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+          Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
+            TestState.Loading({ url: event.url }),
           ),
         );
 
@@ -128,16 +122,14 @@ describe("Inspection", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
-            Machine.on(
-              TestState.Idle,
-              TestEvent.Fetch,
-              ({ event }) => TestState.Loading({ url: event.url }),
-              {
-                guard: canFetch,
-              },
-            ),
+        const machine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+          Machine.on(
+            TestState.Idle,
+            TestEvent.Fetch,
+            ({ event }) => TestState.Loading({ url: event.url }),
+            {
+              guard: canFetch,
+            },
           ),
         );
 
@@ -173,7 +165,7 @@ describe("Inspection", () => {
           Machine.onEnter(TestState.Loading, "enterLoading"),
         );
 
-        const machine = Machine.provide(Machine.build(baseMachine), {
+        const machine = Machine.provide(baseMachine, {
           enterIdle: () => Effect.void,
           exitIdle: () => Effect.void,
           enterLoading: () => Effect.void,
@@ -209,16 +201,14 @@ describe("Inspection", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
-            Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
-              TestState.Loading({ url: event.url }),
-            ),
-            Machine.on(TestState.Loading, TestEvent.Success, ({ event }) =>
-              TestState.Done({ result: event.result }),
-            ),
-            Machine.final(TestState.Done),
+        const machine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+          Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
+            TestState.Loading({ url: event.url }),
           ),
+          Machine.on(TestState.Loading, TestEvent.Success, ({ event }) =>
+            TestState.Done({ result: event.result }),
+          ),
+          Machine.final(TestState.Done),
         );
 
         const system = yield* ActorSystemService;
@@ -245,11 +235,9 @@ describe("Inspection", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
-            Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
-              TestState.Loading({ url: event.url }),
-            ),
+        const machine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+          Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
+            TestState.Loading({ url: event.url }),
           ),
         );
 
@@ -273,11 +261,9 @@ describe("Inspection", () => {
     // This test verifies the inspector is optional
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
-            Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
-              TestState.Loading({ url: event.url }),
-            ),
+        const machine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+          Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
+            TestState.Loading({ url: event.url }),
           ),
         );
 
@@ -301,16 +287,14 @@ describe("Inspection", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
-            Machine.on(
-              TestState.Idle,
-              TestEvent.Fetch,
-              ({ event }) => TestState.Loading({ url: event.url }),
-              {
-                guard: namedGuard,
-              },
-            ),
+        const machine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+          Machine.on(
+            TestState.Idle,
+            TestEvent.Fetch,
+            ({ event }) => TestState.Loading({ url: event.url }),
+            {
+              guard: namedGuard,
+            },
           ),
         );
 
@@ -365,7 +349,7 @@ describe("Inspection", () => {
           Machine.onEnter(TestState.Loading, "enterLoading"),
         );
 
-        const machine = Machine.provide(Machine.build(baseMachine), {
+        const machine = Machine.provide(baseMachine, {
           exitIdle: () => Effect.void,
           enterLoading: () => Effect.void,
         });

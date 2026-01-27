@@ -30,7 +30,7 @@ export interface ActorSystem {
    * Spawn a new actor with the given machine.
    *
    * For regular machines, returns ActorRef.
-   * For persistent machines (created with withPersistence), returns PersistentActorRef.
+   * For persistent machines (created with Machine.persist), returns PersistentActorRef.
    *
    * Note: All effect slots must be provided via `Machine.provide` before spawning.
    * Attempting to spawn a machine with unprovided effect slots will fail.

@@ -27,13 +27,13 @@ describe("Guard Composition", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<AuthState, AuthEvent>(AuthState.Idle({ role: "admin", age: 25 })).pipe(
-            Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed(), {
-              guard: Guard.and(isAdmin, isAdult),
-            }),
-            Machine.final(AuthState.Allowed),
-          ),
+        const machine = Machine.make<AuthState, AuthEvent>(
+          AuthState.Idle({ role: "admin", age: 25 }),
+        ).pipe(
+          Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed(), {
+            guard: Guard.and(isAdmin, isAdult),
+          }),
+          Machine.final(AuthState.Allowed),
         );
 
         const result = yield* simulate(machine, [AuthEvent.Access()]);
@@ -44,13 +44,13 @@ describe("Guard Composition", () => {
     // Fails when one condition is false
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<AuthState, AuthEvent>(AuthState.Idle({ role: "admin", age: 16 })).pipe(
-            Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed(), {
-              guard: Guard.and(isAdmin, isAdult),
-            }),
-            Machine.final(AuthState.Allowed),
-          ),
+        const machine = Machine.make<AuthState, AuthEvent>(
+          AuthState.Idle({ role: "admin", age: 16 }),
+        ).pipe(
+          Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed(), {
+            guard: Guard.and(isAdmin, isAdult),
+          }),
+          Machine.final(AuthState.Allowed),
         );
 
         const result = yield* simulate(machine, [AuthEvent.Access()]);
@@ -67,13 +67,13 @@ describe("Guard Composition", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<AuthState, AuthEvent>(AuthState.Idle({ role: "moderator", age: 20 })).pipe(
-            Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed(), {
-              guard: Guard.or(isAdmin, isModerator),
-            }),
-            Machine.final(AuthState.Allowed),
-          ),
+        const machine = Machine.make<AuthState, AuthEvent>(
+          AuthState.Idle({ role: "moderator", age: 20 }),
+        ).pipe(
+          Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed(), {
+            guard: Guard.or(isAdmin, isModerator),
+          }),
+          Machine.final(AuthState.Allowed),
         );
 
         const result = yield* simulate(machine, [AuthEvent.Access()]);
@@ -87,13 +87,13 @@ describe("Guard Composition", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<AuthState, AuthEvent>(AuthState.Idle({ role: "user", age: 20 })).pipe(
-            Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed(), {
-              guard: Guard.not(isGuest),
-            }),
-            Machine.final(AuthState.Allowed),
-          ),
+        const machine = Machine.make<AuthState, AuthEvent>(
+          AuthState.Idle({ role: "user", age: 20 }),
+        ).pipe(
+          Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed(), {
+            guard: Guard.not(isGuest),
+          }),
+          Machine.final(AuthState.Allowed),
         );
 
         const result = yield* simulate(machine, [AuthEvent.Access()]);
@@ -112,13 +112,13 @@ describe("Guard Composition", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<AuthState, AuthEvent>(AuthState.Idle({ role: "admin", age: 25 })).pipe(
-            Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed(), {
-              guard: Guard.and(isAdmin, isAdult),
-            }),
-            Machine.final(AuthState.Allowed),
-          ),
+        const machine = Machine.make<AuthState, AuthEvent>(
+          AuthState.Idle({ role: "admin", age: 25 }),
+        ).pipe(
+          Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed(), {
+            guard: Guard.and(isAdmin, isAdult),
+          }),
+          Machine.final(AuthState.Allowed),
         );
 
         const result = yield* simulate(machine, [AuthEvent.Access()]);

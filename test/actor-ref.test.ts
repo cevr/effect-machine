@@ -28,28 +28,26 @@ type TestEvent = Event<{
 const TestEvent = Event<TestEvent>();
 
 const createTestMachine = () =>
-  Machine.build(
-    Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
-      Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
-        TestState.Loading({ value: event.value }),
-      ),
-      Machine.on(TestState.Loading, TestEvent.Complete, ({ state }) =>
-        TestState.Active({ value: state.value }),
-      ),
-      Machine.on(TestState.Active, TestEvent.Update, ({ event }) =>
-        TestState.Active({ value: event.value }),
-      ),
-      Machine.on(TestState.Active, TestEvent.Stop, () => TestState.Done()),
-      Machine.on(
-        TestState.Active,
-        TestEvent.Update,
-        ({ state }) => TestState.Active({ value: state.value * 2 }),
-        {
-          guard: ({ event }) => event.value > 100,
-        },
-      ),
-      Machine.final(TestState.Done),
+  Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+    Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
+      TestState.Loading({ value: event.value }),
     ),
+    Machine.on(TestState.Loading, TestEvent.Complete, ({ state }) =>
+      TestState.Active({ value: state.value }),
+    ),
+    Machine.on(TestState.Active, TestEvent.Update, ({ event }) =>
+      TestState.Active({ value: event.value }),
+    ),
+    Machine.on(TestState.Active, TestEvent.Stop, () => TestState.Done()),
+    Machine.on(
+      TestState.Active,
+      TestEvent.Update,
+      ({ state }) => TestState.Active({ value: state.value * 2 }),
+      {
+        guard: ({ event }) => event.value > 100,
+      },
+    ),
+    Machine.final(TestState.Done),
   );
 
 describe("ActorRef ergonomics", () => {
@@ -180,19 +178,17 @@ describe("ActorRef ergonomics", () => {
     test("can/canSync evaluates guards", async () => {
       await Effect.runPromise(
         Effect.gen(function* () {
-          const machine = Machine.build(
-            Machine.make<TestState, TestEvent>(TestState.Active({ value: 0 })).pipe(
-              Machine.on(
-                TestState.Active,
-                TestEvent.Update,
-                ({ event }) => TestState.Active({ value: event.value }),
-                {
-                  guard: ({ event }) => event.value < 10,
-                },
-              ),
-              Machine.on(TestState.Active, TestEvent.Stop, () => TestState.Done()),
-              Machine.final(TestState.Done),
+          const machine = Machine.make<TestState, TestEvent>(TestState.Active({ value: 0 })).pipe(
+            Machine.on(
+              TestState.Active,
+              TestEvent.Update,
+              ({ event }) => TestState.Active({ value: event.value }),
+              {
+                guard: ({ event }) => event.value < 10,
+              },
             ),
+            Machine.on(TestState.Active, TestEvent.Stop, () => TestState.Done()),
+            Machine.final(TestState.Done),
           );
 
           const system = yield* ActorSystemService;

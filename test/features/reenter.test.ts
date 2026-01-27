@@ -41,7 +41,7 @@ describe("on.force Transitions", () => {
           Machine.onExit(PollState.Polling, "exitPolling"),
         );
 
-        const machine = Machine.provide(Machine.build(baseMachine), {
+        const machine = Machine.provide(baseMachine, {
           enterPolling: ({ state }) =>
             Effect.sync(() =>
               effects.push(`enter:Polling:${(state as PollState & { _tag: "Polling" }).attempts}`),
@@ -85,14 +85,12 @@ describe("on.force Transitions", () => {
   test("on.force restarts delay timer", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<PollState, PollEvent>(PollState.Polling({ attempts: 0 })).pipe(
-            Machine.on.force(PollState.Polling, PollEvent.Reset, ({ state }) =>
-              PollState.Polling({ attempts: state.attempts + 1 }),
-            ),
-            Machine.on(PollState.Polling, PollEvent.Poll, () => PollState.Done()),
-            Machine.delay(PollState.Polling, "5 seconds", PollEvent.Poll()),
+        const machine = Machine.make<PollState, PollEvent>(PollState.Polling({ attempts: 0 })).pipe(
+          Machine.on.force(PollState.Polling, PollEvent.Reset, ({ state }) =>
+            PollState.Polling({ attempts: state.attempts + 1 }),
           ),
+          Machine.on(PollState.Polling, PollEvent.Poll, () => PollState.Done()),
+          Machine.delay(PollState.Polling, "5 seconds", PollEvent.Poll()),
         );
 
         const system = yield* ActorSystemService;

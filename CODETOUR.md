@@ -56,13 +56,13 @@ Machine is pure data. No runtime. Contains:
 - Entry/exit effects
 - Final states (terminators)
 
-### Stop 2: MachineBuilder
+### Stop 2: Machine Creation
 
-`src/machine.ts:65-73`
+`src/machine.ts:65-78`
 
-Builder pattern for fluent API. Same shape as Machine but with `_tag: "MachineBuilder"` for type discrimination.
+`Machine.make()` creates a machine with initial state. Combinators (`on`, `final`, etc.) add transitions via internal helpers.
 
-`make()` at line 78 creates empty builder. Combinators add transitions via `addTransition`, `addOnEnter`, etc.
+All combinators are pipeable - they take and return `Machine`, so they work with `.pipe()`.
 
 ### Stop 3: ActorRef Interface
 

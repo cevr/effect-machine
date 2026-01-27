@@ -83,28 +83,6 @@ export interface Machine<
   readonly effectSlots: ReadonlyMap<string, EffectSlot>;
 }
 
-/**
- * Machine builder for fluent API
- *
- * The `Effects` type parameter tracks named effect slots that must be provided
- * before the machine can be spawned. Use `Machine.provide` to supply handlers.
- */
-export interface MachineBuilder<
-  State,
-  Event,
-  R = never,
-  _Effects extends string = never,
-> extends Pipeable {
-  readonly _tag: "MachineBuilder";
-  readonly initial: State;
-  readonly transitions: ReadonlyArray<Transition<State, Event, R>>;
-  readonly alwaysTransitions: ReadonlyArray<AlwaysTransition<State, R>>;
-  readonly onEnter: ReadonlyArray<StateEffect<State, Event, R>>;
-  readonly onExit: ReadonlyArray<StateEffect<State, Event, R>>;
-  readonly finalStates: ReadonlySet<string>;
-  readonly effectSlots: ReadonlyMap<string, EffectSlot>;
-}
-
 const PipeableProto: Pipeable = {
   pipe() {
     return pipeArguments(this, arguments);
@@ -112,13 +90,12 @@ const PipeableProto: Pipeable = {
 };
 
 /** @internal Mutable version for construction */
-interface MachineBuilderMutable<
+interface MachineMutable<
   State,
   Event,
   R = never,
   _Effects extends string = never,
 > extends Pipeable {
-  _tag: "MachineBuilder";
   initial: State;
   transitions: Array<Transition<State, Event, R>>;
   alwaysTransitions: Array<AlwaysTransition<State, R>>;
@@ -133,17 +110,16 @@ interface MachineBuilderMutable<
  */
 export const make = <State extends BrandedState, Event extends BrandedEvent>(
   initial: State,
-): MachineBuilder<State, Event, never, never> => {
-  const builder: MachineBuilderMutable<State, Event, never, never> = Object.create(PipeableProto);
-  builder._tag = "MachineBuilder";
-  builder.initial = initial;
-  builder.transitions = [];
-  builder.alwaysTransitions = [];
-  builder.onEnter = [];
-  builder.onExit = [];
-  builder.finalStates = new Set();
-  builder.effectSlots = new Map();
-  return builder;
+): Machine<State, Event, never, never> => {
+  const machine: MachineMutable<State, Event, never, never> = Object.create(PipeableProto);
+  machine.initial = initial;
+  machine.transitions = [];
+  machine.alwaysTransitions = [];
+  machine.onEnter = [];
+  machine.onExit = [];
+  machine.finalStates = new Set();
+  machine.effectSlots = new Map();
+  return machine;
 };
 
 /**
@@ -153,9 +129,9 @@ export const addTransition =
   <S extends BrandedState, E extends BrandedEvent, R, Effects extends string, R2>(
     transition: Transition<S, E, R2>,
   ) =>
-  (builder: MachineBuilder<S, E, R, Effects>): MachineBuilder<S, E, R | R2, Effects> => ({
-    ...builder,
-    transitions: [...builder.transitions, transition as Transition<S, E, R | R2>],
+  (machine: Machine<S, E, R, Effects>): Machine<S, E, R | R2, Effects> => ({
+    ...machine,
+    transitions: [...machine.transitions, transition as Transition<S, E, R | R2>],
   });
 
 /**
@@ -165,9 +141,9 @@ export const addAlwaysTransition =
   <S extends BrandedState, E extends BrandedEvent, R, Effects extends string, R2>(
     transition: AlwaysTransition<S, R2>,
   ) =>
-  (builder: MachineBuilder<S, E, R, Effects>): MachineBuilder<S, E, R | R2, Effects> => ({
-    ...builder,
-    alwaysTransitions: [...builder.alwaysTransitions, transition as AlwaysTransition<S, R | R2>],
+  (machine: Machine<S, E, R, Effects>): Machine<S, E, R | R2, Effects> => ({
+    ...machine,
+    alwaysTransitions: [...machine.alwaysTransitions, transition as AlwaysTransition<S, R | R2>],
   });
 
 /**
@@ -177,9 +153,9 @@ export const addOnEnter =
   <S extends BrandedState, E extends BrandedEvent, R, Effects extends string, R2>(
     effect: StateEffect<S, E, R2>,
   ) =>
-  (builder: MachineBuilder<S, E, R, Effects>): MachineBuilder<S, E, R | R2, Effects> => ({
-    ...builder,
-    onEnter: [...builder.onEnter, effect as StateEffect<S, E, R | R2>],
+  (machine: Machine<S, E, R, Effects>): Machine<S, E, R | R2, Effects> => ({
+    ...machine,
+    onEnter: [...machine.onEnter, effect as StateEffect<S, E, R | R2>],
   });
 
 /**
@@ -189,9 +165,9 @@ export const addOnExit =
   <S extends BrandedState, E extends BrandedEvent, R, Effects extends string, R2>(
     effect: StateEffect<S, E, R2>,
   ) =>
-  (builder: MachineBuilder<S, E, R, Effects>): MachineBuilder<S, E, R | R2, Effects> => ({
-    ...builder,
-    onExit: [...builder.onExit, effect as StateEffect<S, E, R | R2>],
+  (machine: Machine<S, E, R, Effects>): Machine<S, E, R | R2, Effects> => ({
+    ...machine,
+    onExit: [...machine.onExit, effect as StateEffect<S, E, R | R2>],
   });
 
 /**
@@ -199,9 +175,9 @@ export const addOnExit =
  */
 export const addFinal =
   <S extends BrandedState, E extends BrandedEvent, R, Effects extends string>(stateTag: string) =>
-  (builder: MachineBuilder<S, E, R, Effects>): MachineBuilder<S, E, R, Effects> => ({
-    ...builder,
-    finalStates: new Set([...builder.finalStates, stateTag]),
+  (machine: Machine<S, E, R, Effects>): Machine<S, E, R, Effects> => ({
+    ...machine,
+    finalStates: new Set([...machine.finalStates, stateTag]),
   });
 
 /**
@@ -211,28 +187,10 @@ export const addEffectSlot =
   <S extends BrandedState, E extends BrandedEvent, R, Effects extends string, Name extends string>(
     slot: EffectSlot,
   ) =>
-  (builder: MachineBuilder<S, E, R, Effects>): MachineBuilder<S, E, R, Effects | Name> => ({
-    ...builder,
-    effectSlots: new Map([...builder.effectSlots, [slot.name, slot]]),
+  (machine: Machine<S, E, R, Effects>): Machine<S, E, R, Effects | Name> => ({
+    ...machine,
+    effectSlots: new Map([...machine.effectSlots, [slot.name, slot]]),
   });
-
-/**
- * Build the machine from builder
- */
-export const build = <S extends BrandedState, E extends BrandedEvent, R, Effects extends string>(
-  builder: MachineBuilder<S, E, R, Effects>,
-): Machine<S, E, R, Effects> => {
-  const machine: Machine<S, E, R, Effects> = Object.create(PipeableProto);
-  return Object.assign(machine, {
-    initial: builder.initial,
-    transitions: builder.transitions,
-    alwaysTransitions: builder.alwaysTransitions,
-    onEnter: builder.onEnter,
-    onExit: builder.onExit,
-    finalStates: builder.finalStates,
-    effectSlots: builder.effectSlots,
-  });
-};
 
 /**
  * Type helper to extract state type from constructor

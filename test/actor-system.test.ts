@@ -29,17 +29,15 @@ describe("ActorSystem", () => {
   test("spawns actors and processes events", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
-            Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
-              TestState.Active({ value: event.value }),
-            ),
-            Machine.on(TestState.Active, TestEvent.Update, ({ event }) =>
-              TestState.Active({ value: event.value }),
-            ),
-            Machine.on(TestState.Active, TestEvent.Stop, () => TestState.Done()),
-            Machine.final(TestState.Done),
+        const machine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+          Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
+            TestState.Active({ value: event.value }),
           ),
+          Machine.on(TestState.Active, TestEvent.Update, ({ event }) =>
+            TestState.Active({ value: event.value }),
+          ),
+          Machine.on(TestState.Active, TestEvent.Stop, () => TestState.Done()),
+          Machine.final(TestState.Done),
         );
 
         const system = yield* ActorSystemService;
@@ -72,11 +70,9 @@ describe("ActorSystem", () => {
   test("stops actors properly", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
-            Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
-              TestState.Active({ value: event.value }),
-            ),
+        const machine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+          Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
+            TestState.Active({ value: event.value }),
           ),
         );
 

@@ -19,11 +19,9 @@ const CounterEvent = Event<CounterEvent>();
 
 describe("Machine", () => {
   test("creates machine with initial state using .pipe() syntax", () => {
-    const machine = Machine.build(
-      Machine.make<CounterState, CounterEvent>(CounterState.Idle({ count: 0 })).pipe(
-        Machine.on(CounterState.Idle, CounterEvent.Start, ({ state }) =>
-          CounterState.Counting({ count: state.count }),
-        ),
+    const machine = Machine.make<CounterState, CounterEvent>(CounterState.Idle({ count: 0 })).pipe(
+      Machine.on(CounterState.Idle, CounterEvent.Start, ({ state }) =>
+        CounterState.Counting({ count: state.count }),
       ),
     );
     expect(machine.initial._tag).toBe("Idle");
@@ -33,19 +31,19 @@ describe("Machine", () => {
   test("defines transitions between states", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<CounterState, CounterEvent>(CounterState.Idle({ count: 0 })).pipe(
-            Machine.on(CounterState.Idle, CounterEvent.Start, ({ state }) =>
-              CounterState.Counting({ count: state.count }),
-            ),
-            Machine.on(CounterState.Counting, CounterEvent.Increment, ({ state }) =>
-              CounterState.Counting({ count: state.count + 1 }),
-            ),
-            Machine.on(CounterState.Counting, CounterEvent.Stop, ({ state }) =>
-              CounterState.Done({ count: state.count }),
-            ),
-            Machine.final(CounterState.Done),
+        const machine = Machine.make<CounterState, CounterEvent>(
+          CounterState.Idle({ count: 0 }),
+        ).pipe(
+          Machine.on(CounterState.Idle, CounterEvent.Start, ({ state }) =>
+            CounterState.Counting({ count: state.count }),
           ),
+          Machine.on(CounterState.Counting, CounterEvent.Increment, ({ state }) =>
+            CounterState.Counting({ count: state.count + 1 }),
+          ),
+          Machine.on(CounterState.Counting, CounterEvent.Stop, ({ state }) =>
+            CounterState.Done({ count: state.count }),
+          ),
+          Machine.final(CounterState.Done),
         );
 
         const result = yield* simulate(machine, [
@@ -64,21 +62,21 @@ describe("Machine", () => {
   test("supports guards", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<CounterState, CounterEvent>(CounterState.Counting({ count: 0 })).pipe(
-            Machine.on(
-              CounterState.Counting,
-              CounterEvent.Increment,
-              ({ state }) => CounterState.Counting({ count: state.count + 1 }),
-              {
-                guard: ({ state }) => state.count < 3,
-              },
-            ),
-            Machine.on(CounterState.Counting, CounterEvent.Stop, ({ state }) =>
-              CounterState.Done({ count: state.count }),
-            ),
-            Machine.final(CounterState.Done),
+        const machine = Machine.make<CounterState, CounterEvent>(
+          CounterState.Counting({ count: 0 }),
+        ).pipe(
+          Machine.on(
+            CounterState.Counting,
+            CounterEvent.Increment,
+            ({ state }) => CounterState.Counting({ count: state.count + 1 }),
+            {
+              guard: ({ state }) => state.count < 3,
+            },
           ),
+          Machine.on(CounterState.Counting, CounterEvent.Stop, ({ state }) =>
+            CounterState.Done({ count: state.count }),
+          ),
+          Machine.final(CounterState.Done),
         );
 
         const result = yield* simulate(machine, [
@@ -99,24 +97,24 @@ describe("Machine", () => {
       Effect.gen(function* () {
         const logs: string[] = [];
 
-        const machine = Machine.build(
-          Machine.make<CounterState, CounterEvent>(CounterState.Idle({ count: 0 })).pipe(
-            Machine.on(
-              CounterState.Idle,
-              CounterEvent.Start,
-              ({ state }) => CounterState.Counting({ count: state.count }),
-              {
-                effect: ({ state }) =>
-                  Effect.sync(() => {
-                    logs.push(`Starting from count ${state.count}`);
-                  }),
-              },
-            ),
-            Machine.on(CounterState.Counting, CounterEvent.Stop, ({ state }) =>
-              CounterState.Done({ count: state.count }),
-            ),
-            Machine.final(CounterState.Done),
+        const machine = Machine.make<CounterState, CounterEvent>(
+          CounterState.Idle({ count: 0 }),
+        ).pipe(
+          Machine.on(
+            CounterState.Idle,
+            CounterEvent.Start,
+            ({ state }) => CounterState.Counting({ count: state.count }),
+            {
+              effect: ({ state }) =>
+                Effect.sync(() => {
+                  logs.push(`Starting from count ${state.count}`);
+                }),
+            },
           ),
+          Machine.on(CounterState.Counting, CounterEvent.Stop, ({ state }) =>
+            CounterState.Done({ count: state.count }),
+          ),
+          Machine.final(CounterState.Done),
         );
 
         yield* simulate(machine, [CounterEvent.Start(), CounterEvent.Stop()]);
@@ -126,11 +124,9 @@ describe("Machine", () => {
   });
 
   test("marks states as final", () => {
-    const machine = Machine.build(
-      Machine.make<CounterState, CounterEvent>(CounterState.Idle({ count: 0 })).pipe(
-        Machine.on(CounterState.Idle, CounterEvent.Start, () => CounterState.Done({ count: 0 })),
-        Machine.final(CounterState.Done),
-      ),
+    const machine = Machine.make<CounterState, CounterEvent>(CounterState.Idle({ count: 0 })).pipe(
+      Machine.on(CounterState.Idle, CounterEvent.Start, () => CounterState.Done({ count: 0 })),
+      Machine.final(CounterState.Done),
     );
     expect(machine.finalStates.has("Done")).toBe(true);
     expect(machine.finalStates.has("Idle")).toBe(false);

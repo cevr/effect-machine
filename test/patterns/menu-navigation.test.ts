@@ -79,76 +79,74 @@ describe("Menu Navigation Pattern", () => {
     ({ state, event }) => state.pageId !== event.pageId,
   );
 
-  const menuMachine = Machine.build(
-    Machine.make<MenuState, MenuEvent>(
-      MenuState.Browsing({ pageId: "food", sectionIndex: 0, itemIndex: null }),
-    ).pipe(
-      // Browsing state handlers
-      Machine.from(MenuState.Browsing).pipe(
-        // Page navigation with guard cascade
-        // First: check if different page AND valid
-        Machine.on(
-          MenuEvent.NavigateToPage,
-          ({ event }) =>
-            MenuState.Browsing({ pageId: event.pageId, sectionIndex: 0, itemIndex: null }),
-          { guard: Guard.and(isDifferentPage, isValidPage) },
-        ),
-        // Second: same page - no-op (same state, no lifecycle by default)
-        Machine.on(MenuEvent.NavigateToPage, ({ state }) => state, {
-          guard: Guard.not(isDifferentPage),
-        }),
+  const menuMachine = Machine.make<MenuState, MenuEvent>(
+    MenuState.Browsing({ pageId: "food", sectionIndex: 0, itemIndex: null }),
+  ).pipe(
+    // Browsing state handlers
+    Machine.from(MenuState.Browsing).pipe(
+      // Page navigation with guard cascade
+      // First: check if different page AND valid
+      Machine.on(
+        MenuEvent.NavigateToPage,
+        ({ event }) =>
+          MenuState.Browsing({ pageId: event.pageId, sectionIndex: 0, itemIndex: null }),
+        { guard: Guard.and(isDifferentPage, isValidPage) },
+      ),
+      // Second: same page - no-op (same state, no lifecycle by default)
+      Machine.on(MenuEvent.NavigateToPage, ({ state }) => state, {
+        guard: Guard.not(isDifferentPage),
+      }),
 
-        // Section scrolling (same state, no lifecycle by default)
-        Machine.on(
-          MenuEvent.ScrollToSection,
-          ({ state, event }) =>
-            MenuState.Browsing({ ...state, sectionIndex: event.sectionIndex, itemIndex: null }),
-          { guard: isValidSection },
-        ),
-
-        // Item selection
-        Machine.on(MenuEvent.SelectItem, ({ state, event }) =>
-          MenuState.ItemSelected({
-            pageId: state.pageId,
-            sectionIndex: state.sectionIndex,
-            itemId: event.itemId,
-          }),
-        ),
-
-        // Go to checkout
-        Machine.on(MenuEvent.GoToCheckout, () => MenuState.Checkout({ items: [...cart] })),
-
-        // Close menu
-        Machine.on(MenuEvent.Close, () => MenuState.Closed()),
+      // Section scrolling (same state, no lifecycle by default)
+      Machine.on(
+        MenuEvent.ScrollToSection,
+        ({ state, event }) =>
+          MenuState.Browsing({ ...state, sectionIndex: event.sectionIndex, itemIndex: null }),
+        { guard: isValidSection },
       ),
 
-      // ItemSelected state handlers
-      Machine.from(MenuState.ItemSelected).pipe(
-        // Add to cart and return to browsing
-        Machine.on(MenuEvent.AddToCart, ({ state }) => {
-          cart.push(state.itemId);
-          return MenuState.Browsing({
-            pageId: state.pageId,
-            sectionIndex: state.sectionIndex,
-            itemIndex: null,
-          });
+      // Item selection
+      Machine.on(MenuEvent.SelectItem, ({ state, event }) =>
+        MenuState.ItemSelected({
+          pageId: state.pageId,
+          sectionIndex: state.sectionIndex,
+          itemId: event.itemId,
         }),
-
-        // Cancel selection
-        Machine.on(MenuEvent.Close, ({ state }) =>
-          MenuState.Browsing({
-            pageId: state.pageId,
-            sectionIndex: state.sectionIndex,
-            itemIndex: null,
-          }),
-        ),
       ),
 
-      // Close from Checkout
-      Machine.on(MenuState.Checkout, MenuEvent.Close, () => MenuState.Closed()),
+      // Go to checkout
+      Machine.on(MenuEvent.GoToCheckout, () => MenuState.Checkout({ items: [...cart] })),
 
-      Machine.final(MenuState.Closed),
+      // Close menu
+      Machine.on(MenuEvent.Close, () => MenuState.Closed()),
     ),
+
+    // ItemSelected state handlers
+    Machine.from(MenuState.ItemSelected).pipe(
+      // Add to cart and return to browsing
+      Machine.on(MenuEvent.AddToCart, ({ state }) => {
+        cart.push(state.itemId);
+        return MenuState.Browsing({
+          pageId: state.pageId,
+          sectionIndex: state.sectionIndex,
+          itemIndex: null,
+        });
+      }),
+
+      // Cancel selection
+      Machine.on(MenuEvent.Close, ({ state }) =>
+        MenuState.Browsing({
+          pageId: state.pageId,
+          sectionIndex: state.sectionIndex,
+          itemIndex: null,
+        }),
+      ),
+    ),
+
+    // Close from Checkout
+    Machine.on(MenuState.Checkout, MenuEvent.Close, () => MenuState.Closed()),
+
+    Machine.final(MenuState.Closed),
   );
 
   test("page navigation with valid page", async () => {

@@ -13,7 +13,6 @@ import {
   PersistenceAdapterTag,
   type PersistentActorRef,
   State,
-  withPersistence,
   yieldFibers,
 } from "../src/index.js";
 
@@ -52,19 +51,16 @@ const TestLayer = Layer.merge(ActorSystemDefault, InMemoryPersistenceAdapter);
 
 describe("Persistence", () => {
   const createPersistentMachine = () =>
-    Machine.build(
-      Machine.make<OrderState, OrderEvent>(OrderState.Idle()).pipe(
-        Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
-          OrderState.Pending({ orderId: event.orderId }),
-        ),
-        Machine.on(OrderState.Pending, OrderEvent.Pay, ({ state, event }) =>
-          OrderState.Paid({ orderId: state.orderId, amount: event.amount }),
-        ),
-        Machine.on(OrderState.Paid, OrderEvent.Complete, () => OrderState.Done()),
-        Machine.final(OrderState.Done),
+    Machine.make<OrderState, OrderEvent>(OrderState.Idle()).pipe(
+      Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
+        OrderState.Pending({ orderId: event.orderId }),
       ),
-    ).pipe(
-      withPersistence({
+      Machine.on(OrderState.Pending, OrderEvent.Pay, ({ state, event }) =>
+        OrderState.Paid({ orderId: state.orderId, amount: event.amount }),
+      ),
+      Machine.on(OrderState.Paid, OrderEvent.Complete, () => OrderState.Done()),
+      Machine.final(OrderState.Done),
+      Machine.persist({
         snapshotSchedule: Schedule.forever,
         journalEvents: true,
         stateSchema: StateSchema,
@@ -218,17 +214,14 @@ describe("Persistence", () => {
         const system = yield* ActorSystemService;
 
         // Create machine with no automatic snapshots (using recurs(0) which never triggers)
-        const noAutoSnapshotMachine = Machine.build(
-          Machine.make<OrderState, OrderEvent>(OrderState.Idle()).pipe(
-            Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
-              OrderState.Pending({ orderId: event.orderId }),
-            ),
-            Machine.on(OrderState.Pending, OrderEvent.Pay, ({ state, event }) =>
-              OrderState.Paid({ orderId: state.orderId, amount: event.amount }),
-            ),
+        const noAutoSnapshotMachine = Machine.make<OrderState, OrderEvent>(OrderState.Idle()).pipe(
+          Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
+            OrderState.Pending({ orderId: event.orderId }),
           ),
-        ).pipe(
-          withPersistence({
+          Machine.on(OrderState.Pending, OrderEvent.Pay, ({ state, event }) =>
+            OrderState.Paid({ orderId: state.orderId, amount: event.amount }),
+          ),
+          Machine.persist({
             snapshotSchedule: Schedule.stop, // Never auto-snapshot
             journalEvents: true,
             stateSchema: StateSchema,
@@ -281,17 +274,16 @@ describe("Persistence", () => {
         const system = yield* ActorSystemService;
 
         // Create machine that snapshots infrequently
-        const infrequentSnapshotMachine = Machine.build(
-          Machine.make<OrderState, OrderEvent>(OrderState.Idle()).pipe(
-            Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
-              OrderState.Pending({ orderId: event.orderId }),
-            ),
-            Machine.on(OrderState.Pending, OrderEvent.Pay, ({ state, event }) =>
-              OrderState.Paid({ orderId: state.orderId, amount: event.amount }),
-            ),
-          ),
+        const infrequentSnapshotMachine = Machine.make<OrderState, OrderEvent>(
+          OrderState.Idle(),
         ).pipe(
-          withPersistence({
+          Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
+            OrderState.Pending({ orderId: event.orderId }),
+          ),
+          Machine.on(OrderState.Pending, OrderEvent.Pay, ({ state, event }) =>
+            OrderState.Paid({ orderId: state.orderId, amount: event.amount }),
+          ),
+          Machine.persist({
             snapshotSchedule: Schedule.stop, // Never auto-snapshot
             journalEvents: true,
             stateSchema: StateSchema,
@@ -450,19 +442,16 @@ describe("Persistence", () => {
 
 describe("Persistence Registry", () => {
   const createPersistentMachine = (machineType?: string) =>
-    Machine.build(
-      Machine.make<OrderState, OrderEvent>(OrderState.Idle()).pipe(
-        Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
-          OrderState.Pending({ orderId: event.orderId }),
-        ),
-        Machine.on(OrderState.Pending, OrderEvent.Pay, ({ state, event }) =>
-          OrderState.Paid({ orderId: state.orderId, amount: event.amount }),
-        ),
-        Machine.on(OrderState.Paid, OrderEvent.Complete, () => OrderState.Done()),
-        Machine.final(OrderState.Done),
+    Machine.make<OrderState, OrderEvent>(OrderState.Idle()).pipe(
+      Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
+        OrderState.Pending({ orderId: event.orderId }),
       ),
-    ).pipe(
-      withPersistence({
+      Machine.on(OrderState.Pending, OrderEvent.Pay, ({ state, event }) =>
+        OrderState.Paid({ orderId: state.orderId, amount: event.amount }),
+      ),
+      Machine.on(OrderState.Paid, OrderEvent.Complete, () => OrderState.Done()),
+      Machine.final(OrderState.Done),
+      Machine.persist({
         snapshotSchedule: Schedule.forever,
         journalEvents: true,
         stateSchema: StateSchema,

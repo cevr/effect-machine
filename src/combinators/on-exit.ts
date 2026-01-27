@@ -1,4 +1,4 @@
-import type { MachineBuilder } from "../machine.js";
+import type { Machine } from "../machine.js";
 import { addEffectSlot } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
 import type { StateBrand, EventBrand } from "../internal/brands.js";
@@ -32,8 +32,8 @@ export function onExit<NarrowedState extends BrandedState, Name extends string>(
   const stateTag = getTag(stateConstructor);
 
   return <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
-    builder: MachineBuilder<State, Event, R, Effects>,
-  ): MachineBuilder<State, Event, R, Effects | Name> => {
+    builder: Machine<State, Event, R, Effects>,
+  ): Machine<State, Event, R, Effects | Name> => {
     return addEffectSlot<State, Event, R, Effects, Name>({
       type: "onExit",
       stateTag,

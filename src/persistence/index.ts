@@ -11,7 +11,7 @@ export { PersistenceAdapterTag, PersistenceError, VersionConflictError } from ".
 
 // Persistent machine
 export type { PersistenceConfig, PersistentMachine } from "./persistent-machine.js";
-export { isPersistentMachine, withPersistence } from "./persistent-machine.js";
+export { isPersistentMachine, persist } from "./persistent-machine.js";
 
 // Persistent actor
 export type { PersistentActorRef } from "./persistent-actor.js";

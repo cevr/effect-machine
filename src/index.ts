@@ -10,7 +10,6 @@ export type {
   AlwaysTransition,
   EffectSlot,
   Machine as MachineType,
-  MachineBuilder,
   MachineRef,
   OnOptions,
   StateEffect,
@@ -23,7 +22,6 @@ export {
   addOnEnter,
   addOnExit,
   addTransition,
-  build,
   make,
 } from "./machine.js";
 
@@ -120,9 +118,9 @@ export {
   InMemoryPersistenceAdapter,
   isPersistentMachine,
   makeInMemoryPersistenceAdapter,
+  persist,
   PersistenceAdapterTag,
   PersistenceError,
   restorePersistentActor,
   VersionConflictError,
-  withPersistence,
 } from "./persistence/index.js";

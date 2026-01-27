@@ -8,7 +8,7 @@ src/
 ├── namespace.ts          # Machine namespace (Effect-style API)
 ├── state.ts              # Branded State.TaggedEnum wrapper
 ├── event.ts              # Branded Event.TaggedEnum wrapper
-├── machine.ts            # Core types (Machine, MachineBuilder, Transition, OnOptions)
+├── machine.ts            # Core types (Machine, Transition, OnOptions)
 ├── actor-ref.ts          # Actor reference interface
 ├── actor-system.ts       # Actor system service + layer
 ├── testing.ts            # Test utilities (simulate, harness, assertions)
@@ -63,7 +63,7 @@ test/
 | `namespace.ts`           | Machine namespace export (named `namespace.ts` for macOS compat)    |
 | `internal/loop.ts`       | Event processing, `resolveTransition`, `applyAlways`, `createActor` |
 | `internal/types.ts`      | `TransitionContext`, `StateEffectContext`, `Guard` module           |
-| `machine.ts`             | `Machine`, `MachineBuilder`, `Transition`, `OnOptions` interfaces   |
+| `machine.ts`             | `Machine`, `Transition`, `OnOptions` interfaces                     |
 | `actor-ref.ts`           | `ActorRef` interface with ergonomic helpers                         |
 | `testing.ts`             | `simulate`, `createTestHarness`, `assertPath`, `assertNeverReaches` |
 | `combinators/from.ts`    | `StateScope` for scoped transitions, custom `.pipe()` impl          |

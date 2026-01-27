@@ -44,7 +44,6 @@ const PipeableProto = {
  *   Machine.invoke(State.Loading, "fetchData"),
  *   Machine.onEnter(State.Success, "notifyUser"),
  *   Machine.onExit(State.Loading, "cleanup"),
- *   Machine.build,
  *   Machine.provide({
  *     fetchData: ({ state, self }) =>
  *       Effect.gen(function* () {

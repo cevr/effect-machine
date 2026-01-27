@@ -27,18 +27,16 @@ type TestEvent = Event<{
 }>;
 const TestEvent = Event<TestEvent>();
 
-const testMachine = Machine.build(
-  Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
-    Machine.on(TestState.Idle, TestEvent.Fetch, () => TestState.Loading()),
-    Machine.on(TestState.Loading, TestEvent.Resolve, ({ event }) =>
-      TestState.Success({ data: event.data }),
-    ),
-    Machine.on(TestState.Loading, TestEvent.Reject, ({ event }) =>
-      TestState.Error({ message: event.message }),
-    ),
-    Machine.final(TestState.Success),
-    Machine.final(TestState.Error),
+const testMachine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+  Machine.on(TestState.Idle, TestEvent.Fetch, () => TestState.Loading()),
+  Machine.on(TestState.Loading, TestEvent.Resolve, ({ event }) =>
+    TestState.Success({ data: event.data }),
   ),
+  Machine.on(TestState.Loading, TestEvent.Reject, ({ event }) =>
+    TestState.Error({ message: event.message }),
+  ),
+  Machine.final(TestState.Success),
+  Machine.final(TestState.Error),
 );
 
 describe("Testing", () => {

@@ -1,8 +1,7 @@
-// @effect-diagnostics strictEffectProvide:off
 import { Effect } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { Event, Machine, build, simulate, State } from "../../src/index.js";
+import { Event, Machine, simulate, State } from "../../src/index.js";
 
 // ============================================================================
 // Test fixtures
@@ -35,19 +34,17 @@ describe("Machine.from", () => {
   test("scopes multiple transitions to a single state", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          Machine.make<EditorState, EditorEvent>(EditorState.Idle()).pipe(
-            Machine.on(EditorState.Idle, EditorEvent.Focus, () => EditorState.Typing({ text: "" })),
-            Machine.from(EditorState.Typing).pipe(
-              Machine.on(EditorEvent.KeyPress, ({ state, event }) =>
-                EditorState.Typing({ text: state.text + event.key }),
-              ),
-              Machine.on(EditorEvent.Backspace, ({ state }) =>
-                EditorState.Typing({ text: state.text.slice(0, -1) }),
-              ),
-              Machine.on(EditorEvent.Submit, ({ state }) =>
-                EditorState.Submitted({ text: state.text }),
-              ),
+        const machine = Machine.make<EditorState, EditorEvent>(EditorState.Idle()).pipe(
+          Machine.on(EditorState.Idle, EditorEvent.Focus, () => EditorState.Typing({ text: "" })),
+          Machine.from(EditorState.Typing).pipe(
+            Machine.on(EditorEvent.KeyPress, ({ state, event }) =>
+              EditorState.Typing({ text: state.text + event.key }),
+            ),
+            Machine.on(EditorEvent.Backspace, ({ state }) =>
+              EditorState.Typing({ text: state.text.slice(0, -1) }),
+            ),
+            Machine.on(EditorEvent.Submit, ({ state }) =>
+              EditorState.Submitted({ text: state.text }),
             ),
           ),
         );
@@ -70,17 +67,17 @@ describe("Machine.from", () => {
   test("from().pipe() transitions work with guards", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          Machine.make<EditorState, EditorEvent>(EditorState.Typing({ text: "" })).pipe(
-            Machine.from(EditorState.Typing).pipe(
-              Machine.on(
-                EditorEvent.KeyPress,
-                ({ state, event }) => EditorState.Typing({ text: state.text + event.key }),
-                { guard: ({ state }) => state.text.length < 3 },
-              ),
-              Machine.on(EditorEvent.Submit, ({ state }) =>
-                EditorState.Submitted({ text: state.text }),
-              ),
+        const machine = Machine.make<EditorState, EditorEvent>(
+          EditorState.Typing({ text: "" }),
+        ).pipe(
+          Machine.from(EditorState.Typing).pipe(
+            Machine.on(
+              EditorEvent.KeyPress,
+              ({ state, event }) => EditorState.Typing({ text: state.text + event.key }),
+              { guard: ({ state }) => state.text.length < 3 },
+            ),
+            Machine.on(EditorEvent.Submit, ({ state }) =>
+              EditorState.Submitted({ text: state.text }),
             ),
           ),
         );
@@ -106,22 +103,22 @@ describe("Machine.from", () => {
       Effect.gen(function* () {
         const logs: string[] = [];
 
-        const machine = build(
-          Machine.make<EditorState, EditorEvent>(EditorState.Typing({ text: "" })).pipe(
-            Machine.from(EditorState.Typing).pipe(
-              Machine.on(
-                EditorEvent.KeyPress,
-                ({ state, event }) => EditorState.Typing({ text: state.text + event.key }),
-                {
-                  effect: ({ event }) =>
-                    Effect.sync(() => {
-                      logs.push(`key: ${event.key}`);
-                    }),
-                },
-              ),
-              Machine.on(EditorEvent.Submit, ({ state }) =>
-                EditorState.Submitted({ text: state.text }),
-              ),
+        const machine = Machine.make<EditorState, EditorEvent>(
+          EditorState.Typing({ text: "" }),
+        ).pipe(
+          Machine.from(EditorState.Typing).pipe(
+            Machine.on(
+              EditorEvent.KeyPress,
+              ({ state, event }) => EditorState.Typing({ text: state.text + event.key }),
+              {
+                effect: ({ event }) =>
+                  Effect.sync(() => {
+                    logs.push(`key: ${event.key}`);
+                  }),
+              },
+            ),
+            Machine.on(EditorEvent.Submit, ({ state }) =>
+              EditorState.Submitted({ text: state.text }),
             ),
           ),
         );
@@ -140,23 +137,21 @@ describe("Machine.from", () => {
   test("multiple from() scopes can be combined", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          Machine.make<EditorState, EditorEvent>(EditorState.Idle()).pipe(
-            Machine.from(EditorState.Idle).pipe(
-              Machine.on(EditorEvent.Focus, () => EditorState.Typing({ text: "" })),
+        const machine = Machine.make<EditorState, EditorEvent>(EditorState.Idle()).pipe(
+          Machine.from(EditorState.Idle).pipe(
+            Machine.on(EditorEvent.Focus, () => EditorState.Typing({ text: "" })),
+          ),
+          Machine.from(EditorState.Typing).pipe(
+            Machine.on(EditorEvent.KeyPress, ({ state, event }) =>
+              EditorState.Typing({ text: state.text + event.key }),
             ),
-            Machine.from(EditorState.Typing).pipe(
-              Machine.on(EditorEvent.KeyPress, ({ state, event }) =>
-                EditorState.Typing({ text: state.text + event.key }),
-              ),
-              Machine.on(EditorEvent.Submit, ({ state }) =>
-                EditorState.Submitting({ text: state.text }),
-              ),
+            Machine.on(EditorEvent.Submit, ({ state }) =>
+              EditorState.Submitting({ text: state.text }),
             ),
-            Machine.from(EditorState.Submitting).pipe(
-              Machine.on(EditorEvent.Success, ({ state }) =>
-                EditorState.Submitted({ text: state.text }),
-              ),
+          ),
+          Machine.from(EditorState.Submitting).pipe(
+            Machine.on(EditorEvent.Success, ({ state }) =>
+              EditorState.Submitted({ text: state.text }),
             ),
           ),
         );
@@ -185,16 +180,16 @@ describe("Machine.any", () => {
   test("matches multiple states with single handler", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          Machine.make<EditorState, EditorEvent>(EditorState.Typing({ text: "hello" })).pipe(
-            Machine.on(EditorState.Typing, EditorEvent.Submit, ({ state }) =>
-              EditorState.Submitting({ text: state.text }),
-            ),
-            Machine.on(
-              Machine.any(EditorState.Typing, EditorState.Submitting),
-              EditorEvent.Cancel,
-              () => EditorState.Cancelled(),
-            ),
+        const machine = Machine.make<EditorState, EditorEvent>(
+          EditorState.Typing({ text: "hello" }),
+        ).pipe(
+          Machine.on(EditorState.Typing, EditorEvent.Submit, ({ state }) =>
+            EditorState.Submitting({ text: state.text }),
+          ),
+          Machine.on(
+            Machine.any(EditorState.Typing, EditorState.Submitting),
+            EditorEvent.Cancel,
+            () => EditorState.Cancelled(),
           ),
         );
 
@@ -212,18 +207,18 @@ describe("Machine.any", () => {
   test("any() works with guards", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          Machine.make<EditorState, EditorEvent>(EditorState.Typing({ text: "abc" })).pipe(
-            Machine.on(EditorState.Typing, EditorEvent.Submit, ({ state }) =>
-              EditorState.Submitting({ text: state.text }),
-            ),
-            Machine.on(
-              Machine.any(EditorState.Typing, EditorState.Submitting),
-              EditorEvent.Cancel,
-              () => EditorState.Cancelled(),
-              // Guard tests state has text field - both Typing and Submitting have it
-              { guard: ({ state }) => "text" in state && state.text.length > 0 },
-            ),
+        const machine = Machine.make<EditorState, EditorEvent>(
+          EditorState.Typing({ text: "abc" }),
+        ).pipe(
+          Machine.on(EditorState.Typing, EditorEvent.Submit, ({ state }) =>
+            EditorState.Submitting({ text: state.text }),
+          ),
+          Machine.on(
+            Machine.any(EditorState.Typing, EditorState.Submitting),
+            EditorEvent.Cancel,
+            () => EditorState.Cancelled(),
+            // Guard tests state has text field - both Typing and Submitting have it
+            { guard: ({ state }) => "text" in state && state.text.length > 0 },
           ),
         );
 
@@ -238,22 +233,22 @@ describe("Machine.any", () => {
       Effect.gen(function* () {
         const logs: string[] = [];
 
-        const machine = build(
-          Machine.make<EditorState, EditorEvent>(EditorState.Typing({ text: "" })).pipe(
-            Machine.on(EditorState.Typing, EditorEvent.Submit, ({ state }) =>
-              EditorState.Submitting({ text: state.text }),
-            ),
-            Machine.on(
-              Machine.any(EditorState.Typing, EditorState.Submitting),
-              EditorEvent.Cancel,
-              () => EditorState.Cancelled(),
-              {
-                effect: ({ state }) =>
-                  Effect.sync(() => {
-                    logs.push(`cancelled from: ${state._tag}`);
-                  }),
-              },
-            ),
+        const machine = Machine.make<EditorState, EditorEvent>(
+          EditorState.Typing({ text: "" }),
+        ).pipe(
+          Machine.on(EditorState.Typing, EditorEvent.Submit, ({ state }) =>
+            EditorState.Submitting({ text: state.text }),
+          ),
+          Machine.on(
+            Machine.any(EditorState.Typing, EditorState.Submitting),
+            EditorEvent.Cancel,
+            () => EditorState.Cancelled(),
+            {
+              effect: ({ state }) =>
+                Effect.sync(() => {
+                  logs.push(`cancelled from: ${state._tag}`);
+                }),
+            },
           ),
         );
 
@@ -285,13 +280,11 @@ describe("Machine.any", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = build(
-          Machine.make<MultiState, MultiEvent>(S.A()).pipe(
-            Machine.on(S.A, E.Next, () => S.B()),
-            Machine.on(S.B, E.Next, () => S.C()),
-            Machine.on(S.C, E.Next, () => S.D()),
-            Machine.on(Machine.any(S.A, S.B, S.C, S.D), E.Finish, () => S.Done()),
-          ),
+        const machine = Machine.make<MultiState, MultiEvent>(S.A()).pipe(
+          Machine.on(S.A, E.Next, () => S.B()),
+          Machine.on(S.B, E.Next, () => S.C()),
+          Machine.on(S.C, E.Next, () => S.D()),
+          Machine.on(Machine.any(S.A, S.B, S.C, S.D), E.Finish, () => S.Done()),
         );
 
         // Finish from A
@@ -321,7 +314,7 @@ describe("Machine.any", () => {
 describe("Machine namespace", () => {
   test("Machine namespace exports all combinators", () => {
     expect(Machine.make).toBeDefined();
-    expect(Machine.build).toBeDefined();
+    expect(Machine.provide).toBeDefined();
     expect(Machine.on).toBeDefined();
     expect(Machine.on.force).toBeDefined();
     expect(Machine.from).toBeDefined();
@@ -340,25 +333,23 @@ describe("Machine namespace", () => {
   test("full Machine namespace usage", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<EditorState, EditorEvent>(EditorState.Idle()).pipe(
-            Machine.from(EditorState.Idle).pipe(
-              Machine.on(EditorEvent.Focus, () => EditorState.Typing({ text: "" })),
-            ),
-            Machine.from(EditorState.Typing).pipe(
-              Machine.on(EditorEvent.KeyPress, ({ state, event }) =>
-                EditorState.Typing({ text: state.text + event.key }),
-              ),
-              Machine.on(EditorEvent.Submit, ({ state }) =>
-                EditorState.Submitted({ text: state.text }),
-              ),
-            ),
-            Machine.on(Machine.any(EditorState.Idle, EditorState.Typing), EditorEvent.Cancel, () =>
-              EditorState.Cancelled(),
-            ),
-            Machine.final(EditorState.Submitted),
-            Machine.final(EditorState.Cancelled),
+        const machine = Machine.make<EditorState, EditorEvent>(EditorState.Idle()).pipe(
+          Machine.from(EditorState.Idle).pipe(
+            Machine.on(EditorEvent.Focus, () => EditorState.Typing({ text: "" })),
           ),
+          Machine.from(EditorState.Typing).pipe(
+            Machine.on(EditorEvent.KeyPress, ({ state, event }) =>
+              EditorState.Typing({ text: state.text + event.key }),
+            ),
+            Machine.on(EditorEvent.Submit, ({ state }) =>
+              EditorState.Submitted({ text: state.text }),
+            ),
+          ),
+          Machine.on(Machine.any(EditorState.Idle, EditorState.Typing), EditorEvent.Cancel, () =>
+            EditorState.Cancelled(),
+          ),
+          Machine.final(EditorState.Submitted),
+          Machine.final(EditorState.Cancelled),
         );
 
         const result = yield* simulate(machine, [

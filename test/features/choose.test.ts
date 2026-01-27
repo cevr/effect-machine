@@ -20,17 +20,15 @@ describe("Choose Combinator", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<TestState, TestEvent>(TestState.Idle({ value: 75 })).pipe(
-            Machine.choose(TestState.Idle, TestEvent.Check, [
-              { guard: ({ state }) => state.value >= 70, to: () => TestState.High() },
-              { guard: ({ state }) => state.value >= 40, to: () => TestState.Medium() },
-              { otherwise: true, to: () => TestState.Low() },
-            ]),
-            Machine.final(TestState.High),
-            Machine.final(TestState.Medium),
-            Machine.final(TestState.Low),
-          ),
+        const machine = Machine.make<TestState, TestEvent>(TestState.Idle({ value: 75 })).pipe(
+          Machine.choose(TestState.Idle, TestEvent.Check, [
+            { guard: ({ state }) => state.value >= 70, to: () => TestState.High() },
+            { guard: ({ state }) => state.value >= 40, to: () => TestState.Medium() },
+            { otherwise: true, to: () => TestState.Low() },
+          ]),
+          Machine.final(TestState.High),
+          Machine.final(TestState.Medium),
+          Machine.final(TestState.Low),
         );
 
         const result = yield* simulate(machine, [TestEvent.Check()]);
@@ -54,15 +52,13 @@ describe("Choose Combinator", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<TestState, TestEvent>(TestState.Idle({ value: 10 })).pipe(
-            Machine.choose(TestState.Idle, TestEvent.Check, [
-              { guard: ({ state }) => state.value >= 70, to: () => TestState.High() },
-              { otherwise: true, to: () => TestState.Low() },
-            ]),
-            Machine.final(TestState.High),
-            Machine.final(TestState.Low),
-          ),
+        const machine = Machine.make<TestState, TestEvent>(TestState.Idle({ value: 10 })).pipe(
+          Machine.choose(TestState.Idle, TestEvent.Check, [
+            { guard: ({ state }) => state.value >= 70, to: () => TestState.High() },
+            { otherwise: true, to: () => TestState.Low() },
+          ]),
+          Machine.final(TestState.High),
+          Machine.final(TestState.Low),
         );
 
         const result = yield* simulate(machine, [TestEvent.Check()]);
@@ -87,20 +83,18 @@ describe("Choose Combinator", () => {
       Effect.gen(function* () {
         const logs: string[] = [];
 
-        const machine = Machine.build(
-          Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
-            Machine.choose(TestState.Idle, TestEvent.Go, [
-              {
-                otherwise: true,
-                to: () => TestState.Done(),
-                effect: () =>
-                  Effect.sync(() => {
-                    logs.push("effect ran");
-                  }),
-              },
-            ]),
-            Machine.final(TestState.Done),
-          ),
+        const machine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+          Machine.choose(TestState.Idle, TestEvent.Go, [
+            {
+              otherwise: true,
+              to: () => TestState.Done(),
+              effect: () =>
+                Effect.sync(() => {
+                  logs.push("effect ran");
+                }),
+            },
+          ]),
+          Machine.final(TestState.Done),
         );
 
         yield* simulate(machine, [TestEvent.Go()]);

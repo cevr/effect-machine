@@ -20,23 +20,23 @@ describe("Assign and Update Helpers", () => {
   test("assign helper updates partial state", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<FormState, FormEvent>(FormState.Editing({ name: "", email: "" })).pipe(
-            Machine.on(
-              FormState.Editing,
-              FormEvent.SetName,
-              Machine.assign(({ event }) => ({ name: event.name })),
-            ),
-            Machine.on(
-              FormState.Editing,
-              FormEvent.SetEmail,
-              Machine.assign(({ event }) => ({ email: event.email })),
-            ),
-            Machine.on(FormState.Editing, FormEvent.Submit, ({ state }) =>
-              FormState.Submitted(state),
-            ),
-            Machine.final(FormState.Submitted),
+        const machine = Machine.make<FormState, FormEvent>(
+          FormState.Editing({ name: "", email: "" }),
+        ).pipe(
+          Machine.on(
+            FormState.Editing,
+            FormEvent.SetName,
+            Machine.assign(({ event }) => ({ name: event.name })),
           ),
+          Machine.on(
+            FormState.Editing,
+            FormEvent.SetEmail,
+            Machine.assign(({ event }) => ({ email: event.email })),
+          ),
+          Machine.on(FormState.Editing, FormEvent.Submit, ({ state }) =>
+            FormState.Submitted(state),
+          ),
+          Machine.final(FormState.Submitted),
         );
 
         const result = yield* simulate(machine, [
@@ -57,19 +57,19 @@ describe("Assign and Update Helpers", () => {
   test("update combinator is shorthand for on + assign", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<FormState, FormEvent>(FormState.Editing({ name: "", email: "" })).pipe(
-            Machine.update(FormState.Editing, FormEvent.SetName, ({ event }) => ({
-              name: event.name,
-            })),
-            Machine.update(FormState.Editing, FormEvent.SetEmail, ({ event }) => ({
-              email: event.email,
-            })),
-            Machine.on(FormState.Editing, FormEvent.Submit, ({ state }) =>
-              FormState.Submitted(state),
-            ),
-            Machine.final(FormState.Submitted),
+        const machine = Machine.make<FormState, FormEvent>(
+          FormState.Editing({ name: "", email: "" }),
+        ).pipe(
+          Machine.update(FormState.Editing, FormEvent.SetName, ({ event }) => ({
+            name: event.name,
+          })),
+          Machine.update(FormState.Editing, FormEvent.SetEmail, ({ event }) => ({
+            email: event.email,
+          })),
+          Machine.on(FormState.Editing, FormEvent.Submit, ({ state }) =>
+            FormState.Submitted(state),
           ),
+          Machine.final(FormState.Submitted),
         );
 
         const result = yield* simulate(machine, [
@@ -90,21 +90,21 @@ describe("Assign and Update Helpers", () => {
   test("update with guard", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.build(
-          Machine.make<FormState, FormEvent>(FormState.Editing({ name: "", email: "" })).pipe(
-            Machine.update(
-              FormState.Editing,
-              FormEvent.SetName,
-              ({ event }) => ({ name: event.name }),
-              {
-                guard: ({ event }) => event.name.length <= 50,
-              },
-            ),
-            Machine.on(FormState.Editing, FormEvent.Submit, ({ state }) =>
-              FormState.Submitted(state),
-            ),
-            Machine.final(FormState.Submitted),
+        const machine = Machine.make<FormState, FormEvent>(
+          FormState.Editing({ name: "", email: "" }),
+        ).pipe(
+          Machine.update(
+            FormState.Editing,
+            FormEvent.SetName,
+            ({ event }) => ({ name: event.name }),
+            {
+              guard: ({ event }) => event.name.length <= 50,
+            },
           ),
+          Machine.on(FormState.Editing, FormEvent.Submit, ({ state }) =>
+            FormState.Submitted(state),
+          ),
+          Machine.final(FormState.Submitted),
         );
 
         const result = yield* simulate(machine, [

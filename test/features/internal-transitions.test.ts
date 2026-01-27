@@ -40,7 +40,7 @@ describe("Same-state Transitions", () => {
           Machine.onExit(FormState.Form, "exitForm"),
         );
 
-        const machine = Machine.provide(Machine.build(baseMachine), {
+        const machine = Machine.provide(baseMachine, {
           enterForm: () => Effect.sync(() => effects.push("enter:Form")),
           exitForm: () => Effect.sync(() => effects.push("exit:Form")),
         });
@@ -90,7 +90,7 @@ describe("Same-state Transitions", () => {
           Machine.onExit(FormState.Form, "exitForm"),
         );
 
-        const machine = Machine.provide(Machine.build(baseMachine), {
+        const machine = Machine.provide(baseMachine, {
           enterForm: () => Effect.sync(() => effects.push("enter:Form")),
           exitForm: () => Effect.sync(() => effects.push("exit:Form")),
         });

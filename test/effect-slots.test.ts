@@ -48,7 +48,7 @@ describe("Effect Slots", () => {
   );
 
   test("effectSlots tracks slot names", () => {
-    const built = Machine.build(baseMachine);
+    const built = baseMachine;
 
     expect(built.effectSlots.size).toBe(3);
     expect(built.effectSlots.has("fetchData")).toBe(true);
@@ -71,7 +71,7 @@ describe("Effect Slots", () => {
   test("simulate() works without providing effects", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const built = Machine.build(baseMachine);
+        const built = baseMachine;
 
         // simulate() only runs transitions, not effects - so it works with unprovided slots
         const result = yield* simulate(built, [
@@ -91,7 +91,7 @@ describe("Effect Slots", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const built = Machine.build(baseMachine);
+        const built = baseMachine;
 
         // Provide effect implementations
         const providedMachine = Machine.provide(built, {
@@ -136,7 +136,7 @@ describe("Effect Slots", () => {
   test("can swap effect implementations for testing", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const built = Machine.build(baseMachine);
+        const built = baseMachine;
 
         const mockData = yield* Ref.make<string>("test-mock-data");
 
@@ -165,7 +165,7 @@ describe("Effect Slots", () => {
   });
 
   test("Machine.provide throws on missing handler", () => {
-    const built = Machine.build(baseMachine);
+    const built = baseMachine;
 
     expect(() => {
       // @ts-expect-error - intentionally missing handlers for testing
@@ -177,7 +177,7 @@ describe("Effect Slots", () => {
   });
 
   test("Machine.provide throws on extra handler", () => {
-    const built = Machine.build(baseMachine);
+    const built = baseMachine;
 
     expect(() => {
       Machine.provide(built, {
@@ -191,7 +191,7 @@ describe("Effect Slots", () => {
   });
 
   test("spawning unprovided machine throws runtime error", async () => {
-    const built = Machine.build(baseMachine);
+    const built = baseMachine;
 
     // Note: TypeScript doesn't catch this at compile time because Effects is a phantom type.
     // The runtime validation in spawn() will catch it.
@@ -238,7 +238,6 @@ describe("Effect Slots", () => {
           Machine.invoke(FetchState.Loading, "fetchData"),
           Machine.onEnter(FetchState.Success, "notify"),
           Machine.final(FetchState.Success),
-          Machine.build,
           Machine.provide({
             fetchData: ({ self }) =>
               Effect.gen(function* () {
@@ -287,7 +286,7 @@ describe("Effect Slots", () => {
           Machine.final(TimerState.Stopped),
         );
 
-        const providedMachine = Machine.provide(Machine.build(timerMachine), {
+        const providedMachine = Machine.provide(timerMachine, {
           runTimer: () =>
             Effect.gen(function* () {
               log.push("timer:start");

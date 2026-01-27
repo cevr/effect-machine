@@ -40,54 +40,54 @@ describe("Session Lifecycle Pattern", () => {
   }>;
   const SessionEvent = Event<SessionEvent>();
 
-  const sessionMachine = Machine.build(
-    Machine.make<SessionState, SessionEvent>(SessionState.Initializing({ token: null })).pipe(
-      // Always transition: if no token, go straight to Guest
-      Machine.always(SessionState.Initializing, [
-        { guard: (state) => state.token === null, to: () => SessionState.Guest() },
-      ]),
+  const sessionMachine = Machine.make<SessionState, SessionEvent>(
+    SessionState.Initializing({ token: null }),
+  ).pipe(
+    // Always transition: if no token, go straight to Guest
+    Machine.always(SessionState.Initializing, [
+      { guard: (state) => state.token === null, to: () => SessionState.Guest() },
+    ]),
 
-      // Initializing state handlers
-      Machine.from(SessionState.Initializing).pipe(
-        Machine.on(SessionEvent.TokenValidated, ({ event }) =>
-          SessionState.Active({ userId: event.userId, role: event.role, lastActivity: Date.now() }),
-        ),
-        Machine.on(SessionEvent.TokenInvalid, () => SessionState.Guest()),
+    // Initializing state handlers
+    Machine.from(SessionState.Initializing).pipe(
+      Machine.on(SessionEvent.TokenValidated, ({ event }) =>
+        SessionState.Active({ userId: event.userId, role: event.role, lastActivity: Date.now() }),
       ),
-
-      // Active state handlers
-      Machine.from(SessionState.Active).pipe(
-        Machine.on(SessionEvent.Activity, ({ state }) =>
-          SessionState.Active({ ...state, lastActivity: Date.now() }),
-        ),
-        Machine.on(SessionEvent.SessionTimeout, () => SessionState.SessionExpired()),
-        Machine.on(SessionEvent.MaintenanceStarted, ({ event }) =>
-          SessionState.Maintenance({ message: event.message, previousState: "Active" }),
-        ),
-        Machine.on(SessionEvent.Logout, () => SessionState.LoggedOut()),
-      ),
-
-      // Session timeout delay
-      Machine.delay(SessionState.Active, "30 minutes", SessionEvent.SessionTimeout()),
-
-      // Guest state handlers
-      Machine.from(SessionState.Guest).pipe(
-        Machine.on(SessionEvent.MaintenanceStarted, ({ event }) =>
-          SessionState.Maintenance({ message: event.message, previousState: "Guest" }),
-        ),
-        Machine.on(SessionEvent.Logout, () => SessionState.LoggedOut()),
-      ),
-
-      // Maintenance state handler
-      Machine.on(SessionState.Maintenance, SessionEvent.MaintenanceEnded, ({ state }) =>
-        state.previousState === "Active"
-          ? SessionState.Active({ userId: "restored", role: "user", lastActivity: Date.now() })
-          : SessionState.Guest(),
-      ),
-
-      Machine.final(SessionState.SessionExpired),
-      Machine.final(SessionState.LoggedOut),
+      Machine.on(SessionEvent.TokenInvalid, () => SessionState.Guest()),
     ),
+
+    // Active state handlers
+    Machine.from(SessionState.Active).pipe(
+      Machine.on(SessionEvent.Activity, ({ state }) =>
+        SessionState.Active({ ...state, lastActivity: Date.now() }),
+      ),
+      Machine.on(SessionEvent.SessionTimeout, () => SessionState.SessionExpired()),
+      Machine.on(SessionEvent.MaintenanceStarted, ({ event }) =>
+        SessionState.Maintenance({ message: event.message, previousState: "Active" }),
+      ),
+      Machine.on(SessionEvent.Logout, () => SessionState.LoggedOut()),
+    ),
+
+    // Session timeout delay
+    Machine.delay(SessionState.Active, "30 minutes", SessionEvent.SessionTimeout()),
+
+    // Guest state handlers
+    Machine.from(SessionState.Guest).pipe(
+      Machine.on(SessionEvent.MaintenanceStarted, ({ event }) =>
+        SessionState.Maintenance({ message: event.message, previousState: "Guest" }),
+      ),
+      Machine.on(SessionEvent.Logout, () => SessionState.LoggedOut()),
+    ),
+
+    // Maintenance state handler
+    Machine.on(SessionState.Maintenance, SessionEvent.MaintenanceEnded, ({ state }) =>
+      state.previousState === "Active"
+        ? SessionState.Active({ userId: "restored", role: "user", lastActivity: Date.now() })
+        : SessionState.Guest(),
+    ),
+
+    Machine.final(SessionState.SessionExpired),
+    Machine.final(SessionState.LoggedOut),
   );
 
   test("always transition calculates initial state from no token", async () => {
@@ -107,25 +107,23 @@ describe("Session Lifecycle Pattern", () => {
 
   test("valid token leads to active session", async () => {
     // Create machine with token
-    const machineWithToken = Machine.build(
-      Machine.make<SessionState, SessionEvent>(
-        SessionState.Initializing({ token: "valid-token" }),
-      ).pipe(
-        // With token, wait for validation
-        Machine.always(SessionState.Initializing, [
-          { guard: (state) => state.token === null, to: () => SessionState.Guest() },
-        ]),
+    const machineWithToken = Machine.make<SessionState, SessionEvent>(
+      SessionState.Initializing({ token: "valid-token" }),
+    ).pipe(
+      // With token, wait for validation
+      Machine.always(SessionState.Initializing, [
+        { guard: (state) => state.token === null, to: () => SessionState.Guest() },
+      ]),
 
-        Machine.from(SessionState.Initializing).pipe(
-          Machine.on(SessionEvent.TokenValidated, ({ event }) =>
-            SessionState.Active({
-              userId: event.userId,
-              role: event.role,
-              lastActivity: Date.now(),
-            }),
-          ),
-          Machine.on(SessionEvent.TokenInvalid, () => SessionState.Guest()),
+      Machine.from(SessionState.Initializing).pipe(
+        Machine.on(SessionEvent.TokenValidated, ({ event }) =>
+          SessionState.Active({
+            userId: event.userId,
+            role: event.role,
+            lastActivity: Date.now(),
+          }),
         ),
+        Machine.on(SessionEvent.TokenInvalid, () => SessionState.Guest()),
       ),
     );
 
@@ -142,19 +140,17 @@ describe("Session Lifecycle Pattern", () => {
   });
 
   test("maintenance mode interrupts active session", async () => {
-    const machineWithToken = Machine.build(
-      Machine.make<SessionState, SessionEvent>(
-        SessionState.Active({ userId: "user-1", role: "user", lastActivity: Date.now() }),
-      ).pipe(
-        Machine.on(SessionState.Active, SessionEvent.MaintenanceStarted, ({ event }) =>
-          SessionState.Maintenance({ message: event.message, previousState: "Active" }),
-        ),
+    const machineWithToken = Machine.make<SessionState, SessionEvent>(
+      SessionState.Active({ userId: "user-1", role: "user", lastActivity: Date.now() }),
+    ).pipe(
+      Machine.on(SessionState.Active, SessionEvent.MaintenanceStarted, ({ event }) =>
+        SessionState.Maintenance({ message: event.message, previousState: "Active" }),
+      ),
 
-        Machine.on(SessionState.Maintenance, SessionEvent.MaintenanceEnded, ({ state }) =>
-          state.previousState === "Active"
-            ? SessionState.Active({ userId: "restored", role: "user", lastActivity: Date.now() })
-            : SessionState.Guest(),
-        ),
+      Machine.on(SessionState.Maintenance, SessionEvent.MaintenanceEnded, ({ state }) =>
+        state.previousState === "Active"
+          ? SessionState.Active({ userId: "restored", role: "user", lastActivity: Date.now() })
+          : SessionState.Guest(),
       ),
     );
 
@@ -173,19 +169,17 @@ describe("Session Lifecycle Pattern", () => {
   test("session timeout after inactivity", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const activeMachine = Machine.build(
-          Machine.make<SessionState, SessionEvent>(
-            SessionState.Active({ userId: "user-1", role: "user", lastActivity: Date.now() }),
-          ).pipe(
-            Machine.from(SessionState.Active).pipe(
-              Machine.on(SessionEvent.Activity, ({ state }) =>
-                SessionState.Active({ ...state, lastActivity: Date.now() }),
-              ),
-              Machine.on(SessionEvent.SessionTimeout, () => SessionState.SessionExpired()),
+        const activeMachine = Machine.make<SessionState, SessionEvent>(
+          SessionState.Active({ userId: "user-1", role: "user", lastActivity: Date.now() }),
+        ).pipe(
+          Machine.from(SessionState.Active).pipe(
+            Machine.on(SessionEvent.Activity, ({ state }) =>
+              SessionState.Active({ ...state, lastActivity: Date.now() }),
             ),
-            Machine.delay(SessionState.Active, "30 minutes", SessionEvent.SessionTimeout()),
-            Machine.final(SessionState.SessionExpired),
+            Machine.on(SessionEvent.SessionTimeout, () => SessionState.SessionExpired()),
           ),
+          Machine.delay(SessionState.Active, "30 minutes", SessionEvent.SessionTimeout()),
+          Machine.final(SessionState.SessionExpired),
         );
 
         const system = yield* ActorSystemService;
@@ -219,19 +213,17 @@ describe("Session Lifecycle Pattern", () => {
   test("activity with reenter resets timeout", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const activeMachine = Machine.build(
-          Machine.make<SessionState, SessionEvent>(
-            SessionState.Active({ userId: "user-1", role: "user", lastActivity: Date.now() }),
-          ).pipe(
-            Machine.on.force(SessionState.Active, SessionEvent.Activity, ({ state }) =>
-              SessionState.Active({ ...state, lastActivity: Date.now() }),
-            ),
-            Machine.delay(SessionState.Active, "30 minutes", SessionEvent.SessionTimeout()),
-            Machine.on(SessionState.Active, SessionEvent.SessionTimeout, () =>
-              SessionState.SessionExpired(),
-            ),
-            Machine.final(SessionState.SessionExpired),
+        const activeMachine = Machine.make<SessionState, SessionEvent>(
+          SessionState.Active({ userId: "user-1", role: "user", lastActivity: Date.now() }),
+        ).pipe(
+          Machine.on.force(SessionState.Active, SessionEvent.Activity, ({ state }) =>
+            SessionState.Active({ ...state, lastActivity: Date.now() }),
           ),
+          Machine.delay(SessionState.Active, "30 minutes", SessionEvent.SessionTimeout()),
+          Machine.on(SessionState.Active, SessionEvent.SessionTimeout, () =>
+            SessionState.SessionExpired(),
+          ),
+          Machine.final(SessionState.SessionExpired),
         );
 
         const system = yield* ActorSystemService;
@@ -266,13 +258,11 @@ describe("Session Lifecycle Pattern", () => {
   });
 
   test("logout from active session", async () => {
-    const activeMachine = Machine.build(
-      Machine.make<SessionState, SessionEvent>(
-        SessionState.Active({ userId: "user-1", role: "user", lastActivity: Date.now() }),
-      ).pipe(
-        Machine.on(SessionState.Active, SessionEvent.Logout, () => SessionState.LoggedOut()),
-        Machine.final(SessionState.LoggedOut),
-      ),
+    const activeMachine = Machine.make<SessionState, SessionEvent>(
+      SessionState.Active({ userId: "user-1", role: "user", lastActivity: Date.now() }),
+    ).pipe(
+      Machine.on(SessionState.Active, SessionEvent.Logout, () => SessionState.LoggedOut()),
+      Machine.final(SessionState.LoggedOut),
     );
 
     await Effect.runPromise(

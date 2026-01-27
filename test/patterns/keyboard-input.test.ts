@@ -28,64 +28,62 @@ describe("Keyboard Input Pattern", () => {
   }>;
   const KeyboardEvent = Event<KeyboardEvent>();
 
-  const keyboardMachine = Machine.build(
-    Machine.make<KeyboardState, KeyboardEvent>(
-      KeyboardState.Idle({ value: "", mode: "insert" }),
-    ).pipe(
-      // Focus activates keyboard
-      Machine.on(KeyboardState.Idle, KeyboardEvent.Focus, ({ state }) =>
-        KeyboardState.Typing({ value: state.value, mode: state.mode }),
+  const keyboardMachine = Machine.make<KeyboardState, KeyboardEvent>(
+    KeyboardState.Idle({ value: "", mode: "insert" }),
+  ).pipe(
+    // Focus activates keyboard
+    Machine.on(KeyboardState.Idle, KeyboardEvent.Focus, ({ state }) =>
+      KeyboardState.Typing({ value: state.value, mode: state.mode }),
+    ),
+
+    // Typing state handlers
+    Machine.from(KeyboardState.Typing).pipe(
+      // Key input - different modes (same state, no lifecycle by default)
+      Machine.on(KeyboardEvent.KeyPress, ({ state, event }) => {
+        let newValue: string;
+        switch (state.mode) {
+          case "insert":
+            newValue = state.value + event.key;
+            break;
+          case "append":
+            newValue = state.value + event.key;
+            break;
+          case "replace":
+            newValue = event.key;
+            break;
+        }
+        return KeyboardState.Typing({ value: newValue, mode: state.mode });
+      }),
+
+      // Backspace
+      Machine.on(KeyboardEvent.Backspace, ({ state }) =>
+        KeyboardState.Typing({ value: state.value.slice(0, -1), mode: state.mode }),
       ),
 
-      // Typing state handlers
-      Machine.from(KeyboardState.Typing).pipe(
-        // Key input - different modes (same state, no lifecycle by default)
-        Machine.on(KeyboardEvent.KeyPress, ({ state, event }) => {
-          let newValue: string;
-          switch (state.mode) {
-            case "insert":
-              newValue = state.value + event.key;
-              break;
-            case "append":
-              newValue = state.value + event.key;
-              break;
-            case "replace":
-              newValue = event.key;
-              break;
-          }
-          return KeyboardState.Typing({ value: newValue, mode: state.mode });
-        }),
-
-        // Backspace
-        Machine.on(KeyboardEvent.Backspace, ({ state }) =>
-          KeyboardState.Typing({ value: state.value.slice(0, -1), mode: state.mode }),
-        ),
-
-        // Clear all input
-        Machine.on(KeyboardEvent.Clear, ({ state }) =>
-          KeyboardState.Typing({ value: "", mode: state.mode }),
-        ),
-
-        // Mode switching
-        Machine.on(KeyboardEvent.SwitchMode, ({ state, event }) =>
-          KeyboardState.Typing({ value: state.value, mode: event.mode }),
-        ),
-
-        // Submit
-        Machine.on(KeyboardEvent.Submit, ({ state }) =>
-          KeyboardState.Confirming({ value: state.value }),
-        ),
-
-        // Cancel returns to idle with original value preserved
-        Machine.on(KeyboardEvent.Cancel, ({ state }) =>
-          KeyboardState.Idle({ value: "", mode: state.mode }),
-        ),
+      // Clear all input
+      Machine.on(KeyboardEvent.Clear, ({ state }) =>
+        KeyboardState.Typing({ value: "", mode: state.mode }),
       ),
 
-      // From confirming
-      Machine.on(KeyboardState.Confirming, KeyboardEvent.Cancel, ({ state }) =>
-        KeyboardState.Typing({ value: state.value, mode: "insert" }),
+      // Mode switching
+      Machine.on(KeyboardEvent.SwitchMode, ({ state, event }) =>
+        KeyboardState.Typing({ value: state.value, mode: event.mode }),
       ),
+
+      // Submit
+      Machine.on(KeyboardEvent.Submit, ({ state }) =>
+        KeyboardState.Confirming({ value: state.value }),
+      ),
+
+      // Cancel returns to idle with original value preserved
+      Machine.on(KeyboardEvent.Cancel, ({ state }) =>
+        KeyboardState.Idle({ value: "", mode: state.mode }),
+      ),
+    ),
+
+    // From confirming
+    Machine.on(KeyboardState.Confirming, KeyboardEvent.Cancel, ({ state }) =>
+      KeyboardState.Typing({ value: state.value, mode: "insert" }),
     ),
   );
 

@@ -52,7 +52,6 @@ const machine = Machine.make<MyState, MyEvent>(MyState.Idle()).pipe(
   ),
   Machine.final(MyState.Success),
   Machine.final(MyState.Error),
-  Machine.build,
 );
 
 // Test with simulate
@@ -82,7 +81,6 @@ const machine = Machine.make<MyState, MyEvent>(MyState.Idle()).pipe(
   ),
   Machine.final(MyState.Success),
   Machine.final(MyState.Error),
-  Machine.build,
 );
 ```
 
@@ -108,7 +106,6 @@ const baseMachine = Machine.make<MyState, MyEvent>(MyState.Idle()).pipe(
   Machine.invoke(MyState.Loading, "fetchData"),
   Machine.onEnter(MyState.Success, "notifyUser"),
   Machine.final(MyState.Success),
-  Machine.build,
 );
 
 // Production: provide real implementations
@@ -145,14 +142,13 @@ See the [primer](./primer/) for comprehensive documentation:
 
 ### Core
 
-| Export          | Description                               |
-| --------------- | ----------------------------------------- |
-| `State<T>`      | Branded state type and constructor        |
-| `Event<T>`      | Branded event type and constructor        |
-| `Machine.make`  | Create machine builder with initial state |
-| `Machine.build` | Finalize machine definition               |
-| `Machine.on`    | Add state/event transition                |
-| `Machine.final` | Mark state as final                       |
+| Export          | Description                        |
+| --------------- | ---------------------------------- |
+| `State<T>`      | Branded state type and constructor |
+| `Event<T>`      | Branded event type and constructor |
+| `Machine.make`  | Create machine with initial state  |
+| `Machine.on`    | Add state/event transition         |
+| `Machine.final` | Mark state as final                |
 
 ### Combinators
 
@@ -199,7 +195,7 @@ See the [primer](./primer/) for comprehensive documentation:
 
 | Export                       | Description                    |
 | ---------------------------- | ------------------------------ |
-| `withPersistence`            | Add persistence to a machine   |
+| `Machine.persist`            | Add persistence to a machine   |
 | `InMemoryPersistenceAdapter` | In-memory adapter for testing  |
 | `PersistenceAdapterTag`      | Service tag for custom adapter |
 

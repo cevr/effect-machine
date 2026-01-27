@@ -167,7 +167,6 @@ const liveMachine = Machine.make<State, Event>(State.Idle()).pipe(
   Machine.on(State.Loading, Event.Resolve, ({ event }) => State.Success({ data: event.data })),
   Machine.invoke(State.Loading, "fetchData"),
   Machine.onEnter(State.Success, "notify"),
-  Machine.build,
   Machine.provide({
     fetchData: ({ state, self }) =>
       Effect.gen(function* () {
@@ -184,7 +183,6 @@ const baseMachine = Machine.make<State, Event>(State.Idle()).pipe(
   Machine.on(State.Loading, Event.Resolve, ({ event }) => State.Success({ data: event.data })),
   Machine.invoke(State.Loading, "fetchData"),
   Machine.onEnter(State.Success, "notify"),
-  Machine.build,
 );
 
 // Production handlers

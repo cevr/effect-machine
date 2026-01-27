@@ -18,7 +18,7 @@ bun run fmt           # oxfmt
 - Exports: all public API via `src/index.ts`
 - Strict Effect config: see `tsconfig.json` for `@effect/language-service` rules
 - Namespace pattern: `import { Machine } from "effect-machine"` then `Machine.make`, `Machine.on`, etc.
-- `Machine`/`MachineBuilder` are Pipeable: use `.pipe()` for fluent API
+- `Machine` is Pipeable: use `.pipe()` for fluent API
 
 ## Gotchas
 

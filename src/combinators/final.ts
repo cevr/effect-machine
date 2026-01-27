@@ -1,4 +1,4 @@
-import type { MachineBuilder } from "../machine.js";
+import type { Machine } from "../machine.js";
 import { addFinal } from "../machine.js";
 import { getTag } from "../internal/get-tag.js";
 import type { StateBrand, EventBrand } from "../internal/brands.js";
@@ -25,7 +25,6 @@ export function final<NarrowedState extends BrandedState>(stateConstructor: {
   const stateTag = getTag(stateConstructor);
 
   return <State extends BrandedState, Event extends BrandedEvent, R, Effects extends string>(
-    builder: MachineBuilder<State, Event, R, Effects>,
-  ): MachineBuilder<State, Event, R, Effects> =>
-    addFinal<State, Event, R, Effects>(stateTag)(builder);
+    builder: Machine<State, Event, R, Effects>,
+  ): Machine<State, Event, R, Effects> => addFinal<State, Event, R, Effects>(stateTag)(builder);
 }
