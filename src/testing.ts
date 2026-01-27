@@ -5,6 +5,9 @@ import { applyAlways, resolveTransition } from "./internal/loop.js";
 
 /**
  * Yield to other fibers. Useful in tests to allow forked effects to run.
+ *
+ * @deprecated Use `Effect.yieldNow()` instead. A single yield is sufficient
+ * for allowing forked effects to run.
  */
 export const yieldFibers = Effect.gen(function* () {
   for (let i = 0; i < 10; i++) {

@@ -1,6 +1,5 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Effect, Layer, Schema, TestClock, TestContext } from "effect";
-import { describe, expect, test } from "bun:test";
+import { Effect, Schema, TestClock } from "effect";
 
 import {
   ActorSystemDefault,
@@ -11,8 +10,8 @@ import {
   Guard,
   Machine,
   State,
-  yieldFibers,
 } from "../../src/index.js";
+import { describe, expect, it, yieldFibers } from "../utils/effect-test.js";
 
 /**
  * Payment flow pattern tests based on bite checkout-paying.machine.ts
@@ -162,162 +161,140 @@ describe("Payment Flow Pattern", () => {
     Machine.final(PaymentState.PaymentCancelled),
   );
 
-  test("card payment happy path", async () => {
-    await Effect.runPromise(
-      assertPath(
-        paymentMachine,
-        [
-          PaymentEvent.StartCheckout({ amount: 100 }),
-          PaymentEvent.SelectMethod({ method: "card" }),
-          PaymentEvent.PaymentSucceeded({ receiptId: "rcpt-123" }),
-        ],
-        ["Idle", "SelectingMethod", "ProcessingPayment", "PaymentSuccess"],
-      ),
-    );
-  });
+  it.live("card payment happy path", () =>
+    assertPath(
+      paymentMachine,
+      [
+        PaymentEvent.StartCheckout({ amount: 100 }),
+        PaymentEvent.SelectMethod({ method: "card" }),
+        PaymentEvent.PaymentSucceeded({ receiptId: "rcpt-123" }),
+      ],
+      ["Idle", "SelectingMethod", "ProcessingPayment", "PaymentSuccess"],
+    ),
+  );
 
-  test("bridge payment flow", async () => {
-    await Effect.runPromise(
-      assertPath(
-        paymentMachine,
-        [
-          PaymentEvent.StartCheckout({ amount: 200 }),
-          PaymentEvent.SelectMethod({ method: "bridge" }),
-          PaymentEvent.BridgeConfirmed({ transactionId: "tx-456" }),
-        ],
-        ["Idle", "SelectingMethod", "AwaitingBridgeConfirm", "PaymentSuccess"],
-      ),
-    );
-  });
+  it.live("bridge payment flow", () =>
+    assertPath(
+      paymentMachine,
+      [
+        PaymentEvent.StartCheckout({ amount: 200 }),
+        PaymentEvent.SelectMethod({ method: "bridge" }),
+        PaymentEvent.BridgeConfirmed({ transactionId: "tx-456" }),
+      ],
+      ["Idle", "SelectingMethod", "AwaitingBridgeConfirm", "PaymentSuccess"],
+    ),
+  );
 
-  test("retry after error with guard cascade", async () => {
-    await Effect.runPromise(
-      assertPath(
-        paymentMachine,
-        [
-          PaymentEvent.StartCheckout({ amount: 50 }),
-          PaymentEvent.SelectMethod({ method: "card" }),
-          PaymentEvent.PaymentFailed({ error: "Network error", canRetry: true }),
-          PaymentEvent.Retry(),
-          PaymentEvent.PaymentSucceeded({ receiptId: "rcpt-retry" }),
-        ],
-        [
-          "Idle",
-          "SelectingMethod",
-          "ProcessingPayment",
-          "PaymentError",
-          "ProcessingPayment",
-          "PaymentSuccess",
-        ],
-      ),
-    );
-  });
-
-  test("retry blocked after max attempts", async () => {
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("payment", paymentMachine);
-
-        yield* actor.send(PaymentEvent.StartCheckout({ amount: 50 }));
-        yield* actor.send(PaymentEvent.SelectMethod({ method: "card" }));
-
-        // Fail and retry twice (total 3 attempts)
-        yield* actor.send(PaymentEvent.PaymentFailed({ error: "Error 1", canRetry: true }));
-        yield* yieldFibers;
-        yield* actor.send(PaymentEvent.Retry());
-        yield* yieldFibers;
-        yield* actor.send(PaymentEvent.PaymentFailed({ error: "Error 2", canRetry: true }));
-        yield* yieldFibers;
-        yield* actor.send(PaymentEvent.Retry());
-        yield* yieldFibers;
-        yield* actor.send(PaymentEvent.PaymentFailed({ error: "Error 3", canRetry: true }));
-        yield* yieldFibers;
-
-        // Third retry should be blocked (attempts = 3, guard requires < 3)
-        yield* actor.send(PaymentEvent.Retry());
-        yield* yieldFibers;
-
-        const state = yield* actor.state.get;
-        expect(state._tag).toBe("PaymentError");
-      }).pipe(Effect.scoped, Effect.provide(ActorSystemDefault)),
-    );
-  });
-
-  test("mid-flow cancellation", async () => {
-    await Effect.runPromise(
-      assertPath(
-        paymentMachine,
-        [
-          PaymentEvent.StartCheckout({ amount: 100 }),
-          PaymentEvent.SelectMethod({ method: "card" }),
-          PaymentEvent.Cancel(),
-        ],
-        ["Idle", "SelectingMethod", "ProcessingPayment", "PaymentCancelled"],
-      ),
-    );
-  });
-
-  test("cancellation never reaches success", async () => {
-    await Effect.runPromise(
-      assertNeverReaches(
-        paymentMachine,
-        [PaymentEvent.StartCheckout({ amount: 100 }), PaymentEvent.Cancel()],
+  it.live("retry after error with guard cascade", () =>
+    assertPath(
+      paymentMachine,
+      [
+        PaymentEvent.StartCheckout({ amount: 50 }),
+        PaymentEvent.SelectMethod({ method: "card" }),
+        PaymentEvent.PaymentFailed({ error: "Network error", canRetry: true }),
+        PaymentEvent.Retry(),
+        PaymentEvent.PaymentSucceeded({ receiptId: "rcpt-retry" }),
+      ],
+      [
+        "Idle",
+        "SelectingMethod",
+        "ProcessingPayment",
+        "PaymentError",
+        "ProcessingPayment",
         "PaymentSuccess",
-      ),
-    );
-  });
+      ],
+    ),
+  );
 
-  test("bridge timeout triggers error", async () => {
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("payment", paymentMachine);
+  it.scopedLive("retry blocked after max attempts", () =>
+    Effect.gen(function* () {
+      const system = yield* ActorSystemService;
+      const actor = yield* system.spawn("payment", paymentMachine);
 
-        yield* actor.send(PaymentEvent.StartCheckout({ amount: 100 }));
-        yield* actor.send(PaymentEvent.SelectMethod({ method: "bridge" }));
-        yield* yieldFibers;
+      yield* actor.send(PaymentEvent.StartCheckout({ amount: 50 }));
+      yield* actor.send(PaymentEvent.SelectMethod({ method: "card" }));
 
-        let state = yield* actor.state.get;
-        expect(state._tag).toBe("AwaitingBridgeConfirm");
+      // Fail and retry twice (total 3 attempts)
+      yield* actor.send(PaymentEvent.PaymentFailed({ error: "Error 1", canRetry: true }));
+      yield* yieldFibers;
+      yield* actor.send(PaymentEvent.Retry());
+      yield* yieldFibers;
+      yield* actor.send(PaymentEvent.PaymentFailed({ error: "Error 2", canRetry: true }));
+      yield* yieldFibers;
+      yield* actor.send(PaymentEvent.Retry());
+      yield* yieldFibers;
+      yield* actor.send(PaymentEvent.PaymentFailed({ error: "Error 3", canRetry: true }));
+      yield* yieldFibers;
 
-        // Advance past timeout
-        yield* TestClock.adjust("30 seconds");
-        yield* yieldFibers;
+      // Third retry should be blocked (attempts = 3, guard requires < 3)
+      yield* actor.send(PaymentEvent.Retry());
+      yield* yieldFibers;
 
-        state = yield* actor.state.get;
-        expect(state._tag).toBe("PaymentError");
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(Layer.merge(ActorSystemDefault, TestContext.TestContext)),
-      ),
-    );
-  });
+      const state = yield* actor.state.get;
+      expect(state._tag).toBe("PaymentError");
+    }).pipe(Effect.provide(ActorSystemDefault)),
+  );
 
-  test("non-retryable error auto-dismisses", async () => {
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("payment", paymentMachine);
+  it.live("mid-flow cancellation", () =>
+    assertPath(
+      paymentMachine,
+      [
+        PaymentEvent.StartCheckout({ amount: 100 }),
+        PaymentEvent.SelectMethod({ method: "card" }),
+        PaymentEvent.Cancel(),
+      ],
+      ["Idle", "SelectingMethod", "ProcessingPayment", "PaymentCancelled"],
+    ),
+  );
 
-        yield* actor.send(PaymentEvent.StartCheckout({ amount: 100 }));
-        yield* actor.send(PaymentEvent.SelectMethod({ method: "card" }));
-        yield* actor.send(PaymentEvent.PaymentFailed({ error: "Card declined", canRetry: false }));
-        yield* yieldFibers;
+  it.live("cancellation never reaches success", () =>
+    assertNeverReaches(
+      paymentMachine,
+      [PaymentEvent.StartCheckout({ amount: 100 }), PaymentEvent.Cancel()],
+      "PaymentSuccess",
+    ),
+  );
 
-        let state = yield* actor.state.get;
-        expect(state._tag).toBe("PaymentError");
+  it.scoped("bridge timeout triggers error", () =>
+    Effect.gen(function* () {
+      const system = yield* ActorSystemService;
+      const actor = yield* system.spawn("payment", paymentMachine);
 
-        // Wait for auto-dismiss
-        yield* TestClock.adjust("5 seconds");
-        yield* yieldFibers;
+      yield* actor.send(PaymentEvent.StartCheckout({ amount: 100 }));
+      yield* actor.send(PaymentEvent.SelectMethod({ method: "bridge" }));
+      yield* yieldFibers;
 
-        state = yield* actor.state.get;
-        expect(state._tag).toBe("Idle");
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(Layer.merge(ActorSystemDefault, TestContext.TestContext)),
-      ),
-    );
-  });
+      let state = yield* actor.state.get;
+      expect(state._tag).toBe("AwaitingBridgeConfirm");
+
+      // Advance past timeout
+      yield* TestClock.adjust("30 seconds");
+      yield* yieldFibers;
+
+      state = yield* actor.state.get;
+      expect(state._tag).toBe("PaymentError");
+    }).pipe(Effect.provide(ActorSystemDefault)),
+  );
+
+  it.scoped("non-retryable error auto-dismisses", () =>
+    Effect.gen(function* () {
+      const system = yield* ActorSystemService;
+      const actor = yield* system.spawn("payment", paymentMachine);
+
+      yield* actor.send(PaymentEvent.StartCheckout({ amount: 100 }));
+      yield* actor.send(PaymentEvent.SelectMethod({ method: "card" }));
+      yield* actor.send(PaymentEvent.PaymentFailed({ error: "Card declined", canRetry: false }));
+      yield* yieldFibers;
+
+      let state = yield* actor.state.get;
+      expect(state._tag).toBe("PaymentError");
+
+      // Wait for auto-dismiss
+      yield* TestClock.adjust("5 seconds");
+      yield* yieldFibers;
+
+      state = yield* actor.state.get;
+      expect(state._tag).toBe("Idle");
+    }).pipe(Effect.provide(ActorSystemDefault)),
+  );
 });
