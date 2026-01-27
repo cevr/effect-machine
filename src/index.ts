@@ -11,6 +11,7 @@ export type {
   EffectSlot,
   Machine as MachineType,
   MachineRef,
+  MakeConfig,
   OnOptions,
   StateEffect,
   Transition,

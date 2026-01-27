@@ -29,9 +29,11 @@ describe("Same-state Transitions", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const baseMachine = Machine.make<FormState, FormEvent>(
-          FormState.Form({ name: "", count: 0 }),
-        ).pipe(
+        const baseMachine = Machine.make({
+          state: FormState,
+          event: FormEvent,
+          initial: FormState.Form({ name: "", count: 0 }),
+        }).pipe(
           Machine.on(FormState.Form, FormEvent.SetName, ({ state, event }) =>
             FormState.Form({ name: event.name, count: state.count + 1 }),
           ),
@@ -80,9 +82,11 @@ describe("Same-state Transitions", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const baseMachine = Machine.make<FormState, FormEvent>(
-          FormState.Form({ name: "", count: 0 }),
-        ).pipe(
+        const baseMachine = Machine.make({
+          state: FormState,
+          event: FormEvent,
+          initial: FormState.Form({ name: "", count: 0 }),
+        }).pipe(
           Machine.on.force(FormState.Form, FormEvent.SetName, ({ state, event }) =>
             FormState.Form({ name: event.name, count: state.count + 1 }),
           ),

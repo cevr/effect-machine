@@ -35,7 +35,11 @@ describe("Inspection", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Idle(),
+        }).pipe(
           Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
             TestState.Loading({ url: event.url }),
           ),
@@ -62,7 +66,11 @@ describe("Inspection", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Idle(),
+        }).pipe(
           Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
             TestState.Loading({ url: event.url }),
           ),
@@ -91,7 +99,11 @@ describe("Inspection", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Idle(),
+        }).pipe(
           Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
             TestState.Loading({ url: event.url }),
           ),
@@ -122,7 +134,11 @@ describe("Inspection", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Idle(),
+        }).pipe(
           Machine.on(
             TestState.Idle,
             TestEvent.Fetch,
@@ -156,7 +172,11 @@ describe("Inspection", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const baseMachine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+        const baseMachine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Idle(),
+        }).pipe(
           Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
             TestState.Loading({ url: event.url }),
           ),
@@ -201,7 +221,11 @@ describe("Inspection", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Idle(),
+        }).pipe(
           Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
             TestState.Loading({ url: event.url }),
           ),
@@ -235,7 +259,11 @@ describe("Inspection", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Idle(),
+        }).pipe(
           Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
             TestState.Loading({ url: event.url }),
           ),
@@ -261,7 +289,11 @@ describe("Inspection", () => {
     // This test verifies the inspector is optional
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Idle(),
+        }).pipe(
           Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
             TestState.Loading({ url: event.url }),
           ),
@@ -287,7 +319,11 @@ describe("Inspection", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Idle(),
+        }).pipe(
           Machine.on(
             TestState.Idle,
             TestEvent.Fetch,
@@ -336,7 +372,11 @@ describe("Inspection", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const baseMachine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+        const baseMachine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Idle(),
+        }).pipe(
           Machine.on(
             TestState.Idle,
             TestEvent.Fetch,

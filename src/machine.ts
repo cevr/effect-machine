@@ -1,4 +1,4 @@
-import type { Effect } from "effect";
+import type { Effect, Schema } from "effect";
 import type { Pipeable } from "effect/Pipeable";
 import { pipeArguments } from "effect/Pipeable";
 
@@ -12,6 +12,7 @@ import type {
 } from "./internal/types.js";
 import { normalizeGuard } from "./internal/types.js";
 import type { StateBrand, EventBrand } from "./internal/brands.js";
+import type { MachineStateSchema, MachineEventSchema } from "./machine-schema.js";
 
 // Branded type constraints for compile-time safety
 type BrandedState = { readonly _tag: string } & StateBrand;
@@ -81,6 +82,10 @@ export interface Machine<
   readonly onExit: ReadonlyArray<StateEffect<State, Event, R>>;
   readonly finalStates: ReadonlySet<string>;
   readonly effectSlots: ReadonlyMap<string, EffectSlot>;
+  /** Schema for state (attached when using config-based make) */
+  readonly stateSchema?: Schema.Schema<State, unknown, never>;
+  /** Schema for events (attached when using config-based make) */
+  readonly eventSchema?: Schema.Schema<Event, unknown, never>;
 }
 
 const PipeableProto: Pipeable = {
@@ -103,22 +108,69 @@ interface MachineMutable<
   onExit: Array<StateEffect<State, Event, R>>;
   finalStates: Set<string>;
   effectSlots: Map<string, EffectSlot>;
+  stateSchema?: Schema.Schema<State, unknown, never>;
+  eventSchema?: Schema.Schema<Event, unknown, never>;
 }
 
 /**
- * Create a new machine with initial state
+ * Configuration for creating a machine with attached schemas
  */
-export const make = <State extends BrandedState, Event extends BrandedEvent>(
-  initial: State,
-): Machine<State, Event, never, never> => {
-  const machine: MachineMutable<State, Event, never, never> = Object.create(PipeableProto);
-  machine.initial = initial;
+export interface MakeConfig<
+  SD extends Record<string, Schema.Struct.Fields>,
+  ED extends Record<string, Schema.Struct.Fields>,
+  S extends BrandedState,
+  E extends BrandedEvent,
+> {
+  /** State schema - types will be inferred from this */
+  readonly state: MachineStateSchema<SD> & { Type: S };
+  /** Event schema - types will be inferred from this */
+  readonly event: MachineEventSchema<ED> & { Type: E };
+  /** Initial state value */
+  readonly initial: S;
+}
+
+/**
+ * Create a new machine with schemas and initial state.
+ *
+ * @example
+ * ```ts
+ * const OrderState = State({
+ *   Pending: { orderId: Schema.String },
+ *   Shipped: { trackingId: Schema.String },
+ * });
+ *
+ * const OrderEvent = Event({
+ *   Ship: { trackingId: Schema.String },
+ * });
+ *
+ * const machine = Machine.make({
+ *   state: OrderState,
+ *   event: OrderEvent,
+ *   initial: OrderState.Pending({ orderId: "" }),
+ * });
+ * // Types inferred from schemas - no manual type params needed!
+ * ```
+ */
+export const make = <
+  SD extends Record<string, Schema.Struct.Fields>,
+  ED extends Record<string, Schema.Struct.Fields>,
+  S extends BrandedState,
+  E extends BrandedEvent,
+>(
+  config: MakeConfig<SD, ED, S, E>,
+): Machine<S, E, never, never> => {
+  const machine: MachineMutable<S, E, never, never> = Object.create(PipeableProto);
+  machine.initial = config.initial;
   machine.transitions = [];
   machine.alwaysTransitions = [];
   machine.onEnter = [];
   machine.onExit = [];
   machine.finalStates = new Set();
   machine.effectSlots = new Map();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- schema types are compatible
+  machine.stateSchema = config.state as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- schema types are compatible
+  machine.eventSchema = config.event as any;
   return machine;
 };
 

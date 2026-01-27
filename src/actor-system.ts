@@ -55,9 +55,9 @@ export interface ActorSystem {
     ): Effect.Effect<ActorRef<S, E>, never, R | Scope.Scope>;
 
     // Persistent machine overload
-    <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R, SSI, ESI>(
+    <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
       id: string,
-      machine: PersistentMachine<S, E, R, SSI, ESI>,
+      machine: PersistentMachine<S, E, R>,
     ): Effect.Effect<
       PersistentActorRef<S, E>,
       PersistenceError | VersionConflictError,
@@ -79,15 +79,9 @@ export interface ActorSystem {
    * }
    * ```
    */
-  readonly restore: <
-    S extends { readonly _tag: string },
-    E extends { readonly _tag: string },
-    R,
-    SSI,
-    ESI,
-  >(
+  readonly restore: <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
     id: string,
-    machine: PersistentMachine<S, E, R, SSI, ESI>,
+    machine: PersistentMachine<S, E, R>,
   ) => Effect.Effect<
     Option.Option<PersistentActorRef<S, E>>,
     PersistenceError,
@@ -136,11 +130,9 @@ export interface ActorSystem {
     S extends { readonly _tag: string },
     E extends { readonly _tag: string },
     R,
-    SSI,
-    ESI,
   >(
     ids: ReadonlyArray<string>,
-    machine: PersistentMachine<S, E, R, SSI, ESI>,
+    machine: PersistentMachine<S, E, R>,
   ) => Effect.Effect<RestoreResult<S, E>, never, R | Scope.Scope | PersistenceAdapterTag>;
 
   /**
@@ -159,10 +151,8 @@ export interface ActorSystem {
     S extends { readonly _tag: string },
     E extends { readonly _tag: string },
     R,
-    SSI,
-    ESI,
   >(
-    machine: PersistentMachine<S, E, R, SSI, ESI>,
+    machine: PersistentMachine<S, E, R>,
     options?: { filter?: (meta: ActorMetadata) => boolean },
   ) => Effect.Effect<
     RestoreResult<S, E>,
@@ -235,11 +225,9 @@ const make = Effect.gen(function* () {
     S extends { readonly _tag: string },
     E extends { readonly _tag: string },
     R,
-    SSI,
-    ESI,
   >(
     id: string,
-    persistentMachine: PersistentMachine<S, E, R, SSI, ESI>,
+    persistentMachine: PersistentMachine<S, E, R>,
   ): Effect.Effect<
     PersistentActorRef<S, E>,
     PersistenceError | VersionConflictError,
@@ -299,29 +287,17 @@ const make = Effect.gen(function* () {
     id: string,
     machine: Machine<S, E, R, never>,
   ): Effect.Effect<ActorRef<S, E>, never, R | Scope.Scope>;
-  function spawn<
-    S extends { readonly _tag: string },
-    E extends { readonly _tag: string },
-    R,
-    SSI,
-    ESI,
-  >(
+  function spawn<S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
     id: string,
-    machine: PersistentMachine<S, E, R, SSI, ESI>,
+    machine: PersistentMachine<S, E, R>,
   ): Effect.Effect<
     PersistentActorRef<S, E>,
     PersistenceError | VersionConflictError,
     R | Scope.Scope | PersistenceAdapterTag
   >;
-  function spawn<
-    S extends { readonly _tag: string },
-    E extends { readonly _tag: string },
-    R,
-    SSI,
-    ESI,
-  >(
+  function spawn<S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
     id: string,
-    machine: Machine<S, E, R, never> | PersistentMachine<S, E, R, SSI, ESI>,
+    machine: Machine<S, E, R, never> | PersistentMachine<S, E, R>,
   ):
     | Effect.Effect<ActorRef<S, E>, never, R | Scope.Scope>
     | Effect.Effect<
@@ -332,20 +308,14 @@ const make = Effect.gen(function* () {
     if (isPersistentMachine(machine)) {
       // TypeScript can't narrow union with invariant generic params
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return spawnPersistent(id, machine as PersistentMachine<S, E, R, any, any>);
+      return spawnPersistent(id, machine as PersistentMachine<S, E, R>);
     }
     return spawnRegular(id, machine as Machine<S, E, R, never>);
   }
 
-  const restore = <
-    S extends { readonly _tag: string },
-    E extends { readonly _tag: string },
-    R,
-    SSI,
-    ESI,
-  >(
+  const restore = <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
     id: string,
-    persistentMachine: PersistentMachine<S, E, R, SSI, ESI>,
+    persistentMachine: PersistentMachine<S, E, R>,
   ): Effect.Effect<
     Option.Option<PersistentActorRef<S, E>>,
     PersistenceError,
@@ -424,15 +394,9 @@ const make = Effect.gen(function* () {
       return yield* adapter.listActors();
     });
 
-  const restoreMany = <
-    S extends { readonly _tag: string },
-    E extends { readonly _tag: string },
-    R,
-    SSI,
-    ESI,
-  >(
+  const restoreMany = <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
     ids: ReadonlyArray<string>,
-    persistentMachine: PersistentMachine<S, E, R, SSI, ESI>,
+    persistentMachine: PersistentMachine<S, E, R>,
   ): Effect.Effect<RestoreResult<S, E>, never, R | Scope.Scope | PersistenceAdapterTag> =>
     Effect.gen(function* () {
       const restored: PersistentActorRef<S, E>[] = [];
@@ -466,14 +430,8 @@ const make = Effect.gen(function* () {
       return { restored, failed };
     });
 
-  const restoreAll = <
-    S extends { readonly _tag: string },
-    E extends { readonly _tag: string },
-    R,
-    SSI,
-    ESI,
-  >(
-    persistentMachine: PersistentMachine<S, E, R, SSI, ESI>,
+  const restoreAll = <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
+    persistentMachine: PersistentMachine<S, E, R>,
     options?: { filter?: (meta: ActorMetadata) => boolean },
   ): Effect.Effect<
     RestoreResult<S, E>,

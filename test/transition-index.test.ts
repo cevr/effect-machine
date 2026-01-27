@@ -29,7 +29,11 @@ type TestEvent = typeof TestEvent.Type;
 
 describe("Transition Index", () => {
   test("Machine.findTransitions returns matching transitions", () => {
-    const machine = Machine.make<TestState, TestEvent>(TestState.Idle({})).pipe(
+    const machine = Machine.make({
+      state: TestState,
+      event: TestEvent,
+      initial: TestState.Idle({}),
+    }).pipe(
       Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
         TestState.Loading({ id: event.id }),
       ),
@@ -61,7 +65,11 @@ describe("Transition Index", () => {
   });
 
   test("findTransitions returns multiple transitions for guard cascade", () => {
-    const machine = Machine.make<TestState, TestEvent>(TestState.Idle({})).pipe(
+    const machine = Machine.make({
+      state: TestState,
+      event: TestEvent,
+      initial: TestState.Idle({}),
+    }).pipe(
       // Multiple transitions with guards for same state/event
       Machine.on(
         TestState.Idle,
@@ -99,9 +107,11 @@ describe("Transition Index", () => {
     const CounterEvent = Event({ Increment: {} });
     type CounterEvent = typeof CounterEvent.Type;
 
-    const machine = Machine.make<CounterState, CounterEvent>(
-      CounterState.Counting({ count: 0 }),
-    ).pipe(
+    const machine = Machine.make({
+      state: CounterState,
+      event: CounterEvent,
+      initial: CounterState.Counting({ count: 0 }),
+    }).pipe(
       Machine.on(CounterState.Counting, CounterEvent.Increment, ({ state }) =>
         CounterState.Counting({ count: state.count + 1 }),
       ),
@@ -122,7 +132,11 @@ describe("Transition Index", () => {
   });
 
   test("index is cached (WeakMap behavior)", () => {
-    const machine = Machine.make<TestState, TestEvent>(TestState.Idle({})).pipe(
+    const machine = Machine.make({
+      state: TestState,
+      event: TestEvent,
+      initial: TestState.Idle({}),
+    }).pipe(
       Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
         TestState.Loading({ id: event.id }),
       ),
@@ -139,13 +153,21 @@ describe("Transition Index", () => {
   });
 
   test("different machines have separate indexes", () => {
-    const machine1 = Machine.make<TestState, TestEvent>(TestState.Idle({})).pipe(
+    const machine1 = Machine.make({
+      state: TestState,
+      event: TestEvent,
+      initial: TestState.Idle({}),
+    }).pipe(
       Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
         TestState.Loading({ id: event.id }),
       ),
     );
 
-    const machine2 = Machine.make<TestState, TestEvent>(TestState.Idle({})).pipe(
+    const machine2 = Machine.make({
+      state: TestState,
+      event: TestEvent,
+      initial: TestState.Idle({}),
+    }).pipe(
       Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
         TestState.Loading({ id: event.id }),
       ),

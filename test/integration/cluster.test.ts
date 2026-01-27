@@ -39,7 +39,11 @@ type OrderEvent = typeof OrderEvent.Type;
 // Machine definition (same pattern as before)
 // =============================================================================
 
-const orderMachine = Machine.make<OrderState, OrderEvent>(OrderState.Pending({ orderId: "" })).pipe(
+const orderMachine = Machine.make({
+  state: OrderState,
+  event: OrderEvent,
+  initial: OrderState.Pending({ orderId: "" }),
+}).pipe(
   Machine.on(OrderState.Pending, OrderEvent.Process, ({ state }) =>
     OrderState.Processing({ orderId: state.orderId, startedAt: Date.now() }),
   ),
@@ -60,11 +64,8 @@ const orderMachine = Machine.make<OrderState, OrderEvent>(OrderState.Pending({ o
 // Entity definition using toEntity helper
 // =============================================================================
 
-const OrderEntity = toEntity(orderMachine, {
-  type: "Order",
-  stateSchema: OrderState, // MachineSchema IS a Schema - no duplication!
-  eventSchema: OrderEvent,
-});
+// Schemas are attached to machine - no need to pass them!
+const OrderEntity = toEntity(orderMachine, { type: "Order" });
 
 // =============================================================================
 // Sharding config for tests
@@ -87,9 +88,11 @@ describe("Cluster Integration with MachineSchema", () => {
     // simulate() works great for testing pure state machine logic
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machineWithInitial = Machine.make<OrderState, OrderEvent>(
-          OrderState.Pending({ orderId: "order-123" }),
-        ).pipe(
+        const machineWithInitial = Machine.make({
+          state: OrderState,
+          event: OrderEvent,
+          initial: OrderState.Pending({ orderId: "order-123" }),
+        }).pipe(
           Machine.on(OrderState.Pending, OrderEvent.Process, ({ state }) =>
             OrderState.Processing({ orderId: state.orderId, startedAt: 1000 }),
           ),
@@ -187,9 +190,11 @@ describe("Entity.makeTestClient with machine handler", () => {
   });
   type CounterEvent = typeof CounterEvent.Type;
 
-  const counterMachine = Machine.make<CounterState, CounterEvent>(
-    CounterState.Counting({ count: 0 }),
-  ).pipe(
+  const counterMachine = Machine.make({
+    state: CounterState,
+    event: CounterEvent,
+    initial: CounterState.Counting({ count: 0 }),
+  }).pipe(
     Machine.on(
       CounterState.Counting,
       CounterEvent.Increment,

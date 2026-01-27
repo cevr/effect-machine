@@ -20,9 +20,11 @@ describe("Assign and Update Helpers", () => {
   test("assign helper updates partial state", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<FormState, FormEvent>(
-          FormState.Editing({ name: "", email: "" }),
-        ).pipe(
+        const machine = Machine.make({
+          state: FormState,
+          event: FormEvent,
+          initial: FormState.Editing({ name: "", email: "" }),
+        }).pipe(
           Machine.on(
             FormState.Editing,
             FormEvent.SetName,
@@ -57,9 +59,11 @@ describe("Assign and Update Helpers", () => {
   test("update combinator is shorthand for on + assign", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<FormState, FormEvent>(
-          FormState.Editing({ name: "", email: "" }),
-        ).pipe(
+        const machine = Machine.make({
+          state: FormState,
+          event: FormEvent,
+          initial: FormState.Editing({ name: "", email: "" }),
+        }).pipe(
           Machine.update(FormState.Editing, FormEvent.SetName, ({ event }) => ({
             name: event.name,
           })),
@@ -90,9 +94,11 @@ describe("Assign and Update Helpers", () => {
   test("update with guard", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<FormState, FormEvent>(
-          FormState.Editing({ name: "", email: "" }),
-        ).pipe(
+        const machine = Machine.make({
+          state: FormState,
+          event: FormEvent,
+          initial: FormState.Editing({ name: "", email: "" }),
+        }).pipe(
           Machine.update(
             FormState.Editing,
             FormEvent.SetName,

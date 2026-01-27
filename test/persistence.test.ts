@@ -37,7 +37,11 @@ const TestLayer = Layer.merge(ActorSystemDefault, InMemoryPersistenceAdapter);
 
 describe("Persistence", () => {
   const createPersistentMachine = () =>
-    Machine.make<OrderState, OrderEvent>(OrderState.Idle({})).pipe(
+    Machine.make({
+      state: OrderState,
+      event: OrderEvent,
+      initial: OrderState.Idle({}),
+    }).pipe(
       Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
         OrderState.Pending({ orderId: event.orderId }),
       ),
@@ -49,8 +53,6 @@ describe("Persistence", () => {
       Machine.persist({
         snapshotSchedule: Schedule.forever,
         journalEvents: true,
-        stateSchema: OrderState,
-        eventSchema: OrderEvent,
       }),
     );
 
@@ -200,9 +202,11 @@ describe("Persistence", () => {
         const system = yield* ActorSystemService;
 
         // Create machine with no automatic snapshots (using recurs(0) which never triggers)
-        const noAutoSnapshotMachine = Machine.make<OrderState, OrderEvent>(
-          OrderState.Idle({}),
-        ).pipe(
+        const noAutoSnapshotMachine = Machine.make({
+          state: OrderState,
+          event: OrderEvent,
+          initial: OrderState.Idle({}),
+        }).pipe(
           Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
             OrderState.Pending({ orderId: event.orderId }),
           ),
@@ -212,8 +216,6 @@ describe("Persistence", () => {
           Machine.persist({
             snapshotSchedule: Schedule.stop, // Never auto-snapshot
             journalEvents: true,
-            stateSchema: OrderState,
-            eventSchema: OrderEvent,
           }),
         );
 
@@ -262,9 +264,11 @@ describe("Persistence", () => {
         const system = yield* ActorSystemService;
 
         // Create machine that snapshots infrequently
-        const infrequentSnapshotMachine = Machine.make<OrderState, OrderEvent>(
-          OrderState.Idle({}),
-        ).pipe(
+        const infrequentSnapshotMachine = Machine.make({
+          state: OrderState,
+          event: OrderEvent,
+          initial: OrderState.Idle({}),
+        }).pipe(
           Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
             OrderState.Pending({ orderId: event.orderId }),
           ),
@@ -274,8 +278,6 @@ describe("Persistence", () => {
           Machine.persist({
             snapshotSchedule: Schedule.stop, // Never auto-snapshot
             journalEvents: true,
-            stateSchema: OrderState,
-            eventSchema: OrderEvent,
           }),
         );
 
@@ -430,7 +432,11 @@ describe("Persistence", () => {
 
 describe("Persistence Registry", () => {
   const createPersistentMachine = (machineType?: string) =>
-    Machine.make<OrderState, OrderEvent>(OrderState.Idle({})).pipe(
+    Machine.make({
+      state: OrderState,
+      event: OrderEvent,
+      initial: OrderState.Idle({}),
+    }).pipe(
       Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
         OrderState.Pending({ orderId: event.orderId }),
       ),
@@ -442,8 +448,6 @@ describe("Persistence Registry", () => {
       Machine.persist({
         snapshotSchedule: Schedule.forever,
         journalEvents: true,
-        stateSchema: OrderState,
-        eventSchema: OrderEvent,
         machineType,
       }),
     );

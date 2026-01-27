@@ -29,7 +29,11 @@ describe("ActorSystem", () => {
   test("spawns actors and processes events", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<TestState, TestEvent>(TestState.Idle({})).pipe(
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Idle({}),
+        }).pipe(
           Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
             TestState.Active({ value: event.value }),
           ),
@@ -70,7 +74,11 @@ describe("ActorSystem", () => {
   test("stops actors properly", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<TestState, TestEvent>(TestState.Idle({})).pipe(
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Idle({}),
+        }).pipe(
           Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
             TestState.Active({ value: event.value }),
           ),

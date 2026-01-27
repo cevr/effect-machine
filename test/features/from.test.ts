@@ -34,7 +34,11 @@ describe("Machine.from", () => {
   test("scopes multiple transitions to a single state", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<EditorState, EditorEvent>(EditorState.Idle({})).pipe(
+        const machine = Machine.make({
+          state: EditorState,
+          event: EditorEvent,
+          initial: EditorState.Idle({}),
+        }).pipe(
           Machine.on(EditorState.Idle, EditorEvent.Focus, () => EditorState.Typing({ text: "" })),
           Machine.from(EditorState.Typing).pipe(
             Machine.on(EditorEvent.KeyPress, ({ state, event }) =>
@@ -67,9 +71,11 @@ describe("Machine.from", () => {
   test("from().pipe() transitions work with guards", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<EditorState, EditorEvent>(
-          EditorState.Typing({ text: "" }),
-        ).pipe(
+        const machine = Machine.make({
+          state: EditorState,
+          event: EditorEvent,
+          initial: EditorState.Typing({ text: "" }),
+        }).pipe(
           Machine.from(EditorState.Typing).pipe(
             Machine.on(
               EditorEvent.KeyPress,
@@ -103,9 +109,11 @@ describe("Machine.from", () => {
       Effect.gen(function* () {
         const logs: string[] = [];
 
-        const machine = Machine.make<EditorState, EditorEvent>(
-          EditorState.Typing({ text: "" }),
-        ).pipe(
+        const machine = Machine.make({
+          state: EditorState,
+          event: EditorEvent,
+          initial: EditorState.Typing({ text: "" }),
+        }).pipe(
           Machine.from(EditorState.Typing).pipe(
             Machine.on(
               EditorEvent.KeyPress,
@@ -137,7 +145,11 @@ describe("Machine.from", () => {
   test("multiple from() scopes can be combined", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<EditorState, EditorEvent>(EditorState.Idle({})).pipe(
+        const machine = Machine.make({
+          state: EditorState,
+          event: EditorEvent,
+          initial: EditorState.Idle({}),
+        }).pipe(
           Machine.from(EditorState.Idle).pipe(
             Machine.on(EditorEvent.Focus, () => EditorState.Typing({ text: "" })),
           ),

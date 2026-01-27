@@ -216,9 +216,11 @@ describe("State/Event with Machine", () => {
     type OrderEvent = typeof OrderEvent.Type;
 
     // Machine uses schema-created values
-    const machine = Machine.make<OrderState, OrderEvent>(
-      OrderState.Pending({ orderId: "test-order" }),
-    ).pipe(
+    const machine = Machine.make({
+      state: OrderState,
+      event: OrderEvent,
+      initial: OrderState.Pending({ orderId: "test-order" }),
+    }).pipe(
       Machine.on(OrderState.Pending, OrderEvent.Process, ({ state }) =>
         OrderState.Processing({ orderId: state.orderId }),
       ),
@@ -249,7 +251,11 @@ describe("State/Event with Machine", () => {
     type TestEvent = typeof TestEvent.Type;
 
     // This should compile - state constructors produce branded types
-    const machine = Machine.make<TestState, TestEvent>(TestState.A({ value: 0 })).pipe(
+    const machine = Machine.make({
+      state: TestState,
+      event: TestEvent,
+      initial: TestState.A({ value: 0 }),
+    }).pipe(
       Machine.on(TestState.A, TestEvent.Next, ({ state }) =>
         TestState.B({ value: state.value + 1 }),
       ),

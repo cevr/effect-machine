@@ -4,45 +4,69 @@ Core concepts for building state machines with effect-machine.
 
 ## States and Events
 
-States and events are branded types using `State<T>` and `Event<T>`:
+States and events are schema-first definitions:
 
 ```typescript
+import { Schema } from "effect";
 import { State, Event } from "effect-machine";
 
-// States - what the machine can be
-type MyState = State<{
-  Idle: {};
-  Loading: { url: string };
-  Success: { data: string };
-  Error: { message: string };
-}>;
-const MyState = State<MyState>();
+// States - what the machine can be (schema-first)
+const MyState = State({
+  Idle: {},
+  Loading: { url: Schema.String },
+  Success: { data: Schema.String },
+  Error: { message: Schema.String },
+});
+type MyState = typeof MyState.Type;
 
-// Events - what can happen
-type MyEvent = Event<{
-  Fetch: { url: string };
-  Resolve: { data: string };
-  Reject: { message: string };
-}>;
-const MyEvent = Event<MyEvent>();
+// Events - what can happen (schema-first)
+const MyEvent = Event({
+  Fetch: { url: Schema.String },
+  Resolve: { data: Schema.String },
+  Reject: { message: Schema.String },
+});
+type MyEvent = typeof MyEvent.Type;
 ```
 
-**Why branded types?**
+**Why schema-first?**
 
+- Single source of truth for types AND serialization
 - Exhaustive pattern matching
 - Type narrowing in handlers
 - Structural equality for testing
 - Compile-time prevention of state/event mixups
+- Automatic persistence support (schemas attached to machine)
 
 ## Building Machines
 
-Use `Machine.make().pipe()` to compose a machine definition:
+Use `Machine.make({ state, event, initial }).pipe()` to compose a machine definition:
 
 ```typescript
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { Machine, State, Event } from "effect-machine";
 
-const machine = Machine.make<MyState, MyEvent>(MyState.Idle()).pipe(
+// Define state and event schemas
+const MyState = State({
+  Idle: {},
+  Loading: { url: Schema.String },
+  Success: { data: Schema.String },
+  Error: { message: Schema.String },
+});
+type MyState = typeof MyState.Type;
+
+const MyEvent = Event({
+  Fetch: { url: Schema.String },
+  Resolve: { data: Schema.String },
+  Reject: { message: Schema.String },
+});
+type MyEvent = typeof MyEvent.Type;
+
+// Machine.make infers types from schemas - no manual type params needed!
+const machine = Machine.make({
+  state: MyState,
+  event: MyEvent,
+  initial: MyState.Idle(),
+}).pipe(
   // Transitions: from state + event → new state
   Machine.on(MyState.Idle, MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url })),
   Machine.on(MyState.Loading, MyEvent.Resolve, ({ event }) =>
@@ -128,7 +152,11 @@ Register effect slots for state entry/exit, then provide handlers:
 ```typescript
 import { Machine, State, Event } from "effect-machine";
 
-const baseMachine = Machine.make<MyState, MyEvent>(MyState.Idle()).pipe(
+const baseMachine = Machine.make({
+  state: MyState,
+  event: MyEvent,
+  initial: MyState.Idle(),
+}).pipe(
   Machine.on(MyState.Idle, MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url })),
   Machine.on(MyState.Loading, MyEvent.Resolve, ({ event }) =>
     MyState.Success({ data: event.data }),
@@ -156,7 +184,11 @@ const machine = Machine.provide(baseMachine, {
 Transitions that fire immediately based on state:
 
 ```typescript
-Machine.make<MyState, MyEvent>(MyState.Calculating({ value: 75 })).pipe(
+Machine.make({
+  state: MyState,
+  event: MyEvent,
+  initial: MyState.Calculating({ value: 75 }),
+}).pipe(
   Machine.always(MyState.Calculating, [
     { guard: (s) => s.value >= 70, to: (s) => MyState.High({ value: s.value }) },
     { guard: (s) => s.value >= 40, to: (s) => MyState.Medium({ value: s.value }) },
@@ -172,7 +204,11 @@ Branches are evaluated top-to-bottom. First match wins.
 Auto-send events after a duration:
 
 ```typescript
-Machine.make<MyState, MyEvent>(MyState.Success({ message: "Done" })).pipe(
+Machine.make({
+  state: MyState,
+  event: MyEvent,
+  initial: MyState.Success({ message: "Done" }),
+}).pipe(
   Machine.on(MyState.Success, MyEvent.Dismiss, () => MyState.Dismissed()),
   Machine.delay(MyState.Success, "3 seconds", MyEvent.Dismiss()),
 );

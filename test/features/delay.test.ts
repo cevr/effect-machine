@@ -26,9 +26,11 @@ describe("Delay Transitions", () => {
   test("schedules event after duration with TestClock", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<NotifState, NotifEvent>(
-          NotifState.Showing({ message: "Hello" }),
-        ).pipe(
+        const machine = Machine.make({
+          state: NotifState,
+          event: NotifEvent,
+          initial: NotifState.Showing({ message: "Hello" }),
+        }).pipe(
           Machine.on(NotifState.Showing, NotifEvent.Dismiss, () => NotifState.Dismissed({})),
           Machine.delay(NotifState.Showing, "3 seconds", NotifEvent.Dismiss({})),
           Machine.final(NotifState.Dismissed),
@@ -60,9 +62,11 @@ describe("Delay Transitions", () => {
   test("cancels timer on state exit before delay", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<NotifState, NotifEvent>(
-          NotifState.Showing({ message: "Hello" }),
-        ).pipe(
+        const machine = Machine.make({
+          state: NotifState,
+          event: NotifEvent,
+          initial: NotifState.Showing({ message: "Hello" }),
+        }).pipe(
           Machine.on(NotifState.Showing, NotifEvent.Dismiss, () => NotifState.Dismissed({})),
           Machine.delay(NotifState.Showing, "3 seconds", NotifEvent.Dismiss({})),
           Machine.final(NotifState.Dismissed),

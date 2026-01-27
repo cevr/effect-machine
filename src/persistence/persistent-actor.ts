@@ -60,11 +60,9 @@ const buildPersistentActorRef = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
-  SSI,
-  ESI,
 >(
   id: string,
-  persistentMachine: PersistentMachine<S, E, R, SSI, ESI>,
+  persistentMachine: PersistentMachine<S, E, R>,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
   versionRef: Ref.Ref<number>,
   eventQueue: Queue.Queue<E>,
@@ -164,11 +162,9 @@ export const createPersistentActor = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
-  SSI,
-  ESI,
 >(
   id: string,
-  persistentMachine: PersistentMachine<S, E, R, SSI, ESI>,
+  persistentMachine: PersistentMachine<S, E, R>,
   initialSnapshot: Option.Option<Snapshot<S>>,
   initialEvents: ReadonlyArray<PersistedEvent<E>>,
 ): Effect.Effect<PersistentActorRef<S, E>, PersistenceError, R | PersistenceAdapterTag> =>
@@ -331,11 +327,9 @@ const persistentEventLoop = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
-  SSI,
-  ESI,
 >(
   id: string,
-  persistentMachine: PersistentMachine<S, E, R, SSI, ESI>,
+  persistentMachine: PersistentMachine<S, E, R>,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
   versionRef: Ref.Ref<number>,
   eventQueue: Queue.Queue<E>,
@@ -474,16 +468,11 @@ const persistentEventLoop = <
  * Save a snapshot after state transition.
  * Called inline in event loop to avoid race conditions.
  */
-const saveSnapshot = <
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
-  SSI,
-  ESI,
->(
+const saveSnapshot = <S extends { readonly _tag: string }, E extends { readonly _tag: string }>(
   id: string,
   state: S,
   version: number,
-  persistence: PersistentMachine<S, E, never, SSI, ESI>["persistence"],
+  persistence: PersistentMachine<S, E, never>["persistence"],
   adapter: PersistenceAdapter,
 ): Effect.Effect<void> => {
   const snapshot: Snapshot<S> = {
@@ -500,17 +489,12 @@ const saveSnapshot = <
  * Save or update actor metadata if adapter supports registry.
  * Called on spawn and state transitions.
  */
-const saveMetadata = <
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
-  SSI,
-  ESI,
->(
+const saveMetadata = <S extends { readonly _tag: string }, E extends { readonly _tag: string }>(
   id: string,
   state: S,
   version: number,
   createdAt: number,
-  persistence: PersistentMachine<S, E, never, SSI, ESI>["persistence"],
+  persistence: PersistentMachine<S, E, never>["persistence"],
   adapter: PersistenceAdapter,
 ): Effect.Effect<void> => {
   if (adapter.saveMetadata === undefined) {
@@ -597,11 +581,9 @@ export const restorePersistentActor = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
-  SSI,
-  ESI,
 >(
   id: string,
-  persistentMachine: PersistentMachine<S, E, R, SSI, ESI>,
+  persistentMachine: PersistentMachine<S, E, R>,
 ): Effect.Effect<
   Option.Option<PersistentActorRef<S, E>>,
   PersistenceError,

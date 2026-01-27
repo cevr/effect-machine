@@ -23,7 +23,7 @@
 
 // Core machine
 export { make } from "./machine.js";
-export type { EffectSlot, Machine, MachineRef, OnOptions } from "./machine.js";
+export type { EffectSlot, Machine, MachineRef, MakeConfig, OnOptions } from "./machine.js";
 
 // Combinators
 export { on } from "./combinators/on.js";

@@ -19,7 +19,11 @@ type CounterEvent = typeof CounterEvent.Type;
 
 describe("Machine", () => {
   test("creates machine with initial state using .pipe() syntax", () => {
-    const machine = Machine.make<CounterState, CounterEvent>(CounterState.Idle({ count: 0 })).pipe(
+    const machine = Machine.make({
+      state: CounterState,
+      event: CounterEvent,
+      initial: CounterState.Idle({ count: 0 }),
+    }).pipe(
       Machine.on(CounterState.Idle, CounterEvent.Start, ({ state }) =>
         CounterState.Counting({ count: state.count }),
       ),
@@ -31,9 +35,11 @@ describe("Machine", () => {
   test("defines transitions between states", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<CounterState, CounterEvent>(
-          CounterState.Idle({ count: 0 }),
-        ).pipe(
+        const machine = Machine.make({
+          state: CounterState,
+          event: CounterEvent,
+          initial: CounterState.Idle({ count: 0 }),
+        }).pipe(
           Machine.on(CounterState.Idle, CounterEvent.Start, ({ state }) =>
             CounterState.Counting({ count: state.count }),
           ),
@@ -62,9 +68,11 @@ describe("Machine", () => {
   test("supports guards", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<CounterState, CounterEvent>(
-          CounterState.Counting({ count: 0 }),
-        ).pipe(
+        const machine = Machine.make({
+          state: CounterState,
+          event: CounterEvent,
+          initial: CounterState.Counting({ count: 0 }),
+        }).pipe(
           Machine.on(
             CounterState.Counting,
             CounterEvent.Increment,
@@ -97,9 +105,11 @@ describe("Machine", () => {
       Effect.gen(function* () {
         const logs: string[] = [];
 
-        const machine = Machine.make<CounterState, CounterEvent>(
-          CounterState.Idle({ count: 0 }),
-        ).pipe(
+        const machine = Machine.make({
+          state: CounterState,
+          event: CounterEvent,
+          initial: CounterState.Idle({ count: 0 }),
+        }).pipe(
           Machine.on(
             CounterState.Idle,
             CounterEvent.Start,
@@ -124,7 +134,11 @@ describe("Machine", () => {
   });
 
   test("marks states as final", () => {
-    const machine = Machine.make<CounterState, CounterEvent>(CounterState.Idle({ count: 0 })).pipe(
+    const machine = Machine.make({
+      state: CounterState,
+      event: CounterEvent,
+      initial: CounterState.Idle({ count: 0 }),
+    }).pipe(
       Machine.on(CounterState.Idle, CounterEvent.Start, () => CounterState.Done({ count: 0 })),
       Machine.final(CounterState.Done),
     );

@@ -30,9 +30,11 @@ describe("on.force Transitions", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const baseMachine = Machine.make<PollState, PollEvent>(
-          PollState.Polling({ attempts: 0 }),
-        ).pipe(
+        const baseMachine = Machine.make({
+          state: PollState,
+          event: PollEvent,
+          initial: PollState.Polling({ attempts: 0 }),
+        }).pipe(
           Machine.on.force(PollState.Polling, PollEvent.Reset, ({ state }) =>
             PollState.Polling({ attempts: state.attempts + 1 }),
           ),
@@ -85,7 +87,11 @@ describe("on.force Transitions", () => {
   test("on.force restarts delay timer", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<PollState, PollEvent>(PollState.Polling({ attempts: 0 })).pipe(
+        const machine = Machine.make({
+          state: PollState,
+          event: PollEvent,
+          initial: PollState.Polling({ attempts: 0 }),
+        }).pipe(
           Machine.on.force(PollState.Polling, PollEvent.Reset, ({ state }) =>
             PollState.Polling({ attempts: state.attempts + 1 }),
           ),

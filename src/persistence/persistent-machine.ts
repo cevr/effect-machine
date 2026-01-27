@@ -8,8 +8,8 @@ type BrandedState = { readonly _tag: string } & StateBrand;
 type BrandedEvent = { readonly _tag: string } & EventBrand;
 
 /**
- * Configuration for persistence behavior.
- * Schemas must have no context requirements (use Schema<S, SI, never>).
+ * Configuration for persistence behavior (after resolution).
+ * Schemas are required at runtime - the persist function ensures this.
  *
  * Note: Schema types S and E should match the structural shape of the machine's
  * state and event types (without brands). The schemas don't know about brands.
@@ -34,13 +34,13 @@ export interface PersistenceConfig<S, E, SSI = unknown, ESI = unknown> {
 
   /**
    * Schema for serializing/deserializing state.
-   * Required for type-safe persistence.
+   * Always present at runtime (resolved from config or machine).
    */
   readonly stateSchema: Schema.Schema<S, SSI, never>;
 
   /**
    * Schema for serializing/deserializing events.
-   * Required for type-safe persistence.
+   * Always present at runtime (resolved from config or machine).
    */
   readonly eventSchema: Schema.Schema<E, ESI, never>;
 
@@ -60,12 +60,10 @@ export interface PersistentMachine<
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R = never,
-  SSI = unknown,
-  ESI = unknown,
 > {
   readonly _tag: "PersistentMachine";
   readonly machine: Machine<S, E, R>;
-  readonly persistence: PersistenceConfig<S, E, SSI, ESI>;
+  readonly persistence: PersistenceConfig<S, E>;
 }
 
 /**
@@ -73,13 +71,7 @@ export interface PersistentMachine<
  */
 export const isPersistentMachine = (
   value: unknown,
-): value is PersistentMachine<
-  { readonly _tag: string },
-  { readonly _tag: string },
-  unknown,
-  unknown,
-  unknown
-> =>
+): value is PersistentMachine<{ readonly _tag: string }, { readonly _tag: string }, unknown> =>
   typeof value === "object" &&
   value !== null &&
   "_tag" in value &&
@@ -88,40 +80,54 @@ export const isPersistentMachine = (
 /**
  * Attach persistence configuration to a machine.
  *
- * Note: The schema types don't need to include brands - they work with the
- * structural shape of the types. Brands are type-level only.
+ * Schemas are read from the machine - must use `Machine.make({ state, event, initial })`.
  *
  * @example
  * ```ts
- * const orderMachine = Machine.make<State, Event>(State.Idle()).pipe(
- *   Machine.on(State.Idle, Event.Submit, ({ event }) => State.Pending({ orderId: event.orderId })),
- *   Machine.final(State.Paid),
+ * const orderMachine = Machine.make({
+ *   state: OrderState,
+ *   event: OrderEvent,
+ *   initial: OrderState.Idle({}),
+ * }).pipe(
+ *   Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
+ *     OrderState.Pending({ orderId: event.orderId })
+ *   ),
+ *   Machine.final(OrderState.Paid),
  *   Machine.persist({
  *     snapshotSchedule: Schedule.forever,
  *     journalEvents: true,
- *     stateSchema: StateSchema,
- *     eventSchema: EventSchema,
  *   }),
  * );
  * ```
  */
-// Type for config to allow flexible schema typing
-interface WithPersistenceConfig<SSI, ESI> {
+interface WithPersistenceConfig {
   readonly snapshotSchedule: Schedule.Schedule<unknown, { readonly _tag: string }>;
   readonly journalEvents: boolean;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- schemas operate on unbranded types
-  readonly stateSchema: Schema.Schema<any, SSI, never>;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- schemas operate on unbranded types
-  readonly eventSchema: Schema.Schema<any, ESI, never>;
   readonly machineType?: string;
 }
 
 export const persist =
-  <SSI = unknown, ESI = unknown>(config: WithPersistenceConfig<SSI, ESI>) =>
+  (config: WithPersistenceConfig) =>
   <S extends BrandedState, E extends BrandedEvent, R>(
     machine: Machine<S, E, R>,
-  ): PersistentMachine<S, E, R, SSI, ESI> => ({
-    _tag: "PersistentMachine",
-    machine,
-    persistence: config as unknown as PersistenceConfig<S, E, SSI, ESI>,
-  });
+  ): PersistentMachine<S, E, R> => {
+    const stateSchema = machine.stateSchema;
+    const eventSchema = machine.eventSchema;
+
+    if (stateSchema === undefined || eventSchema === undefined) {
+      throw new Error(
+        "persist requires schemas attached to the machine. " +
+          "Use Machine.make({ state, event, initial }) to create the machine.",
+      );
+    }
+
+    return {
+      _tag: "PersistentMachine",
+      machine,
+      persistence: {
+        ...config,
+        stateSchema,
+        eventSchema,
+      } as unknown as PersistenceConfig<S, E>,
+    };
+  };

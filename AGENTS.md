@@ -14,7 +14,8 @@ bun run fmt           # oxfmt
 ## Conventions
 
 - Files: kebab-case (`actor-system.ts`, `on-enter.ts`)
-- States/Events: use branded `State<T>` / `Event<T>` types and constructors (NOT `Data.TaggedEnum`)
+- States/Events: schema-first with `State({...})` / `Event({...})` - they ARE schemas
+- Machine creation: `Machine.make({ state, event, initial })` - types inferred from schemas
 - Exports: all public API via `src/index.ts`
 - Strict Effect config: see `tsconfig.json` for `@effect/language-service` rules
 - Namespace pattern: `import { Machine } from "effect-machine"` then `Machine.make`, `Machine.on`, etc.
@@ -37,6 +38,7 @@ bun run fmt           # oxfmt
 - `namespace.ts` exports Machine namespace (not `Machine.ts` - macOS case-insensitivity)
 - Branded types: `State<T>` / `Event<T>` prevent accidental swap at compile time
 - Brand is phantom (type-level only) - runtime values identical to `Data.TaggedEnum`
+- Schemas attached to machine: `persist` and `toEntity` infer schemas automatically
 
 ## Effect Slots
 

@@ -83,9 +83,11 @@ describe("Menu Navigation Pattern", () => {
     ({ state, event }) => state.pageId !== event.pageId,
   );
 
-  const menuMachine = Machine.make<MenuState, MenuEvent>(
-    MenuState.Browsing({ pageId: "food", sectionIndex: 0, itemIndex: null }),
-  ).pipe(
+  const menuMachine = Machine.make({
+    state: MenuState,
+    event: MenuEvent,
+    initial: MenuState.Browsing({ pageId: "food", sectionIndex: 0, itemIndex: null }),
+  }).pipe(
     // Browsing state handlers
     Machine.from(MenuState.Browsing).pipe(
       // Page navigation with guard cascade

@@ -19,9 +19,11 @@ describe("Always Transitions", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<TestState, TestEvent>(
-          TestState.Calculating({ value: 75 }),
-        ).pipe(
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Calculating({ value: 75 }),
+        }).pipe(
           Machine.always(TestState.Calculating, [
             { guard: (s) => s.value >= 70, to: (s) => TestState.High({ value: s.value }) },
             { to: (s) => TestState.Low({ value: s.value }) },
@@ -51,7 +53,11 @@ describe("Always Transitions", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<TestState, TestEvent>(TestState.A({ n: 0 })).pipe(
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.A({ n: 0 }),
+        }).pipe(
           Machine.always(TestState.A, [{ to: (s) => TestState.B({ n: s.n + 1 }) }]),
           Machine.always(TestState.B, [{ to: (s) => TestState.C({ n: s.n + 1 }) }]),
           Machine.always(TestState.C, [{ to: (s) => TestState.Done({ n: s.n + 1 }) }]),
@@ -81,7 +87,11 @@ describe("Always Transitions", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<TestState, TestEvent>(TestState.Input({ value: 50 })).pipe(
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Input({ value: 50 }),
+        }).pipe(
           Machine.always(TestState.Input, [
             { guard: (s) => s.value >= 70, to: () => TestState.High({}) },
             { guard: (s) => s.value >= 40, to: () => TestState.Medium({}) },

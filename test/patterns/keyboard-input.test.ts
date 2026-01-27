@@ -29,9 +29,11 @@ describe("Keyboard Input Pattern", () => {
   });
   type KeyboardEvent = typeof KeyboardEvent.Type;
 
-  const keyboardMachine = Machine.make<KeyboardState, KeyboardEvent>(
-    KeyboardState.Idle({ value: "", mode: "insert" }),
-  ).pipe(
+  const keyboardMachine = Machine.make({
+    state: KeyboardState,
+    event: KeyboardEvent,
+    initial: KeyboardState.Idle({ value: "", mode: "insert" }),
+  }).pipe(
     // Focus activates keyboard
     Machine.on(KeyboardState.Idle, KeyboardEvent.Focus, ({ state }) =>
       KeyboardState.Typing({ value: state.value, mode: state.mode }),

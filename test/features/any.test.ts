@@ -34,9 +34,11 @@ describe("Machine.any", () => {
   test("matches multiple states with single handler", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<EditorState, EditorEvent>(
-          EditorState.Typing({ text: "hello" }),
-        ).pipe(
+        const machine = Machine.make({
+          state: EditorState,
+          event: EditorEvent,
+          initial: EditorState.Typing({ text: "hello" }),
+        }).pipe(
           Machine.on(EditorState.Typing, EditorEvent.Submit, ({ state }) =>
             EditorState.Submitting({ text: state.text }),
           ),
@@ -61,9 +63,11 @@ describe("Machine.any", () => {
   test("any() works with guards", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<EditorState, EditorEvent>(
-          EditorState.Typing({ text: "abc" }),
-        ).pipe(
+        const machine = Machine.make({
+          state: EditorState,
+          event: EditorEvent,
+          initial: EditorState.Typing({ text: "abc" }),
+        }).pipe(
           Machine.on(EditorState.Typing, EditorEvent.Submit, ({ state }) =>
             EditorState.Submitting({ text: state.text }),
           ),
@@ -87,9 +91,11 @@ describe("Machine.any", () => {
       Effect.gen(function* () {
         const logs: string[] = [];
 
-        const machine = Machine.make<EditorState, EditorEvent>(
-          EditorState.Typing({ text: "" }),
-        ).pipe(
+        const machine = Machine.make({
+          state: EditorState,
+          event: EditorEvent,
+          initial: EditorState.Typing({ text: "" }),
+        }).pipe(
           Machine.on(EditorState.Typing, EditorEvent.Submit, ({ state }) =>
             EditorState.Submitting({ text: state.text }),
           ),
@@ -124,17 +130,19 @@ describe("Machine.any", () => {
       D: {},
       Done: {},
     });
-    type MultiState = typeof S.Type;
 
     const E = Event({
       Next: {},
       Finish: {},
     });
-    type MultiEvent = typeof E.Type;
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<MultiState, MultiEvent>(S.A({})).pipe(
+        const machine = Machine.make({
+          state: S,
+          event: E,
+          initial: S.A({}),
+        }).pipe(
           Machine.on(S.A, E.Next, () => S.B({})),
           Machine.on(S.B, E.Next, () => S.C({})),
           Machine.on(S.C, E.Next, () => S.D({})),
@@ -187,7 +195,11 @@ describe("Machine namespace", () => {
   test("full Machine namespace usage", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const machine = Machine.make<EditorState, EditorEvent>(EditorState.Idle({})).pipe(
+        const machine = Machine.make({
+          state: EditorState,
+          event: EditorEvent,
+          initial: EditorState.Idle({}),
+        }).pipe(
           Machine.from(EditorState.Idle).pipe(
             Machine.on(EditorEvent.Focus, () => EditorState.Typing({ text: "" })),
           ),

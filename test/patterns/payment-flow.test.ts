@@ -65,7 +65,11 @@ describe("Payment Flow Pattern", () => {
     ({ state }) => state.canRetry && state.attempts < 3,
   );
 
-  const paymentMachine = Machine.make<PaymentState, PaymentEvent>(PaymentState.Idle({})).pipe(
+  const paymentMachine = Machine.make({
+    state: PaymentState,
+    event: PaymentEvent,
+    initial: PaymentState.Idle({}),
+  }).pipe(
     // Start checkout
     Machine.on(PaymentState.Idle, PaymentEvent.StartCheckout, ({ event }) =>
       PaymentState.SelectingMethod({ amount: event.amount }),

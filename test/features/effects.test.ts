@@ -30,7 +30,11 @@ describe("Effect Slots", () => {
   type FetchEvent = typeof FetchEvent.Type;
 
   // Machine with effect slots
-  const baseMachine = Machine.make<FetchState, FetchEvent>(FetchState.Idle({})).pipe(
+  const baseMachine = Machine.make({
+    state: FetchState,
+    event: FetchEvent,
+    initial: FetchState.Idle({}),
+  }).pipe(
     Machine.on(FetchState.Idle, FetchEvent.Fetch, ({ event }) =>
       FetchState.Loading({ url: event.url }),
     ),
@@ -228,7 +232,11 @@ describe("Effect Slots", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         // Using the pipeable form - handlers first, then machine
-        const providedMachine = Machine.make<FetchState, FetchEvent>(FetchState.Idle({})).pipe(
+        const providedMachine = Machine.make({
+          state: FetchState,
+          event: FetchEvent,
+          initial: FetchState.Idle({}),
+        }).pipe(
           Machine.on(FetchState.Idle, FetchEvent.Fetch, ({ event }) =>
             FetchState.Loading({ url: event.url }),
           ),
@@ -280,7 +288,11 @@ describe("Effect Slots", () => {
         });
         type TimerEvent = typeof TimerEvent.Type;
 
-        const timerMachine = Machine.make<TimerState, TimerEvent>(TimerState.Running({})).pipe(
+        const timerMachine = Machine.make({
+          state: TimerState,
+          event: TimerEvent,
+          initial: TimerState.Running({}),
+        }).pipe(
           Machine.on(TimerState.Running, TimerEvent.Stop, () => TimerState.Stopped({})),
           Machine.invoke(TimerState.Running, "runTimer"),
           Machine.final(TimerState.Stopped),

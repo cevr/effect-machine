@@ -10,28 +10,13 @@ import type { Schema } from "effect";
 import type { Machine } from "../machine.js";
 
 /**
- * Options for toEntity
+ * Options for toEntity.
  */
-export interface ToEntityOptions<
-  StateSchema extends Schema.Schema.Any,
-  EventSchema extends Schema.Schema.Any,
-> {
+export interface ToEntityOptions {
   /**
    * Entity type name (e.g., "Order", "User")
    */
   readonly type: string;
-
-  /**
-   * Schema for state serialization.
-   * Can be a MachineSchema.State or any Schema.Schema.
-   */
-  readonly stateSchema: StateSchema;
-
-  /**
-   * Schema for event serialization.
-   * Can be a MachineSchema.Event or any Schema.Schema.
-   */
-  readonly eventSchema: EventSchema;
 }
 
 /**
@@ -61,28 +46,28 @@ export type EntityRpcs<
  * - `Send(event)` - Process event through machine, returns new state
  * - `GetState()` - Returns current state
  *
+ * Schemas are read from the machine - must use `Machine.make({ state, event, initial })`.
+ *
  * @example
  * ```ts
- * const OrderState = MachineSchema.State({
+ * const OrderState = State({
  *   Pending: { orderId: Schema.String },
  *   Shipped: { trackingId: Schema.String },
  * })
  *
- * const OrderEvent = MachineSchema.Event({
+ * const OrderEvent = Event({
  *   Ship: { trackingId: Schema.String },
  * })
  *
- * const orderMachine = Machine.make(OrderState.Pending({ orderId: "" })).pipe(
+ * const orderMachine = Machine.make({
+ *   state: OrderState,
+ *   event: OrderEvent,
+ *   initial: OrderState.Pending({ orderId: "" }),
+ * }).pipe(
  *   Machine.on(OrderState.Pending, OrderEvent.Ship, ...),
  * )
  *
- * const OrderEntity = toEntity(orderMachine, {
- *   type: "Order",
- *   stateSchema: OrderState,
- *   eventSchema: OrderEvent,
- * })
- *
- * // Use with EntityMachine.layer() to wire the machine
+ * const OrderEntity = toEntity(orderMachine, { type: "Order" })
  * ```
  */
 export const toEntity = <
@@ -90,19 +75,27 @@ export const toEntity = <
   E extends { readonly _tag: string },
   R,
   Effects extends string,
-  StateSchema extends Schema.Schema.Any,
-  EventSchema extends Schema.Schema.Any,
 >(
-  _machine: Machine<S, E, R, Effects>,
-  options: ToEntityOptions<StateSchema, EventSchema>,
+  machine: Machine<S, E, R, Effects>,
+  options: ToEntityOptions,
 ) => {
+  const stateSchema = machine.stateSchema;
+  const eventSchema = machine.eventSchema;
+
+  if (stateSchema === undefined || eventSchema === undefined) {
+    throw new Error(
+      "toEntity requires schemas attached to the machine. " +
+        "Use Machine.make({ state, event, initial }) to create the machine.",
+    );
+  }
+
   return Entity.make(options.type, [
     Rpc.make("Send", {
-      payload: { event: options.eventSchema },
-      success: options.stateSchema,
+      payload: { event: eventSchema },
+      success: stateSchema,
     }),
     Rpc.make("GetState", {
-      success: options.stateSchema,
+      success: stateSchema,
     }),
   ]);
 };

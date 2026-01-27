@@ -28,7 +28,11 @@ const TestEvent = Event({
 type TestEvent = typeof TestEvent.Type;
 
 const createTestMachine = () =>
-  Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+  Machine.make({
+    state: TestState,
+    event: TestEvent,
+    initial: TestState.Idle(),
+  }).pipe(
     Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
       TestState.Loading({ value: event.value }),
     ),

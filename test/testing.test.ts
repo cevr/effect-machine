@@ -27,7 +27,11 @@ const TestEvent = Event({
 });
 type TestEvent = typeof TestEvent.Type;
 
-const testMachine = Machine.make<TestState, TestEvent>(TestState.Idle()).pipe(
+const testMachine = Machine.make({
+  state: TestState,
+  event: TestEvent,
+  initial: TestState.Idle(),
+}).pipe(
   Machine.on(TestState.Idle, TestEvent.Fetch, () => TestState.Loading()),
   Machine.on(TestState.Loading, TestEvent.Resolve, ({ event }) =>
     TestState.Success({ data: event.data }),
