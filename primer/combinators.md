@@ -145,6 +145,13 @@ The polling fiber is interrupted when exiting `Polling` state.
 Wire handlers to all effect slots. Required before spawning.
 
 ```typescript
+// Data-last (pipeable)
+Machine.provide({
+  slotName: (ctx) => Effect<void>,
+  ...
+})
+
+// Data-first
 Machine.provide(machine, {
   slotName: (ctx) => Effect<void>,
   ...
@@ -154,8 +161,27 @@ Machine.provide(machine, {
 **Example:**
 
 ```typescript
+// Pipeable form - all in one pipe
+const liveMachine = Machine.make<State, Event>(State.Idle()).pipe(
+  Machine.on(State.Idle, Event.Fetch, ({ event }) => State.Loading({ url: event.url })),
+  Machine.on(State.Loading, Event.Resolve, ({ event }) => State.Success({ data: event.data })),
+  Machine.invoke(State.Loading, "fetchData"),
+  Machine.onEnter(State.Success, "notify"),
+  Machine.build,
+  Machine.provide({
+    fetchData: ({ state, self }) =>
+      Effect.gen(function* () {
+        const data = yield* httpClient.get(state.url);
+        yield* self.send(Event.Resolve({ data }));
+      }),
+    notify: ({ state }) => Effect.log(`Done: ${state.data}`),
+  }),
+);
+
+// Or split for different implementations
 const baseMachine = Machine.make<State, Event>(State.Idle()).pipe(
   Machine.on(State.Idle, Event.Fetch, ({ event }) => State.Loading({ url: event.url })),
+  Machine.on(State.Loading, Event.Resolve, ({ event }) => State.Success({ data: event.data })),
   Machine.invoke(State.Loading, "fetchData"),
   Machine.onEnter(State.Success, "notify"),
   Machine.build,

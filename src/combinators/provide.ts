@@ -44,29 +44,61 @@ const PipeableProto = {
  *   Machine.invoke(State.Loading, "fetchData"),
  *   Machine.onEnter(State.Success, "notifyUser"),
  *   Machine.onExit(State.Loading, "cleanup"),
+ *   Machine.build,
+ *   Machine.provide({
+ *     fetchData: ({ state, self }) =>
+ *       Effect.gen(function* () {
+ *         const data = yield* fetchFromApi(state.url)
+ *         yield* self.send(Event.Resolve({ data }))
+ *       }),
+ *     notifyUser: ({ state }) => Effect.log(`Success: ${state.data}`),
+ *     cleanup: () => Effect.void,
+ *   }),
  * )
- *
- * // Provide implementations for production
- * const FetchMachineLive = Machine.provide(FetchMachine, {
- *   fetchData: ({ state, self }) =>
- *     Effect.gen(function* () {
- *       const http = yield* HttpClient
- *       const data = yield* http.get(state.url)
- *       yield* self.send(Event.Resolve({ data }))
- *     }),
- *   notifyUser: ({ state }) => Effect.log(`Success: ${state.data}`),
- *   cleanup: () => Effect.void,
- * })
- *
- * // Provide mock implementations for testing
- * const FetchMachineTest = Machine.provide(FetchMachine, {
- *   fetchData: ({ self }) => self.send(Event.Resolve({ data: "mock" })),
- *   notifyUser: () => Effect.void,
- *   cleanup: () => Effect.void,
- * })
  * ```
  */
 export function provide<
+  State extends BrandedState,
+  Event extends BrandedEvent,
+  Effects extends string,
+  R2,
+>(
+  handlers: EffectHandlers<State, Event, Effects, R2>,
+): <R>(machine: Machine<State, Event, R, Effects>) => Machine<State, Event, R | R2, never>;
+
+export function provide<
+  State extends BrandedState,
+  Event extends BrandedEvent,
+  R,
+  Effects extends string,
+  R2,
+>(
+  machine: Machine<State, Event, R, Effects>,
+  handlers: EffectHandlers<State, Event, Effects, R2>,
+): Machine<State, Event, R | R2, never>;
+
+export function provide<
+  State extends BrandedState,
+  Event extends BrandedEvent,
+  R,
+  Effects extends string,
+  R2,
+>(
+  machineOrHandlers: Machine<State, Event, R, Effects> | EffectHandlers<State, Event, Effects, R2>,
+  handlers?: EffectHandlers<State, Event, Effects, R2>,
+):
+  | Machine<State, Event, R | R2, never>
+  | (<R3>(machine: Machine<State, Event, R3, Effects>) => Machine<State, Event, R3 | R2, never>) {
+  // Data-last (curried) form: provide(handlers)
+  if (handlers === undefined) {
+    const h = machineOrHandlers as EffectHandlers<State, Event, Effects, R2>;
+    return <R3>(machine: Machine<State, Event, R3, Effects>) => provideImpl(machine, h);
+  }
+  // Data-first form: provide(machine, handlers)
+  return provideImpl(machineOrHandlers as Machine<State, Event, R, Effects>, handlers);
+}
+
+function provideImpl<
   State extends BrandedState,
   Event extends BrandedEvent,
   R,

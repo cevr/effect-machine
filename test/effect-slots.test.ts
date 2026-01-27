@@ -222,6 +222,48 @@ describe("Effect Slots", () => {
     }
   });
 
+  test("Machine.provide is pipeable (data-last)", async () => {
+    const log: string[] = [];
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        // Using the pipeable form - handlers first, then machine
+        const providedMachine = Machine.make<FetchState, FetchEvent>(FetchState.Idle()).pipe(
+          Machine.on(FetchState.Idle, FetchEvent.Fetch, ({ event }) =>
+            FetchState.Loading({ url: event.url }),
+          ),
+          Machine.on(FetchState.Loading, FetchEvent.Resolve, ({ event }) =>
+            FetchState.Success({ data: event.data }),
+          ),
+          Machine.invoke(FetchState.Loading, "fetchData"),
+          Machine.onEnter(FetchState.Success, "notify"),
+          Machine.final(FetchState.Success),
+          Machine.build,
+          Machine.provide({
+            fetchData: ({ self }) =>
+              Effect.gen(function* () {
+                log.push("fetch");
+                yield* self.send(FetchEvent.Resolve({ data: "piped" }));
+              }),
+            notify: () => Effect.sync(() => log.push("notify")),
+          }),
+        );
+
+        expect(providedMachine.effectSlots.size).toBe(0);
+
+        const system = yield* ActorSystemService;
+        const actor = yield* system.spawn("piped", providedMachine);
+
+        yield* actor.send(FetchEvent.Fetch({ url: "/api" }));
+        yield* yieldFibers;
+
+        const state = yield* actor.snapshot;
+        expect(state._tag).toBe("Success");
+        expect(log).toEqual(["fetch", "notify"]);
+      }).pipe(Effect.scoped, Effect.provide(ActorSystemDefault)),
+    );
+  });
+
   test("invoke cancels on state exit", async () => {
     const log: string[] = [];
 
