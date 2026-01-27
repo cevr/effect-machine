@@ -4,6 +4,7 @@ import type { ActorRef } from "../actor-ref.js";
 import type { Machine, MachineRef } from "../machine.js";
 import type { InspectionEvent, Inspector } from "../inspection.js";
 import { Inspector as InspectorTag } from "../inspection.js";
+import { findTransitions, findAlwaysTransitions } from "./transition-index.js";
 
 /** Listener set for sync subscriptions */
 type Listeners<S> = Set<(state: S) => void>;
@@ -25,7 +26,8 @@ const now = (): number => Date.now();
 
 /**
  * Resolve which transition should fire for a given state and event.
- * Iterates transitions in registration order; first guard pass wins.
+ * Uses indexed O(1) lookup, then evaluates guards in registration order.
+ * First guard pass wins.
  */
 export const resolveTransition = <
   S extends { readonly _tag: string },
@@ -38,11 +40,10 @@ export const resolveTransition = <
   actorId?: string,
   inspector?: Inspector<S, E>,
 ): Machine<S, E, R>["transitions"][number] | undefined => {
+  const candidates = findTransitions(machine, currentState._tag, event._tag);
+
   let guardIndex = 0;
-  for (const transition of machine.transitions) {
-    if (transition.stateTag !== currentState._tag || transition.eventTag !== event._tag) {
-      continue;
-    }
+  for (const transition of candidates) {
     // If no guard, this transition wins
     if (transition.guard === undefined) {
       return transition;
@@ -76,7 +77,8 @@ export const resolveTransition = <
 
 /**
  * Resolve which always transition should fire for the current state.
- * Iterates always transitions in registration order; first guard pass wins.
+ * Uses indexed O(1) lookup, then evaluates guards in registration order.
+ * First guard pass wins.
  */
 export const resolveAlwaysTransition = <
   S extends { readonly _tag: string },
@@ -86,10 +88,9 @@ export const resolveAlwaysTransition = <
   machine: Machine<S, E, R>,
   currentState: S,
 ): Machine<S, E, R>["alwaysTransitions"][number] | undefined => {
-  for (const transition of machine.alwaysTransitions) {
-    if (transition.stateTag !== currentState._tag) {
-      continue;
-    }
+  const candidates = findAlwaysTransitions(machine, currentState._tag);
+
+  for (const transition of candidates) {
     // If no guard, or guard passes, this transition wins
     if (transition.guard === undefined || transition.guard(currentState)) {
       return transition;

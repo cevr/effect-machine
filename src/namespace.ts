@@ -51,3 +51,6 @@ export type { StateMatcher } from "./combinators/any.js";
 // Persistence
 export { persist } from "./persistence/index.js";
 export type { PersistenceConfig, PersistentMachine } from "./persistence/index.js";
+
+// Transition lookup
+export { findTransitions, findAlwaysTransitions } from "./internal/transition-index.js";

@@ -1,9 +1,9 @@
 // Machine namespace (Effect-style)
 export * as Machine from "./namespace.js";
 
-// Branded State and Event types
-export { State } from "./state.js";
-export { Event } from "./event.js";
+// Schema-first State/Event definitions (single source of truth)
+export { State, Event } from "./machine-schema.js";
+export type { MachineStateSchema, MachineEventSchema } from "./machine-schema.js";
 
 // Core machine types and constructors
 export type {
