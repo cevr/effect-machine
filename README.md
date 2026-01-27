@@ -4,12 +4,14 @@ Type-safe state machines for Effect. XState-inspired API with full Effect integr
 
 ## Features
 
-- **Type-safe transitions** - branded `State<T>` and `Event<T>` types prevent mixups at compile time
+- **Schema-first** - `State` and `Event` ARE schemas. Single source of truth for types and serialization
+- **Type-safe transitions** - types inferred from schemas, no manual type params needed
 - **Guard composition** - `Guard.and`, `Guard.or`, `Guard.not`
 - **Eventless transitions** - `always` for computed state changes
 - **Delayed transitions** - `delay` with TestClock support
 - **Actor model** - spawn machines as actors with lifecycle management
 - **Persistence** - snapshot and event sourcing with pluggable adapters
+- **Cluster support** - `toEntity` for @effect/cluster integration
 - **Effect-native** - full integration with Effect runtime, layers, and testing
 
 ## Install
@@ -21,28 +23,32 @@ bun add effect-machine effect
 ## Quick Start
 
 ```typescript
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { Machine, State, Event, simulate } from "effect-machine";
 
-// Define states with branded types
-type MyState = State<{
-  Idle: {};
-  Loading: { url: string };
-  Success: { data: string };
-  Error: { message: string };
-}>;
-const MyState = State<MyState>();
+// Define states with schema (schema-first - no separate type definition needed)
+const MyState = State({
+  Idle: {},
+  Loading: { url: Schema.String },
+  Success: { data: Schema.String },
+  Error: { message: Schema.String },
+});
+type MyState = typeof MyState.Type;
 
-// Define events with branded types
-type MyEvent = Event<{
-  Fetch: { url: string };
-  Resolve: { data: string };
-  Reject: { message: string };
-}>;
-const MyEvent = Event<MyEvent>();
+// Define events with schema
+const MyEvent = Event({
+  Fetch: { url: Schema.String },
+  Resolve: { data: Schema.String },
+  Reject: { message: Schema.String },
+});
+type MyEvent = typeof MyEvent.Type;
 
-// Build machine using namespace
-const machine = Machine.make<MyState, MyEvent>(MyState.Idle()).pipe(
+// Build machine - types inferred from schemas
+const machine = Machine.make({
+  state: MyState,
+  event: MyEvent,
+  initial: MyState.Idle(),
+}).pipe(
   Machine.on(MyState.Idle, MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url })),
   Machine.on(MyState.Loading, MyEvent.Resolve, ({ event }) =>
     MyState.Success({ data: event.data }),
@@ -71,7 +77,11 @@ Effect.runPromise(
 Group transitions by source state:
 
 ```typescript
-const machine = Machine.make<MyState, MyEvent>(MyState.Idle()).pipe(
+const machine = Machine.make({
+  state: MyState,
+  event: MyEvent,
+  initial: MyState.Idle(),
+}).pipe(
   Machine.from(MyState.Idle).pipe(
     Machine.on(MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url })),
   ),
@@ -98,7 +108,11 @@ Effects (`invoke`, `onEnter`, `onExit`) use named slots. Provide handlers via `M
 
 ```typescript
 // Define machine with effect slots
-const baseMachine = Machine.make<MyState, MyEvent>(MyState.Idle()).pipe(
+const baseMachine = Machine.make({
+  state: MyState,
+  event: MyEvent,
+  initial: MyState.Idle(),
+}).pipe(
   Machine.on(MyState.Idle, MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url })),
   Machine.on(MyState.Loading, MyEvent.Resolve, ({ event }) =>
     MyState.Success({ data: event.data }),
@@ -127,6 +141,27 @@ const testMachine = Machine.provide(baseMachine, {
 
 `simulate()` works without providing effects (pure transitions only).
 
+## Persistence
+
+Schemas attached to machine - no need to pass them again:
+
+```typescript
+const persistentMachine = Machine.make({
+  state: OrderState,
+  event: OrderEvent,
+  initial: OrderState.Pending({ orderId: "" }),
+}).pipe(
+  Machine.on(OrderState.Pending, OrderEvent.Ship, ({ event }) =>
+    OrderState.Shipped({ trackingId: event.trackingId }),
+  ),
+  Machine.final(OrderState.Shipped),
+  Machine.persist({
+    snapshotSchedule: Schedule.forever,
+    journalEvents: true,
+  }),
+);
+```
+
 ## Documentation
 
 See the [primer](./primer/) for comprehensive documentation:
@@ -142,13 +177,13 @@ See the [primer](./primer/) for comprehensive documentation:
 
 ### Core
 
-| Export          | Description                        |
-| --------------- | ---------------------------------- |
-| `State<T>`      | Branded state type and constructor |
-| `Event<T>`      | Branded event type and constructor |
-| `Machine.make`  | Create machine with initial state  |
-| `Machine.on`    | Add state/event transition         |
-| `Machine.final` | Mark state as final                |
+| Export          | Description                                    |
+| --------------- | ---------------------------------------------- |
+| `State({...})`  | Schema-first state definition                  |
+| `Event({...})`  | Schema-first event definition                  |
+| `Machine.make`  | Create machine with `{ state, event, initial}` |
+| `Machine.on`    | Add state/event transition                     |
+| `Machine.final` | Mark state as final                            |
 
 ### Combinators
 
@@ -165,6 +200,7 @@ See the [primer](./primer/) for comprehensive documentation:
 | `Machine.onEnter` | Register entry effect slot (provide handler)  |
 | `Machine.onExit`  | Register exit effect slot (provide handler)   |
 | `Machine.provide` | Wire effect handlers to named slots           |
+| `Machine.persist` | Add persistence (schemas from machine)        |
 
 ### Guards
 
@@ -198,6 +234,12 @@ See the [primer](./primer/) for comprehensive documentation:
 | `Machine.persist`            | Add persistence to a machine   |
 | `InMemoryPersistenceAdapter` | In-memory adapter for testing  |
 | `PersistenceAdapterTag`      | Service tag for custom adapter |
+
+### Cluster
+
+| Export     | Description                                     |
+| ---------- | ----------------------------------------------- |
+| `toEntity` | Generate Entity from machine (schemas inferred) |
 
 ## License
 

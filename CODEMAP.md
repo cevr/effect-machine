@@ -6,12 +6,12 @@
 src/
 ├── index.ts              # Public exports
 ├── namespace.ts          # Machine namespace (Effect-style API)
-├── state.ts              # Branded State.TaggedEnum wrapper
-├── event.ts              # Branded Event.TaggedEnum wrapper
-├── machine.ts            # Core types (Machine, Transition, OnOptions)
+├── machine-schema.ts     # Schema-first State/Event (MachineStateSchema, MachineEventSchema)
+├── machine.ts            # Core types (Machine, MakeConfig, Transition)
 ├── actor-ref.ts          # Actor reference interface
 ├── actor-system.ts       # Actor system service + layer
 ├── testing.ts            # Test utilities (simulate, harness, assertions)
+├── inspection.ts         # Inspector service for debugging
 ├── combinators/
 │   ├── on.ts             # State/event transitions (on, on.force, scoped variant)
 │   ├── from.ts           # State scoping (Machine.from(State).pipe(...))
@@ -25,6 +25,14 @@ src/
 │   ├── on-enter.ts       # Named onEnter slot (effect provided via Machine.provide)
 │   ├── on-exit.ts        # Named onExit slot (effect provided via Machine.provide)
 │   └── provide.ts        # Machine.provide - wires effect handlers to slots
+├── persistence/
+│   ├── adapter.ts        # PersistenceAdapter interface + tags
+│   ├── persistent-machine.ts  # Machine.persist combinator
+│   ├── persistent-actor.ts    # PersistentActorRef implementation
+│   └── in-memory.ts      # InMemoryPersistenceAdapter
+├── cluster/
+│   ├── index.ts          # Cluster exports
+│   └── to-entity.ts      # toEntity - generates Entity from machine
 └── internal/
     ├── loop.ts           # Event loop, transition resolver, actor creation
     ├── types.ts          # Internal types (contexts, Guard module)
@@ -34,43 +42,44 @@ src/
 test/
 ├── machine.test.ts       # Core machine tests
 ├── actor-system.test.ts  # Actor spawning/lifecycle
-├── actor-ref.test.ts     # ActorRef ergonomics (snapshot, matches, can, subscribe)
-├── testing.test.ts       # Test utilities (assertPath, assertNeverReaches, onTransition)
+├── actor-ref.test.ts     # ActorRef ergonomics
+├── persistence.test.ts   # Persistence tests
+├── testing.test.ts       # Test utilities
+├── machine-schema.test.ts # Schema-first State/Event tests
+├── transition-index.test.ts # O(1) transition lookup tests
+├── inspection.test.ts    # Inspector tests
 ├── features/             # Feature-specific tests
-│   ├── always-transitions.test.ts
-│   ├── assign-update.test.ts
+│   ├── always.test.ts
+│   ├── any.test.ts
+│   ├── assign.test.ts
 │   ├── choose.test.ts
 │   ├── delay.test.ts
 │   ├── dynamic-delay.test.ts
-│   ├── from-any.test.ts          # Machine.from() and Machine.any() combinators
-│   ├── guard-composition.test.ts
-│   ├── internal-transitions.test.ts
-│   └── reenter.test.ts
-└── patterns/             # Real-world pattern tests (from bite analysis)
-    ├── payment-flow.test.ts      # Guard cascade, retry, Machine.any() for Cancel
-    ├── session-lifecycle.test.ts # Machine.from() scoping, always transitions, timeout
-    ├── keyboard-input.test.ts    # Machine.from() scoping, mode switching
-    └── menu-navigation.test.ts   # Machine.from() scoping, guard-based routing
+│   ├── effects.test.ts
+│   ├── force.test.ts
+│   ├── from.test.ts
+│   ├── guards.test.ts
+│   └── same-state.test.ts
+├── patterns/             # Real-world pattern tests
+│   ├── payment-flow.test.ts
+│   ├── session-lifecycle.test.ts
+│   ├── keyboard-input.test.ts
+│   └── menu-navigation.test.ts
+└── integration/
+    └── cluster.test.ts   # @effect/cluster integration
 ```
 
 ## Key Files
 
-| File                     | Purpose                                                             |
-| ------------------------ | ------------------------------------------------------------------- |
-| `state.ts`               | Branded `State.TaggedEnum` wrapper - prevents State/Event mixup     |
-| `event.ts`               | Branded `Event.TaggedEnum` wrapper - prevents State/Event mixup     |
-| `internal/brands.ts`     | `StateBrand`/`EventBrand` using Effect's `Brand` (phantom types)    |
-| `namespace.ts`           | Machine namespace export (named `namespace.ts` for macOS compat)    |
-| `internal/loop.ts`       | Event processing, `resolveTransition`, `applyAlways`, `createActor` |
-| `internal/types.ts`      | `TransitionContext`, `StateEffectContext`, `Guard` module           |
-| `machine.ts`             | `Machine`, `Transition`, `OnOptions` interfaces                     |
-| `actor-ref.ts`           | `ActorRef` interface with ergonomic helpers                         |
-| `testing.ts`             | `simulate`, `createTestHarness`, `assertPath`, `assertNeverReaches` |
-| `combinators/from.ts`    | `StateScope` for scoped transitions, custom `.pipe()` impl          |
-| `combinators/any.ts`     | `StateMatcher` interface, multi-state matching                      |
-| `combinators/provide.ts` | `Machine.provide` - wires handlers to effect slots                  |
-| `delay.ts`               | `DurationOrFn`, WeakMap fiber storage pattern                       |
-| `invoke.ts`              | Effect slot registration (handler provided via `Machine.provide`)   |
+| File                                | Purpose                                                |
+| ----------------------------------- | ------------------------------------------------------ |
+| `machine-schema.ts`                 | Schema-first `State`/`Event` - single source of truth  |
+| `machine.ts`                        | `Machine.make({ state, event, initial })` + core types |
+| `namespace.ts`                      | Machine namespace export (named for macOS compat)      |
+| `internal/loop.ts`                  | Event processing, `resolveTransition`, `applyAlways`   |
+| `internal/brands.ts`                | `StateBrand`/`EventBrand` phantom types                |
+| `persistence/persistent-machine.ts` | `Machine.persist` - schemas from machine, no drift     |
+| `cluster/to-entity.ts`              | `toEntity` - schemas from machine, no drift            |
 
 ## Event Flow
 
@@ -84,29 +93,46 @@ Event → resolveTransition (guard cascade) → onExit → handler → applyAlwa
 - `applyAlways`: loops until no match or final state (max 100 iterations)
 - Final states stop the actor
 
+## Schema-First Pattern
+
+State and Event ARE schemas. `Machine.make` requires them:
+
+```ts
+const MyState = State({
+  Idle: {},
+  Loading: { url: Schema.String },
+});
+type MyState = typeof MyState.Type;
+
+const machine = Machine.make({
+  state: MyState, // required - becomes machine.stateSchema
+  event: MyEvent, // required - becomes machine.eventSchema
+  initial: MyState.Idle(),
+});
+```
+
+- Types inferred from schemas - no manual type params
+- `persist()` and `toEntity()` read schemas from machine - no drift possible
+- `$match` and `$is` helpers for pattern matching
+
 ## Fiber Storage Pattern
 
-`delay.ts` and `provide.ts` use WeakMap for per-actor, per-combinator fiber storage:
+`delay.ts` and `provide.ts` use WeakMap for per-actor fiber storage:
 
 ```ts
 const actorFibers = new WeakMap<MachineRef<unknown>, Map<symbol, Fiber>>();
 const instanceKey = Symbol("delay"); // unique per combinator instance
 ```
 
-- Prevents closure-based fiber leaks across actor instances
-- Symbol key allows multiple delays/invokes per state
-
 ## Effect Slots Pattern
 
-`invoke`, `onEnter`, `onExit` register named slots, not inline handlers:
+`invoke`, `onEnter`, `onExit` register named slots:
 
 ```ts
 Machine.invoke(State.Loading, "fetchData")  // registers slot
 Machine.provide(machine, { fetchData: ... }) // wires handler
 ```
 
-- Slots tracked in `Machine.effectSlots: Map<string, EffectSlot>`
-- `Machine.provide` builds actual `StateEffect` entries from slots + handlers
 - Spawning validates all slots have handlers (runtime check)
 - `simulate()` ignores effects - works with unprovided machines
 
@@ -118,24 +144,17 @@ Machine.provide(machine, { fetchData: ... }) // wires handler
 | `createTestHarness`   | No      | Yes    | Yes      |
 | Actor + `yieldFibers` | Yes     | Yes    | No       |
 
-- `assertPath(machine, events, ["S1", "S2", ...])` - verify exact state sequence
-- `assertNeverReaches(machine, events, "Forbidden")` - verify state never visited
-- `onTransition: (from, event, to) => void` - spy on transitions
-
 Use `Layer.merge(ActorSystemDefault, TestContext.TestContext)` for TestClock.
 
 ## ActorRef API
 
-| Method         | Effect | Sync | Purpose                                   |
-| -------------- | ------ | ---- | ----------------------------------------- |
-| `snapshot`     | ✓      | -    | Get current state                         |
-| `snapshotSync` | -      | ✓    | Get current state (sync)                  |
-| `matches`      | ✓      | -    | Check if state matches tag                |
-| `matchesSync`  | -      | ✓    | Check if state matches tag (sync)         |
-| `can`          | ✓      | -    | Check if event can be handled (w/ guards) |
-| `canSync`      | -      | ✓    | Check if event can be handled (sync)      |
-| `changes`      | Stream | -    | Stream of state updates                   |
-| `subscribe`    | -      | ✓    | Sync callback, returns unsubscribe fn     |
-
-- `can`/`canSync` evaluate guards - returns `true` only if transition exists AND guards pass
-- `subscribe` callback fires on each state change; `changes` stream excludes initial value
+| Method         | Effect | Sync | Purpose                           |
+| -------------- | ------ | ---- | --------------------------------- |
+| `snapshot`     | ✓      | -    | Get current state                 |
+| `snapshotSync` | -      | ✓    | Get current state (sync)          |
+| `matches`      | ✓      | -    | Check state tag                   |
+| `matchesSync`  | -      | ✓    | Check state tag (sync)            |
+| `can`          | ✓      | -    | Check if event handled (w/guards) |
+| `canSync`      | -      | ✓    | Check if event handled (sync)     |
+| `changes`      | Stream | -    | Stream of state updates           |
+| `subscribe`    | -      | ✓    | Sync callback, returns unsub fn   |
