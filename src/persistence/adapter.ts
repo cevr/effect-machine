@@ -127,6 +127,15 @@ export interface PersistenceAdapter {
    * Optional — adapters without registry support can omit this.
    */
   readonly deleteMetadata?: (id: string) => Effect.Effect<void, PersistenceError>;
+
+  /**
+   * Load metadata for a specific actor by ID.
+   * Returns None if no metadata exists.
+   * Optional — adapters without registry support can omit this.
+   */
+  readonly loadMetadata?: (
+    id: string,
+  ) => Effect.Effect<Option.Option<ActorMetadata>, PersistenceError>;
 }
 
 /**

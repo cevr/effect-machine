@@ -234,6 +234,12 @@ const make = Effect.gen(function* () {
         newMap.delete(id);
         return newMap;
       }),
+
+    loadMetadata: (id: string): Effect.Effect<Option.Option<ActorMetadata>, PersistenceError> =>
+      Effect.map(Ref.get(registry), (map) => {
+        const meta = map.get(id);
+        return meta !== undefined ? Option.some(meta) : Option.none();
+      }),
   };
 
   return adapter;

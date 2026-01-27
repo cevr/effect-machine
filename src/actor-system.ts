@@ -473,8 +473,17 @@ const make = Effect.gen(function* () {
         return { restored: [], failed: [] };
       }
 
+      // Require explicit machineType to prevent cross-machine restores
+      const machineType = persistentMachine.persistence.machineType;
+      if (machineType === undefined) {
+        return yield* new PersistenceErrorClass({
+          operation: "restoreAll",
+          actorId: "*",
+          message: "restoreAll requires explicit machineType in persistence config",
+        });
+      }
+
       const allMetadata = yield* adapter.listActors();
-      const machineType = persistentMachine.persistence.machineType ?? "unknown";
 
       // Filter by machineType and optional user filter
       let filtered = allMetadata.filter((meta) => meta.machineType === machineType);

@@ -221,10 +221,20 @@ export const createPersistentActor = <
       const eventQueue = yield* Queue.unbounded<E>();
       const listeners: Listeners<S> = new Set();
 
-      // Track creation time for metadata
-      const createdAt = Option.isSome(initialSnapshot)
-        ? initialSnapshot.value.timestamp
-        : Date.now();
+      // Track creation time for metadata - prefer existing metadata if restoring
+      let createdAt: number;
+      if (Option.isSome(initialSnapshot)) {
+        // Restoring - try to get original createdAt from metadata
+        const existingMeta =
+          adapter.loadMetadata !== undefined
+            ? yield* adapter.loadMetadata(id)
+            : Option.none<ActorMetadata>();
+        createdAt = Option.isSome(existingMeta)
+          ? existingMeta.value.createdAt
+          : initialSnapshot.value.timestamp; // fallback to snapshot time
+      } else {
+        createdAt = Date.now();
+      }
 
       // Create self reference for sending events
       const self: MachineRef<E> = {

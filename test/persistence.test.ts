@@ -739,4 +739,83 @@ describe("Persistence Registry", () => {
       }).pipe(Effect.scoped, Effect.provide(minimalLayer)),
     );
   });
+
+  test("restoreAll fails when machineType is undefined", async () => {
+    const sharedAdapter = await Effect.runPromise(makeInMemoryPersistenceAdapter);
+    const sharedLayer = Layer.merge(
+      ActorSystemDefault,
+      Layer.succeed(PersistenceAdapterTag, sharedAdapter),
+    );
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const system = yield* ActorSystemService;
+        // Machine without explicit machineType
+        const noTypeMachine = createPersistentMachine(undefined);
+
+        const result = yield* Effect.either(system.restoreAll(noTypeMachine));
+
+        expect(result._tag).toBe("Left");
+        if (result._tag === "Left") {
+          expect(result.left._tag).toBe("PersistenceError");
+          expect(result.left.message).toContain("machineType");
+        }
+      }).pipe(Effect.scoped, Effect.provide(sharedLayer)),
+    );
+  });
+
+  test("restored actor preserves original createdAt from metadata", async () => {
+    const sharedAdapter = await Effect.runPromise(makeInMemoryPersistenceAdapter);
+    const sharedLayer = Layer.merge(
+      ActorSystemDefault,
+      Layer.succeed(PersistenceAdapterTag, sharedAdapter),
+    );
+
+    let originalCreatedAt: number | undefined;
+
+    // Spawn actor and record its createdAt
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const system = yield* ActorSystemService;
+        const persistentMachine = createPersistentMachine("orders");
+
+        const actor = yield* system.spawn("order-created-at", persistentMachine);
+        yield* actor.send(OrderEvent.Submit({ orderId: "C1" }));
+        yield* yieldFibers;
+
+        // Get the metadata to check createdAt
+        const actors = yield* system.listPersisted();
+        const meta = actors.find((a) => a.id === "order-created-at");
+        expect(meta).toBeDefined();
+        originalCreatedAt = meta!.createdAt;
+
+        // Wait a bit to ensure time passes
+        yield* Effect.sleep("10 millis");
+
+        // Send another event to update lastActivityAt but not createdAt
+        yield* actor.send(OrderEvent.Pay({ amount: 100 }));
+        yield* yieldFibers;
+      }).pipe(Effect.scoped, Effect.provide(sharedLayer)),
+    );
+
+    // Restore and verify createdAt is preserved
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const system = yield* ActorSystemService;
+        const persistentMachine = createPersistentMachine("orders");
+
+        const maybeActor = yield* system.restore("order-created-at", persistentMachine);
+        expect(Option.isSome(maybeActor)).toBe(true);
+
+        // Check metadata after restore
+        const actors = yield* system.listPersisted();
+        const meta = actors.find((a) => a.id === "order-created-at");
+        expect(meta).toBeDefined();
+        expect(originalCreatedAt).toBeDefined();
+        expect(meta!.createdAt).toBe(originalCreatedAt!);
+        // lastActivityAt should be updated
+        expect(meta!.lastActivityAt).toBeGreaterThanOrEqual(meta!.createdAt);
+      }).pipe(Effect.scoped, Effect.provide(sharedLayer)),
+    );
+  });
 });
