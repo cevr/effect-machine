@@ -47,15 +47,9 @@ export type {
   ProvideHandlers,
 } from "./machine.js";
 
-// Actor types
-export type { ActorRef } from "./actor-ref.js";
-
-// Actor system
-export type { ActorSystem } from "./actor-system.js";
-export {
-  ActorSystem as ActorSystemService,
-  Default as ActorSystemDefault,
-} from "./actor-system.js";
+// Actor types and system
+export type { ActorRef, ActorSystem } from "./actor.js";
+export { ActorSystem as ActorSystemService, Default as ActorSystemDefault } from "./actor.js";
 
 // Testing utilities
 export {

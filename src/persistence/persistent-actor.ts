@@ -3,14 +3,14 @@
 
 import { Clock, Effect, Fiber, Option, Queue, Ref, SubscriptionRef } from "effect";
 
-import type { ActorRef } from "../actor-ref.js";
+import type { ActorRef, Listeners } from "../actor.js";
+import { buildActorRefCore, notifyListeners } from "../actor.js";
 import type { MachineRef, HandlerContext, Machine } from "../machine.js";
 import type { Inspector } from "../inspection.js";
 import { Inspector as InspectorTag } from "../inspection.js";
-import { resolveTransition } from "../internal/loop.js";
+import { resolveTransition } from "../internal/transition.js";
 import { isEffect } from "../internal/utils.js";
 import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
-import { type Listeners, notifyListeners, buildActorRefCore } from "../internal/actor-core.js";
 
 import type {
   ActorMetadata,

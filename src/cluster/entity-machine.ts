@@ -8,7 +8,7 @@ import type { Rpc } from "@effect/rpc";
 import { Effect, Exit, type Layer, Queue, Ref, Scope } from "effect";
 
 import type { Machine, MachineRef, HandlerContext } from "../machine.js";
-import { resolveTransition, runSpawnEffects } from "../internal/loop.js";
+import { resolveTransition, runSpawnEffects } from "../actor.js";
 import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
 import { isEffect, INTERNAL_ENTER_EVENT } from "../internal/utils.js";
 

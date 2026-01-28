@@ -1,13 +1,120 @@
 /**
- * Transition index for O(1) lookup by state/event tag.
+ * Transition execution and indexing.
  *
- * Uses a WeakMap cache to avoid memory leaks - machine references
- * can be garbage collected normally.
+ * Combines:
+ * - Transition execution logic (for event processing, simulation, test harness)
+ * - O(1) indexed lookup by state/event tag
  *
  * @internal
  */
-import type { Machine, Transition, SpawnEffect } from "../machine.js";
-import type { GuardsDef, EffectsDef } from "../slot.js";
+import { Effect } from "effect";
+
+import type { Machine, MachineRef, Transition, SpawnEffect, HandlerContext } from "../machine.js";
+import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
+import { isEffect } from "./utils.js";
+
+// ============================================================================
+// Transition Execution
+// ============================================================================
+
+/**
+ * Result of executing a transition.
+ */
+export interface TransitionExecutionResult<S> {
+  /** New state after transition (or current state if no transition matched) */
+  readonly newState: S;
+  /** Whether a transition was executed */
+  readonly transitioned: boolean;
+  /** Whether reenter was specified on the transition */
+  readonly reenter: boolean;
+}
+
+/**
+ * Execute a transition for a given state and event.
+ * Handles transition resolution, handler invocation, and guard/effect slot creation.
+ *
+ * Used by:
+ * - processEvent in actor.ts (actual actor event loop)
+ * - simulate in testing.ts (pure transition simulation)
+ * - createTestHarness.send in testing.ts (step-by-step testing)
+ *
+ * @internal
+ */
+export const executeTransition = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+  GD extends GuardsDef,
+  EFD extends EffectsDef,
+>(
+  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
+  currentState: S,
+  event: E,
+  self: MachineRef<E>,
+): Effect.Effect<TransitionExecutionResult<S>, never, R> =>
+  Effect.gen(function* () {
+    // Find matching transition
+    const transition = resolveTransition(machine, currentState, event);
+
+    if (transition === undefined) {
+      return {
+        newState: currentState,
+        transitioned: false,
+        reenter: false,
+      };
+    }
+
+    // Create context for handler
+    const ctx: MachineContext<S, E, MachineRef<E>> = {
+      state: currentState,
+      event,
+      self,
+    };
+    const { guards, effects } = machine._createSlotAccessors(ctx);
+
+    const handlerCtx: HandlerContext<S, E, GD, EFD> = {
+      state: currentState,
+      event,
+      guards,
+      effects,
+    };
+
+    // Compute new state - provide machine context for slot handlers
+    const newStateResult = transition.handler(handlerCtx);
+    const newState = isEffect(newStateResult)
+      ? yield* (newStateResult as Effect.Effect<S, never, R>).pipe(
+          Effect.provideService(machine.Context, ctx),
+        )
+      : newStateResult;
+
+    return {
+      newState,
+      transitioned: true,
+      reenter: transition.reenter === true,
+    };
+  });
+
+/**
+ * Resolve which transition should fire for a given state and event.
+ * Uses indexed O(1) lookup. First matching transition wins.
+ */
+export const resolveTransition = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+>(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
+  machine: Machine<S, E, R, any, any, any, any>,
+  currentState: S,
+  event: E,
+): (typeof machine.transitions)[number] | undefined => {
+  const candidates = findTransitions(machine, currentState._tag, event._tag);
+  return candidates[0];
+};
+
+// ============================================================================
+// Transition Index (O(1) Lookup)
+// ============================================================================
 
 /**
  * Index structure: stateTag -> eventTag -> transitions[]
@@ -69,9 +176,6 @@ const buildTransitionIndex = <
   return index;
 };
 
-/**
- * Build effect index from machine definition.
- */
 /**
  * Build spawn index from machine definition.
  */

@@ -3,7 +3,7 @@ import { Effect, SubscriptionRef } from "effect";
 import type { Machine, MachineRef } from "./machine.js";
 import { AssertionError } from "./errors.js";
 import type { GuardsDef, EffectsDef } from "./slot.js";
-import { executeTransition } from "./internal/execute-transition.js";
+import { executeTransition } from "./internal/transition.js";
 
 /**
  * Result of simulating events through a machine

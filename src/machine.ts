@@ -615,7 +615,7 @@ export class Machine<
 export const make = Machine.make;
 
 // Transition lookup (introspection)
-export { findTransitions } from "./internal/transition-index.js";
+export { findTransitions } from "./internal/transition.js";
 
 // Persistence types
 export type { PersistenceConfig, PersistentMachine } from "./persistence/index.js";
