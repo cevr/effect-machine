@@ -1,7 +1,6 @@
-import { Effect } from "effect";
+import type { Effect } from "effect";
 
 import type { MachineRef } from "../machine.js";
-import { GuardCompositionError } from "../errors.js";
 
 /**
  * Extracts _tag from a tagged union member
@@ -80,7 +79,7 @@ export interface TransitionOptions<S, E, R> {
 }
 
 // ============================================================================
-// Guard Module - Composable guards
+// Guard Module - Slots only (must be provided via Machine.provide)
 // ============================================================================
 
 /**
@@ -91,214 +90,107 @@ export type GuardPredicate<S, E, R = never> = (
 ) => boolean | Effect.Effect<boolean, never, R>;
 
 /**
- * A composable guard that can be combined with other guards.
+ * A guard that must be provided via Machine.provide().
  *
- * Guards can be:
- * - Inline with predicate: `Guard.make("name", predicate)` - default provided, no slot needed
- * - Named slot only: `Guard.make("name")` - must be provided via Machine.provide()
+ * Guards form a tree structure supporting hierarchical composition:
+ * - Leaf: named slot resolved from guardHandlers
+ * - And: all children must pass
+ * - Or: any child must pass
+ * - Not: negates single child
+ *
+ * @example
+ * ```ts
+ * // Simple guard slot
+ * .on(State.Idle, Event.Start, handler, { guard: Guard.make("canStart") })
+ *
+ * // Hierarchical composition
+ * .on(State.Idle, Event.Submit, handler, {
+ *   guard: Guard.and(
+ *     Guard.make("isValid"),
+ *     Guard.or(Guard.make("isAdmin"), Guard.make("isOwner")),
+ *     Guard.not(Guard.make("isLocked"))
+ *   )
+ * })
+ *
+ * // Provide implementations
+ * machine.provide({
+ *   canStart: ({ state }) => state.ready,
+ *   isValid: ({ state }) => state.data !== null,
+ *   isAdmin: ({ state }) => state.role === "admin",
+ *   isOwner: ({ state }) => state.userId === state.ownerId,
+ *   isLocked: ({ state }) => state.locked
+ * })
+ * ```
  */
-export interface Guard<S, E, R = never> {
-  readonly _tag: "Guard";
-  /** Guard name - used for effect slot registration when predicate is undefined */
-  readonly name: string;
-  /** Default predicate - if undefined, must be provided via Machine.provide() */
-  readonly predicate?: GuardPredicate<S, E, R>;
-}
+export type Guard<_S, _E, _R = never> =
+  | { readonly _tag: "GuardSlot"; readonly name: string }
+  | { readonly _tag: "GuardAnd"; readonly guards: readonly Guard<_S, _E, _R>[] }
+  | { readonly _tag: "GuardOr"; readonly guards: readonly Guard<_S, _E, _R>[] }
+  | { readonly _tag: "GuardNot"; readonly guard: Guard<_S, _E, _R> };
 
-// Counter for anonymous guards
-let anonymousGuardCounter = 0;
+/** Input for guard composition - either a Guard or a string name */
+export type GuardOrName<S, E, R = never> = Guard<S, E, R> | string;
 
-/** @internal Check if a value is an Effect */
-const isEffect = (value: unknown): value is Effect.Effect<unknown, unknown, unknown> =>
-  typeof value === "object" && value !== null && Effect.EffectTypeId in value;
+/** Normalize string to Guard */
+const toGuard = <S, E, R = never>(input: GuardOrName<S, E, R>): Guard<S, E, R> =>
+  typeof input === "string" ? { _tag: "GuardSlot", name: input } : input;
 
 /**
- * Guard module for creating and composing guards
+ * Guard module for creating named guard slots and composing them
  */
 export const Guard = {
   /**
-   * Create a guard.
-   *
-   * @example Anonymous guard (inline predicate only)
-   * ```ts
-   * Guard.make(({ state }) => state.canPrint)
-   * ```
-   *
-   * @example Named guard with inline predicate (default provided)
-   * ```ts
-   * Guard.make("canPrint", ({ state }) => state.canPrint)
-   * ```
-   *
-   * @example Named guard with Effect predicate
-   * ```ts
-   * Guard.make("hasPermission", ({ state }) =>
-   *   Effect.gen(function* () {
-   *     const auth = yield* AuthService
-   *     return yield* auth.check(state.userId)
-   *   })
-   * )
-   * ```
-   *
-   * @example Named slot only (must provide via Machine.provide)
-   * ```ts
-   * Guard.make("canPrint")
-   *
-   * // Later:
-   * Machine.provide(machine, {
-   *   canPrint: ({ state }) => state.canPrint
-   * })
-   * ```
+   * Create a named guard slot.
+   * The predicate must be provided via Machine.provide().
    */
-  make: <S, E, R = never>(
-    nameOrPredicate: string | GuardPredicate<S, E, R>,
-    predicate?: GuardPredicate<S, E, R>,
-  ): Guard<S, E, R> => {
-    if (typeof nameOrPredicate === "function") {
-      // Anonymous guard: Guard.make(predicate)
-      return {
-        _tag: "Guard",
-        name: `anonymous_${++anonymousGuardCounter}`,
-        predicate: nameOrPredicate,
-      };
-    }
-    // Named guard: Guard.make(name) or Guard.make(name, predicate)
-    return {
-      _tag: "Guard",
-      name: nameOrPredicate,
-      predicate,
-    };
-  },
-
-  /**
-   * Combine guards with logical AND.
-   * All guards must have predicates (not slots).
-   */
-  and: <S, E, R>(...guards: Guard<S, E, R>[]): Guard<S, E, R> => {
-    const names = guards.map((g) => g.name);
-    // All guards must have predicates for composition
-    const predicates = guards.map((g) => {
-      if (g.predicate === undefined) {
-        throw new GuardCompositionError({ guardName: g.name, operation: "and" });
-      }
-      return g.predicate;
-    });
-    return {
-      _tag: "Guard",
-      name: `and(${names.join(", ")})`,
-      predicate: (ctx) => {
-        for (const [i, predicate] of predicates.entries()) {
-          const result = predicate(ctx);
-          if (isEffect(result)) {
-            return Effect.gen(function* () {
-              if ((yield* result) === false) {
-                return false;
-              }
-              for (const nextPredicate of predicates.slice(i + 1)) {
-                const next = nextPredicate(ctx);
-                if (isEffect(next)) {
-                  if ((yield* next) === false) return false;
-                } else if (next === false) {
-                  return false;
-                }
-              }
-              return true;
-            });
-          }
-          if (result === false) {
-            return false;
-          }
-        }
-        return true;
-      },
-    };
-  },
-
-  /**
-   * Combine guards with logical OR.
-   * All guards must have predicates (not slots).
-   */
-  or: <S, E, R>(...guards: Guard<S, E, R>[]): Guard<S, E, R> => {
-    const names = guards.map((g) => g.name);
-    const predicates = guards.map((g) => {
-      if (g.predicate === undefined) {
-        throw new GuardCompositionError({ guardName: g.name, operation: "or" });
-      }
-      return g.predicate;
-    });
-    return {
-      _tag: "Guard",
-      name: `or(${names.join(", ")})`,
-      predicate: (ctx) => {
-        for (const [i, predicate] of predicates.entries()) {
-          const result = predicate(ctx);
-          if (isEffect(result)) {
-            return Effect.gen(function* () {
-              if ((yield* result) === true) {
-                return true;
-              }
-              for (const nextPredicate of predicates.slice(i + 1)) {
-                const next = nextPredicate(ctx);
-                if (isEffect(next)) {
-                  if ((yield* next) === true) return true;
-                } else if (next === true) {
-                  return true;
-                }
-              }
-              return false;
-            });
-          }
-          if (result === true) {
-            return true;
-          }
-        }
-        return false;
-      },
-    };
-  },
-
-  /**
-   * Negate a guard.
-   * Guard must have a predicate (not a slot).
-   */
-  not: <S, E, R>(guard: Guard<S, E, R>): Guard<S, E, R> => {
-    if (guard.predicate === undefined) {
-      throw new GuardCompositionError({ guardName: guard.name, operation: "not" });
-    }
-    const pred = guard.predicate;
-    return {
-      _tag: "Guard",
-      name: `not(${guard.name})`,
-      predicate: (ctx) => {
-        const result = pred(ctx);
-        return isEffect(result) ? Effect.map(result, (value) => value === false) : result === false;
-      },
-    };
-  },
-
-  /**
-   * All guards must pass (alias for and)
-   */
-  all: <S, E, R>(...guards: Guard<S, E, R>[]): Guard<S, E, R> => Guard.and(...guards),
-
-  /**
-   * Any guard must pass (alias for or)
-   */
-  any: <S, E, R>(...guards: Guard<S, E, R>[]): Guard<S, E, R> => Guard.or(...guards),
-
-  /**
-   * Create a copy of a guard with a new name.
-   * Useful for giving anonymous guards a name for debugging/inspection.
-   */
-  named: <S, E, R>(name: string, guard: Guard<S, E, R>): Guard<S, E, R> => ({
-    _tag: "Guard",
+  make: <S, E, R = never>(name: string): Guard<S, E, R> => ({
+    _tag: "GuardSlot",
     name,
-    predicate: guard.predicate,
   }),
 
   /**
-   * Check if a guard needs to be provided (has no predicate)
+   * Combine guards with logical AND (all must pass).
+   * Accepts Guard objects or string names.
+   *
+   * @example
+   * ```ts
+   * Guard.and("isReady", "hasPermission")
+   * Guard.and("isReady", Guard.not("isLocked"))
+   * ```
    */
-  needsProvision: <S, E, R>(guard: Guard<S, E, R>): boolean => guard.predicate === undefined,
+  and: <S, E, R = never>(...guards: GuardOrName<S, E, R>[]): Guard<S, E, R> => ({
+    _tag: "GuardAnd",
+    guards: guards.map(toGuard),
+  }),
+
+  /**
+   * Combine guards with logical OR (any must pass).
+   * Accepts Guard objects or string names.
+   *
+   * @example
+   * ```ts
+   * Guard.or("isAdmin", "isOwner")
+   * ```
+   */
+  or: <S, E, R = never>(...guards: GuardOrName<S, E, R>[]): Guard<S, E, R> => ({
+    _tag: "GuardOr",
+    guards: guards.map(toGuard),
+  }),
+
+  /**
+   * Negate a guard.
+   * Accepts Guard object or string name.
+   *
+   * @example
+   * ```ts
+   * Guard.not("isLocked")
+   * Guard.not(Guard.and("a", "b"))
+   * ```
+   */
+  not: <S, E, R = never>(guard: GuardOrName<S, E, R>): Guard<S, E, R> => ({
+    _tag: "GuardNot",
+    guard: toGuard(guard),
+  }),
 
   /**
    * Check if a value is a Guard object
@@ -307,40 +199,65 @@ export const Guard = {
     typeof value === "object" &&
     value !== null &&
     "_tag" in value &&
-    (value as { _tag: unknown })._tag === "Guard",
+    typeof (value as { _tag: unknown })._tag === "string" &&
+    (value as { _tag: string })._tag.startsWith("Guard"),
 };
 
 /**
- * Guard input - Guard object, predicate function, or sync function
+ * Collect all leaf slot names from a guard tree
  */
-export type GuardInput<S, E, R = never> = Guard<S, E, R> | GuardPredicate<S, E, R>;
+export const collectGuardSlotNames = (guard: Guard<unknown, unknown, unknown>): string[] => {
+  switch (guard._tag) {
+    case "GuardSlot":
+      return [guard.name];
+    case "GuardAnd":
+    case "GuardOr":
+      return guard.guards.flatMap(collectGuardSlotNames);
+    case "GuardNot":
+      return collectGuardSlotNames(guard.guard);
+  }
+};
 
 /**
- * Normalized guard result - includes name if it's a slot that needs provision
+ * Get display name for a guard tree
+ */
+export const getGuardDisplayName = (guard: Guard<unknown, unknown, unknown>): string => {
+  switch (guard._tag) {
+    case "GuardSlot":
+      return guard.name;
+    case "GuardAnd":
+      return `and(${guard.guards.map(getGuardDisplayName).join(", ")})`;
+    case "GuardOr":
+      return `or(${guard.guards.map(getGuardDisplayName).join(", ")})`;
+    case "GuardNot":
+      return `not(${getGuardDisplayName(guard.guard)})`;
+  }
+};
+
+/**
+ * Guard input - Guard object only (slots-only pattern)
+ */
+export type GuardInput<S, E, R = never> = Guard<S, E, R>;
+
+/**
+ * Normalized guard for storage on transitions
  */
 export interface NormalizedGuard<S, E, R = never> {
-  readonly name?: string;
-  readonly predicate?: GuardPredicate<S, E, R>;
-  readonly needsProvision: boolean;
+  /** Display name */
+  readonly name: string;
+  /** All slot names that need provision */
+  readonly slotNames: readonly string[];
+  /** The guard tree for evaluation */
+  readonly guard: Guard<S, E, R>;
 }
 
 /**
- * Normalize guard input to a structured form
+ * Normalize guard input to a structured form.
  */
 export const normalizeGuard = <S, E, R = never>(
   input: GuardInput<S, E, R>,
-): NormalizedGuard<S, E, R> => {
-  if (Guard.isGuard<S, E, R>(input)) {
-    const guard = input as Guard<S, E, R>;
-    return {
-      name: guard.name,
-      predicate: guard.predicate,
-      needsProvision: guard.predicate === undefined,
-    };
-  }
-  // Raw predicate function - no slot needed
-  return {
-    predicate: input as GuardPredicate<S, E, R>,
-    needsProvision: false,
-  };
-};
+): NormalizedGuard<S, E, R> => ({
+  name: getGuardDisplayName(input),
+  slotNames: collectGuardSlotNames(input),
+  guard: input,
+});

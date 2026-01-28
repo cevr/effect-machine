@@ -57,8 +57,7 @@ export class GuardProvisionError extends Schema.TaggedError<GuardProvisionError>
   { guardName: Schema.String },
 ) {}
 
-/** Guard.and/or/not called on guard without predicate */
-export class GuardCompositionError extends Schema.TaggedError<GuardCompositionError>()(
-  "GuardCompositionError",
-  { guardName: Schema.String, operation: Schema.String },
-) {}
+/** Assertion failed in testing utilities */
+export class AssertionError extends Schema.TaggedError<AssertionError>()("AssertionError", {
+  message: Schema.String,
+}) {}

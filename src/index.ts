@@ -3,8 +3,8 @@ export * as Machine from "./namespace.js";
 
 // Errors
 export {
+  AssertionError,
   DuplicateActorError,
-  GuardCompositionError,
   GuardProvisionError,
   InvalidSchemaError,
   MissingMatchHandlerError,
@@ -42,7 +42,6 @@ export type {
   ChooseOtherwise,
   EffectHandler,
   EffectHandlers,
-  GuardEffectHandler,
   FromScope,
 } from "./machine.js";
 
@@ -58,7 +57,6 @@ export {
 
 // Testing utilities
 export {
-  AssertionError,
   assertNeverReaches,
   assertPath,
   assertReaches,
@@ -68,19 +66,22 @@ export {
 } from "./testing.js";
 export type { SimulationResult, TestHarness, TestHarnessOptions } from "./testing.js";
 
-// Guard utilities
-export type {
-  GuardFn,
-  GuardInput,
-  InstanceOf,
-  StateEffectContext,
-  StateEffectHandler,
-  TransitionContext,
-  TransitionHandler,
-  TransitionOptions,
-  TransitionResult,
+// Guard and transition types
+export {
+  Guard,
+  collectGuardSlotNames,
+  getGuardDisplayName,
+  type Guard as GuardType,
+  type GuardFn,
+  type GuardInput,
+  type InstanceOf,
+  type StateEffectContext,
+  type StateEffectHandler,
+  type TransitionContext,
+  type TransitionHandler,
+  type TransitionOptions,
+  type TransitionResult,
 } from "./internal/types.js";
-export { Guard, normalizeGuard } from "./internal/types.js";
 
 // Inspection
 export type {

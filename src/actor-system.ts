@@ -173,29 +173,17 @@ export const ActorSystem = Context.GenericTag<ActorSystem>("@effect/machine/Acto
 const make = Effect.gen(function* () {
   const actors = yield* SynchronizedRef.make(new Map<string, ActorRef<AnyState, unknown>>());
 
-  const spawnRegular = <
-    S extends { readonly _tag: string },
-    E extends { readonly _tag: string },
-    R,
-  >(
+  /** Check for duplicate ID, register actor, add cleanup finalizer */
+  const registerActor = <T extends { stop: Effect.Effect<void> }>(
     id: string,
-    machine: Machine<S, E, R, never>,
-  ): Effect.Effect<ActorRef<S, E>, never, R | Scope.Scope> =>
+    actor: T,
+  ): Effect.Effect<T, never, Scope.Scope> =>
     Effect.gen(function* () {
       // Check if actor already exists
       const existing = yield* SynchronizedRef.get(actors);
       if (existing.has(id)) {
         throw new DuplicateActorError({ actorId: id });
       }
-
-      // Validate all effect slots are provided (runtime safety net)
-      if (machine.effectSlots.size > 0) {
-        const unprovided = Array.from(machine.effectSlots.keys());
-        throw new UnprovidedSlotsError({ slots: unprovided });
-      }
-
-      // Create the actor
-      const actor = yield* createActor(id, machine);
 
       // Register it
       yield* SynchronizedRef.update(actors, (map) => {
@@ -219,6 +207,26 @@ const make = Effect.gen(function* () {
       return actor;
     });
 
+  const spawnRegular = <
+    S extends { readonly _tag: string },
+    E extends { readonly _tag: string },
+    R,
+  >(
+    id: string,
+    machine: Machine<S, E, R, never>,
+  ): Effect.Effect<ActorRef<S, E>, never, R | Scope.Scope> =>
+    Effect.gen(function* () {
+      // Validate all effect slots are provided (runtime safety net)
+      if (machine.effectSlots.size > 0) {
+        const unprovided = Array.from(machine.effectSlots.keys());
+        throw new UnprovidedSlotsError({ slots: unprovided });
+      }
+
+      // Create and register the actor
+      const actor = yield* createActor(id, machine);
+      return yield* registerActor(id, actor);
+    });
+
   const spawnPersistent = <
     S extends { readonly _tag: string },
     E extends { readonly _tag: string },
@@ -232,12 +240,6 @@ const make = Effect.gen(function* () {
     R | Scope.Scope | PersistenceAdapterTag
   > =>
     Effect.gen(function* () {
-      // Check if actor already exists
-      const existing = yield* SynchronizedRef.get(actors);
-      if (existing.has(id)) {
-        throw new DuplicateActorError({ actorId: id });
-      }
-
       const adapter = yield* PersistenceAdapterTag;
 
       // Try to load existing snapshot
@@ -255,29 +257,9 @@ const make = Effect.gen(function* () {
           )
         : [];
 
-      // Create the persistent actor
+      // Create and register the persistent actor
       const actor = yield* createPersistentActor(id, persistentMachine, maybeSnapshot, events);
-
-      // Register it
-      yield* SynchronizedRef.update(actors, (map) => {
-        const newMap = new Map(map);
-        newMap.set(id, actor as unknown as ActorRef<AnyState, unknown>);
-        return newMap;
-      });
-
-      // Register cleanup on scope finalization
-      yield* Effect.addFinalizer(() =>
-        Effect.gen(function* () {
-          yield* actor.stop;
-          yield* SynchronizedRef.update(actors, (map) => {
-            const newMap = new Map(map);
-            newMap.delete(id);
-            return newMap;
-          });
-        }),
-      );
-
-      return actor;
+      return yield* registerActor(id, actor);
     });
 
   // Type-safe overloaded spawn implementation
@@ -320,36 +302,11 @@ const make = Effect.gen(function* () {
     R | Scope.Scope | PersistenceAdapterTag
   > =>
     Effect.gen(function* () {
-      // Check if actor already exists
-      const existing = yield* SynchronizedRef.get(actors);
-      if (existing.has(id)) {
-        throw new DuplicateActorError({ actorId: id });
-      }
-
       // Try to restore from persistence
       const maybeActor = yield* restorePersistentActor(id, persistentMachine);
 
       if (Option.isSome(maybeActor)) {
-        const actor = maybeActor.value;
-
-        // Register it
-        yield* SynchronizedRef.update(actors, (map) => {
-          const newMap = new Map(map);
-          newMap.set(id, actor as unknown as ActorRef<AnyState, unknown>);
-          return newMap;
-        });
-
-        // Register cleanup on scope finalization
-        yield* Effect.addFinalizer(() =>
-          Effect.gen(function* () {
-            yield* actor.stop;
-            yield* SynchronizedRef.update(actors, (map) => {
-              const newMap = new Map(map);
-              newMap.delete(id);
-              return newMap;
-            });
-          }),
-        );
+        yield* registerActor(id, maybeActor.value);
       }
 
       return maybeActor;

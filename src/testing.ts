@@ -2,6 +2,7 @@ import { Effect, SubscriptionRef } from "effect";
 
 import type { Machine } from "./machine.js";
 import { applyAlways, resolveTransition } from "./internal/loop.js";
+import { AssertionError } from "./errors.js";
 
 /**
  * Yield to other fibers. Useful in tests to allow forked effects to run.
@@ -91,12 +92,8 @@ export const simulate = <
     return { states, finalState: currentState };
   });
 
-/**
- * Error thrown when assertReaches fails
- */
-export class AssertionError extends Error {
-  readonly _tag = "AssertionError";
-}
+// AssertionError is exported from errors.ts
+export { AssertionError } from "./errors.js";
 
 /**
  * Assert that a machine can reach a specific state given a sequence of events
@@ -113,12 +110,11 @@ export const assertReaches = <
   Effect.gen(function* () {
     const result = yield* simulate(machine, events);
     if (result.finalState._tag !== expectedTag) {
-      return yield* Effect.fail(
-        new AssertionError(
+      return yield* new AssertionError({
+        message:
           `Expected final state "${expectedTag}" but got "${result.finalState._tag}". ` +
-            `States visited: ${result.states.map((s) => s._tag).join(" -> ")}`,
-        ),
-      );
+          `States visited: ${result.states.map((s) => s._tag).join(" -> ")}`,
+      });
     }
     return result.finalState;
   });
@@ -149,24 +145,22 @@ export const assertPath = <
     const actualPath = result.states.map((s) => s._tag);
 
     if (actualPath.length !== expectedPath.length) {
-      return yield* Effect.fail(
-        new AssertionError(
+      return yield* new AssertionError({
+        message:
           `Path length mismatch. Expected ${expectedPath.length} states but got ${actualPath.length}.\n` +
-            `Expected: ${expectedPath.join(" -> ")}\n` +
-            `Actual:   ${actualPath.join(" -> ")}`,
-        ),
-      );
+          `Expected: ${expectedPath.join(" -> ")}\n` +
+          `Actual:   ${actualPath.join(" -> ")}`,
+      });
     }
 
     for (let i = 0; i < expectedPath.length; i++) {
       if (actualPath[i] !== expectedPath[i]) {
-        return yield* Effect.fail(
-          new AssertionError(
+        return yield* new AssertionError({
+          message:
             `Path mismatch at position ${i}. Expected "${expectedPath[i]}" but got "${actualPath[i]}".\n` +
-              `Expected: ${expectedPath.join(" -> ")}\n` +
-              `Actual:   ${actualPath.join(" -> ")}`,
-          ),
-        );
+            `Expected: ${expectedPath.join(" -> ")}\n` +
+            `Actual:   ${actualPath.join(" -> ")}`,
+        });
       }
     }
 
@@ -200,12 +194,11 @@ export const assertNeverReaches = <
 
     const visitedIndex = result.states.findIndex((s) => s._tag === forbiddenTag);
     if (visitedIndex !== -1) {
-      return yield* Effect.fail(
-        new AssertionError(
+      return yield* new AssertionError({
+        message:
           `Machine reached forbidden state "${forbiddenTag}" at position ${visitedIndex}.\n` +
-            `States visited: ${result.states.map((s) => s._tag).join(" -> ")}`,
-        ),
-      );
+          `States visited: ${result.states.map((s) => s._tag).join(" -> ")}`,
+      });
     }
 
     return result;

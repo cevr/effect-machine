@@ -5,26 +5,19 @@ import { pipeArguments } from "effect/Pipeable";
 import { createFiberStorage } from "./internal/fiber-storage.js";
 
 import type {
+  Guard,
   GuardInput,
-  GuardPredicate,
   StateEffectContext,
   TransitionContext,
   TransitionResult,
 } from "./internal/types.js";
 import { normalizeGuard } from "./internal/types.js";
-import type { StateBrand, EventBrand, TaggedOrConstructor } from "./internal/brands.js";
+import type { TaggedOrConstructor, BrandedState, BrandedEvent } from "./internal/brands.js";
 import { getTag } from "./internal/get-tag.js";
 import type { MachineStateSchema, MachineEventSchema, VariantsUnion } from "./machine-schema.js";
 import type { PersistentMachine, WithPersistenceConfig } from "./persistence/persistent-machine.js";
 import { persist as persistImpl } from "./persistence/persistent-machine.js";
 import { MissingSlotHandlerError, UnknownSlotError } from "./errors.js";
-
-// ============================================================================
-// Branded type constraints
-// ============================================================================
-
-type BrandedState = { readonly _tag: string } & StateBrand;
-type BrandedEvent = { readonly _tag: string } & EventBrand;
 
 // ============================================================================
 // Core types
@@ -44,9 +37,10 @@ export interface Transition<State, Event, R> {
   readonly stateTag: string;
   readonly eventTag: string;
   readonly handler: (ctx: TransitionContext<State, Event>) => TransitionResult<State, R>;
-  readonly guard?: GuardPredicate<State, Event, R>;
+  /** Guard display name */
   readonly guardName?: string;
-  readonly guardNeedsProvision?: boolean;
+  /** Guard tree for evaluation */
+  readonly guard?: Guard<State, Event, R>;
   readonly effect?: (ctx: TransitionContext<State, Event>) => Effect.Effect<void, never, R>;
   readonly reenter?: boolean;
 }
@@ -101,11 +95,6 @@ export type EffectSlotType<
 /** Any effect slot type (for constraints) */
 export type AnySlot = EffectSlotType<"invoke" | "onEnter" | "onExit" | "guard", string>;
 
-/** Guard handler function */
-export type GuardHandler<State, Event, R> = (
-  ctx: TransitionContext<State, Event>,
-) => Effect.Effect<boolean, never, R>;
-
 // ============================================================================
 // Options types
 // ============================================================================
@@ -145,7 +134,7 @@ export interface AlwaysBranch<S, R> {
 
 /** Branch for `choose` transitions (with guard) */
 export interface ChooseBranch<S, E, R> {
-  readonly guard: (ctx: TransitionContext<S, E>) => boolean;
+  readonly guard: GuardInput<S, E, R>;
   readonly to: (ctx: TransitionContext<S, E>) => TransitionResult<{ readonly _tag: string }, R>;
   readonly effect?: (ctx: TransitionContext<S, E>) => Effect.Effect<void, never, R>;
   readonly otherwise?: never;
@@ -171,14 +160,14 @@ export type EffectHandler<State, Event, R> = (
   ctx: StateEffectContext<State, Event>,
 ) => Effect.Effect<void, never, R>;
 
-/** Guard effect handler function */
-export type GuardEffectHandler<State, Event, R> = (
+/** Guard handler function - sync boolean or Effect<boolean> */
+export type GuardHandler<State, Event, R = never> = (
   ctx: TransitionContext<State, Event>,
-) => Effect.Effect<boolean, never, R>;
+) => boolean | Effect.Effect<boolean, never, R>;
 
 /** Compute handler type based on slot type */
 type HandlerForSlot<State, Event, Slot extends AnySlot, R> = Slot extends { type: "guard" }
-  ? GuardEffectHandler<State, Event, R>
+  ? GuardHandler<State, Event, R>
   : EffectHandler<State, Event, R>;
 
 /** Type for the handlers record */
@@ -201,9 +190,9 @@ type InvokeSlots<Names extends readonly string[]> = Names[number] extends infer 
   : never;
 
 interface NormalizedGuardOptions<S, E, R> {
-  guard?: GuardPredicate<S, E, R>;
   guardName?: string;
-  guardNeedsProvision?: boolean;
+  guardSlotNames?: readonly string[];
+  guard?: Guard<S, E, R>;
   effect?: (ctx: TransitionContext<S, E>) => Effect.Effect<void, never, R>;
   reenter?: boolean;
 }
@@ -218,9 +207,9 @@ const normalizeOnOptions = <S, E, R>(
 
   if (options?.guard !== undefined) {
     const normalized = normalizeGuard(options.guard);
-    result.guard = normalized.predicate;
     result.guardName = normalized.name;
-    result.guardNeedsProvision = normalized.needsProvision;
+    result.guardSlotNames = normalized.slotNames;
+    result.guard = normalized.guard;
   }
 
   result.effect = options?.effect;
@@ -447,9 +436,8 @@ export class Machine<
       stateTag,
       eventTag,
       handler: handler as unknown as Transition<State, Event, R | R2>["handler"],
-      guard: normalized?.guard as unknown as Transition<State, Event, R | R2>["guard"],
       guardName: normalized?.guardName,
-      guardNeedsProvision: normalized?.guardNeedsProvision,
+      guard: normalized?.guard as unknown as Transition<State, Event, R | R2>["guard"],
       effect: normalized?.effect as unknown as Transition<State, Event, R | R2>["effect"],
       reenter: normalized?.reenter,
     };
@@ -457,14 +445,16 @@ export class Machine<
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (this._transitions as any[]).push(transition);
 
-    // Add guard slot if needed
-    if (normalized?.guardNeedsProvision === true && normalized.guardName !== undefined) {
-      this._effectSlots.set(normalized.guardName, {
-        type: "guard",
-        stateTag,
-        eventTag,
-        name: normalized.guardName,
-      });
+    // Register all guard slots (for composed guards, register each constituent)
+    if (normalized?.guardSlotNames !== undefined) {
+      for (const slotName of normalized.guardSlotNames) {
+        this._effectSlots.set(slotName, {
+          type: "guard",
+          stateTag,
+          eventTag,
+          name: slotName,
+        });
+      }
     }
 
     return this as unknown as Machine<State, Event, R | R2, _Slots, _SD, _ED>;
@@ -502,21 +492,31 @@ export class Machine<
     const stateTag = getTag(state);
     const eventTag = getTag(event);
     for (const branch of branches) {
+      const hasGuard = !("otherwise" in branch && branch.otherwise === true);
+      const guardInput = hasGuard ? (branch as ChooseBranch<NS, NE, R2>).guard : undefined;
+      const normalized = guardInput !== undefined ? normalizeGuard(guardInput) : undefined;
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (this._transitions as any[]).push({
         stateTag,
         eventTag,
         handler: branch.to as unknown as Transition<State, Event, R | R2>["handler"],
-        guard:
-          "otherwise" in branch && branch.otherwise === true
-            ? undefined
-            : ((branch as ChooseBranch<NS, NE, R2>).guard as unknown as Transition<
-                State,
-                Event,
-                R | R2
-              >["guard"]),
+        guardName: normalized?.name,
+        guard: normalized?.guard,
         effect: branch.effect as unknown as Transition<State, Event, R | R2>["effect"],
       });
+
+      // Register guard slots
+      if (normalized?.slotNames !== undefined) {
+        for (const slotName of normalized.slotNames) {
+          this._effectSlots.set(slotName, {
+            type: "guard",
+            stateTag,
+            eventTag,
+            name: slotName,
+          });
+        }
+      }
     }
     return this as unknown as Machine<State, Event, R | R2, _Slots, _SD, _ED>;
   }
@@ -691,18 +691,21 @@ export class Machine<
       this.eventSchema as Schema.Schema<Event, unknown, never>,
     );
 
-    // Copy existing data
+    // Share immutable arrays (never mutated after provide)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (result._transitions as any[]).push(...this._transitions);
+    (result as any)._transitions = this._transitions;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (result._alwaysTransitions as any[]).push(...this._alwaysTransitions);
+    (result as any)._alwaysTransitions = this._alwaysTransitions;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (result as any)._finalStates = this._finalStates;
+
+    // Copy arrays that will be mutated by provide (add slot handlers)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (result._onEnterEffects as any[]).push(...this._onEnterEffects);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (result._onExitEffects as any[]).push(...this._onExitEffects);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (result._rootInvokes as any[]).push(...this._rootInvokes);
-    for (const tag of this._finalStates) result._finalStates.add(tag);
     for (const [k, v] of this._guardHandlers)
       result._guardHandlers.set(k, v as GuardHandler<State, Event, R | R2>);
     // Note: do NOT copy effectSlots - they will be resolved below

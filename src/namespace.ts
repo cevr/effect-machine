@@ -42,12 +42,15 @@ export type {
   ChooseOtherwise,
   EffectHandler,
   EffectHandlers,
-  GuardEffectHandler,
   FromScope,
 } from "./machine.js";
 
 // Helpers - assign is used inside handlers
 export { assign } from "./combinators/assign.js";
+
+// Guard - for creating guard slots
+export { Guard } from "./internal/types.js";
+export type { Guard as GuardType } from "./internal/types.js";
 
 // Persistence types
 export type { PersistenceConfig, PersistentMachine } from "./persistence/index.js";

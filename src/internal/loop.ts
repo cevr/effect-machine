@@ -11,6 +11,8 @@ import {
   findOnExitEffects,
 } from "./transition-index.js";
 import { GuardProvisionError } from "../errors.js";
+import { isEffect } from "./is-effect.js";
+import type { Guard } from "./types.js";
 
 /** Listener set for sync subscriptions */
 type Listeners<S> = Set<(state: S) => void>;
@@ -30,9 +32,49 @@ const emit = <S, E>(inspector: Inspector<S, E> | undefined, event: InspectionEve
 /** Get current timestamp */
 const now = (): number => Date.now();
 
-/** Check if a value is an Effect */
-const isEffect = (value: unknown): value is Effect.Effect<unknown, unknown, unknown> =>
-  typeof value === "object" && value !== null && Effect.EffectTypeId in value;
+/**
+ * Evaluate a guard tree recursively.
+ * Composed guards (and/or) evaluate children in parallel.
+ */
+const evaluateGuard = <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
+  machine: Machine<S, E, R>,
+  guard: Guard<S, E, R>,
+  ctx: { state: S; event: E },
+): Effect.Effect<boolean, never, R> => {
+  switch (guard._tag) {
+    case "GuardSlot": {
+      const predicate = machine.guardHandlers.get(guard.name);
+      if (predicate === undefined) {
+        throw new GuardProvisionError({ guardName: guard.name });
+      }
+      return Effect.suspend(() => {
+        const result = predicate(ctx);
+        return isEffect(result) ? result : Effect.succeed(result);
+      });
+    }
+
+    case "GuardAnd":
+      return Effect.gen(function* () {
+        const results = yield* Effect.all(
+          guard.guards.map((g) => evaluateGuard(machine, g, ctx)),
+          { concurrency: "unbounded" },
+        );
+        return results.every((r) => r);
+      });
+
+    case "GuardOr":
+      return Effect.gen(function* () {
+        const results = yield* Effect.all(
+          guard.guards.map((g) => evaluateGuard(machine, g, ctx)),
+          { concurrency: "unbounded" },
+        );
+        return results.some((r) => r);
+      });
+
+    case "GuardNot":
+      return Effect.map(evaluateGuard(machine, guard.guard, ctx), (r) => !r);
+  }
+};
 
 /**
  * Resolve which transition should fire for a given state and event.
@@ -54,32 +96,17 @@ export const resolveTransition = <
 ): Effect.Effect<Machine<S, E, R>["transitions"][number] | undefined, never, R> =>
   Effect.gen(function* () {
     const candidates = findTransitions(machine, currentState._tag, event._tag);
+    const ctx = { state: currentState, event };
 
     let guardIndex = 0;
     for (const transition of candidates) {
-      const guardPredicate =
-        transition.guard ??
-        (transition.guardNeedsProvision === true
-          ? (() => {
-              if (transition.guardName === undefined) {
-                throw new GuardProvisionError({ guardName: "<unnamed>" });
-              }
-              const handler = machine.guardHandlers.get(transition.guardName);
-              if (handler === undefined) {
-                throw new GuardProvisionError({ guardName: transition.guardName });
-              }
-              return handler;
-            })()
-          : undefined);
-
       // If no guard, this transition wins
-      if (guardPredicate === undefined) {
+      if (transition.guard === undefined) {
         return transition;
       }
 
-      // Evaluate guard - may be sync boolean or Effect<boolean>
-      const guardResult = guardPredicate({ state: currentState, event });
-      const result: boolean = isEffect(guardResult) ? yield* guardResult : guardResult;
+      // Evaluate guard tree
+      const result = yield* evaluateGuard(machine, transition.guard, ctx);
 
       if (actorId !== undefined && inspector !== undefined) {
         emit(inspector, {
