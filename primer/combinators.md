@@ -73,7 +73,7 @@ machine.final(MyState.Success).final(MyState.Error);
 
 ### spawn
 
-Run effect on state entry, auto-cancel on exit. Use `Effect.addFinalizer` for cleanup.
+Run effect on state entry, auto-cancel on exit. Spawn handlers call effect slots.
 
 ```typescript
 machine.spawn(stateConstructor, handler);
@@ -82,34 +82,45 @@ machine.spawn(stateConstructor, handler);
 **Example:**
 
 ```typescript
-machine.spawn(MyState.Loading, ({ state, self }) =>
-  Effect.gen(function* () {
-    // Cleanup via finalizer
-    yield* Effect.addFinalizer(() => Effect.log("Leaving Loading"));
+const MyEffects = Slot.Effects({
+  fetchData: { url: Schema.String },
+});
 
-    // Main work - auto-cancelled on exit
-    const data = yield* httpClient.get(state.url);
-    yield* self.send(MyEvent.Resolve({ data }));
-  }),
-);
+machine
+  .spawn(MyState.Loading, ({ effects, state }) => effects.fetchData({ url: state.url }))
+  .provide({
+    fetchData: ({ url }, { self }) =>
+      Effect.gen(function* () {
+        yield* Effect.addFinalizer(() => Effect.log("Leaving Loading"));
+        const data = yield* httpClient.get(url);
+        yield* self.send(MyEvent.Resolve({ data }));
+      }),
+  });
 ```
 
 The effect is forked into a state-scoped scope. When the state exits, the fiber is interrupted and finalizers run.
 
 ### background
 
-Run effect for machine lifetime (not tied to state).
+Run effect for machine lifetime (not tied to state). Background handlers call effect slots.
 
 ```typescript
-machine.background(name, handler);
+machine.background(handler);
 ```
 
 **Example:**
 
 ```typescript
-machine.background("heartbeat", ({ self }) =>
-  Effect.forever(Effect.sleep("30 seconds").pipe(Effect.andThen(self.send(MyEvent.Ping)))),
-);
+const MyEffects = Slot.Effects({
+  heartbeat: {},
+});
+
+machine
+  .background(({ effects }) => effects.heartbeat())
+  .provide({
+    heartbeat: (_, { self }) =>
+      Effect.forever(Effect.sleep("30 seconds").pipe(Effect.andThen(self.send(MyEvent.Ping)))),
+  });
 ```
 
 Background effects start on actor spawn and are interrupted when the actor stops.
@@ -143,6 +154,7 @@ const MyGuards = Slot.Guards({
 });
 
 const MyEffects = Slot.Effects({
+  fetchData: { url: Schema.String },
   notify: { message: Schema.String },
 });
 
@@ -161,14 +173,15 @@ const machine = Machine.make({
       return MyState.Failed;
     }),
   )
-  .spawn(MyState.Loading, ({ state, self }) =>
-    Effect.gen(function* () {
-      const data = yield* httpClient.get(state.url);
-      yield* self.send(MyEvent.Resolve({ data }));
-    }),
-  )
+  // Spawn/background call effect slots
+  .spawn(MyState.Loading, ({ effects, state }) => effects.fetchData({ url: state.url }))
   .provide({
     canRetry: ({ max }, { state }) => state.attempts < max,
+    fetchData: ({ url }, { self }) =>
+      Effect.gen(function* () {
+        const data = yield* httpClient.get(url);
+        yield* self.send(MyEvent.Resolve({ data }));
+      }),
     notify: ({ message }) => Effect.log(message),
   });
 ```

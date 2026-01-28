@@ -192,25 +192,34 @@ Index built on first access, cached per machine instance.
 
 ## spawn Pattern
 
-```ts
-machine
-  .spawn(State.Loading, ({ state, self }) =>
-    Effect.gen(function* () {
-      // Cleanup via finalizer
-      yield* Effect.addFinalizer(() => Effect.log("Leaving"));
+Spawn and background use effect slots - same pattern as guards/effects in handlers:
 
-      // Main work - auto-cancelled on exit
-      const data = yield* fetchData(state.url);
-      yield* self.send(Event.Resolve({ data }));
-    }),
-  )
-  .background("heartbeat", ({ self }) =>
-    Effect.forever(Effect.sleep("30 seconds").pipe(Effect.andThen(self.send(Event.Ping)))),
-  );
+```ts
+const MyEffects = Slot.Effects({
+  fetchData: { url: Schema.String },
+  heartbeat: {},
+});
+
+machine
+  // Spawn calls effect slot
+  .spawn(State.Loading, ({ effects, state }) => effects.fetchData({ url: state.url }))
+  // Background calls effect slot (no name parameter)
+  .background(({ effects }) => effects.heartbeat())
+  .provide({
+    fetchData: ({ url }, { self }) =>
+      Effect.gen(function* () {
+        yield* Effect.addFinalizer(() => Effect.log("Leaving"));
+        const data = yield* fetchData(url);
+        yield* self.send(Event.Resolve({ data }));
+      }),
+    heartbeat: (_, { self }) =>
+      Effect.forever(Effect.sleep("30 seconds").pipe(Effect.andThen(self.send(Event.Ping)))),
+  });
 ```
 
 - `spawn` forks into state scope - cancelled on state exit
 - `background` forks into machine scope - cancelled on stop/final
+- Effect implementations live in `provide()` - consistent with guards
 - Use `Effect.addFinalizer` for cleanup logic
 - `simulate()` ignores spawn/background effects - works without real actor
 

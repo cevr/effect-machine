@@ -89,7 +89,6 @@ export interface SpawnEffect<State, Event, ED extends EffectsDef, R> {
  * Background effect - runs for entire machine lifetime
  */
 export interface BackgroundEffect<State, Event, ED extends EffectsDef, R> {
-  readonly name: string;
   readonly handler: StateEffectHandler<State, Event, ED, R>;
 }
 
@@ -329,17 +328,24 @@ export class Machine<
 
   /**
    * State-scoped effect that is forked on state entry and automatically cancelled on state exit.
-   * Use `Effect.addFinalizer` inside the handler for cleanup logic.
+   * Use effect slots defined via `Slot.Effects` for the actual work.
    *
    * @example
    * ```ts
-   * .spawn(State.Loading, ({ state, self }) =>
-   *   Effect.gen(function* () {
-   *     yield* Effect.addFinalizer(() => Effect.log("Leaving Loading"))
-   *     const data = yield* Http.get(state.url)
-   *     yield* self.send(Event.Loaded({ data }))
-   *   })
-   * )
+   * const MyEffects = Slot.Effects({
+   *   fetchData: { url: Schema.String },
+   * });
+   *
+   * machine
+   *   .spawn(State.Loading, ({ effects, state }) => effects.fetchData({ url: state.url }))
+   *   .provide({
+   *     fetchData: ({ url }, { self }) =>
+   *       Effect.gen(function* () {
+   *         yield* Effect.addFinalizer(() => Effect.log("Leaving Loading"));
+   *         const data = yield* Http.get(url);
+   *         yield* self.send(Event.Loaded({ data }));
+   *       }),
+   *   });
    * ```
    */
   spawn<NS extends VariantsUnion<_SD> & BrandedState, R2 = never>(
@@ -359,25 +365,29 @@ export class Machine<
 
   /**
    * Machine-lifetime effect that is forked on actor spawn and runs until the actor stops.
+   * Use effect slots defined via `Slot.Effects` for the actual work.
    *
    * @example
    * ```ts
-   * .background("heartbeat", ({ self }) =>
-   *   Effect.forever(
-   *     Effect.sleep("30 seconds").pipe(
-   *       Effect.andThen(self.send(Event.Ping))
-   *     )
-   *   )
-   * )
+   * const MyEffects = Slot.Effects({
+   *   heartbeat: {},
+   * });
+   *
+   * machine
+   *   .background(({ effects }) => effects.heartbeat())
+   *   .provide({
+   *     heartbeat: (_, { self }) =>
+   *       Effect.forever(
+   *         Effect.sleep("30 seconds").pipe(Effect.andThen(self.send(Event.Ping)))
+   *       ),
+   *   });
    * ```
    */
   background<R2 = never>(
-    name: string,
     handler: StateEffectHandler<State, Event, EFD, R2>,
   ): Machine<State, Event, R | R2, _SD, _ED, GD, EFD> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (this._backgroundEffects as any[]).push({
-      name,
       handler: handler as unknown as BackgroundEffect<State, Event, EFD, R | R2>["handler"],
     });
     return this as unknown as Machine<State, Event, R | R2, _SD, _ED, GD, EFD>;

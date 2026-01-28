@@ -150,10 +150,10 @@ spawn() called
 
 ## State Effects with spawn
 
-Effects are forked on state entry and cancelled on exit. Use `Effect.addFinalizer` for cleanup:
+Effects are forked on state entry and cancelled on exit. Spawn handlers call effect slots defined via `Slot.Effects`:
 
 ```typescript
-import { Machine, State, Event, Schema } from "effect-machine";
+import { Machine, State, Event, Slot, Schema } from "effect-machine";
 
 const MyState = State({
   Idle: {},
@@ -168,23 +168,28 @@ const MyEvent = Event({
 });
 type MyEvent = typeof MyEvent.Type;
 
+const MyEffects = Slot.Effects({
+  fetchData: { url: Schema.String },
+});
+
 const machine = Machine.make({
   state: MyState,
   event: MyEvent,
+  effects: MyEffects,
   initial: MyState.Idle,
 })
   .on(MyState.Idle, MyEvent.Start, ({ event }) => MyState.Loading({ url: event.url }))
   .on(MyState.Loading, MyEvent.Done, ({ event }) => MyState.Success({ data: event.data }))
-  .spawn(MyState.Loading, ({ state, self }) =>
-    Effect.gen(function* () {
-      // Cleanup via finalizer
-      yield* Effect.addFinalizer(() => Effect.log("Leaving Loading"));
-
-      // Main work - auto-cancelled on state exit
-      const data = yield* fetchFromApi(state.url);
-      yield* self.send(MyEvent.Done({ data }));
-    }),
-  )
+  // Spawn calls effect slot - logic lives in provide()
+  .spawn(MyState.Loading, ({ effects, state }) => effects.fetchData({ url: state.url }))
+  .provide({
+    fetchData: ({ url }, { self }) =>
+      Effect.gen(function* () {
+        yield* Effect.addFinalizer(() => Effect.log("Leaving Loading"));
+        const data = yield* fetchFromApi(url);
+        yield* self.send(MyEvent.Done({ data }));
+      }),
+  })
   .final(MyState.Success);
 ```
 
@@ -206,22 +211,29 @@ const MyEvent = Event({
 });
 type MyEvent = typeof MyEvent.Type;
 
+const MyEffects = Slot.Effects({
+  pollStatus: { id: Schema.String },
+});
+
 const machine = Machine.make({
   state: MyState,
   event: MyEvent,
+  effects: MyEffects,
   initial: MyState.Idle,
 })
   .on(MyState.Idle, MyEvent.StartPolling, ({ event }) => MyState.Polling({ id: event.id }))
   .on(MyState.Polling, MyEvent.Stop, () => MyState.Idle)
-  .spawn(MyState.Polling, ({ state, self }) =>
-    Effect.gen(function* () {
-      while (true) {
-        yield* Effect.sleep("5 seconds");
-        const status = yield* checkStatus(state.id);
-        yield* self.send(MyEvent.StatusUpdate({ status }));
-      }
-    }),
-  );
+  .spawn(MyState.Polling, ({ effects, state }) => effects.pollStatus({ id: state.id }))
+  .provide({
+    pollStatus: ({ id }, { self }) =>
+      Effect.gen(function* () {
+        while (true) {
+          yield* Effect.sleep("5 seconds");
+          const status = yield* checkStatus(id);
+          yield* self.send(MyEvent.StatusUpdate({ status }));
+        }
+      }),
+  });
 ```
 
 When transitioning out of `Polling`, the polling fiber is automatically interrupted.
@@ -272,17 +284,24 @@ test("delayed transition", async () => {
 
 ## Error Handling
 
-Unhandled errors in effects will cause the fiber to fail. Use Effect error handling:
+Unhandled errors in effects will cause the fiber to fail. Use Effect error handling inside the slot implementation:
 
 ```typescript
-machine.spawn(MyState.Loading, ({ state, self }) =>
-  Effect.gen(function* () {
-    const result = yield* fetchFromApi(state.url).pipe(
-      Effect.catchAll((error) => self.send(MyEvent.Error({ message: String(error) }))),
-    );
-    yield* self.send(MyEvent.Done({ data: result }));
-  }),
-);
+const MyEffects = Slot.Effects({
+  fetchData: { url: Schema.String },
+});
+
+machine
+  .spawn(MyState.Loading, ({ effects, state }) => effects.fetchData({ url: state.url }))
+  .provide({
+    fetchData: ({ url }, { self }) =>
+      Effect.gen(function* () {
+        const result = yield* fetchFromApi(url).pipe(
+          Effect.catchAll((error) => self.send(MyEvent.Error({ message: String(error) }))),
+        );
+        yield* self.send(MyEvent.Done({ data: result }));
+      }),
+  });
 ```
 
 ## See Also

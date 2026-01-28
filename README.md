@@ -71,35 +71,37 @@ Effect.runPromise(
 
 ## State Effects with spawn
 
-Use `.spawn()` for state-scoped effects. Use `Effect.addFinalizer` for cleanup:
+Use `.spawn()` for state-scoped effects. Spawn handlers call effect slots defined via `Slot.Effects`:
 
 ```typescript
+const MyEffects = Slot.Effects({
+  fetchData: { url: Schema.String },
+  heartbeat: {},
+});
+
 const machine = Machine.make({
   state: MyState,
   event: MyEvent,
+  effects: MyEffects,
   initial: MyState.Idle,
 })
   .on(MyState.Idle, MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url }))
   .on(MyState.Loading, MyEvent.Resolve, ({ event }) => MyState.Success({ data: event.data }))
-  .spawn(MyState.Loading, ({ state, self }) =>
-    Effect.gen(function* () {
-      // Cleanup runs when state exits
-      yield* Effect.addFinalizer(() => Effect.log("Leaving Loading"));
-
-      // Main work - auto-cancelled on state exit
-      const data = yield* fetchFromApi(state.url);
-      yield* self.send(MyEvent.Resolve({ data }));
-    }),
-  )
+  // Spawn calls effect slot - logic lives in provide()
+  .spawn(MyState.Loading, ({ effects, state }) => effects.fetchData({ url: state.url }))
+  // Background calls effect slot - no name parameter
+  .background(({ effects }) => effects.heartbeat())
+  .provide({
+    fetchData: ({ url }, { self }) =>
+      Effect.gen(function* () {
+        yield* Effect.addFinalizer(() => Effect.log("Leaving Loading"));
+        const data = yield* fetchFromApi(url);
+        yield* self.send(MyEvent.Resolve({ data }));
+      }),
+    heartbeat: (_, { self }) =>
+      Effect.forever(Effect.sleep("30 seconds").pipe(Effect.andThen(self.send(MyEvent.Ping)))),
+  })
   .final(MyState.Success);
-```
-
-Use `.background()` for machine-lifetime effects:
-
-```typescript
-machine.background("heartbeat", ({ self }) =>
-  Effect.forever(Effect.sleep("30 seconds").pipe(Effect.andThen(self.send(MyEvent.Ping)))),
-);
 ```
 
 `simulate()` works without spawn/background effects (pure transitions only).

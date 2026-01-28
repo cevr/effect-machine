@@ -134,28 +134,33 @@ If guard returns `false`, stay in current state.
 
 ## State Effects with spawn
 
-Run effects when entering a state. Use `Effect.addFinalizer` for cleanup:
+Run effects when entering a state. Spawn handlers call effect slots defined via `Slot.Effects`:
 
 ```typescript
-import { Machine, State, Event } from "effect-machine";
+import { Machine, State, Event, Slot } from "effect-machine";
+
+const MyEffects = Slot.Effects({
+  fetchData: { url: Schema.String },
+});
 
 const machine = Machine.make({
   state: MyState,
   event: MyEvent,
+  effects: MyEffects,
   initial: MyState.Idle,
 })
   .on(MyState.Idle, MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url }))
   .on(MyState.Loading, MyEvent.Resolve, ({ event }) => MyState.Success({ data: event.data }))
-  .spawn(MyState.Loading, ({ state, self }) =>
-    Effect.gen(function* () {
-      // Cleanup runs when state exits (via addFinalizer)
-      yield* Effect.addFinalizer(() => Effect.log("Leaving Loading"));
-
-      // Main work - automatically cancelled when exiting Loading
-      const data = yield* fetchData(state.url);
-      yield* self.send(MyEvent.Resolve({ data }));
-    }),
-  );
+  // Spawn calls effect slot - logic lives in provide()
+  .spawn(MyState.Loading, ({ effects, state }) => effects.fetchData({ url: state.url }))
+  .provide({
+    fetchData: ({ url }, { self }) =>
+      Effect.gen(function* () {
+        yield* Effect.addFinalizer(() => Effect.log("Leaving Loading"));
+        const data = yield* fetchData(url);
+        yield* self.send(MyEvent.Resolve({ data }));
+      }),
+  });
 ```
 
 `self.send` lets you send events back to the machine from effects.

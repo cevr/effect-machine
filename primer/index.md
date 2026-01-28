@@ -75,7 +75,8 @@ console.log(result.finalState._tag); // "Done"
 | **Event**      | Branded type representing inputs                    |
 | **Transition** | State + Event → New State                           |
 | **Guard**      | Boolean predicate that enables/disables transitions |
-| **Spawn**      | State-scoped effect (cancelled on exit)             |
+| **Spawn**      | State-scoped effect slot (cancelled on exit)        |
+| **Background** | Machine-lifetime effect slot                        |
 | **Final**      | Terminal state - no transitions out                 |
 
 ## API Quick Reference
@@ -90,13 +91,13 @@ console.log(result.finalState._tag); // "Done"
 
 ### Combinators
 
-| Function                                 | Purpose                     |
-| ---------------------------------------- | --------------------------- |
-| `Machine.choose(state, event, branches)` | Guard cascade               |
-| `Machine.delay(state, duration, event)`  | Auto-send event after delay |
-| `Machine.spawn(state, handler)`          | State-scoped effect         |
-| `Machine.background(name, handler)`      | Machine-lifetime effect     |
-| `Machine.provide(machine, handlers)`     | Wire handlers to slots      |
+| Function                                 | Purpose                                     |
+| ---------------------------------------- | ------------------------------------------- |
+| `Machine.choose(state, event, branches)` | Guard cascade                               |
+| `Machine.delay(state, duration, event)`  | Auto-send event after delay                 |
+| `Machine.spawn(state, handler)`          | State-scoped effect (calls effect slot)     |
+| `Machine.background(handler)`            | Machine-lifetime effect (calls effect slot) |
+| `Machine.provide(machine, handlers)`     | Wire handlers to slots                      |
 
 ### Guards
 

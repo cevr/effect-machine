@@ -107,32 +107,40 @@ const machine = Machine.make({
 
 ## State Effects with spawn
 
-Use `.spawn()` for state-scoped effects. Use `Effect.addFinalizer` for cleanup:
+Use `.spawn()` for state-scoped effects. Spawn handlers call effect slots defined via `Slot.Effects`:
 
 ```ts
-machine.spawn(State.Loading, ({ state, self }) =>
-  Effect.gen(function* () {
-    // Cleanup via finalizer
-    yield* Effect.addFinalizer(() => Effect.log("Leaving Loading"));
+const MyEffects = Slot.Effects({
+  fetchData: { url: Schema.String },
+  heartbeat: {},
+});
 
-    // Main work - auto-cancelled when exiting Loading
-    const data = yield* Http.get(state.url);
-    yield* self.send(Event.Loaded({ data }));
-  }),
-);
+const machine = Machine.make({
+  state: MyState,
+  event: MyEvent,
+  effects: MyEffects,
+  initial: MyState.Idle,
+})
+  // Spawn calls effect slot - logic lives in provide()
+  .spawn(MyState.Loading, ({ effects, state }) => effects.fetchData({ url: state.url }))
+  // Background calls effect slot - no name parameter needed
+  .background(({ effects }) => effects.heartbeat())
+  .provide({
+    fetchData: ({ url }, { self }) =>
+      Effect.gen(function* () {
+        yield* Effect.addFinalizer(() => Effect.log("Leaving Loading"));
+        const data = yield* Http.get(url);
+        yield* self.send(MyEvent.Loaded({ data }));
+      }),
+    heartbeat: (_, { self }) =>
+      Effect.forever(Effect.sleep("30 seconds").pipe(Effect.andThen(self.send(MyEvent.Ping)))),
+  });
 ```
 
-Use `.background()` for machine-lifetime effects:
-
-```ts
-machine.background("heartbeat", ({ self }) =>
-  Effect.forever(Effect.sleep("30 seconds").pipe(Effect.andThen(self.send(Event.Ping)))),
-);
-```
-
-- Spawn effects are forked into state scope - cancelled on state exit
-- Background effects are forked into machine scope - cancelled on stop/final
-- `simulate()` works without providing spawn/background effects (pure transitions only)
+- Spawn effects forked into state scope - cancelled on state exit
+- Background effects forked into machine scope - cancelled on stop/final
+- Effect implementations live in `provide()` - same pattern as guards
+- `simulate()` works without spawn/background effects (pure transitions only)
 
 ## Effect Language Service
 
