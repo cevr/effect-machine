@@ -4,10 +4,10 @@ import { Effect, Schema, Stream } from "effect";
 import {
   ActorSystemDefault,
   ActorSystemService,
-  Guard,
   Machine,
   State,
   Event,
+  Slot,
 } from "../src/index.js";
 import { describe, expect, it, yieldFibers } from "./utils/effect-test.js";
 
@@ -27,30 +27,35 @@ const TestEvent = Event({
 });
 type TestEvent = typeof TestEvent.Type;
 
+const TestGuards = Slot.Guards({
+  isHighValue: {},
+});
+
 const createTestMachine = () =>
   Machine.make({
     state: TestState,
     event: TestEvent,
+    guards: TestGuards,
     initial: TestState.Idle,
   })
     .on(TestState.Idle, TestEvent.Start, ({ event }) => TestState.Loading({ value: event.value }))
     .on(TestState.Loading, TestEvent.Complete, ({ state }) =>
       TestState.Active({ value: state.value }),
     )
-    .on(TestState.Active, TestEvent.Update, ({ event }) => TestState.Active({ value: event.value }))
-    .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
-    .on(
-      TestState.Active,
-      TestEvent.Update,
-      ({ state }) => TestState.Active({ value: state.value * 2 }),
-      {
-        guard: Guard.make("isHighValue"),
-      },
+    .on(TestState.Active, TestEvent.Update, ({ event, guards }) =>
+      Effect.gen(function* () {
+        // If high value (> 100), double it
+        if (yield* guards.isHighValue()) {
+          return TestState.Active({ value: event.value * 2 });
+        }
+        return TestState.Active({ value: event.value });
+      }),
     )
+    .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
+    .final(TestState.Done)
     .provide({
-      isHighValue: ({ event }: { event: { value: number } }) => event.value > 100,
-    })
-    .final(TestState.Done);
+      isHighValue: (_params, { event }) => event._tag === "Update" && event.value > 100,
+    });
 
 describe("ActorRef ergonomics", () => {
   describe("snapshot / snapshotSync", () => {
@@ -173,11 +178,11 @@ describe("ActorRef ergonomics", () => {
         yield* actor.send(TestEvent.Complete);
         yield* yieldFibers;
 
-        // Update with value <= 100 uses first handler (no guard)
+        // Update with value <= 100 uses regular path
         const canUpdateLow = yield* actor.can(TestEvent.Update({ value: 50 }));
         expect(canUpdateLow).toBe(true);
 
-        // Update with value > 100 also matches (guard passes)
+        // Update with value > 100 also works (uses high value path)
         const canUpdateHigh = yield* actor.can(TestEvent.Update({ value: 200 }));
         expect(canUpdateHigh).toBe(true);
       }).pipe(Effect.provide(ActorSystemDefault)),

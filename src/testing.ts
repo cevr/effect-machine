@@ -1,8 +1,10 @@
 import { Effect, SubscriptionRef } from "effect";
 
-import type { Machine } from "./machine.js";
+import type { Machine, MachineRef, HandlerContext } from "./machine.js";
 import { applyAlways, resolveTransition } from "./internal/loop.js";
 import { AssertionError } from "./errors.js";
+import type { GuardsDef, EffectsDef, MachineContext } from "./slot.js";
+import { isEffect } from "./internal/is-effect.js";
 
 /**
  * Yield to other fibers. Useful in tests to allow forked effects to run.
@@ -28,8 +30,8 @@ export interface SimulationResult<S> {
 /**
  * Simulate a sequence of events through a machine without running an actor.
  * Useful for testing state transitions in isolation.
- * Does not run onEnter/onExit/invoke effects, but does evaluate guards
- * and apply always transitions.
+ * Does not run onEnter/onExit/invoke effects, but does run guard/effect slots
+ * within transition handlers.
  *
  * @example
  * ```ts
@@ -49,35 +51,57 @@ export const simulate = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
+  GD extends GuardsDef = Record<string, never>,
+  EFD extends EffectsDef = Record<string, never>,
 >(
-  machine: Machine<S, E, R>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
+  machine: Machine<S, E, R, never, any, any, GD, EFD>,
   events: ReadonlyArray<E>,
 ): Effect.Effect<SimulationResult<S>, never, R> =>
   Effect.gen(function* () {
+    // Create a dummy self for slot accessors
+    const dummySelf: MachineRef<E> = {
+      send: () => Effect.void,
+    };
+
     // Apply always transitions to initial state
-    let currentState = yield* applyAlways(machine, machine.initial);
+    let currentState = yield* applyAlways(machine, machine.initial, dummySelf);
     const states: S[] = [currentState];
 
     for (const event of events) {
-      // Use shared resolver for guard cascade support
+      // Use shared resolver for transition lookup
       const transition = yield* resolveTransition(machine, currentState, event);
 
       if (transition === undefined) {
         continue;
       }
 
-      // Compute new state
-      const newStateResult = transition.handler({ state: currentState, event });
-      let newState = Effect.isEffect(newStateResult) ? yield* newStateResult : newStateResult;
+      // Create context for handler
+      const ctx: MachineContext<S, E, MachineRef<E>> = {
+        state: currentState,
+        event,
+        self: dummySelf,
+      };
+      const { guards, effects } = machine._createSlotAccessors(ctx);
 
-      // Run transition effect if any (for side effects during test)
-      if (transition.effect !== undefined) {
-        yield* transition.effect({ state: currentState, event });
-      }
+      const handlerCtx: HandlerContext<S, E, GD, EFD> = {
+        state: currentState,
+        event,
+        guards,
+        effects,
+      };
+
+      // Compute new state
+      const newStateResult = transition.handler(handlerCtx);
+      let newState = isEffect(newStateResult)
+        ? yield* (newStateResult as Effect.Effect<S, never, R>).pipe(
+            Effect.provideService(machine.Context, ctx),
+          )
+        : newStateResult;
 
       // Apply always transitions if state tag changed
       if (newState._tag !== currentState._tag) {
-        newState = yield* applyAlways(machine, newState);
+        newState = yield* applyAlways(machine, newState, dummySelf);
       }
 
       currentState = newState;
@@ -102,8 +126,11 @@ export const assertReaches = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
+  GD extends GuardsDef = Record<string, never>,
+  EFD extends EffectsDef = Record<string, never>,
 >(
-  machine: Machine<S, E, R>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
+  machine: Machine<S, E, R, never, any, any, GD, EFD>,
   events: ReadonlyArray<E>,
   expectedTag: string,
 ): Effect.Effect<S, AssertionError, R> =>
@@ -135,8 +162,11 @@ export const assertPath = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
+  GD extends GuardsDef = Record<string, never>,
+  EFD extends EffectsDef = Record<string, never>,
 >(
-  machine: Machine<S, E, R>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
+  machine: Machine<S, E, R, never, any, any, GD, EFD>,
   events: ReadonlyArray<E>,
   expectedPath: ReadonlyArray<string>,
 ): Effect.Effect<SimulationResult<S>, AssertionError, R> =>
@@ -184,8 +214,11 @@ export const assertNeverReaches = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
+  GD extends GuardsDef = Record<string, never>,
+  EFD extends EffectsDef = Record<string, never>,
 >(
-  machine: Machine<S, E, R>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
+  machine: Machine<S, E, R, never, any, any, GD, EFD>,
   events: ReadonlyArray<E>,
   forbiddenTag: string,
 ): Effect.Effect<SimulationResult<S>, AssertionError, R> =>
@@ -207,7 +240,7 @@ export const assertNeverReaches = <
 /**
  * Create a controllable test harness for a machine
  */
-export interface TestHarness<S, E, R> {
+export interface TestHarness<S, E, R, _GD extends GuardsDef, _EFD extends EffectsDef> {
   readonly state: SubscriptionRef.SubscriptionRef<S>;
   readonly send: (event: E) => Effect.Effect<S, never, R>;
   readonly getState: Effect.Effect<S>;
@@ -226,8 +259,8 @@ export interface TestHarnessOptions<S, E> {
 
 /**
  * Create a test harness for step-by-step testing.
- * Does not run onEnter/onExit/invoke effects, but does evaluate guards
- * and apply always transitions.
+ * Does not run onEnter/onExit/invoke effects, but does run guard/effect slots
+ * within transition handlers.
  *
  * @example Basic usage
  * ```ts
@@ -249,36 +282,59 @@ export const createTestHarness = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
+  GD extends GuardsDef = Record<string, never>,
+  EFD extends EffectsDef = Record<string, never>,
 >(
-  machine: Machine<S, E, R>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
+  machine: Machine<S, E, R, never, any, any, GD, EFD>,
   options?: TestHarnessOptions<S, E>,
-): Effect.Effect<TestHarness<S, E, R>, never, R> =>
+): Effect.Effect<TestHarness<S, E, R, GD, EFD>, never, R> =>
   Effect.gen(function* () {
+    // Create a dummy self for slot accessors
+    const dummySelf: MachineRef<E> = {
+      send: () => Effect.void,
+    };
+
     // Apply always transitions to initial state
-    const resolvedInitial = yield* applyAlways(machine, machine.initial);
+    const resolvedInitial = yield* applyAlways(machine, machine.initial, dummySelf);
     const stateRef = yield* SubscriptionRef.make(resolvedInitial);
 
     const send = (event: E): Effect.Effect<S, never, R> =>
       Effect.gen(function* () {
         const currentState = yield* SubscriptionRef.get(stateRef);
 
-        // Use shared resolver for guard cascade support
+        // Use shared resolver for transition lookup
         const transition = yield* resolveTransition(machine, currentState, event);
 
         if (transition === undefined) {
           return currentState;
         }
 
-        const newStateResult = transition.handler({ state: currentState, event });
-        let newState = Effect.isEffect(newStateResult) ? yield* newStateResult : newStateResult;
+        // Create context for handler
+        const ctx: MachineContext<S, E, MachineRef<E>> = {
+          state: currentState,
+          event,
+          self: dummySelf,
+        };
+        const { guards, effects } = machine._createSlotAccessors(ctx);
 
-        if (transition.effect !== undefined) {
-          yield* transition.effect({ state: currentState, event });
-        }
+        const handlerCtx: HandlerContext<S, E, GD, EFD> = {
+          state: currentState,
+          event,
+          guards,
+          effects,
+        };
+
+        const newStateResult = transition.handler(handlerCtx);
+        let newState = isEffect(newStateResult)
+          ? yield* (newStateResult as Effect.Effect<S, never, R>).pipe(
+              Effect.provideService(machine.Context, ctx),
+            )
+          : newStateResult;
 
         // Apply always transitions if state tag changed
         if (newState._tag !== currentState._tag) {
-          newState = yield* applyAlways(machine, newState);
+          newState = yield* applyAlways(machine, newState, dummySelf);
         }
 
         yield* SubscriptionRef.set(stateRef, newState);

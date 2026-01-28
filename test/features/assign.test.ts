@@ -3,7 +3,7 @@
 import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { Event, Guard, Machine, simulate, State } from "../../src/index.js";
+import { Event, Machine, simulate, State, Slot } from "../../src/index.js";
 
 describe("Assign and Update Helpers", () => {
   const FormState = State({
@@ -89,27 +89,33 @@ describe("Assign and Update Helpers", () => {
     );
   });
 
-  test("on with assign and guard", async () => {
+  test("on with assign and guard logic in handler", async () => {
+    const TestGuards = Slot.Guards({
+      nameLengthOk: {},
+    });
+
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.make({
           state: FormState,
           event: FormEvent,
+          guards: TestGuards,
           initial: FormState.Editing({ name: "", email: "" }),
         })
-          .on(
-            FormState.Editing,
-            FormEvent.SetName,
-            Machine.assign(({ event }) => ({ name: event.name })),
-            {
-              guard: Guard.make("nameLengthOk"),
-            },
+          .on(FormState.Editing, FormEvent.SetName, ({ state, event, guards }) =>
+            Effect.gen(function* () {
+              if (yield* guards.nameLengthOk()) {
+                return FormState.Editing({ ...state, name: event.name });
+              }
+              return state;
+            }),
           )
-          .provide({
-            nameLengthOk: ({ event }: { event: { name: string } }) => event.name.length <= 50,
-          })
           .on(FormState.Editing, FormEvent.Submit, ({ state }) => FormState.Submitted(state))
-          .final(FormState.Submitted);
+          .final(FormState.Submitted)
+          .provide({
+            nameLengthOk: (_params, { event }) =>
+              event._tag === "SetName" && event.name.length <= 50,
+          });
 
         const result = yield* simulate(machine, [
           FormEvent.SetName({ name: "A".repeat(100) }), // blocked by guard

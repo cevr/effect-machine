@@ -8,6 +8,7 @@ src/
 ├── namespace.ts          # Machine namespace (Effect-style API)
 ├── machine-schema.ts     # Schema-first State/Event (MachineStateSchema, MachineEventSchema)
 ├── machine.ts            # Machine class with fluent builder API
+├── slot.ts               # Slot.Guards/Slot.Effects factories for parameterized slots
 ├── actor-ref.ts          # Actor reference interface
 ├── actor-system.ts       # Actor system service + layer
 ├── testing.ts            # Test utilities (simulate, harness, assertions)
@@ -27,7 +28,6 @@ src/
     ├── loop.ts           # Event loop, transition resolver, lifecycle effects
     ├── transition-index.ts # O(1) lookup for transitions and effects
     ├── fiber-storage.ts  # Per-actor WeakMap fiber storage utility
-    ├── types.ts          # Internal types (contexts, Guard module)
     ├── brands.ts         # StateBrand/EventBrand + BrandedState/BrandedEvent
     ├── is-effect.ts      # Shared isEffect type guard
     └── get-tag.ts        # Tag extraction from constructors
@@ -45,7 +45,6 @@ test/
 │   ├── always.test.ts
 │   ├── any.test.ts
 │   ├── assign.test.ts
-│   ├── choose.test.ts
 │   ├── delay.test.ts
 │   ├── dynamic-delay.test.ts
 │   ├── effects.test.ts
@@ -65,17 +64,18 @@ test/
 
 ## Key Files
 
-| File                                | Purpose                                                    |
-| ----------------------------------- | ---------------------------------------------------------- |
-| `machine.ts`                        | Machine class - fluent builder, all combinators as methods |
-| `machine-schema.ts`                 | Schema-first `State`/`Event` - single source of truth      |
-| `namespace.ts`                      | Machine namespace export (named for macOS compat)          |
-| `internal/loop.ts`                  | Event processing, `resolveTransition`, lifecycle effects   |
-| `internal/transition-index.ts`      | O(1) lookup for transitions, always, onEnter, onExit       |
-| `internal/brands.ts`                | Branded types: `StateBrand`, `BrandedState`, etc.          |
-| `internal/fiber-storage.ts`         | `createFiberStorage()` - per-actor WeakMap utility         |
-| `persistence/persistent-machine.ts` | `Machine.persist` - schemas from machine                   |
-| `cluster/entity-machine.ts`         | `toEntity` - schemas from machine                          |
+| File                                | Purpose                                                     |
+| ----------------------------------- | ----------------------------------------------------------- |
+| `machine.ts`                        | Machine class - fluent builder, all combinators as methods  |
+| `machine-schema.ts`                 | Schema-first `State`/`Event` - single source of truth       |
+| `slot.ts`                           | `Slot.Guards`/`Slot.Effects` - parameterized slot factories |
+| `namespace.ts`                      | Machine namespace export (named for macOS compat)           |
+| `internal/loop.ts`                  | Event processing, `resolveTransition`, lifecycle effects    |
+| `internal/transition-index.ts`      | O(1) lookup for transitions, always, onEnter, onExit        |
+| `internal/brands.ts`                | Branded types: `StateBrand`, `BrandedState`, etc.           |
+| `internal/fiber-storage.ts`         | `createFiberStorage()` - per-actor WeakMap utility          |
+| `persistence/persistent-machine.ts` | `Machine.persist` - schemas from machine                    |
+| `cluster/entity-machine.ts`         | `toEntity` - schemas from machine                           |
 
 ## Machine Class Architecture
 
@@ -84,24 +84,26 @@ Machine uses mutable builder pattern with immutable public views:
 ```ts
 // Internal mutable arrays
 readonly _transitions: Array<Transition<...>>;
-readonly _effectSlots: Map<string, EffectSlot>;
+readonly _guardHandlers: Map<string, GuardHandler>;
+readonly _effectHandlers: Map<string, EffectHandler>;
 
 // Public readonly getters
 get transitions(): ReadonlyArray<Transition<...>> { return this._transitions; }
-get effectSlots(): ReadonlyMap<string, EffectSlot> { return this._effectSlots; }
 ```
 
 - Builder methods mutate `this` and return `this` for chaining
-- Exception: `provide()` creates new Machine (supports reusing base with different effects)
+- Exception: `provide()` creates new Machine (supports reusing base with different handlers)
 - Phantom types `_SD`/`_ED` constrain state/event to schema variants at compile time
+- `GD`/`EFD` type params track guard/effect definitions
 
 ## Event Flow
 
 ```
-Event → resolveTransition (guard cascade) → onExit → handler → applyAlways → onEnter → update state
+Event → resolveTransition → onExit → handler (w/ guards/effects) → applyAlways → onEnter → update state
 ```
 
-- Guard cascade: first passing guard wins (registration order)
+- Handler receives `{ state, event, guards, effects }` context
+- Guards checked inside handler via `yield* guards.xxx(params)`
 - Same-state transitions skip onExit/onEnter by default
 - `.on.force()`: force onExit/onEnter even for same state tag
 - `applyAlways`: loops until no match or final state (max 100 iterations)
@@ -121,6 +123,8 @@ type MyState = typeof MyState.Type;
 const machine = Machine.make({
   state: MyState, // required - becomes machine.stateSchema
   event: MyEvent, // required - becomes machine.eventSchema
+  guards: MyGuards, // optional - Slot.Guards definition
+  effects: MyEffects, // optional - Slot.Effects definition
   initial: MyState.Idle, // empty struct: no parens needed
 });
 ```
@@ -130,6 +134,47 @@ const machine = Machine.make({
 - Non-empty: `State.Loading({ url })` - args required
 - `persist()` and `toEntity()` read schemas from machine - no drift possible
 - `$match` and `$is` helpers for pattern matching
+
+## Parameterized Slots Pattern
+
+Guards and effects defined via `Slot.Guards`/`Slot.Effects`:
+
+```ts
+const MyGuards = Slot.Guards({
+  canRetry: { max: Schema.Number },  // with params
+  isValid: {},                        // no params
+});
+
+const MyEffects = Slot.Effects({
+  fetchData: { url: Schema.String },
+});
+
+// Use in handlers
+.on(State.Idle, Event.Start, ({ state, guards, effects }) =>
+  Effect.gen(function* () {
+    if (yield* guards.canRetry({ max: 3 })) {
+      yield* effects.fetchData({ url: state.url });
+      return State.Loading({ url: state.url });
+    }
+    return state;
+  })
+)
+
+// Provide implementations - (params, ctx) signature
+.provide({
+  canRetry: ({ max }, { state }) => state.attempts < max,
+  fetchData: ({ url }, { self }) =>
+    Effect.gen(function* () {
+      const data = yield* Http.get(url);
+      yield* self.send(Event.Resolve({ data }));
+    }),
+})
+```
+
+- Guards return `boolean | Effect<boolean>`
+- Effects return `Effect<void>`
+- Context (`ctx`) has `{ state, event, self }`
+- `provide()` creates new machine - original reusable with different handlers
 
 ## Fiber Storage Pattern
 
@@ -154,7 +199,7 @@ getFiberMap(self).set(instanceKey, fiber);
 
 Index built on first access, cached per machine instance.
 
-## Effect Slots Pattern
+## Invoke Slots Pattern
 
 ```ts
 machine
@@ -167,60 +212,28 @@ machine
 
 - `provide()` creates new machine (original reusable with different handlers)
 - Spawning validates all slots have handlers (runtime check)
-- `simulate()` ignores effects - works with unprovided machines
+- `simulate()` ignores invoke effects - works with unprovided machines
 - Root invokes start on spawn, interrupted on stop or final state
-
-## Guard Pattern
-
-Guards are **slots-only** - always require provision via `.provide()`:
-
-```ts
-// Declare guard slot
-Guard.make("canRetry");
-
-// Composition with string shorthand
-Guard.and("isAdmin", "isActive");
-Guard.or("isOwner", "isAdmin");
-Guard.not("isLocked");
-Guard.and(Guard.or("isAdmin", "isMod"), "isActive"); // nested
-
-// Use in transition
-.on(State.Idle, Event.Start, handler, { guard: Guard.make("canStart") })
-
-// Provide implementation (sync or async)
-.provide({
-  canStart: ({ state }) => state.ready,  // sync boolean
-  canRetry: ({ state }) =>               // async Effect<boolean>
-    Effect.gen(function* () {
-      const auth = yield* AuthService;
-      return yield* auth.check(state.userId);
-    }),
-})
-```
-
-- Guards evaluated in parallel for composition
-- Async guards add R to machine type - `simulate` requires providing R
-- Hierarchical tree structure: `GuardSlot | GuardAnd | GuardOr | GuardNot`
 
 ## Testing
 
-| Function              | Effects | Always | Observer |
-| --------------------- | ------- | ------ | -------- |
-| `simulate`            | No      | Yes    | No       |
-| `createTestHarness`   | No      | Yes    | Yes      |
-| Actor + `yieldFibers` | Yes     | Yes    | No       |
+| Function              | Guard/Effect Slots | Invoke Effects | Always | Observer |
+| --------------------- | ------------------ | -------------- | ------ | -------- |
+| `simulate`            | Yes                | No             | Yes    | No       |
+| `createTestHarness`   | Yes                | No             | Yes    | Yes      |
+| Actor + `yieldFibers` | Yes                | Yes            | Yes    | No       |
 
 Use `Layer.merge(ActorSystemDefault, TestContext.TestContext)` for TestClock.
 
 ## ActorRef API
 
-| Method         | Effect | Sync | Purpose                           |
-| -------------- | ------ | ---- | --------------------------------- |
-| `snapshot`     | Yes    | -    | Get current state                 |
-| `snapshotSync` | -      | Yes  | Get current state (sync)          |
-| `matches`      | Yes    | -    | Check state tag                   |
-| `matchesSync`  | -      | Yes  | Check state tag (sync)            |
-| `can`          | Yes    | -    | Check if event handled (w/guards) |
-| `canSync`      | -      | Yes  | Check if event handled (sync)     |
-| `changes`      | Stream | -    | Stream of state updates           |
-| `subscribe`    | -      | Yes  | Sync callback, returns unsub fn   |
+| Method         | Effect | Sync | Purpose                         |
+| -------------- | ------ | ---- | ------------------------------- |
+| `snapshot`     | Yes    | -    | Get current state               |
+| `snapshotSync` | -      | Yes  | Get current state (sync)        |
+| `matches`      | Yes    | -    | Check state tag                 |
+| `matchesSync`  | -      | Yes  | Check state tag (sync)          |
+| `can`          | Yes    | -    | Check if event handled          |
+| `canSync`      | -      | Yes  | Check if event handled (sync)   |
+| `changes`      | Stream | -    | Stream of state updates         |
+| `subscribe`    | -      | Yes  | Sync callback, returns unsub fn |

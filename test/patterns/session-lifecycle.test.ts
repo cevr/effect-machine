@@ -44,9 +44,10 @@ describe("Session Lifecycle Pattern", () => {
     event: SessionEvent,
     initial: SessionState.Initializing({ token: null }),
   })
-    .always(SessionState.Initializing, [
-      { guard: (state) => state.token === null, to: () => SessionState.Guest },
-    ])
+    .always(SessionState.Initializing, (state) => {
+      if (state.token === null) return SessionState.Guest;
+      return state;
+    })
     .on(SessionState.Initializing, SessionEvent.TokenValidated, ({ event }) =>
       SessionState.Active({ userId: event.userId, role: event.role, lastActivity: Date.now() }),
     )
@@ -88,9 +89,10 @@ describe("Session Lifecycle Pattern", () => {
         event: SessionEvent,
         initial: SessionState.Initializing({ token: "valid-token" }),
       })
-        .always(SessionState.Initializing, [
-          { guard: (state) => state.token === null, to: () => SessionState.Guest },
-        ])
+        .always(SessionState.Initializing, (state) => {
+          if (state.token === null) return SessionState.Guest;
+          return state;
+        })
         .on(SessionState.Initializing, SessionEvent.TokenValidated, ({ event }) =>
           SessionState.Active({ userId: event.userId, role: event.role, lastActivity: Date.now() }),
         );

@@ -77,7 +77,8 @@ export const toEntity = <
   R,
   Slots extends AnySlot,
 >(
-  machine: Machine<S, E, R, Slots>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
+  machine: Machine<S, E, R, Slots, any, any, any, any>,
   options: ToEntityOptions,
 ) => {
   const stateSchema = machine.stateSchema;

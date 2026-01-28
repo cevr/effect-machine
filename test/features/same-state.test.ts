@@ -29,12 +29,8 @@ describe("Same-state Transitions", () => {
           FormState.Form({ name: event.name, count: state.count + 1 }),
         )
         .on(FormState.Form, FormEvent.Submit, () => FormState.Submitted)
-        .onEnter(FormState.Form, "enterForm")
-        .onExit(FormState.Form, "exitForm")
-        .provide({
-          enterForm: () => Effect.sync(() => effects.push("enter:Form")),
-          exitForm: () => Effect.sync(() => effects.push("exit:Form")),
-        });
+        .onEnter(FormState.Form, () => Effect.sync(() => effects.push("enter:Form")))
+        .onExit(FormState.Form, () => Effect.sync(() => effects.push("exit:Form")));
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("form", machine);
@@ -77,12 +73,8 @@ describe("Same-state Transitions", () => {
         .on.force(FormState.Form, FormEvent.SetName, ({ state, event }) =>
           FormState.Form({ name: event.name, count: state.count + 1 }),
         )
-        .onEnter(FormState.Form, "enterForm")
-        .onExit(FormState.Form, "exitForm")
-        .provide({
-          enterForm: () => Effect.sync(() => effects.push("enter:Form")),
-          exitForm: () => Effect.sync(() => effects.push("exit:Form")),
-        });
+        .onEnter(FormState.Form, () => Effect.sync(() => effects.push("enter:Form")))
+        .onExit(FormState.Form, () => Effect.sync(() => effects.push("exit:Form")));
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("form", machine);

@@ -5,15 +5,13 @@ import {
   ActorSystemDefault,
   ActorSystemService,
   collectingInspector,
-  getGuardDisplayName,
-  Guard,
   type InspectionEvent,
   InspectorService,
   Machine,
   State,
   Event,
 } from "../src/index.js";
-import { describe, expect, it, test, yieldFibers } from "./utils/effect-test.js";
+import { describe, expect, it, yieldFibers } from "./utils/effect-test.js";
 
 const TestState = State({
   Idle: {},
@@ -106,42 +104,6 @@ describe("Inspection", () => {
     );
   });
 
-  it.scopedLive("emits guard evaluation events", () => {
-    const events: InspectionEvent<TestState, TestEvent>[] = [];
-    const canFetch = Guard.make("canFetch");
-
-    return Effect.gen(function* () {
-      const machine = Machine.make({
-        state: TestState,
-        event: TestEvent,
-        initial: TestState.Idle,
-      })
-        .on(
-          TestState.Idle,
-          TestEvent.Fetch,
-          ({ event }) => TestState.Loading({ url: (event as { url: string }).url }),
-          { guard: canFetch },
-        )
-        .provide({
-          canFetch: () => true,
-        });
-
-      const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("test", machine);
-
-      yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
-      yield* yieldFibers;
-
-      const guardEvent = events.find((e) => e.type === "@machine.guard");
-      expect(guardEvent).toBeDefined();
-      expect((guardEvent as { guardName: string }).guardName).toBe("canFetch");
-      expect((guardEvent as { result: boolean }).result).toBe(true);
-    }).pipe(
-      Effect.provide(ActorSystemDefault),
-      Effect.provideService(InspectorService, collectingInspector(events)),
-    );
-  });
-
   it.scopedLive("emits entry and exit effect events", () => {
     const events: InspectionEvent<TestState, TestEvent>[] = [];
 
@@ -152,14 +114,9 @@ describe("Inspection", () => {
         initial: TestState.Idle,
       })
         .on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }))
-        .onEnter(TestState.Idle, "enterIdle")
-        .onExit(TestState.Idle, "exitIdle")
-        .onEnter(TestState.Loading, "enterLoading")
-        .provide({
-          enterIdle: () => Effect.void,
-          exitIdle: () => Effect.void,
-          enterLoading: () => Effect.void,
-        });
+        .onEnter(TestState.Idle, () => Effect.void)
+        .onExit(TestState.Idle, () => Effect.void)
+        .onEnter(TestState.Loading, () => Effect.void);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
@@ -259,58 +216,8 @@ describe("Inspection", () => {
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
 
-  it.scopedLive("guard naming with Guard.make", () => {
-    const events: InspectionEvent<TestState, TestEvent>[] = [];
-    const namedGuard = Guard.make("myGuard");
-
-    return Effect.gen(function* () {
-      const machine = Machine.make({
-        state: TestState,
-        event: TestEvent,
-        initial: TestState.Idle,
-      })
-        .on(
-          TestState.Idle,
-          TestEvent.Fetch,
-          ({ event }) => TestState.Loading({ url: (event as { url: string }).url }),
-          { guard: namedGuard },
-        )
-        .provide({
-          myGuard: () => true,
-        });
-
-      const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("test", machine);
-
-      yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
-      yield* yieldFibers;
-
-      const guardEvent = events.find((e) => e.type === "@machine.guard");
-      expect(guardEvent).toBeDefined();
-      expect((guardEvent as { guardName: string }).guardName).toBe("myGuard");
-    }).pipe(
-      Effect.provide(ActorSystemDefault),
-      Effect.provideService(InspectorService, collectingInspector(events)),
-    );
-  });
-
-  test("composite guard names", () => {
-    const guardA = Guard.make("guardA");
-    const guardB = Guard.make("guardB");
-    const combined = Guard.and(guardA, guardB);
-
-    expect(getGuardDisplayName(combined)).toBe("and(guardA, guardB)");
-
-    const orCombined = Guard.or(guardA, guardB);
-    expect(getGuardDisplayName(orCombined)).toBe("or(guardA, guardB)");
-
-    const negated = Guard.not(guardA);
-    expect(getGuardDisplayName(negated)).toBe("not(guardA)");
-  });
-
   it.scopedLive("event order is correct", () => {
     const events: InspectionEvent<TestState, TestEvent>[] = [];
-    const canFetch = Guard.make("canFetch");
 
     return Effect.gen(function* () {
       const machine = Machine.make({
@@ -318,20 +225,9 @@ describe("Inspection", () => {
         event: TestEvent,
         initial: TestState.Idle,
       })
-        .on(
-          TestState.Idle,
-          TestEvent.Fetch,
-          ({ event }) => TestState.Loading({ url: (event as { url: string }).url }),
-          { guard: canFetch },
-        )
-        .onExit(TestState.Idle, "exitIdle")
-        .onEnter(TestState.Loading, "enterLoading")
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- guard slot tracking issue
-        .provide({
-          canFetch: () => true,
-          exitIdle: () => Effect.void,
-          enterLoading: () => Effect.void,
-        } as any);
+        .on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }))
+        .onExit(TestState.Idle, () => Effect.void)
+        .onEnter(TestState.Loading, () => Effect.void);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
@@ -346,11 +242,10 @@ describe("Inspection", () => {
       // Filter to events between spawn and stop (the transition events)
       const transitionEvents = events.slice(1, -1); // Remove spawn at start and stop at end
 
-      // Expected order: event received -> guard -> exit effect -> transition -> entry effect
+      // Expected order: event received -> exit effect -> transition -> entry effect
       const types = transitionEvents.map((e) => e.type);
       expect(types).toEqual([
         "@machine.event",
-        "@machine.guard",
         "@machine.effect", // exit
         "@machine.transition",
         "@machine.effect", // entry

@@ -1,7 +1,8 @@
+// @effect-diagnostics strictEffectProvide:off - tests are entry points
 import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { Guard, Machine, simulate, State, Event } from "../src/index.js";
+import { Machine, simulate, State, Event, Slot } from "../src/index.js";
 
 const CounterState = State({
   Idle: { count: Schema.Number },
@@ -15,7 +16,6 @@ const CounterEvent = Event({
   Increment: {},
   Stop: {},
 });
-type CounterEvent = typeof CounterEvent.Type;
 
 describe("Machine", () => {
   test("creates machine with initial state using .pipe() syntax", () => {
@@ -62,29 +62,35 @@ describe("Machine", () => {
     );
   });
 
-  test("supports guards", async () => {
+  test("supports guards via Slot.Guards", async () => {
+    const CounterGuards = Slot.Guards({
+      belowLimit: { limit: Schema.Number },
+    });
+
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.make({
           state: CounterState,
           event: CounterEvent,
+          guards: CounterGuards,
           initial: CounterState.Counting({ count: 0 }),
         })
-          .on(
-            CounterState.Counting,
-            CounterEvent.Increment,
-            ({ state }) => CounterState.Counting({ count: state.count + 1 }),
-            {
-              guard: Guard.make("belowLimit"),
-            },
+          .on(CounterState.Counting, CounterEvent.Increment, ({ state, guards }) =>
+            Effect.gen(function* () {
+              if (yield* guards.belowLimit({ limit: 3 })) {
+                return CounterState.Counting({ count: state.count + 1 });
+              }
+              return state;
+            }),
           )
-          .provide({
-            belowLimit: ({ state }: { state: { count: number } }) => state.count < 3,
-          })
           .on(CounterState.Counting, CounterEvent.Stop, ({ state }) =>
             CounterState.Done({ count: state.count }),
           )
-          .final(CounterState.Done);
+          .final(CounterState.Done)
+          .provide({
+            // Handler receives (params, ctx) - context passed directly
+            belowLimit: ({ limit }, { state }) => state.count < limit,
+          });
 
         const result = yield* simulate(machine, [
           CounterEvent.Increment,
@@ -99,7 +105,7 @@ describe("Machine", () => {
     );
   });
 
-  test("supports transition effects", async () => {
+  test("supports effects in handler via Effect<State>", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const logs: string[] = [];
@@ -109,16 +115,11 @@ describe("Machine", () => {
           event: CounterEvent,
           initial: CounterState.Idle({ count: 0 }),
         })
-          .on(
-            CounterState.Idle,
-            CounterEvent.Start,
-            ({ state }) => CounterState.Counting({ count: state.count }),
-            {
-              effect: ({ state }) =>
-                Effect.sync(() => {
-                  logs.push(`Starting from count ${state.count}`);
-                }),
-            },
+          .on(CounterState.Idle, CounterEvent.Start, ({ state }) =>
+            Effect.gen(function* () {
+              yield* Effect.sync(() => logs.push(`Starting from count ${state.count}`));
+              return CounterState.Counting({ count: state.count });
+            }),
           )
           .on(CounterState.Counting, CounterEvent.Stop, ({ state }) =>
             CounterState.Done({ count: state.count }),

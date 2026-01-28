@@ -1,9 +1,10 @@
+// @effect-diagnostics strictEffectProvide:off - tests are entry points
 import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { Event, Guard, Machine, simulate, State } from "../../src/index.js";
+import { Event, Machine, simulate, State, Slot } from "../../src/index.js";
 
-describe("Choose Combinator", () => {
+describe("Conditional Transitions (replaces choose combinator)", () => {
   test("first matching guard wins", async () => {
     const TestState = State({
       Idle: { value: Schema.Number },
@@ -16,26 +17,36 @@ describe("Choose Combinator", () => {
       Check: {},
     });
 
+    const TestGuards = Slot.Guards({
+      isHigh: {},
+      isMedium: {},
+    });
+
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.make({
           state: TestState,
           event: TestEvent,
+          guards: TestGuards,
           initial: TestState.Idle({ value: 75 }),
         })
-          .choose(TestState.Idle, TestEvent.Check, [
-            { guard: Guard.make("isHigh"), to: () => TestState.High },
-            { guard: Guard.make("isMedium"), to: () => TestState.Medium },
-            { otherwise: true, to: () => TestState.Low },
-          ])
+          .on(TestState.Idle, TestEvent.Check, ({ guards }) =>
+            Effect.gen(function* () {
+              if (yield* guards.isHigh()) {
+                return TestState.High;
+              }
+              if (yield* guards.isMedium()) {
+                return TestState.Medium;
+              }
+              return TestState.Low;
+            }),
+          )
           .final(TestState.High)
           .final(TestState.Medium)
           .final(TestState.Low)
           .provide({
-            isHigh: ({ state }: { state: { _tag: string; value?: number } }) =>
-              state._tag === "Idle" && (state.value ?? 0) >= 70,
-            isMedium: ({ state }: { state: { _tag: string; value?: number } }) =>
-              state._tag === "Idle" && (state.value ?? 0) >= 40,
+            isHigh: (_params, { state }) => state._tag === "Idle" && state.value >= 70,
+            isMedium: (_params, { state }) => state._tag === "Idle" && state.value >= 40,
           });
 
         const result = yield* simulate(machine, [TestEvent.Check]);
@@ -44,7 +55,7 @@ describe("Choose Combinator", () => {
     );
   });
 
-  test("otherwise branch catches all", async () => {
+  test("fallback branch catches all", async () => {
     const TestState = State({
       Idle: { value: Schema.Number },
       High: {},
@@ -55,22 +66,31 @@ describe("Choose Combinator", () => {
       Check: {},
     });
 
+    const TestGuards = Slot.Guards({
+      isHigh: {},
+    });
+
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.make({
           state: TestState,
           event: TestEvent,
+          guards: TestGuards,
           initial: TestState.Idle({ value: 10 }),
         })
-          .choose(TestState.Idle, TestEvent.Check, [
-            { guard: Guard.make("isHigh"), to: () => TestState.High },
-            { otherwise: true, to: () => TestState.Low },
-          ])
+          .on(TestState.Idle, TestEvent.Check, ({ guards }) =>
+            Effect.gen(function* () {
+              if (yield* guards.isHigh()) {
+                return TestState.High;
+              }
+              // Fallback
+              return TestState.Low;
+            }),
+          )
           .final(TestState.High)
           .final(TestState.Low)
           .provide({
-            isHigh: ({ state }: { state: { _tag: string; value?: number } }) =>
-              state._tag === "Idle" && (state.value ?? 0) >= 70,
+            isHigh: (_params, { state }) => state._tag === "Idle" && state.value >= 70,
           });
 
         const result = yield* simulate(machine, [TestEvent.Check]);
@@ -79,7 +99,7 @@ describe("Choose Combinator", () => {
     );
   });
 
-  test("runs effect on matching branch", async () => {
+  test("runs effect in matching branch", async () => {
     const TestState = State({
       Idle: {},
       Done: {},
@@ -89,6 +109,10 @@ describe("Choose Combinator", () => {
       Go: {},
     });
 
+    const TestEffects = Slot.Effects({
+      logAction: { message: Schema.String },
+    });
+
     await Effect.runPromise(
       Effect.gen(function* () {
         const logs: string[] = [];
@@ -96,19 +120,22 @@ describe("Choose Combinator", () => {
         const machine = Machine.make({
           state: TestState,
           event: TestEvent,
+          effects: TestEffects,
           initial: TestState.Idle,
         })
-          .choose(TestState.Idle, TestEvent.Go, [
-            {
-              otherwise: true,
-              to: () => TestState.Done,
-              effect: () =>
-                Effect.sync(() => {
-                  logs.push("effect ran");
-                }),
-            },
-          ])
-          .final(TestState.Done);
+          .on(TestState.Idle, TestEvent.Go, ({ effects }) =>
+            Effect.gen(function* () {
+              yield* effects.logAction({ message: "effect ran" });
+              return TestState.Done;
+            }),
+          )
+          .final(TestState.Done)
+          .provide({
+            logAction: ({ message }) =>
+              Effect.sync(() => {
+                logs.push(message);
+              }),
+          });
 
         yield* simulate(machine, [TestEvent.Go]);
         expect(logs).toEqual(["effect ran"]);

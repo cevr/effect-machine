@@ -1,7 +1,7 @@
 import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { Event, Guard, Machine, simulate, State } from "../../src/index.js";
+import { Event, Machine, simulate, State, Slot } from "../../src/index.js";
 
 // ============================================================================
 // Test fixtures
@@ -59,12 +59,17 @@ describe("Machine.any", () => {
     );
   });
 
-  test("any() works with guards", async () => {
+  test("any() works with guards in handler", async () => {
+    const TestGuards = Slot.Guards({
+      hasText: {},
+    });
+
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.make({
           state: EditorState,
           event: EditorEvent,
+          guards: TestGuards,
           initial: EditorState.Typing({ text: "abc" }),
         })
           .on(EditorState.Typing, EditorEvent.Submit, ({ state }) =>
@@ -73,11 +78,16 @@ describe("Machine.any", () => {
           .onAny(
             [EditorState.Typing, EditorState.Submitting],
             EditorEvent.Cancel,
-            () => EditorState.Cancelled,
-            { guard: Guard.make("hasText") },
+            ({ state, guards }) =>
+              Effect.gen(function* () {
+                if (yield* guards.hasText()) {
+                  return EditorState.Cancelled;
+                }
+                return state;
+              }),
           )
           .provide({
-            hasText: ({ state }: { state: { text?: string } }) =>
+            hasText: (_params, { state }) =>
               "text" in state && state.text !== undefined && state.text.length > 0,
           });
 
@@ -87,7 +97,7 @@ describe("Machine.any", () => {
     );
   });
 
-  test("any() works with effects", async () => {
+  test("any() works with effects in handler", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const logs: string[] = [];
@@ -100,16 +110,11 @@ describe("Machine.any", () => {
           .on(EditorState.Typing, EditorEvent.Submit, ({ state }) =>
             EditorState.Submitting({ text: state.text }),
           )
-          .onAny(
-            [EditorState.Typing, EditorState.Submitting],
-            EditorEvent.Cancel,
-            () => EditorState.Cancelled,
-            {
-              effect: ({ state }) =>
-                Effect.sync(() => {
-                  logs.push(`cancelled from: ${state._tag}`);
-                }),
-            },
+          .onAny([EditorState.Typing, EditorState.Submitting], EditorEvent.Cancel, ({ state }) =>
+            Effect.gen(function* () {
+              yield* Effect.sync(() => logs.push(`cancelled from: ${state._tag}`));
+              return EditorState.Cancelled;
+            }),
           );
 
         yield* simulate(machine, [EditorEvent.Cancel]);

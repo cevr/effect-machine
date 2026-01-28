@@ -7,9 +7,11 @@ import { Entity } from "@effect/cluster";
 import type { Rpc } from "@effect/rpc";
 import { Effect, type Layer, Queue, Ref } from "effect";
 
-import type { Machine, MachineRef } from "../machine.js";
+import type { Machine, MachineRef, HandlerContext, StateHandlerContext } from "../machine.js";
 import { findOnEnterEffects, findOnExitEffects } from "../internal/transition-index.js";
 import { applyAlways, resolveTransition } from "../internal/loop.js";
+import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
+import { isEffect } from "../internal/is-effect.js";
 
 /**
  * Options for EntityMachine.layer
@@ -36,15 +38,34 @@ const runEntryEffectsSimple = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
+  GD extends GuardsDef = Record<string, never>,
+  EFD extends EffectsDef = Record<string, never>,
 >(
-  machine: Machine<S, E, R>,
+  machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
   state: S,
   self: MachineRef<E>,
 ): Effect.Effect<void, never, R> =>
   Effect.gen(function* () {
     const effects = findOnEnterEffects(machine, state._tag);
+
+    // Create context for effect slots
+    const dummyEvent = { _tag: "__enter__" } as E;
+    const ctx: MachineContext<S, E, MachineRef<E>> = {
+      state,
+      event: dummyEvent,
+      self,
+    };
+    const { effects: effectSlots } = machine._createSlotAccessors(ctx);
+
     for (const effect of effects) {
-      yield* effect.handler({ state, self });
+      const handlerCtx: StateHandlerContext<S, E, EFD> = {
+        state,
+        self,
+        effects: effectSlots,
+      };
+      yield* (effect.handler(handlerCtx) as Effect.Effect<void, never, R>).pipe(
+        Effect.provideService(machine.Context, ctx),
+      );
     }
   });
 
@@ -55,23 +76,48 @@ const runExitEffectsSimple = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
+  GD extends GuardsDef = Record<string, never>,
+  EFD extends EffectsDef = Record<string, never>,
 >(
-  machine: Machine<S, E, R>,
+  machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
   state: S,
   self: MachineRef<E>,
 ): Effect.Effect<void, never, R> =>
   Effect.gen(function* () {
     const effects = findOnExitEffects(machine, state._tag);
+
+    // Create context for effect slots
+    const dummyEvent = { _tag: "__exit__" } as E;
+    const ctx: MachineContext<S, E, MachineRef<E>> = {
+      state,
+      event: dummyEvent,
+      self,
+    };
+    const { effects: effectSlots } = machine._createSlotAccessors(ctx);
+
     for (const effect of effects) {
-      yield* effect.handler({ state, self });
+      const handlerCtx: StateHandlerContext<S, E, EFD> = {
+        state,
+        self,
+        effects: effectSlots,
+      };
+      yield* (effect.handler(handlerCtx) as Effect.Effect<void, never, R>).pipe(
+        Effect.provideService(machine.Context, ctx),
+      );
     }
   });
 
 /**
  * Process a single event through the machine
  */
-const processEvent = <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
-  machine: Machine<S, E, R>,
+const processEvent = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+  GD extends GuardsDef = Record<string, never>,
+  EFD extends EffectsDef = Record<string, never>,
+>(
+  machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
   stateRef: Ref.Ref<S>,
   event: E,
   self: MachineRef<E>,
@@ -87,14 +133,28 @@ const processEvent = <S extends { readonly _tag: string }, E extends { readonly 
       return;
     }
 
-    // Compute new state
-    const newStateResult = transition.handler({ state: currentState, event });
-    let newState = Effect.isEffect(newStateResult) ? yield* newStateResult : newStateResult;
+    // Create context for handler
+    const ctx: MachineContext<S, E, MachineRef<E>> = {
+      state: currentState,
+      event,
+      self,
+    };
+    const { guards, effects } = machine._createSlotAccessors(ctx);
 
-    // Run transition effect if any
-    if (transition.effect !== undefined) {
-      yield* transition.effect({ state: currentState, event });
-    }
+    const handlerCtx: HandlerContext<S, E, GD, EFD> = {
+      state: currentState,
+      event,
+      guards,
+      effects,
+    };
+
+    // Compute new state
+    const newStateResult = transition.handler(handlerCtx);
+    let newState = isEffect(newStateResult)
+      ? yield* (newStateResult as Effect.Effect<S, never, R>).pipe(
+          Effect.provideService(machine.Context, ctx),
+        )
+      : newStateResult;
 
     // Determine if we should run exit/enter effects
     const stateTagChanged = newState._tag !== currentState._tag;
@@ -106,7 +166,7 @@ const processEvent = <S extends { readonly _tag: string }, E extends { readonly 
 
       // Apply always transitions (only if tag changed)
       if (stateTagChanged) {
-        newState = yield* applyAlways(machine, newState);
+        newState = yield* applyAlways(machine, newState, self);
       }
 
       // Update state
@@ -161,11 +221,13 @@ export const EntityMachine = {
     S extends { readonly _tag: string },
     E extends { readonly _tag: string },
     R,
+    GD extends GuardsDef,
+    EFD extends EffectsDef,
     EntityType extends string,
     Rpcs extends Rpc.Any,
   >(
     entity: Entity.Entity<EntityType, Rpcs>,
-    machine: Machine<S, E, R, never>,
+    machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
     options?: EntityMachineOptions<S>,
   ): Layer.Layer<never, never, R> => {
     return entity.toLayer(
@@ -181,19 +243,17 @@ export const EntityMachine = {
             ? options.initializeState(entityId)
             : machine.initial;
 
-        // Apply always transitions to initial state
-        const resolvedInitial = yield* applyAlways(machine, initialState);
-
-        // Create state ref
-        const stateRef = yield* Ref.make<S>(resolvedInitial);
-
-        // Create internal event queue for invoke effects
+        // Create self reference for sending events back to machine
         const internalQueue = yield* Queue.unbounded<E>();
-
-        // Self reference for sending events back to machine
         const self: MachineRef<E> = {
           send: (event) => Queue.offer(internalQueue, event),
         };
+
+        // Apply always transitions to initial state
+        const resolvedInitial = yield* applyAlways(machine, initialState, self);
+
+        // Create state ref
+        const stateRef = yield* Ref.make<S>(resolvedInitial);
 
         // Run initial entry effects
         yield* runEntryEffectsSimple(machine, resolvedInitial, self);

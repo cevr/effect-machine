@@ -2,99 +2,44 @@
 import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { Event, Guard, Machine, simulate, State } from "../../src/index.js";
-import type { TransitionContext } from "../../src/index.js";
+import { Event, Machine, simulate, State, Slot } from "../../src/index.js";
 
-describe("Named Guards (via on options)", () => {
+describe("Parameterized Guards (via Slot.Guards)", () => {
   const TestState = State({
     Ready: { canPrint: Schema.Boolean },
     Printing: {},
     Done: {},
   });
-  type TestStateType = typeof TestState.Type;
 
   const TestEvent = Event({
     Print: {},
     Finish: {},
   });
-  type TestEventType = typeof TestEvent.Type;
 
-  test("guard slot registered via on() with named guard", () => {
-    const canPrint = Guard.make<
-      { readonly _tag: "Ready"; readonly canPrint: boolean },
-      { readonly _tag: "Print" }
-    >("canPrint");
-
-    const machine = Machine.make({
-      state: TestState,
-      event: TestEvent,
-      initial: TestState.Ready({ canPrint: true }),
-    }).on(TestState.Ready, TestEvent.Print, () => TestState.Printing, {
-      guard: canPrint,
-    });
-
-    expect(machine.effectSlots.size).toBe(1);
-
-    const slot = machine.effectSlots.get("canPrint");
-    expect(slot).toBeDefined();
-    expect(slot?.type).toBe("guard");
-    expect(slot?.name).toBe("canPrint");
-
-    // Guard slot has stateTag and eventTag
-    if (slot?.type === "guard") {
-      expect(slot.stateTag).toBe("Ready");
-      expect(slot.eventTag).toBe("Print");
-    }
+  const TestGuards = Slot.Guards({
+    canPrint: {},
   });
 
-  test("provide() accepts Effect<boolean> for guard", () => {
-    const canPrint = Guard.make<
-      { readonly _tag: "Ready"; readonly canPrint: boolean },
-      { readonly _tag: "Print" }
-    >("canPrint");
-
-    const machine = Machine.make({
-      state: TestState,
-      event: TestEvent,
-      initial: TestState.Ready({ canPrint: true }),
-    }).on(TestState.Ready, TestEvent.Print, () => TestState.Printing, {
-      guard: canPrint,
-    });
-
-    // This should type-check - guards return Effect<boolean>
-    const provided = machine.provide({
-      canPrint: ({ state }: TransitionContext<TestStateType, TestEventType>) =>
-        // Narrow state to Ready variant to access canPrint
-        state._tag === "Ready" ? Effect.succeed(state.canPrint) : Effect.succeed(false),
-    });
-
-    // Guard handler should be in guardHandlers map
-    expect(provided.guardHandlers.size).toBe(1);
-    expect(provided.guardHandlers.has("canPrint")).toBe(true);
-  });
-
-  test("named guard slot blocks transition when handler returns false", async () => {
-    const canPrint = Guard.make<
-      {
-        readonly _tag: "Ready";
-        readonly canPrint: boolean;
-      },
-      { readonly _tag: "Print" }
-    >("canPrint");
-
+  test("guard slot blocks transition when handler returns false", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.make({
           state: TestState,
           event: TestEvent,
+          guards: TestGuards,
           initial: TestState.Ready({ canPrint: false }),
         })
-          .on(TestState.Ready, TestEvent.Print, () => TestState.Printing, {
-            guard: canPrint,
-          })
+          .on(TestState.Ready, TestEvent.Print, ({ state, guards }) =>
+            Effect.gen(function* () {
+              if (yield* guards.canPrint()) {
+                return TestState.Printing;
+              }
+              return state;
+            }),
+          )
           .provide({
-            canPrint: ({ state }: TransitionContext<TestStateType, TestEventType>) =>
-              Effect.succeed(state._tag === "Ready" ? state.canPrint : false),
+            // Handlers receive (params, ctx) - no circular reference
+            canPrint: (_params, { state }) => (state._tag === "Ready" ? state.canPrint : false),
           });
 
         const result = yield* simulate(machine, [TestEvent.Print]);
@@ -104,21 +49,24 @@ describe("Named Guards (via on options)", () => {
   });
 
   test("guard slot allows transition when handler returns true", async () => {
-    const canPrint = Guard.make("canPrint");
-
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.make({
           state: TestState,
           event: TestEvent,
+          guards: TestGuards,
           initial: TestState.Ready({ canPrint: true }),
         })
-          .on(TestState.Ready, TestEvent.Print, () => TestState.Printing, {
-            guard: canPrint,
-          })
+          .on(TestState.Ready, TestEvent.Print, ({ state, guards }) =>
+            Effect.gen(function* () {
+              if (yield* guards.canPrint()) {
+                return TestState.Printing;
+              }
+              return state;
+            }),
+          )
           .provide({
-            canPrint: ({ state }: { state: { _tag: string; canPrint?: boolean } }) =>
-              state._tag === "Ready" && state.canPrint === true,
+            canPrint: (_params, { state }) => (state._tag === "Ready" ? state.canPrint : false),
           });
 
         const result = yield* simulate(machine, [TestEvent.Print]);
@@ -128,7 +76,7 @@ describe("Named Guards (via on options)", () => {
   });
 });
 
-describe("Guard Composition", () => {
+describe("Parameterized Guards with Parameters", () => {
   const AuthState = State({
     Idle: { role: Schema.String, age: Schema.Number },
     Allowed: {},
@@ -139,77 +87,37 @@ describe("Guard Composition", () => {
     Access: {},
   });
 
-  test("Guard.and combines guards with logical AND", async () => {
-    const isAdmin = Guard.make("isAdmin");
-    const isAdult = Guard.make("isAdult");
-
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const machine = Machine.make({
-          state: AuthState,
-          event: AuthEvent,
-          initial: AuthState.Idle({ role: "admin", age: 25 }),
-        })
-          .on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed, {
-            guard: Guard.and(isAdmin, isAdult),
-          })
-          .final(AuthState.Allowed)
-          .provide({
-            isAdmin: ({ state }: { state: { _tag: string; role?: string } }) =>
-              state._tag === "Idle" && state.role === "admin",
-            isAdult: ({ state }: { state: { _tag: string; age?: number } }) =>
-              state._tag === "Idle" && (state.age ?? 0) >= 18,
-          });
-
-        const result = yield* simulate(machine, [AuthEvent.Access]);
-        expect(result.finalState._tag).toBe("Allowed");
-      }),
-    );
-
-    // Fails when one condition is false
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const machine = Machine.make({
-          state: AuthState,
-          event: AuthEvent,
-          initial: AuthState.Idle({ role: "admin", age: 16 }),
-        })
-          .on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed, {
-            guard: Guard.and(isAdmin, isAdult),
-          })
-          .final(AuthState.Allowed)
-          .provide({
-            isAdmin: ({ state }: { state: { _tag: string; role?: string } }) =>
-              state._tag === "Idle" && state.role === "admin",
-            isAdult: ({ state }: { state: { _tag: string; age?: number } }) =>
-              state._tag === "Idle" && (state.age ?? 0) >= 18,
-          });
-
-        const result = yield* simulate(machine, [AuthEvent.Access]);
-        expect(result.finalState._tag).toBe("Idle");
-      }),
-    );
+  const AuthGuards = Slot.Guards({
+    isAdmin: {},
+    isAdult: { minAge: Schema.Number },
+    isModerator: {},
   });
 
-  test("Guard.or combines guards with logical OR", async () => {
-    const isAdmin = Guard.make("isAdmin");
-    const isModerator = Guard.make("isModerator");
-
+  test("guard with parameters: isAdult({ minAge: 18 })", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.make({
           state: AuthState,
           event: AuthEvent,
-          initial: AuthState.Idle({ role: "moderator", age: 20 }),
+          guards: AuthGuards,
+          initial: AuthState.Idle({ role: "admin", age: 25 }),
         })
-          .on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed, {
-            guard: Guard.or(isAdmin, isModerator),
-          })
+          .on(AuthState.Idle, AuthEvent.Access, ({ guards }) =>
+            Effect.gen(function* () {
+              const isAdmin = yield* guards.isAdmin();
+              const isAdult = yield* guards.isAdult({ minAge: 18 });
+              if (isAdmin && isAdult) {
+                return AuthState.Allowed;
+              }
+              return AuthState.Denied;
+            }),
+          )
           .final(AuthState.Allowed)
+          .final(AuthState.Denied)
           .provide({
-            isAdmin: ({ state }: { state: { _tag: string; role?: string } }) =>
-              state._tag === "Idle" && state.role === "admin",
-            isModerator: ({ state }: { state: { _tag: string; role?: string } }) =>
+            isAdmin: (_params, { state }) => state._tag === "Idle" && state.role === "admin",
+            isAdult: ({ minAge }, { state }) => state._tag === "Idle" && state.age >= minAge,
+            isModerator: (_params, { state }) =>
               state._tag === "Idle" && state.role === "moderator",
           });
 
@@ -219,79 +127,69 @@ describe("Guard Composition", () => {
     );
   });
 
-  test("Guard.not negates a guard", async () => {
-    const isGuest = Guard.make("isGuest");
-
+  test("combined guard logic with && / ||", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.make({
           state: AuthState,
           event: AuthEvent,
-          initial: AuthState.Idle({ role: "user", age: 20 }),
-        })
-          .on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed, {
-            guard: Guard.not(isGuest),
-          })
-          .final(AuthState.Allowed)
-          .provide({
-            isGuest: ({ state }: { state: { _tag: string; role?: string } }) =>
-              state._tag === "Idle" && state.role === "guest",
-          });
-
-        const result = yield* simulate(machine, [AuthEvent.Access]);
-        expect(result.finalState._tag).toBe("Allowed");
-      }),
-    );
-  });
-
-  test("nested composition: Guard.and with Guard.not inside", async () => {
-    const isAdmin = Guard.make("isAdmin");
-    const isLocked = Guard.make("isLocked");
-
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const machine = Machine.make({
-          state: AuthState,
-          event: AuthEvent,
-          initial: AuthState.Idle({ role: "admin", age: 25 }),
-        })
-          .on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed, {
-            // Admin AND NOT locked
-            guard: Guard.and(isAdmin, Guard.not(isLocked)),
-          })
-          .final(AuthState.Allowed)
-          .provide({
-            isAdmin: ({ state }: { state: { _tag: string; role?: string } }) =>
-              state._tag === "Idle" && state.role === "admin",
-            isLocked: () => false, // Not locked
-          });
-
-        const result = yield* simulate(machine, [AuthEvent.Access]);
-        expect(result.finalState._tag).toBe("Allowed");
-      }),
-    );
-  });
-
-  test("deeply nested: Guard.and with Guard.or inside (string shorthand)", async () => {
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const machine = Machine.make({
-          state: AuthState,
-          event: AuthEvent,
+          guards: AuthGuards,
           initial: AuthState.Idle({ role: "moderator", age: 25 }),
         })
-          .on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed, {
-            // (admin OR moderator) AND adult - using string shorthand
-            guard: Guard.and(Guard.or("isAdmin", "isModerator"), "isAdult"),
-          })
+          .on(AuthState.Idle, AuthEvent.Access, ({ guards }) =>
+            Effect.gen(function* () {
+              // (admin OR moderator) AND adult
+              const isAdmin = yield* guards.isAdmin();
+              const isMod = yield* guards.isModerator();
+              const isAdult = yield* guards.isAdult({ minAge: 18 });
+              if ((isAdmin || isMod) && isAdult) {
+                return AuthState.Allowed;
+              }
+              return AuthState.Denied;
+            }),
+          )
           .final(AuthState.Allowed)
+          .final(AuthState.Denied)
           .provide({
-            isAdmin: ({ state }: { state: { _tag: string; role?: string } }) =>
-              state._tag === "Idle" && state.role === "admin",
-            isModerator: ({ state }: { state: { _tag: string; role?: string } }) =>
+            isAdmin: (_params, { state }) => state._tag === "Idle" && state.role === "admin",
+            isAdult: ({ minAge }, { state }) => state._tag === "Idle" && state.age >= minAge,
+            isModerator: (_params, { state }) =>
               state._tag === "Idle" && state.role === "moderator",
-            isAdult: ({ state }: { state: { _tag: string; age?: number } }) =>
-              state._tag === "Idle" && (state.age ?? 0) >= 18,
+          });
+
+        const result = yield* simulate(machine, [AuthEvent.Access]);
+        expect(result.finalState._tag).toBe("Allowed");
+      }),
+    );
+  });
+
+  test("NOT logic with !", async () => {
+    const LockedGuards = Slot.Guards({
+      isGuest: {},
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const machine = Machine.make({
+          state: AuthState,
+          event: AuthEvent,
+          guards: LockedGuards,
+          initial: AuthState.Idle({ role: "user", age: 20 }),
+        })
+          .on(AuthState.Idle, AuthEvent.Access, ({ guards }) =>
+            Effect.gen(function* () {
+              const isGuest = yield* guards.isGuest();
+              // NOT guest = allowed
+              if (!isGuest) {
+                return AuthState.Allowed;
+              }
+              return AuthState.Denied;
+            }),
+          )
+          .final(AuthState.Allowed)
+          .final(AuthState.Denied)
+          .provide({
+            isGuest: (_params, { state }) => state._tag === "Idle" && state.role === "guest",
           });
 
         const result = yield* simulate(machine, [AuthEvent.Access]);

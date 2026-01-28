@@ -1,7 +1,7 @@
 import { Effect, Fiber, Option, Queue, Ref, SubscriptionRef } from "effect";
 
 import type { ActorRef } from "../actor-ref.js";
-import type { MachineRef } from "../machine.js";
+import type { MachineRef, HandlerContext, Machine } from "../machine.js";
 import type { Inspector } from "../inspection.js";
 import { Inspector as InspectorTag } from "../inspection.js";
 import {
@@ -10,6 +10,8 @@ import {
   runEntryEffects,
   runExitEffects,
 } from "../internal/loop.js";
+import { isEffect } from "../internal/is-effect.js";
+import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
 
 import type {
   ActorMetadata,
@@ -65,6 +67,8 @@ const buildPersistentActorRef = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
+  GD extends GuardsDef = Record<string, never>,
+  EFD extends EffectsDef = Record<string, never>,
 >(
   id: string,
   persistentMachine: PersistentMachine<S, E, R>,
@@ -76,6 +80,16 @@ const buildPersistentActorRef = <
   adapter: PersistenceAdapter,
 ): PersistentActorRef<S, E> => {
   const { machine, persistence } = persistentMachine;
+  const typedMachine = machine as unknown as Machine<
+    S,
+    E,
+    R,
+    never,
+    Record<string, never>,
+    Record<string, never>,
+    GD,
+    EFD
+  >;
 
   const persist: Effect.Effect<void, PersistenceError | VersionConflictError> = Effect.gen(
     function* () {
@@ -105,6 +119,11 @@ const buildPersistentActorRef = <
             let state = snapshot.state;
             let version = snapshot.version;
 
+            // Dummy self for slot accessors
+            const dummySelf: MachineRef<E> = {
+              send: () => Effect.void,
+            };
+
             for (const persistedEvent of events) {
               if (persistedEvent.version > targetVersion) break;
 
@@ -113,14 +132,33 @@ const buildPersistentActorRef = <
                * Machine.provide eliminates R requirements before spawning.
                */
               const transition = yield* resolveTransition(
-                machine,
+                typedMachine,
                 state,
                 persistedEvent.event,
-              ) as Effect.Effect<(typeof machine.transitions)[number] | undefined, never, never>;
+              ) as Effect.Effect<
+                (typeof typedMachine.transitions)[number] | undefined,
+                never,
+                never
+              >;
               if (transition !== undefined) {
-                const newStateResult = transition.handler({ state, event: persistedEvent.event });
+                // Create context for handler
+                const ctx: MachineContext<S, E, MachineRef<E>> = {
+                  state,
+                  event: persistedEvent.event,
+                  self: dummySelf,
+                };
+                const { guards, effects } = typedMachine._createSlotAccessors(ctx);
+
+                const handlerCtx: HandlerContext<S, E, GD, EFD> = {
+                  state,
+                  event: persistedEvent.event,
+                  guards,
+                  effects,
+                };
+
+                const newStateResult = transition.handler(handlerCtx);
                 // Only support synchronous handlers in replay
-                if (!Effect.isEffect(newStateResult)) {
+                if (!isEffect(newStateResult)) {
                   state = newStateResult;
                 }
               }
@@ -151,8 +189,8 @@ const buildPersistentActorRef = <
          * INVARIANT: R=never for machines passed to persistent actors.
          * Machine.provide eliminates R requirements before spawning.
          */
-        const transition = yield* resolveTransition(machine, s, event) as Effect.Effect<
-          (typeof machine.transitions)[number] | undefined,
+        const transition = yield* resolveTransition(typedMachine, s, event) as Effect.Effect<
+          (typeof typedMachine.transitions)[number] | undefined,
           never,
           never
         >;
@@ -165,8 +203,8 @@ const buildPersistentActorRef = <
        * canSync only works with sync guards - async guards will throw.
        */
       const transition = Effect.runSync(
-        resolveTransition(machine, state, event) as Effect.Effect<
-          (typeof machine.transitions)[number] | undefined,
+        resolveTransition(typedMachine, state, event) as Effect.Effect<
+          (typeof typedMachine.transitions)[number] | undefined,
           never,
           never
         >,
@@ -194,6 +232,8 @@ export const createPersistentActor = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
+  GD extends GuardsDef = Record<string, never>,
+  EFD extends EffectsDef = Record<string, never>,
 >(
   id: string,
   persistentMachine: PersistentMachine<S, E, R>,
@@ -206,11 +246,27 @@ export const createPersistentActor = <
     Effect.gen(function* () {
       const adapter = yield* PersistenceAdapterTag;
       const { machine } = persistentMachine;
+      const typedMachine = machine as unknown as Machine<
+        S,
+        E,
+        R,
+        never,
+        Record<string, never>,
+        Record<string, never>,
+        GD,
+        EFD
+      >;
 
       // Get optional inspector from context
       const inspectorOption = yield* Effect.serviceOption(InspectorTag);
       const inspector =
         inspectorOption._tag === "Some" ? (inspectorOption.value as Inspector<S, E>) : undefined;
+
+      // Create self reference for sending events
+      const eventQueue = yield* Queue.unbounded<E>();
+      const self: MachineRef<E> = {
+        send: (event) => Queue.offer(eventQueue, event),
+      };
 
       // Determine initial state and version
       let resolvedInitial: S;
@@ -224,33 +280,46 @@ export const createPersistentActor = <
         // Replay events after snapshot (synchronous state computation only)
         for (const persistedEvent of initialEvents) {
           const transition = yield* resolveTransition(
-            machine,
+            typedMachine,
             resolvedInitial,
             persistedEvent.event,
           );
           if (transition !== undefined) {
-            const newStateResult = transition.handler({
+            // Create context for handler
+            const ctx: MachineContext<S, E, MachineRef<E>> = {
               state: resolvedInitial,
               event: persistedEvent.event,
-            });
+              self,
+            };
+            const { guards, effects } = typedMachine._createSlotAccessors(ctx);
+
+            const handlerCtx: HandlerContext<S, E, GD, EFD> = {
+              state: resolvedInitial,
+              event: persistedEvent.event,
+              guards,
+              effects,
+            };
+
+            const newStateResult = transition.handler(handlerCtx);
             // Support both sync and async handlers during initial restore
-            const newState = Effect.isEffect(newStateResult)
-              ? yield* newStateResult
+            const newState = isEffect(newStateResult)
+              ? yield* (newStateResult as Effect.Effect<S, never, R>).pipe(
+                  Effect.provideService(typedMachine.Context, ctx),
+                )
               : newStateResult;
-            resolvedInitial = yield* applyAlways(machine, newState);
+            resolvedInitial = yield* applyAlways(typedMachine, newState, self);
             initialVersion = persistedEvent.version;
           }
         }
       } else {
         // Fresh start
-        resolvedInitial = yield* applyAlways(machine, machine.initial);
+        resolvedInitial = yield* applyAlways(typedMachine, typedMachine.initial, self);
         initialVersion = 0;
       }
 
       // Initialize state refs
       const stateRef = yield* SubscriptionRef.make(resolvedInitial);
       const versionRef = yield* Ref.make(initialVersion);
-      const eventQueue = yield* Queue.unbounded<E>();
       const listeners: Listeners<S> = new Set();
 
       // Track creation time for metadata - prefer existing metadata if restoring
@@ -267,11 +336,6 @@ export const createPersistentActor = <
       } else {
         createdAt = Date.now();
       }
-
-      // Create self reference for sending events
-      const self: MachineRef<E> = {
-        send: (event) => Queue.offer(eventQueue, event),
-      };
 
       // Emit spawn event
       if (inspector !== undefined) {
@@ -294,7 +358,7 @@ export const createPersistentActor = <
       );
 
       // Check if initial state is final
-      if (machine.finalStates.has(resolvedInitial._tag)) {
+      if (typedMachine.finalStates.has(resolvedInitial._tag)) {
         if (inspector !== undefined) {
           inspector.onInspect({
             type: "@machine.stop",
@@ -363,6 +427,8 @@ const persistentEventLoop = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
+  GD extends GuardsDef = Record<string, never>,
+  EFD extends EffectsDef = Record<string, never>,
 >(
   id: string,
   persistentMachine: PersistentMachine<S, E, R>,
@@ -377,6 +443,16 @@ const persistentEventLoop = <
 ): Effect.Effect<void, never, R> =>
   Effect.gen(function* () {
     const { machine, persistence } = persistentMachine;
+    const typedMachine = machine as unknown as Machine<
+      S,
+      E,
+      R,
+      never,
+      Record<string, never>,
+      Record<string, never>,
+      GD,
+      EFD
+    >;
 
     while (true) {
       const event = yield* Queue.take(eventQueue);
@@ -395,7 +471,7 @@ const persistentEventLoop = <
       }
 
       // Find matching transition
-      const transition = yield* resolveTransition(machine, currentState, event, id, inspector);
+      const transition = yield* resolveTransition(typedMachine, currentState, event, id, inspector);
       if (transition === undefined) {
         continue;
       }
@@ -418,23 +494,28 @@ const persistentEventLoop = <
           );
       }
 
-      // Compute new state
-      const newStateResult = transition.handler({ state: currentState, event });
-      let newState = Effect.isEffect(newStateResult) ? yield* newStateResult : newStateResult;
+      // Create context for handler
+      const ctx: MachineContext<S, E, MachineRef<E>> = {
+        state: currentState,
+        event,
+        self,
+      };
+      const { guards, effects } = typedMachine._createSlotAccessors(ctx);
 
-      // Run transition effect if any
-      if (transition.effect !== undefined) {
-        if (inspector !== undefined) {
-          inspector.onInspect({
-            type: "@machine.effect",
-            actorId: id,
-            effectType: "transition",
-            state: currentState,
-            timestamp: Date.now(),
-          });
-        }
-        yield* transition.effect({ state: currentState, event });
-      }
+      const handlerCtx: HandlerContext<S, E, GD, EFD> = {
+        state: currentState,
+        event,
+        guards,
+        effects,
+      };
+
+      // Compute new state
+      const newStateResult = transition.handler(handlerCtx);
+      let newState = isEffect(newStateResult)
+        ? yield* (newStateResult as Effect.Effect<S, never, R>).pipe(
+            Effect.provideService(typedMachine.Context, ctx),
+          )
+        : newStateResult;
 
       // Determine if we should run exit/enter effects
       const stateTagChanged = newState._tag !== currentState._tag;
@@ -442,11 +523,11 @@ const persistentEventLoop = <
 
       if (runLifecycle) {
         // Run exit effects
-        yield* runExitEffects(machine, currentState, self, id, inspector);
+        yield* runExitEffects(typedMachine, currentState, self, id, inspector);
 
         // Apply always transitions
         if (stateTagChanged) {
-          newState = yield* applyAlways(machine, newState);
+          newState = yield* applyAlways(typedMachine, newState, self);
         }
 
         // Emit transition event
@@ -472,10 +553,10 @@ const persistentEventLoop = <
         yield* saveMetadata(id, newState, newVersion, createdAt, persistence, adapter);
 
         // Run entry effects
-        yield* runEntryEffects(machine, newState, self, id, inspector);
+        yield* runEntryEffects(typedMachine, newState, self, id, inspector);
 
         // Check if final
-        if (machine.finalStates.has(newState._tag)) {
+        if (typedMachine.finalStates.has(newState._tag)) {
           if (inspector !== undefined) {
             inspector.onInspect({
               type: "@machine.stop",

@@ -9,287 +9,234 @@ All machine builder combinators explained.
 Add a transition from state + event to new state.
 
 ```typescript
-Machine.on(
-  stateConstructor,  // e.g., MyState.Idle
-  eventConstructor,  // e.g., MyEvent.Fetch
-  handler,           // (ctx) => newState
-  options?,          // { guard?, effect? }
-)
+machine.on(
+  stateConstructor, // e.g., MyState.Idle
+  eventConstructor, // e.g., MyEvent.Fetch
+  handler, // (ctx) => State | Effect<State>
+);
 ```
 
 **Handler context:**
 
 ```typescript
-type TransitionContext<S, E> = {
-  state: S; // Current state (narrowed)
-  event: E; // Triggering event (narrowed)
+type HandlerContext<S, E, GD, EFD> = {
+  state: S;      // Current state (narrowed)
+  event: E;      // Triggering event (narrowed)
+  guards: {...}; // Guard accessors (if guards defined)
+  effects: {...}; // Effect accessors (if effects defined)
 };
-```
-
-**Options:**
-
-```typescript
-{
-  guard?: (ctx) => boolean,        // Enable/disable transition
-  effect?: (ctx) => Effect<void>,  // Side effect after transition
-}
 ```
 
 **Example:**
 
 ```typescript
-Machine.on(MyState.Idle, MyEvent.Start, ({ event }) => MyState.Running({ id: event.id }), {
-  guard: ({ state }) => !state.locked,
-  effect: ({ event }) => Effect.log(`Started ${event.id}`),
-});
+machine.on(MyState.Idle, MyEvent.Start, ({ event }) => MyState.Running({ id: event.id }));
+
+// With guards
+machine.on(MyState.Form, MyEvent.Submit, ({ state, guards }) =>
+  Effect.gen(function* () {
+    if (yield* guards.isValid()) {
+      return MyState.Submitting;
+    }
+    return state;
+  }),
+);
 ```
+
+### on.force
+
+Like `on` but forces exit/enter effects even for same state tag.
+
+```typescript
+machine.on.force(MyState.Active, MyEvent.Refresh, ({ state }) =>
+  MyState.Active({ ...state, lastRefresh: Date.now() }),
+);
+```
+
+Useful for restarting delay timers or re-running invoke effects.
 
 ### final
 
 Mark a state as terminal.
 
 ```typescript
-Machine.final(stateConstructor);
+machine.final(stateConstructor);
 ```
 
 **Example:**
 
 ```typescript
-Machine.final(MyState.Success),
-Machine.final(MyState.Error),
+machine.final(MyState.Success).final(MyState.Error);
 ```
 
 ## State Effects
 
-Effects use **named slots** - register the slot name, then provide handlers via `Machine.provide`.
-
 ### onEnter
 
-Register entry effect slot.
+Run effect when entering state.
 
 ```typescript
-Machine.onEnter(stateConstructor, slotName);
+machine.onEnter(stateConstructor, handler);
 ```
 
 **Example:**
 
 ```typescript
-// Register slot in machine definition
-const baseMachine = Machine.make<MyState, MyEvent>(MyState.Idle()).pipe(
-  Machine.on(MyState.Idle, MyEvent.Start, () => MyState.Success({ data: "done" })),
-  Machine.onEnter(MyState.Success, "notifyUser"),
+machine.onEnter(MyState.Success, ({ state }) => Effect.log(`Success: ${state.data}`));
+
+// With effects slot
+machine.onEnter(MyState.Active, ({ state, effects }) =>
+  effects.notify({ message: `User ${state.userId} is active` }),
 );
-
-// Provide handler
-const machine = Machine.provide(baseMachine, {
-  notifyUser: ({ state }) => Effect.log(`Success: ${state.data}`),
-});
-```
-
-**Handler context:**
-
-```typescript
-type StateEffectContext<S, E> = {
-  state: S; // Current state
-  self: { send: (e: E) => Effect<void> }; // Self-reference
-};
 ```
 
 ### onExit
 
-Register exit effect slot.
+Run effect when exiting state.
 
 ```typescript
-Machine.onExit(stateConstructor, slotName);
+machine.onExit(stateConstructor, handler);
 ```
 
 **Example:**
 
 ```typescript
-// Register slot
-const baseMachine = Machine.make<MyState, MyEvent>(MyState.Idle()).pipe(
-  Machine.on(MyState.Idle, MyEvent.Edit, () => MyState.Editing({ content: "" })),
-  Machine.on(MyState.Editing, MyEvent.Save, () => MyState.Saved()),
-  Machine.onExit(MyState.Editing, "saveDraft"),
-);
-
-// Provide handler
-const machine = Machine.provide(baseMachine, {
-  saveDraft: ({ state }) => Effect.log(`Saved draft: ${state.content}`),
-});
+machine.onExit(MyState.Editing, ({ state }) => Effect.log(`Saved draft: ${state.content}`));
 ```
 
 ### invoke
 
-Register invoke slot (runs on entry, auto-cancels on exit).
+Run effect on entry, auto-cancel on exit. For long-running processes.
 
 ```typescript
-Machine.invoke(stateConstructor, slotName);
+machine.invoke(stateConstructor, slotName);
+machine.invoke(stateConstructor, [slot1, slot2]); // parallel
+machine.invoke(slotName); // root-level (machine lifetime)
 ```
-
-Combines entry/exit with automatic fiber cancellation.
 
 **Example:**
 
 ```typescript
-// Register slot
-const baseMachine = Machine.make<MyState, MyEvent>(MyState.Idle()).pipe(
-  Machine.on(MyState.Idle, MyEvent.StartPolling, ({ event }) => MyState.Polling({ id: event.id })),
-  Machine.on(MyState.Polling, MyEvent.Stop, () => MyState.Idle()),
-  Machine.invoke(MyState.Polling, "poll"),
-);
-
-// Provide handler
-const machine = Machine.provide(baseMachine, {
-  poll: ({ state, self }) =>
-    Effect.gen(function* () {
-      while (true) {
-        yield* Effect.sleep("5 seconds");
-        const data = yield* fetchStatus(state.id);
-        yield* self.send(MyEvent.StatusUpdate({ data }));
-      }
-    }),
-});
+const machine = Machine.make({ state, event, initial })
+  .invoke(MyState.Polling, "poll")
+  .provide({
+    poll: ({ state, self }) =>
+      Effect.gen(function* () {
+        while (true) {
+          yield* Effect.sleep("5 seconds");
+          const data = yield* fetchStatus(state.id);
+          yield* self.send(MyEvent.StatusUpdate({ data }));
+        }
+      }),
+  });
 ```
 
 The polling fiber is interrupted when exiting `Polling` state.
 
 ### provide
 
-Wire handlers to all effect slots. Required before spawning.
+Wire handlers to guard/effect slots. Required before spawning.
 
 ```typescript
-// Data-last (pipeable)
-Machine.provide({
-  slotName: (ctx) => Effect<void>,
-  ...
-})
+machine.provide({
+  guardName: (params, ctx) => boolean | Effect<boolean>,
+  effectName: (params, ctx) => Effect<void>,
+  invokeName: (ctx) => Effect<void>,
+});
+```
 
-// Data-first
-Machine.provide(machine, {
-  slotName: (ctx) => Effect<void>,
-  ...
-})
+**Context structure:**
+
+```typescript
+type SlotContext<S, E> = {
+  state: S;
+  event: E;
+  self: MachineRef<E>;
+};
 ```
 
 **Example:**
 
 ```typescript
-// Pipeable form - all in one pipe
-const liveMachine = Machine.make<MyState, MyEvent>(MyState.Idle()).pipe(
-  Machine.on(MyState.Idle, MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url })),
-  Machine.on(MyState.Loading, MyEvent.Resolve, ({ event }) =>
-    MyState.Success({ data: event.data }),
-  ),
-  Machine.invoke(MyState.Loading, "fetchData"),
-  Machine.onEnter(MyState.Success, "notify"),
-  Machine.provide({
+const MyGuards = Slot.Guards({
+  canRetry: { max: Schema.Number },
+});
+
+const MyEffects = Slot.Effects({
+  notify: { message: Schema.String },
+});
+
+const machine = Machine.make({
+  state: MyState,
+  event: MyEvent,
+  guards: MyGuards,
+  effects: MyEffects,
+  initial: MyState.Idle,
+})
+  .on(MyState.Error, MyEvent.Retry, ({ state, guards }) =>
+    Effect.gen(function* () {
+      if (yield* guards.canRetry({ max: 3 })) {
+        return MyState.Retrying;
+      }
+      return MyState.Failed;
+    }),
+  )
+  .invoke(MyState.Loading, "fetchData")
+  .provide({
+    canRetry: ({ max }, { state }) => state.attempts < max,
+    notify: ({ message }) => Effect.log(message),
     fetchData: ({ state, self }) =>
       Effect.gen(function* () {
         const data = yield* httpClient.get(state.url);
         yield* self.send(MyEvent.Resolve({ data }));
       }),
-    notify: ({ state }) => Effect.log(`Done: ${state.data}`),
-  }),
-);
-
-// Or split for different implementations
-const baseMachine = Machine.make<MyState, MyEvent>(MyState.Idle()).pipe(
-  Machine.on(MyState.Idle, MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url })),
-  Machine.on(MyState.Loading, MyEvent.Resolve, ({ event }) =>
-    MyState.Success({ data: event.data }),
-  ),
-  Machine.invoke(MyState.Loading, "fetchData"),
-  Machine.onEnter(MyState.Success, "notify"),
-);
-
-// Production handlers
-const liveMachine = Machine.provide(baseMachine, {
-  fetchData: ({ state, self }) =>
-    Effect.gen(function* () {
-      const data = yield* httpClient.get(state.url);
-      yield* self.send(MyEvent.Resolve({ data }));
-    }),
-  notify: ({ state }) => Effect.log(`Done: ${state.data}`),
-});
-
-// Test handlers (mocked)
-const testMachine = Machine.provide(baseMachine, {
-  fetchData: ({ self }) => self.send(MyEvent.Resolve({ data: "mock" })),
-  notify: () => Effect.void,
-});
+  });
 ```
 
 **Notes:**
 
 - All slots must have handlers - missing keys → runtime error
-- Extra keys → runtime error
-- `simulate()` works without `provide()` (effects skipped)
+- `simulate()` works without `provide()` (invoke effects skipped)
+- `provide()` returns new machine - original reusable with different handlers
 
-## Guard Cascade
-
-### choose
-
-Multiple guarded transitions for same state + event.
-
-```typescript
-Machine.choose(stateConstructor, eventConstructor, [
-  { guard: (ctx) => boolean, to: (ctx) => newState },
-  { guard: (ctx) => boolean, to: (ctx) => newState },
-  { to: (ctx) => newState }, // Fallback (no guard)
-]);
-```
-
-**Example:**
-
-```typescript
-Machine.choose(MyState.Form, MyEvent.Submit, [
-  {
-    guard: ({ state }) => !state.email,
-    to: () => MyState.Error({ field: "email" }),
-  },
-  {
-    guard: ({ state }) => !state.password,
-    to: () => MyState.Error({ field: "password" }),
-  },
-  {
-    to: ({ state }) => MyState.Submitting({ data: state }), // Fallback
-  },
-]);
-```
-
-Evaluated top-to-bottom. First match wins.
+## Eventless Transitions
 
 ### always
 
 Eventless transitions - fire immediately when state matches.
 
 ```typescript
-Machine.always(stateConstructor, [
-  { guard: (state) => boolean, to: (state) => newState },
-  { to: (state) => newState }, // Fallback (no guard)
-]);
+machine.always(stateConstructor, handler);
 ```
 
-**Note:** `always` handlers receive just the state, not a context object.
-
-**Example:**
+**Handler receives state and optional guards:**
 
 ```typescript
-Machine.always(MyState.Calculating, [
-  { guard: (s) => s.value >= 100, to: () => MyState.Overflow() },
-  { guard: (s) => s.value >= 70, to: (s) => MyState.High(s) },
-  { guard: (s) => s.value >= 40, to: (s) => MyState.Medium(s) },
-  { to: (s) => MyState.Low(s) }, // Fallback
-]);
+// Without guards
+machine.always(MyState.Calculating, (state) => {
+  if (state.value >= 100) return MyState.Overflow;
+  if (state.value >= 70) return MyState.High({ value: state.value });
+  return MyState.Low({ value: state.value });
+});
+
+// With guards
+machine.always(MyState.Pending, (state, guards) =>
+  Effect.gen(function* () {
+    if (yield* guards.shouldAutoApprove()) {
+      return MyState.Approved;
+    }
+    return state; // stay in Pending
+  }),
+);
 ```
 
 **Cascading:** Always transitions can trigger other always transitions:
 
 ```typescript
-Machine.always(MyState.A, [{ to: () => MyState.B() }]),
-Machine.always(MyState.B, [{ to: () => MyState.C() }]),
-Machine.always(MyState.C, [{ to: () => MyState.Done() }]),
+machine
+  .always(MyState.A, () => MyState.B)
+  .always(MyState.B, () => MyState.C)
+  .always(MyState.C, () => MyState.Done);
 // A → B → C → Done happens in one step
 ```
 
@@ -302,23 +249,20 @@ Max 100 iterations to prevent infinite loops.
 Schedule event after duration.
 
 ```typescript
-Machine.delay(
+machine.delay(
   stateConstructor,
-  duration,   // DurationInput: "3 seconds", 3000, etc.
-  event,      // Event to send
-  options?,   // { guard?: (state) => boolean }
-)
+  duration, // DurationInput: "3 seconds", 3000, etc.
+  event, // Event to send
+);
 ```
 
 **Example:**
 
 ```typescript
-Machine.delay(MyState.Success, "3 seconds", MyEvent.Dismiss()),
+machine.delay(MyState.Success, "3 seconds", MyEvent.Dismiss);
 
-// With guard
-Machine.delay(MyState.Error, "5 seconds", MyEvent.Retry(), {
-  guard: (state) => state.canRetry,
-}),
+// Dynamic duration based on state
+machine.delay(MyState.Retrying, (state) => `${state.attempts * 2} seconds`, MyEvent.Retry);
 ```
 
 Timer is cancelled if:
@@ -328,6 +272,52 @@ Timer is cancelled if:
 
 Works with TestClock for deterministic testing.
 
+## Scoped Builders
+
+### from
+
+Scope multiple transitions to a single state.
+
+```typescript
+machine.from(stateConstructor, (scope) => scope.on(Event1, handler1).on(Event2, handler2));
+```
+
+**Example:**
+
+```typescript
+machine.from(MyState.Form, (scope) =>
+  scope
+    .on(MyEvent.SetName, ({ state, event }) => MyState.Form({ ...state, name: event.name }))
+    .on(MyEvent.SetEmail, ({ state, event }) => MyState.Form({ ...state, email: event.email }))
+    .on(MyEvent.Submit, ({ state, guards }) =>
+      Effect.gen(function* () {
+        if (yield* guards.isValid()) {
+          return MyState.Submitting({ data: state });
+        }
+        return state;
+      }),
+    ),
+);
+```
+
+### onAny
+
+Same transition for multiple states.
+
+```typescript
+machine.onAny([State1, State2, State3], eventConstructor, handler);
+```
+
+**Example:**
+
+```typescript
+machine.onAny(
+  [MyState.Loading, MyState.Retrying, MyState.Processing],
+  MyEvent.Cancel,
+  () => MyState.Cancelled,
+);
+```
+
 ## State Updates
 
 ### assign
@@ -335,43 +325,17 @@ Works with TestClock for deterministic testing.
 Helper for partial state updates (doesn't change tag).
 
 ```typescript
-Machine.assign(updater); // (ctx) => Partial<State>
-```
+import { assign } from "effect-machine";
 
-**Example:**
-
-```typescript
-Machine.on(MyState.Form, MyEvent.SetName, Machine.assign(({ event }) => ({ name: event.name }))),
-Machine.on(MyState.Form, MyEvent.SetEmail, Machine.assign(({ event }) => ({ email: event.email }))),
-```
-
-### update
-
-Shorthand for `on` + `assign`.
-
-```typescript
-Machine.update(
-  stateConstructor,
-  eventConstructor,
-  updater,   // (ctx) => Partial<State>
-  options?,  // { guard?, effect? }
-)
-```
-
-**Example:**
-
-```typescript
-// These are equivalent:
-Machine.on(
+machine.on(
   MyState.Form,
   MyEvent.SetName,
-  Machine.assign(({ event }) => ({ name: event.name })),
+  assign(({ event }) => ({ name: event.name })),
 );
-Machine.update(MyState.Form, MyEvent.SetName, ({ event }) => ({ name: event.name }));
 ```
 
 ## See Also
 
-- `guards.md` - guard composition in depth
+- `guards.md` - parameterized guards in depth
 - `basics.md` - core concepts
 - `testing.md` - testing patterns

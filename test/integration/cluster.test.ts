@@ -12,53 +12,8 @@ import { Rpc } from "@effect/rpc";
 import { Effect, Ref, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { Guard, Machine, simulate, State, Event } from "../../src/index.js";
+import { Machine, simulate, State, Event, Slot } from "../../src/index.js";
 import { toEntity } from "../../src/cluster/index.js";
-
-// Type for guard predicate (sync or async)
-type GuardPredicateFn<S, E> = (ctx: { state: S; event: E }) => boolean | Effect.Effect<boolean>;
-
-// Helper to evaluate guard trees for manual Entity testing
-const evaluateGuardManual = <S, E>(
-  guardHandlers: ReadonlyMap<string, GuardPredicateFn<S, E>>,
-  guard: ReturnType<typeof Guard.make>,
-  ctx: { state: S; event: E },
-): boolean | Effect.Effect<boolean, never, never> => {
-  switch (guard._tag) {
-    case "GuardSlot": {
-      const predicate = guardHandlers.get(guard.name);
-      if (predicate === undefined) {
-        throw new Error(`Guard not provided: ${guard.name}`);
-      }
-      return predicate(ctx);
-    }
-    case "GuardAnd": {
-      const results = guard.guards.map((g) => evaluateGuardManual(guardHandlers, g, ctx));
-      if (results.some((r) => Effect.isEffect(r))) {
-        return Effect.all(results.map((r) => (Effect.isEffect(r) ? r : Effect.succeed(r)))).pipe(
-          Effect.map((rs) => rs.every(Boolean)),
-        );
-      }
-      return (results as boolean[]).every(Boolean);
-    }
-    case "GuardOr": {
-      const results = guard.guards.map((g) => evaluateGuardManual(guardHandlers, g, ctx));
-      if (results.some((r) => Effect.isEffect(r))) {
-        return Effect.all(results.map((r) => (Effect.isEffect(r) ? r : Effect.succeed(r)))).pipe(
-          Effect.map((rs) => rs.some(Boolean)),
-        );
-      }
-      return (results as boolean[]).some(Boolean);
-    }
-    case "GuardNot": {
-      const result = evaluateGuardManual(guardHandlers, guard.guard, ctx);
-      if (Effect.isEffect(result)) {
-        return Effect.map(result, (r) => !r);
-      }
-      return !result;
-    }
-  }
-};
 
 // =============================================================================
 // Schema-first definitions using MachineSchema
@@ -233,27 +188,34 @@ describe("Entity.makeTestClient with machine handler", () => {
   });
   type CounterEvent = typeof CounterEvent.Type;
 
+  const CounterGuards = Slot.Guards({
+    underLimit: {},
+  });
+
   const counterMachine = Machine.make({
     state: CounterState,
     event: CounterEvent,
+    guards: CounterGuards,
     initial: CounterState.Counting({ count: 0 }),
   })
-    .on(
-      CounterState.Counting,
-      CounterEvent.Increment,
-      ({ state }) => CounterState.Counting({ count: state.count + 1 }),
-      { guard: Guard.make("underLimit") },
+    .on(CounterState.Counting, CounterEvent.Increment, ({ state, guards }) =>
+      Effect.gen(function* () {
+        if (yield* guards.underLimit()) {
+          return CounterState.Counting({ count: state.count + 1 });
+        }
+        return state;
+      }),
     )
     .on(CounterState.Counting, CounterEvent.Finish, ({ state }) =>
       CounterState.Done({ count: state.count }),
     )
+    .final(CounterState.Done)
     .provide({
-      underLimit: ({ state }: { state: { count: number } }) => state.count < 3,
-    })
-    .final(CounterState.Done);
+      underLimit: (_params, { state }) => state._tag === "Counting" && state.count < 3,
+    });
 
   // Entity using MachineSchema directly as schemas
-  const CounterEntity = Entity.make("Counter", [
+  const _CounterEntity = Entity.make("Counter", [
     Rpc.make("Send", { payload: { event: CounterEvent }, success: CounterState }),
     Rpc.make("GetState", { success: CounterState }),
   ]);
@@ -283,29 +245,21 @@ describe("Entity.makeTestClient with machine handler", () => {
                 event._tag,
               );
 
-              let transition: (typeof transitions)[number] | undefined;
-              for (const t of transitions) {
-                if (t.guard === undefined) {
-                  transition = t;
-                  break;
-                }
-                const guardResult = evaluateGuardManual(orderMachine.guardHandlers, t.guard, {
-                  state: currentState,
-                  event,
-                });
-                const ok = Effect.isEffect(guardResult) ? yield* guardResult : guardResult;
-                if (ok) {
-                  transition = t;
-                  break;
-                }
-              }
-
+              const transition = transitions[0];
               if (transition === undefined) {
                 return currentState;
               }
 
               // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test helper
-              const newState = transition.handler({ state: currentState, event } as any);
+              const handlerResult = transition.handler({
+                state: currentState,
+                event,
+                guards: {} as any,
+                effects: {} as any,
+              });
+              const newState = Effect.isEffect(handlerResult)
+                ? yield* handlerResult as Effect.Effect<OrderState>
+                : handlerResult;
               yield* Ref.set(stateRef, newState as OrderState);
               return newState as OrderState;
             }),
@@ -336,70 +290,21 @@ describe("Entity.makeTestClient with machine handler", () => {
     );
   });
 
-  test("guards work with Machine.findTransitions", async () => {
-    const CounterEntityLayer = CounterEntity.toLayer(
-      Effect.gen(function* () {
-        const stateRef = yield* Ref.make<CounterState>(CounterState.Counting({ count: 0 }));
-
-        return CounterEntity.of({
-          Send: (envelope) =>
-            Effect.gen(function* () {
-              const currentState = yield* Ref.get(stateRef);
-              const event = envelope.payload.event as unknown as CounterEvent;
-
-              const transitions = Machine.findTransitions(
-                counterMachine,
-                currentState._tag,
-                event._tag,
-              );
-
-              let transition: (typeof transitions)[number] | undefined;
-              for (const t of transitions) {
-                if (t.guard === undefined) {
-                  transition = t;
-                  break;
-                }
-                const guardResult = evaluateGuardManual(counterMachine.guardHandlers, t.guard, {
-                  state: currentState,
-                  event,
-                });
-                const ok = Effect.isEffect(guardResult) ? yield* guardResult : guardResult;
-                if (ok) {
-                  transition = t;
-                  break;
-                }
-              }
-
-              if (transition === undefined) {
-                return currentState;
-              }
-
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test helper
-              const newState = transition.handler({ state: currentState, event } as any);
-              yield* Ref.set(stateRef, newState as CounterState);
-              return newState as CounterState;
-            }),
-          GetState: () => Ref.get(stateRef),
-        });
-      }),
-    );
-
+  test("guards work with simulate", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const makeClient = yield* Entity.makeTestClient(CounterEntity, CounterEntityLayer);
-        const client = yield* makeClient("counter-1");
+        const result = yield* simulate(counterMachine, [
+          CounterEvent.Increment,
+          CounterEvent.Increment,
+          CounterEvent.Increment,
+          CounterEvent.Increment, // blocked by guard
+          CounterEvent.Finish,
+        ]);
 
-        // Increment 4 times - only 3 should work due to guard
-        yield* client.Send({ event: CounterEvent.Increment });
-        yield* client.Send({ event: CounterEvent.Increment });
-        yield* client.Send({ event: CounterEvent.Increment });
-        yield* client.Send({ event: CounterEvent.Increment }); // blocked by guard
-
-        const state = yield* client.GetState();
-        expect(state._tag).toBe("Counting");
+        expect(result.finalState._tag).toBe("Done");
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test assertion
-        expect((state as any).count).toBe(3);
-      }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)),
+        expect((result.finalState as any).count).toBe(3);
+      }),
     );
   });
 });

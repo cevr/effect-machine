@@ -5,9 +5,9 @@ import {
   assertNeverReaches,
   assertPath,
   Event,
-  Guard,
   Machine,
   simulate,
+  Slot,
   State,
 } from "../../src/index.js";
 
@@ -65,31 +65,41 @@ describe("Menu Navigation Pattern", () => {
 
   const cart: string[] = [];
 
+  const MenuGuards = Slot.Guards({
+    canNavigateToPage: {},
+    canScrollToSection: {},
+  });
+
   const menuMachine = Machine.make({
     state: MenuState,
     event: MenuEvent,
+    guards: MenuGuards,
     initial: MenuState.Browsing({ pageId: "food", sectionIndex: 0, itemIndex: null }),
   })
     // Browsing handlers
     .from(MenuState.Browsing, (scope) =>
       scope
         // Navigate to different page (reset section)
-        .on(
-          MenuEvent.NavigateToPage,
-          ({ event }) =>
-            MenuState.Browsing({ pageId: event.pageId, sectionIndex: 0, itemIndex: null }),
-          {
-            guard: Guard.make("canNavigateToPage"),
-          },
+        .on(MenuEvent.NavigateToPage, ({ state, event, guards }) =>
+          Effect.gen(function* () {
+            if (yield* guards.canNavigateToPage()) {
+              return MenuState.Browsing({ pageId: event.pageId, sectionIndex: 0, itemIndex: null });
+            }
+            return state;
+          }),
         )
         // Scroll to section
-        .on(
-          MenuEvent.ScrollToSection,
-          ({ state, event }) =>
-            MenuState.Browsing({ ...state, sectionIndex: event.sectionIndex, itemIndex: null }),
-          {
-            guard: Guard.make("canScrollToSection"),
-          },
+        .on(MenuEvent.ScrollToSection, ({ state, event, guards }) =>
+          Effect.gen(function* () {
+            if (yield* guards.canScrollToSection()) {
+              return MenuState.Browsing({
+                ...state,
+                sectionIndex: event.sectionIndex,
+                itemIndex: null,
+              });
+            }
+            return state;
+          }),
         )
         // Select item
         .on(MenuEvent.SelectItem, ({ state, event }) =>
@@ -128,24 +138,16 @@ describe("Menu Navigation Pattern", () => {
     // Checkout handlers
     .on(MenuState.Checkout, MenuEvent.Close, () => MenuState.Closed)
     .provide({
-      canNavigateToPage: ({
-        state,
-        event,
-      }: {
-        state: { pageId: string };
-        event: { pageId: string };
-      }) => state.pageId !== event.pageId && pages.some((p) => p.id === event.pageId),
-      canScrollToSection: ({
-        state,
-        event,
-      }: {
-        state: { pageId: string };
-        event: { sectionIndex: number };
-      }) => {
-        const page = pages.find((p) => p.id === state.pageId);
-        return (
-          page !== undefined && event.sectionIndex >= 0 && event.sectionIndex < page.sections.length
-        );
+      canNavigateToPage: (_params, { state, event }) => {
+        const s = state as { pageId: string };
+        const e = event as { pageId: string };
+        return s.pageId !== e.pageId && pages.some((p) => p.id === e.pageId);
+      },
+      canScrollToSection: (_params, { state, event }) => {
+        const s = state as { pageId: string };
+        const e = event as { sectionIndex: number };
+        const page = pages.find((p) => p.id === s.pageId);
+        return page !== undefined && e.sectionIndex >= 0 && e.sectionIndex < page.sections.length;
       },
     })
     .final(MenuState.Closed);

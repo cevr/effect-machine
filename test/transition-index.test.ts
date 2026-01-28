@@ -6,9 +6,9 @@
  * transition index used for state/event matching.
  */
 import { describe, expect, test } from "bun:test";
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 
-import { Event, Guard, Machine, State } from "../src/index.js";
+import { Event, Machine, Slot, State } from "../src/index.js";
 
 // Test state machine types
 const TestState = State({
@@ -61,31 +61,39 @@ describe("Transition Index", () => {
     expect(noTransitions.length).toBe(0);
   });
 
-  test("findTransitions returns multiple transitions for guard cascade", () => {
+  test("findTransitions returns single transition (guards now in handler)", () => {
+    // With the new API, guards are checked inside handlers
+    // So multiple transitions for same state/event just means multiple registrations
+    const TestGuards = Slot.Guards({
+      isSpecial: {},
+      isNormal: {},
+    });
+
     const machine = Machine.make({
       state: TestState,
       event: TestEvent,
+      guards: TestGuards,
       initial: TestState.Idle,
     })
-      .on(TestState.Idle, TestEvent.Start, ({ event }) => TestState.Loading({ id: event.id }), {
-        guard: Guard.make("isSpecial"),
-      })
-      .on(TestState.Idle, TestEvent.Start, ({ event }) => TestState.Loading({ id: event.id }), {
-        guard: Guard.make("isNormal"),
-      })
-      .on(TestState.Idle, TestEvent.Start, ({ event }) => TestState.Loading({ id: event.id }))
+      .on(TestState.Idle, TestEvent.Start, ({ event, guards }) =>
+        Effect.gen(function* () {
+          if (yield* guards.isSpecial()) {
+            return TestState.Loading({ id: event.id });
+          }
+          if (yield* guards.isNormal()) {
+            return TestState.Loading({ id: event.id });
+          }
+          return TestState.Loading({ id: event.id });
+        }),
+      )
       .provide({
-        isSpecial: ({ event }: { event: { id: string } }) => event.id === "special",
-        isNormal: ({ event }: { event: { id: string } }) => event.id === "normal",
+        isSpecial: (_params, { event }) => (event as { id: string }).id === "special",
+        isNormal: (_params, { event }) => (event as { id: string }).id === "normal",
       });
 
     const transitions = Machine.findTransitions(machine, "Idle", "Start");
-    expect(transitions.length).toBe(3);
-
-    // Should preserve registration order
-    expect(transitions[0]?.guard).toBeDefined();
-    expect(transitions[1]?.guard).toBeDefined();
-    expect(transitions[2]?.guard).toBeUndefined();
+    // Now there's just one transition with guards inside the handler
+    expect(transitions.length).toBe(1);
   });
 
   test("findAlwaysTransitions returns always transitions for state", () => {
@@ -96,7 +104,6 @@ describe("Transition Index", () => {
     type CounterState = typeof CounterState.Type;
 
     const CounterEvent = Event({ Increment: {} });
-    type CounterEvent = typeof CounterEvent.Type;
 
     const machine = Machine.make({
       state: CounterState,
@@ -106,12 +113,10 @@ describe("Transition Index", () => {
       .on(CounterState.Counting, CounterEvent.Increment, ({ state }) =>
         CounterState.Counting({ count: state.count + 1 }),
       )
-      .always(CounterState.Counting, [
-        {
-          guard: (state) => state.count >= 10,
-          to: (state) => CounterState.Done({ count: state.count }),
-        },
-      ]);
+      .always(CounterState.Counting, (state) => {
+        if (state.count >= 10) return CounterState.Done({ count: state.count });
+        return state;
+      });
 
     const alwaysTransitions = Machine.findAlwaysTransitions(machine, "Counting");
     expect(alwaysTransitions.length).toBe(1);

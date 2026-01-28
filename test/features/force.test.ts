@@ -30,18 +30,16 @@ describe("on.force Transitions", () => {
         .on.force(PollState.Polling, PollEvent.Reset, ({ state }) =>
           PollState.Polling({ attempts: state.attempts + 1 }),
         )
-        .onEnter(PollState.Polling, "enterPolling")
-        .onExit(PollState.Polling, "exitPolling")
-        .provide({
-          enterPolling: ({ state }) =>
-            Effect.sync(() =>
-              effects.push(`enter:Polling:${(state as PollState & { _tag: "Polling" }).attempts}`),
-            ),
-          exitPolling: ({ state }) =>
-            Effect.sync(() =>
-              effects.push(`exit:Polling:${(state as PollState & { _tag: "Polling" }).attempts}`),
-            ),
-        });
+        .onEnter(PollState.Polling, ({ state }) =>
+          Effect.sync(() =>
+            effects.push(`enter:Polling:${(state as PollState & { _tag: "Polling" }).attempts}`),
+          ),
+        )
+        .onExit(PollState.Polling, ({ state }) =>
+          Effect.sync(() =>
+            effects.push(`exit:Polling:${(state as PollState & { _tag: "Polling" }).attempts}`),
+          ),
+        );
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("poller", machine);

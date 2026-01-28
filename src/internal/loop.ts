@@ -1,7 +1,7 @@
 import { Effect, Fiber, Option, Queue, SubscriptionRef } from "effect";
 
 import type { ActorRef } from "../actor-ref.js";
-import type { Machine, MachineRef } from "../machine.js";
+import type { Machine, MachineRef, HandlerContext } from "../machine.js";
 import type { InspectionEvent, Inspector } from "../inspection.js";
 import { Inspector as InspectorTag } from "../inspection.js";
 import {
@@ -10,9 +10,8 @@ import {
   findOnEnterEffects,
   findOnExitEffects,
 } from "./transition-index.js";
-import { GuardProvisionError } from "../errors.js";
 import { isEffect } from "./is-effect.js";
-import type { Guard } from "./types.js";
+import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
 
 /** Listener set for sync subscriptions */
 type Listeners<S> = Set<(state: S) => void>;
@@ -33,124 +32,55 @@ const emit = <S, E>(inspector: Inspector<S, E> | undefined, event: InspectionEve
 const now = (): number => Date.now();
 
 /**
- * Evaluate a guard tree recursively.
- * Composed guards (and/or) evaluate children in parallel.
- */
-const evaluateGuard = <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
-  machine: Machine<S, E, R>,
-  guard: Guard<S, E, R>,
-  ctx: { state: S; event: E },
-): Effect.Effect<boolean, never, R> => {
-  switch (guard._tag) {
-    case "GuardSlot": {
-      const predicate = machine.guardHandlers.get(guard.name);
-      if (predicate === undefined) {
-        throw new GuardProvisionError({ guardName: guard.name });
-      }
-      return Effect.suspend(() => {
-        const result = predicate(ctx);
-        return isEffect(result) ? result : Effect.succeed(result);
-      });
-    }
-
-    case "GuardAnd":
-      return Effect.gen(function* () {
-        const results = yield* Effect.all(
-          guard.guards.map((g) => evaluateGuard(machine, g, ctx)),
-          { concurrency: "unbounded" },
-        );
-        return results.every((r) => r);
-      });
-
-    case "GuardOr":
-      return Effect.gen(function* () {
-        const results = yield* Effect.all(
-          guard.guards.map((g) => evaluateGuard(machine, g, ctx)),
-          { concurrency: "unbounded" },
-        );
-        return results.some((r) => r);
-      });
-
-    case "GuardNot":
-      return Effect.map(evaluateGuard(machine, guard.guard, ctx), (r) => !r);
-  }
-};
-
-/**
  * Resolve which transition should fire for a given state and event.
  * Uses indexed O(1) lookup, then evaluates guards in registration order.
  * First guard pass wins.
  *
- * Returns Effect because guards can be async (Effect<boolean>).
+ * Returns Effect because handler may return Effect<State>.
  */
 export const resolveTransition = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
+  GD extends GuardsDef,
+  EFD extends EffectsDef,
 >(
-  machine: Machine<S, E, R>,
+  machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
   currentState: S,
   event: E,
-  actorId?: string,
-  inspector?: Inspector<S, E>,
-): Effect.Effect<Machine<S, E, R>["transitions"][number] | undefined, never, R> =>
-  Effect.gen(function* () {
+  _actorId?: string,
+  _inspector?: Inspector<S, E>,
+): Effect.Effect<(typeof machine.transitions)[number] | undefined, never, R> =>
+  Effect.sync(() => {
     const candidates = findTransitions(machine, currentState._tag, event._tag);
-    const ctx = { state: currentState, event };
 
-    let guardIndex = 0;
+    // With the new API, there are no guards on transitions - logic is in handler body
+    // So first matching transition wins
     for (const transition of candidates) {
-      // If no guard, this transition wins
-      if (transition.guard === undefined) {
-        return transition;
-      }
-
-      // Evaluate guard tree
-      const result = yield* evaluateGuard(machine, transition.guard, ctx);
-
-      if (actorId !== undefined && inspector !== undefined) {
-        emit(inspector, {
-          type: "@machine.guard",
-          actorId,
-          state: currentState,
-          event,
-          guardName: transition.guardName,
-          guardIndex,
-          result,
-          timestamp: now(),
-        });
-      }
-
-      if (result) {
-        return transition;
-      }
-
-      // Guard failed - continue to next transition (guard cascade)
-      guardIndex++;
+      return transition;
     }
     return undefined;
   });
 
 /**
  * Resolve which always transition should fire for the current state.
- * Uses indexed O(1) lookup, then evaluates guards in registration order.
- * First guard pass wins.
+ * Uses indexed O(1) lookup.
  */
 export const resolveAlwaysTransition = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
+  GD extends GuardsDef,
+  EFD extends EffectsDef,
 >(
-  machine: Machine<S, E, R>,
+  machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
   currentState: S,
-): Machine<S, E, R>["alwaysTransitions"][number] | undefined => {
+): (typeof machine.alwaysTransitions)[number] | undefined => {
   const candidates = findAlwaysTransitions(machine, currentState._tag);
 
+  // First transition wins - guard logic is now in handler body
   for (const transition of candidates) {
-    // If no guard, or guard passes, this transition wins
-    if (transition.guard === undefined || transition.guard(currentState)) {
-      return transition;
-    }
+    return transition;
   }
   return undefined;
 };
@@ -163,13 +93,28 @@ export const applyAlways = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
+  GD extends GuardsDef,
+  EFD extends EffectsDef,
 >(
-  machine: Machine<S, E, R>,
+  machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
   state: S,
+  self?: MachineRef<E>,
 ): Effect.Effect<S, never, R> =>
   Effect.gen(function* () {
     let currentState = state;
     let steps = 0;
+
+    // Create slot accessors for always handlers
+    const dummySelf: MachineRef<E> = self ?? {
+      send: () => Effect.void,
+    };
+    const dummyEvent = { _tag: "__always__" } as E;
+    const ctx: MachineContext<S, E, MachineRef<E>> = {
+      state: currentState,
+      event: dummyEvent,
+      self: dummySelf,
+    };
+    const { guards, effects } = machine._createSlotAccessors(ctx);
 
     while (steps < MAX_ALWAYS_STEPS) {
       const transition = resolveAlwaysTransition(machine, currentState);
@@ -177,8 +122,8 @@ export const applyAlways = <
         break;
       }
 
-      const newStateResult = transition.handler(currentState);
-      const newState = Effect.isEffect(newStateResult) ? yield* newStateResult : newStateResult;
+      const newStateResult = transition.handler(currentState, guards, effects);
+      const newState = isEffect(newStateResult) ? yield* newStateResult : newStateResult;
 
       // If state didn't change, stop (prevent infinite loops)
       if (newState._tag === currentState._tag && newState === currentState) {
@@ -201,9 +146,15 @@ export const applyAlways = <
 /**
  * Build ActorRef with all methods
  */
-const buildActorRef = <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
+const buildActorRef = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+  GD extends GuardsDef,
+  EFD extends EffectsDef,
+>(
   id: string,
-  machine: Machine<S, E, R>,
+  machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
   eventQueue: Queue.Queue<E>,
   listeners: Listeners<S>,
@@ -220,11 +171,6 @@ const buildActorRef = <S extends { readonly _tag: string }, E extends { readonly
   can: (event) =>
     Effect.gen(function* () {
       const s = yield* SubscriptionRef.get(stateRef);
-      /**
-       * INVARIANT: R=never for machines passed to createActor.
-       * Machine.provide eliminates R requirements before spawning.
-       * ActorSystem.spawn validates all effect slots are provided.
-       */
       const transition = yield* resolveTransition(machine, s, event) as Effect.Effect<
         (typeof machine.transitions)[number] | undefined,
         never,
@@ -234,11 +180,6 @@ const buildActorRef = <S extends { readonly _tag: string }, E extends { readonly
     }),
   canSync: (event) => {
     const state = Effect.runSync(SubscriptionRef.get(stateRef));
-    /**
-     * INVARIANT: R=never for machines passed to createActor.
-     * Machine.provide eliminates R requirements before spawning.
-     * canSync only works with sync guards - async guards will throw.
-     */
     const transition = Effect.runSync(
       resolveTransition(machine, state, event) as Effect.Effect<
         (typeof machine.transitions)[number] | undefined,
@@ -273,9 +214,11 @@ export const createActor = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
+  GD extends GuardsDef,
+  EFD extends EffectsDef,
 >(
   id: string,
-  machine: Machine<S, E, R>,
+  machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
 ): Effect.Effect<ActorRef<S, E>, never, R> =>
   Effect.withSpan("effect-machine.actor.spawn", {
     attributes: { "effect_machine.actor.id": id },
@@ -286,8 +229,14 @@ export const createActor = <
         | Inspector<S, E>
         | undefined;
 
+      // Create self reference for sending events
+      const eventQueue = yield* Queue.unbounded<E>();
+      const self: MachineRef<E> = {
+        send: (event) => Queue.offer(eventQueue, event),
+      };
+
       // Apply always transitions to initial state
-      const resolvedInitial = yield* applyAlways(machine, machine.initial);
+      const resolvedInitial = yield* applyAlways(machine, machine.initial, self);
 
       // Annotate span with initial state
       yield* Effect.annotateCurrentSpan("effect_machine.actor.initial_state", resolvedInitial._tag);
@@ -304,13 +253,7 @@ export const createActor = <
 
       // Initialize state
       const stateRef = yield* SubscriptionRef.make(resolvedInitial);
-      const eventQueue = yield* Queue.unbounded<E>();
       const listeners: Listeners<S> = new Set();
-
-      // Create self reference for sending events
-      const self: MachineRef<E> = {
-        send: (event) => Queue.offer(eventQueue, event),
-      };
 
       // Fork root-level invokes (run for entire machine lifetime)
       const rootFibers: Fiber.Fiber<void, never>[] = [];
@@ -377,8 +320,14 @@ export const createActor = <
 /**
  * Main event loop for the actor
  */
-const eventLoop = <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
-  machine: Machine<S, E, R>,
+const eventLoop = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+  GD extends GuardsDef,
+  EFD extends EffectsDef,
+>(
+  machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
   eventQueue: Queue.Queue<E>,
   self: MachineRef<E>,
@@ -414,8 +363,14 @@ const eventLoop = <S extends { readonly _tag: string }, E extends { readonly _ta
 /**
  * Process a single event, returning true if the actor should stop
  */
-const processEvent = <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
-  machine: Machine<S, E, R>,
+const processEvent = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+  GD extends GuardsDef,
+  EFD extends EffectsDef,
+>(
+  machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
   currentState: S,
   event: E,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
@@ -436,7 +391,7 @@ const processEvent = <S extends { readonly _tag: string }, E extends { readonly 
       });
     }
 
-    // Find matching transition using guard cascade
+    // Find matching transition
     const transition = yield* resolveTransition(machine, currentState, event, actorId, inspector);
 
     if (transition === undefined) {
@@ -447,25 +402,28 @@ const processEvent = <S extends { readonly _tag: string }, E extends { readonly 
 
     yield* Effect.annotateCurrentSpan("effect_machine.transition.matched", true);
 
-    // Compute new state
-    const newStateResult = transition.handler({ state: currentState, event });
-    let newState = Effect.isEffect(newStateResult) ? yield* newStateResult : newStateResult;
+    // Create context for handler
+    const ctx: MachineContext<S, E, MachineRef<E>> = {
+      state: currentState,
+      event,
+      self,
+    };
+    const { guards, effects } = machine._createSlotAccessors(ctx);
 
-    // Run transition effect if any
-    if (transition.effect !== undefined) {
-      if (inspector !== undefined) {
-        emit(inspector, {
-          type: "@machine.effect",
-          actorId,
-          effectType: "transition",
-          state: currentState,
-          timestamp: now(),
-        });
-      }
-      yield* Effect.withSpan("effect-machine.effect.transition", {
-        attributes: { "effect_machine.state": currentState._tag },
-      })(transition.effect({ state: currentState, event }));
-    }
+    const handlerCtx: HandlerContext<S, E, GD, EFD> = {
+      state: currentState,
+      event,
+      guards,
+      effects,
+    };
+
+    // Compute new state - provide machine context for slot handlers
+    const newStateResult = transition.handler(handlerCtx);
+    let newState = isEffect(newStateResult)
+      ? yield* (newStateResult as Effect.Effect<S, never, R>).pipe(
+          Effect.provideService(machine.Context, ctx),
+        )
+      : newStateResult;
 
     // Determine if we should run exit/enter effects
     const stateTagChanged = newState._tag !== currentState._tag;
@@ -480,7 +438,7 @@ const processEvent = <S extends { readonly _tag: string }, E extends { readonly 
 
       // Apply always transitions (only if tag changed)
       if (stateTagChanged) {
-        newState = yield* applyAlways(machine, newState);
+        newState = yield* applyAlways(machine, newState, self);
       }
 
       yield* Effect.annotateCurrentSpan("effect_machine.state.from", currentState._tag);
@@ -537,8 +495,10 @@ export const runEntryEffects = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
+  GD extends GuardsDef,
+  EFD extends EffectsDef,
 >(
-  machine: Machine<S, E, R>,
+  machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
   state: S,
   self: MachineRef<E>,
   actorId?: string,
@@ -546,6 +506,16 @@ export const runEntryEffects = <
 ): Effect.Effect<void, never, R> =>
   Effect.gen(function* () {
     const effects = findOnEnterEffects(machine, state._tag);
+
+    // Create context for effect slots
+    const dummyEvent = { _tag: "__enter__" } as E;
+    const ctx: MachineContext<S, E, MachineRef<E>> = {
+      state,
+      event: dummyEvent,
+      self,
+    };
+    const { effects: effectSlots } = machine._createSlotAccessors(ctx);
+
     for (const effect of effects) {
       if (actorId !== undefined && inspector !== undefined) {
         emit(inspector, {
@@ -558,7 +528,11 @@ export const runEntryEffects = <
       }
       yield* Effect.withSpan("effect-machine.effect.entry", {
         attributes: { "effect_machine.state": state._tag },
-      })(effect.handler({ state, self }));
+      })(
+        (
+          effect.handler({ state, self, effects: effectSlots }) as Effect.Effect<void, never, R>
+        ).pipe(Effect.provideService(machine.Context, ctx)),
+      );
     }
   });
 
@@ -569,8 +543,10 @@ export const runExitEffects = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
+  GD extends GuardsDef,
+  EFD extends EffectsDef,
 >(
-  machine: Machine<S, E, R>,
+  machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
   state: S,
   self: MachineRef<E>,
   actorId?: string,
@@ -578,6 +554,16 @@ export const runExitEffects = <
 ): Effect.Effect<void, never, R> =>
   Effect.gen(function* () {
     const effects = findOnExitEffects(machine, state._tag);
+
+    // Create context for effect slots
+    const dummyEvent = { _tag: "__exit__" } as E;
+    const ctx: MachineContext<S, E, MachineRef<E>> = {
+      state,
+      event: dummyEvent,
+      self,
+    };
+    const { effects: effectSlots } = machine._createSlotAccessors(ctx);
+
     for (const effect of effects) {
       if (actorId !== undefined && inspector !== undefined) {
         emit(inspector, {
@@ -590,6 +576,10 @@ export const runExitEffects = <
       }
       yield* Effect.withSpan("effect-machine.effect.exit", {
         attributes: { "effect_machine.state": state._tag },
-      })(effect.handler({ state, self }));
+      })(
+        (
+          effect.handler({ state, self, effects: effectSlots }) as Effect.Effect<void, never, R>
+        ).pipe(Effect.provideService(machine.Context, ctx)),
+      );
     }
   });

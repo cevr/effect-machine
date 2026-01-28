@@ -7,8 +7,8 @@ import {
   assertNeverReaches,
   assertPath,
   Event,
-  Guard,
   Machine,
+  Slot,
   State,
 } from "../../src/index.js";
 import { describe, expect, it, yieldFibers } from "../utils/effect-test.js";
@@ -50,9 +50,14 @@ describe("Payment Flow Pattern", () => {
   });
   type PaymentEvent = typeof PaymentEvent.Type;
 
+  const PaymentGuards = Slot.Guards({
+    canRetry: {},
+  });
+
   const paymentMachine = Machine.make({
     state: PaymentState,
     event: PaymentEvent,
+    guards: PaymentGuards,
     initial: PaymentState.Idle,
   })
     .on(PaymentState.Idle, PaymentEvent.StartCheckout, ({ event }) =>
@@ -93,28 +98,37 @@ describe("Payment Flow Pattern", () => {
       }),
     )
     // Error handling - retry with guard
-    .on(
-      PaymentState.PaymentError,
-      PaymentEvent.Retry,
-      ({ state }) =>
-        PaymentState.ProcessingPayment({
-          method: "card",
-          amount: state.amount,
-          attempts: state.attempts + 1,
-        }),
-      { guard: Guard.make("canRetry") },
+    .on(PaymentState.PaymentError, PaymentEvent.Retry, ({ state, guards }) =>
+      Effect.gen(function* () {
+        if (yield* guards.canRetry()) {
+          return PaymentState.ProcessingPayment({
+            method: "card",
+            amount: state.amount,
+            attempts: state.attempts + 1,
+          });
+        }
+        return state;
+      }),
     )
     .provide({
-      canRetry: ({ state }: { state: { canRetry: boolean; attempts: number } }) =>
-        state.canRetry && state.attempts < 3,
+      canRetry: (_params, { state }) => {
+        const s = state as { canRetry: boolean; attempts: number };
+        return s.canRetry && s.attempts < 3;
+      },
     })
-    // Auto-dismiss goes back to idle
-    .on(PaymentState.PaymentError, PaymentEvent.AutoDismissError, () => PaymentState.Idle)
+    // Auto-dismiss goes back to idle (only for non-retryable errors)
+    .on(PaymentState.PaymentError, PaymentEvent.AutoDismissError, ({ state }) => {
+      // Only auto-dismiss if not retryable
+      if (!state.canRetry) {
+        return PaymentState.Idle;
+      }
+      return state; // Stay in error state
+    })
     // Delays
     .delay(PaymentState.AwaitingBridgeConfirm, "30 seconds", PaymentEvent.BridgeTimeout)
-    .delay(PaymentState.PaymentError, "5 seconds", PaymentEvent.AutoDismissError, {
-      guard: (state) => !state.canRetry,
-    })
+    // Delay timer only fires for non-retryable errors
+    // This works because the timer still fires, but the transition handler can check state
+    .delay(PaymentState.PaymentError, "5 seconds", PaymentEvent.AutoDismissError)
     // Cancel from multiple states
     .onAny(
       [

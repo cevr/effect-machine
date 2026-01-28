@@ -1,6 +1,22 @@
 // Machine namespace (Effect-style)
 export * as Machine from "./namespace.js";
 
+// Slot module
+export { Slot } from "./slot.js";
+export type {
+  GuardsSchema,
+  EffectsSchema,
+  GuardsDef,
+  EffectsDef,
+  GuardSlots,
+  EffectSlots,
+  GuardSlot,
+  EffectSlot as SlotEffectSlot,
+  GuardHandlers,
+  EffectHandlers as SlotEffectHandlers,
+  MachineContext,
+} from "./slot.js";
+
 // Errors
 export {
   AssertionError,
@@ -30,19 +46,14 @@ export type {
   AlwaysTransition,
   StateEffect,
   RootInvoke,
-  GuardHandler,
-  OnOptions,
-  OnForceOptions,
-  DelayOptions,
   DurationOrFn,
   PersistOptions,
-  AlwaysBranch,
-  ChooseBranch,
-  ChooseEntry,
-  ChooseOtherwise,
-  EffectHandler,
-  EffectHandlers,
   FromScope,
+  HandlerContext,
+  StateHandlerContext,
+  TransitionHandler,
+  StateEffectHandler,
+  ProvideHandlers,
 } from "./machine.js";
 
 // Actor types
@@ -66,21 +77,12 @@ export {
 } from "./testing.js";
 export type { SimulationResult, TestHarness, TestHarnessOptions } from "./testing.js";
 
-// Guard and transition types
-export {
-  Guard,
-  collectGuardSlotNames,
-  getGuardDisplayName,
-  type Guard as GuardType,
-  type GuardFn,
-  type GuardInput,
-  type InstanceOf,
-  type StateEffectContext,
-  type StateEffectHandler,
-  type TransitionContext,
-  type TransitionHandler,
-  type TransitionOptions,
-  type TransitionResult,
+// Legacy types for backward compatibility
+export type {
+  InstanceOf,
+  StateEffectContext,
+  TransitionContext,
+  TransitionResult,
 } from "./internal/types.js";
 
 // Inspection

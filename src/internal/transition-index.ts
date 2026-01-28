@@ -7,35 +7,43 @@
  * @internal
  */
 import type { Machine, Transition, AlwaysTransition, StateEffect } from "../machine.js";
+import type { GuardsDef, EffectsDef } from "../slot.js";
 
 /**
  * Index structure: stateTag -> eventTag -> transitions[]
  * Array preserves registration order for guard cascade evaluation.
  */
-type TransitionIndex<S, E, R> = Map<string, Map<string, Array<Transition<S, E, R>>>>;
+type TransitionIndex<S, E, GD extends GuardsDef, EFD extends EffectsDef, R> = Map<
+  string,
+  Map<string, Array<Transition<S, E, GD, EFD, R>>>
+>;
 
 /**
  * Index for always transitions: stateTag -> transitions[]
  */
-type AlwaysIndex<S, R> = Map<string, Array<AlwaysTransition<S, R>>>;
+type AlwaysIndex<S, GD extends GuardsDef, EFD extends EffectsDef, R> = Map<
+  string,
+  Array<AlwaysTransition<S, GD, EFD, R>>
+>;
 
 /**
  * Index for state effects: stateTag -> effects[]
  */
-type EffectIndex<S, E, R> = Map<string, Array<StateEffect<S, E, R>>>;
+type EffectIndex<S, E, EFD extends EffectsDef, R> = Map<string, Array<StateEffect<S, E, EFD, R>>>;
 
 /**
  * Combined index for a machine
  */
-interface MachineIndex<S, E, R> {
-  readonly transitions: TransitionIndex<S, E, R>;
-  readonly always: AlwaysIndex<S, R>;
-  readonly onEnter: EffectIndex<S, E, R>;
-  readonly onExit: EffectIndex<S, E, R>;
+interface MachineIndex<S, E, GD extends GuardsDef, EFD extends EffectsDef, R> {
+  readonly transitions: TransitionIndex<S, E, GD, EFD, R>;
+  readonly always: AlwaysIndex<S, GD, EFD, R>;
+  readonly onEnter: EffectIndex<S, E, EFD, R>;
+  readonly onExit: EffectIndex<S, E, EFD, R>;
 }
 
 // Module-level cache - WeakMap allows GC of unreferenced machines
-const indexCache = new WeakMap<object, MachineIndex<unknown, unknown, unknown>>();
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const indexCache = new WeakMap<object, MachineIndex<any, any, any, any, any>>();
 
 /**
  * Build transition index from machine definition.
@@ -44,11 +52,13 @@ const indexCache = new WeakMap<object, MachineIndex<unknown, unknown, unknown>>(
 const buildTransitionIndex = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
+  GD extends GuardsDef,
+  EFD extends EffectsDef,
   R,
 >(
-  transitions: ReadonlyArray<Transition<S, E, R>>,
-): TransitionIndex<S, E, R> => {
-  const index: TransitionIndex<S, E, R> = new Map();
+  transitions: ReadonlyArray<Transition<S, E, GD, EFD, R>>,
+): TransitionIndex<S, E, GD, EFD, R> => {
+  const index: TransitionIndex<S, E, GD, EFD, R> = new Map();
 
   for (const t of transitions) {
     let stateMap = index.get(t.stateTag);
@@ -72,10 +82,15 @@ const buildTransitionIndex = <
 /**
  * Build always transition index from machine definition.
  */
-const buildAlwaysIndex = <S extends { readonly _tag: string }, R>(
-  transitions: ReadonlyArray<AlwaysTransition<S, R>>,
-): AlwaysIndex<S, R> => {
-  const index: AlwaysIndex<S, R> = new Map();
+const buildAlwaysIndex = <
+  S extends { readonly _tag: string },
+  GD extends GuardsDef,
+  EFD extends EffectsDef,
+  R,
+>(
+  transitions: ReadonlyArray<AlwaysTransition<S, GD, EFD, R>>,
+): AlwaysIndex<S, GD, EFD, R> => {
+  const index: AlwaysIndex<S, GD, EFD, R> = new Map();
 
   for (const t of transitions) {
     let stateList = index.get(t.stateTag);
@@ -95,11 +110,12 @@ const buildAlwaysIndex = <S extends { readonly _tag: string }, R>(
 const buildEffectIndex = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
+  EFD extends EffectsDef,
   R,
 >(
-  effects: ReadonlyArray<StateEffect<S, E, R>>,
-): EffectIndex<S, E, R> => {
-  const index: EffectIndex<S, E, R> = new Map();
+  effects: ReadonlyArray<StateEffect<S, E, EFD, R>>,
+): EffectIndex<S, E, EFD, R> => {
+  const index: EffectIndex<S, E, EFD, R> = new Map();
 
   for (const e of effects) {
     let stateList = index.get(e.stateTag);
@@ -116,10 +132,17 @@ const buildEffectIndex = <
 /**
  * Get or build index for a machine.
  */
-const getIndex = <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
-  machine: Machine<S, E, R>,
-): MachineIndex<S, E, R> => {
-  let index = indexCache.get(machine) as MachineIndex<S, E, R> | undefined;
+const getIndex = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+  GD extends GuardsDef,
+  EFD extends EffectsDef,
+>(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
+  machine: Machine<S, E, R, never, any, any, GD, EFD>,
+): MachineIndex<S, E, GD, EFD, R> => {
+  let index = indexCache.get(machine) as MachineIndex<S, E, GD, EFD, R> | undefined;
   if (index === undefined) {
     index = {
       transitions: buildTransitionIndex(machine.transitions),
@@ -127,7 +150,7 @@ const getIndex = <S extends { readonly _tag: string }, E extends { readonly _tag
       onEnter: buildEffectIndex(machine.onEnterEffects),
       onExit: buildEffectIndex(machine.onExitEffects),
     };
-    indexCache.set(machine, index as MachineIndex<unknown, unknown, unknown>);
+    indexCache.set(machine, index);
   }
   return index;
 };
@@ -142,11 +165,14 @@ export const findTransitions = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
+  GD extends GuardsDef = Record<string, never>,
+  EFD extends EffectsDef = Record<string, never>,
 >(
-  machine: Machine<S, E, R>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
+  machine: Machine<S, E, R, never, any, any, GD, EFD>,
   stateTag: string,
   eventTag: string,
-): ReadonlyArray<Transition<S, E, R>> => {
+): ReadonlyArray<Transition<S, E, GD, EFD, R>> => {
   const index = getIndex(machine);
   return index.transitions.get(stateTag)?.get(eventTag) ?? [];
 };
@@ -159,10 +185,13 @@ export const findAlwaysTransitions = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
+  GD extends GuardsDef = Record<string, never>,
+  EFD extends EffectsDef = Record<string, never>,
 >(
-  machine: Machine<S, E, R>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
+  machine: Machine<S, E, R, never, any, any, GD, EFD>,
   stateTag: string,
-): ReadonlyArray<AlwaysTransition<S, R>> => {
+): ReadonlyArray<AlwaysTransition<S, GD, EFD, R>> => {
   const index = getIndex(machine);
   return index.always.get(stateTag) ?? [];
 };
@@ -177,10 +206,13 @@ export const findOnEnterEffects = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
+  GD extends GuardsDef = Record<string, never>,
+  EFD extends EffectsDef = Record<string, never>,
 >(
-  machine: Machine<S, E, R>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
+  machine: Machine<S, E, R, never, any, any, GD, EFD>,
   stateTag: string,
-): ReadonlyArray<StateEffect<S, E, R>> => {
+): ReadonlyArray<StateEffect<S, E, EFD, R>> => {
   const index = getIndex(machine);
   return index.onEnter.get(stateTag) ?? [];
 };
@@ -195,10 +227,13 @@ export const findOnExitEffects = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
+  GD extends GuardsDef = Record<string, never>,
+  EFD extends EffectsDef = Record<string, never>,
 >(
-  machine: Machine<S, E, R>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
+  machine: Machine<S, E, R, never, any, any, GD, EFD>,
   stateTag: string,
-): ReadonlyArray<StateEffect<S, E, R>> => {
+): ReadonlyArray<StateEffect<S, E, EFD, R>> => {
   const index = getIndex(machine);
   return index.onExit.get(stateTag) ?? [];
 };

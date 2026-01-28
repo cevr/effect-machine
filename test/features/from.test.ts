@@ -1,7 +1,7 @@
 import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { Event, Guard, Machine, simulate, State } from "../../src/index.js";
+import { Event, Machine, simulate, State, Slot } from "../../src/index.js";
 
 // ============================================================================
 // Test fixtures
@@ -63,25 +63,34 @@ describe("Machine.from", () => {
     );
   });
 
-  test("from() transitions work with guards", async () => {
+  test("from() transitions work with guards in handler", async () => {
+    const TestGuards = Slot.Guards({
+      textUnderLimit: {},
+    });
+
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.make({
           state: EditorState,
           event: EditorEvent,
+          guards: TestGuards,
           initial: EditorState.Typing({ text: "" }),
         })
           .from(EditorState.Typing, (scope) =>
             scope
-              .on(
-                EditorEvent.KeyPress,
-                ({ state, event }) => EditorState.Typing({ text: state.text + event.key }),
-                { guard: Guard.make("textUnderLimit") },
+              .on(EditorEvent.KeyPress, ({ state, event, guards }) =>
+                Effect.gen(function* () {
+                  if (yield* guards.textUnderLimit()) {
+                    return EditorState.Typing({ text: state.text + event.key });
+                  }
+                  return state;
+                }),
               )
               .on(EditorEvent.Submit, ({ state }) => EditorState.Submitted({ text: state.text })),
           )
           .provide({
-            textUnderLimit: ({ state }: { state: { text: string } }) => state.text.length < 3,
+            textUnderLimit: (_params, { state }) =>
+              state._tag === "Typing" && state.text.length < 3,
           });
 
         const result = yield* simulate(machine, [
@@ -100,7 +109,7 @@ describe("Machine.from", () => {
     );
   });
 
-  test("from() transitions work with effects", async () => {
+  test("from() transitions work with effects in handler", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const logs: string[] = [];
@@ -111,15 +120,11 @@ describe("Machine.from", () => {
           initial: EditorState.Typing({ text: "" }),
         }).from(EditorState.Typing, (scope) =>
           scope
-            .on(
-              EditorEvent.KeyPress,
-              ({ state, event }) => EditorState.Typing({ text: state.text + event.key }),
-              {
-                effect: ({ event }) =>
-                  Effect.sync(() => {
-                    logs.push(`key: ${event.key}`);
-                  }),
-              },
+            .on(EditorEvent.KeyPress, ({ state, event }) =>
+              Effect.gen(function* () {
+                yield* Effect.sync(() => logs.push(`key: ${event.key}`));
+                return EditorState.Typing({ text: state.text + event.key });
+              }),
             )
             .on(EditorEvent.Submit, ({ state }) => EditorState.Submitted({ text: state.text })),
         );
