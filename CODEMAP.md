@@ -5,9 +5,8 @@
 ```
 src/
 ├── index.ts              # Public exports
-├── namespace.ts          # Machine namespace (Effect-style API)
-├── machine-schema.ts     # Schema-first State/Event (MachineStateSchema, MachineEventSchema)
-├── machine.ts            # Machine class with fluent builder API
+├── machine.ts            # Machine class + namespace (fluent builder API)
+├── schema.ts             # Schema-first State/Event (MachineStateSchema, MachineEventSchema)
 ├── slot.ts               # Slot.Guards/Slot.Effects factories for parameterized slots
 ├── actor-ref.ts          # Actor reference interface
 ├── actor-system.ts       # Actor system service + layer
@@ -26,11 +25,8 @@ src/
     ├── loop.ts              # Event loop, transition resolver, lifecycle effects
     ├── execute-transition.ts # Shared transition execution (loop, simulate, harness)
     ├── transition-index.ts  # O(1) lookup for transitions
-    ├── fiber-storage.ts     # Per-actor WeakMap fiber storage utility
     ├── brands.ts            # StateBrand/EventBrand + BrandedState/BrandedEvent
-    ├── types.ts             # Internal utility types
-    ├── is-effect.ts         # Shared isEffect type guard
-    └── get-tag.ts           # Tag extraction from constructors
+    └── utils.ts             # Type helpers, constants, isEffect, getTag
 
 test/
 ├── machine.test.ts       # Core machine tests
@@ -38,18 +34,18 @@ test/
 ├── actor-ref.test.ts     # ActorRef ergonomics
 ├── persistence.test.ts   # Persistence tests
 ├── testing.test.ts       # Test utilities
-├── machine-schema.test.ts # Schema-first State/Event tests
-├── transition-index.test.ts # O(1) transition lookup tests
+├── schema.test.ts        # Schema-first State/Event tests
 ├── inspection.test.ts    # Inspector tests
-├── features/             # Feature-specific tests
-│   ├── any.test.ts
-│   ├── delay.test.ts         # Timeout via spawn patterns
-│   ├── dynamic-delay.test.ts # Dynamic timeout via spawn
-│   ├── effects.test.ts
-│   ├── force.test.ts         # reenter transition tests
-│   ├── from.test.ts
-│   ├── guards.test.ts
-│   └── same-state.test.ts
+├── guards.test.ts        # Parameterized guard tests
+├── choose.test.ts        # Conditional transition tests
+├── delay.test.ts         # Timeout via spawn patterns
+├── dynamic-delay.test.ts # Dynamic timeout via spawn
+├── same-state.test.ts    # Same-state transition tests
+├── force.test.ts         # reenter transition tests
+├── utils/
+│   └── effect-test.ts    # Test helpers (yieldFibers, etc.)
+├── internal/
+│   └── transition-index.test.ts # O(1) transition lookup tests
 ├── patterns/             # Real-world pattern tests
 │   ├── payment-flow.test.ts
 │   ├── session-lifecycle.test.ts
@@ -63,14 +59,13 @@ test/
 
 | File                                | Purpose                                                     |
 | ----------------------------------- | ----------------------------------------------------------- |
-| `machine.ts`                        | Machine class - fluent builder, all combinators as methods  |
-| `machine-schema.ts`                 | Schema-first `State`/`Event` - single source of truth       |
+| `machine.ts`                        | Machine class + namespace - fluent builder, all combinators |
+| `schema.ts`                         | Schema-first `State`/`Event` - single source of truth       |
 | `slot.ts`                           | `Slot.Guards`/`Slot.Effects` - parameterized slot factories |
-| `namespace.ts`                      | Machine namespace export (named for macOS compat)           |
 | `internal/loop.ts`                  | Event processing, `resolveTransition`, spawn effect forking |
 | `internal/transition-index.ts`      | O(1) lookup for transitions                                 |
 | `internal/brands.ts`                | Branded types: `StateBrand`, `BrandedState`, etc.           |
-| `internal/fiber-storage.ts`         | `createFiberStorage()` - per-actor WeakMap utility          |
+| `internal/utils.ts`                 | Shared utilities: types, constants, `isEffect`, `getTag`    |
 | `persistence/persistent-machine.ts` | `Machine.persist` - schemas from machine                    |
 | `cluster/entity-machine.ts`         | `toEntity` - schemas from machine                           |
 
@@ -171,18 +166,6 @@ const MyEffects = Slot.Effects({
 - Effects return `Effect<void>`
 - Context (`ctx`) has `{ state, event, self }`
 - `provide()` creates new machine - original reusable with different handlers
-
-## Fiber Storage Pattern
-
-`spawn` uses shared utility from `internal/fiber-storage.ts`:
-
-```ts
-import { createFiberStorage } from "../internal/fiber-storage.js";
-
-const getFiberMap = createFiberStorage(); // WeakMap-backed, per-actor
-const instanceKey = Symbol("spawn"); // unique per combinator instance
-getFiberMap(self).set(instanceKey, fiber);
-```
 
 ## Transition Index
 

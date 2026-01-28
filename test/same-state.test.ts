@@ -1,8 +1,8 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
 import { Effect, Schema } from "effect";
 
-import { ActorSystemDefault, ActorSystemService, Event, Machine, State } from "../../src/index.js";
-import { describe, expect, it, yieldFibers } from "../utils/effect-test.js";
+import { ActorSystemDefault, ActorSystemService, Event, Machine, State } from "../src/index.js";
+import { describe, expect, it, yieldFibers } from "./utils/effect-test.js";
 
 describe("Same-state Transitions", () => {
   const FormState = State({

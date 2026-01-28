@@ -7,7 +7,7 @@ import { Inspector as InspectorTag } from "../inspection.js";
 import { findTransitions, findSpawnEffects } from "./transition-index.js";
 import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
 import { executeTransition } from "./execute-transition.js";
-import { INTERNAL_INIT_EVENT, INTERNAL_ENTER_EVENT } from "./constants.js";
+import { INTERNAL_INIT_EVENT, INTERNAL_ENTER_EVENT } from "./utils.js";
 
 /** Listener set for sync subscriptions */
 type Listeners<S> = Set<(state: S) => void>;

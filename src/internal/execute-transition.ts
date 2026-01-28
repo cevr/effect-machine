@@ -8,7 +8,7 @@ import { Effect } from "effect";
 import type { Machine, MachineRef, HandlerContext } from "../machine.js";
 import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
 import { resolveTransition } from "./loop.js";
-import { isEffect } from "./is-effect.js";
+import { isEffect } from "./utils.js";
 
 /**
  * Result of executing a transition.

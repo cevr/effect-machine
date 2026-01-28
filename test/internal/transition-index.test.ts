@@ -8,7 +8,7 @@
 import { describe, expect, test } from "bun:test";
 import { Effect, Schema } from "effect";
 
-import { Event, Machine, Slot, State } from "../src/index.js";
+import { Event, Machine, Slot, State } from "../../src/index.js";
 
 // Test state machine types
 const TestState = State({

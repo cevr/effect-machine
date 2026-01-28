@@ -2,7 +2,7 @@
 import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { Event, Machine, simulate, State, Slot } from "../../src/index.js";
+import { Event, Machine, simulate, State, Slot } from "../src/index.js";
 
 describe("Parameterized Guards (via Slot.Guards)", () => {
   const TestState = State({

@@ -45,7 +45,6 @@ const machine = Machine.make({ state, event, initial })
 - Actor testing needs `Effect.yieldNow()` after `send()` to let effects run
 - Same-state transitions skip spawn/finalizers by default
 - `.reenter()` runs exit/enter even on same state tag - use to restart timers/spawn
-- `namespace.ts` exports Machine namespace (not `Machine.ts` - macOS case-insensitivity)
 - Branded types: `State<T>` / `Event<T>` prevent accidental swap at compile time
 - Brand is phantom (type-level only) - runtime values identical to `Data.TaggedEnum`
 - Schemas attached to machine: `persist` and `toEntity` infer schemas automatically

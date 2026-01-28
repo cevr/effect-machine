@@ -1,12 +1,56 @@
+/**
+ * Machine namespace - fluent builder API for state machines.
+ *
+ * @example
+ * ```ts
+ * import { Machine, State, Event, Slot } from "effect-machine"
+ *
+ * const MyState = State({ Idle: {}, Running: { count: Schema.Number } })
+ * const MyEvent = Event({ Start: {}, Stop: {} })
+ *
+ * const MyGuards = Slot.Guards({
+ *   canStart: { threshold: Schema.Number },
+ * })
+ *
+ * const MyEffects = Slot.Effects({
+ *   notify: { message: Schema.String },
+ * })
+ *
+ * const machine = Machine.make({
+ *   state: MyState,
+ *   event: MyEvent,
+ *   guards: MyGuards,
+ *   effects: MyEffects,
+ *   initial: MyState.Idle,
+ * })
+ *   .on(MyState.Idle, MyEvent.Start, ({ state, guards, effects }) =>
+ *     Effect.gen(function* () {
+ *       if (yield* guards.canStart({ threshold: 5 })) {
+ *         yield* effects.notify({ message: "Starting!" })
+ *         return MyState.Running({ count: 0 })
+ *       }
+ *       return state
+ *     })
+ *   )
+ *   .on(MyState.Running, MyEvent.Stop, () => MyState.Idle)
+ *   .final(MyState.Idle)
+ *   .provide({
+ *     canStart: ({ threshold }) => Effect.succeed(threshold > 0),
+ *     notify: ({ message }) => Effect.log(message),
+ *   })
+ * ```
+ *
+ * @module
+ */
 import type { Schema, Schedule } from "effect";
 import { Context, Effect } from "effect";
 import type { Pipeable } from "effect/Pipeable";
 import { pipeArguments } from "effect/Pipeable";
 
-import type { TransitionResult } from "./internal/types.js";
+import type { TransitionResult } from "./internal/utils.js";
+import { getTag } from "./internal/utils.js";
 import type { TaggedOrConstructor, BrandedState, BrandedEvent } from "./internal/brands.js";
-import { getTag } from "./internal/get-tag.js";
-import type { MachineStateSchema, MachineEventSchema, VariantsUnion } from "./machine-schema.js";
+import type { MachineStateSchema, MachineEventSchema, VariantsUnion } from "./schema.js";
 import type { PersistentMachine, WithPersistenceConfig } from "./persistence/persistent-machine.js";
 import { persist as persistImpl } from "./persistence/persistent-machine.js";
 import { SlotProvisionError, ProvisionValidationError } from "./errors.js";
@@ -569,3 +613,9 @@ export class Machine<
 // ============================================================================
 
 export const make = Machine.make;
+
+// Transition lookup (introspection)
+export { findTransitions } from "./internal/transition-index.js";
+
+// Persistence types
+export type { PersistenceConfig, PersistentMachine } from "./persistence/index.js";

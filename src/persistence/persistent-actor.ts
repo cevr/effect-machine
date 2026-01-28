@@ -8,7 +8,7 @@ import type { MachineRef, HandlerContext, Machine } from "../machine.js";
 import type { Inspector } from "../inspection.js";
 import { Inspector as InspectorTag } from "../inspection.js";
 import { resolveTransition } from "../internal/loop.js";
-import { isEffect } from "../internal/is-effect.js";
+import { isEffect } from "../internal/utils.js";
 import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
 
 import type {

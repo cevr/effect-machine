@@ -1,5 +1,5 @@
 // Machine namespace (Effect-style)
-export * as Machine from "./namespace.js";
+export * as Machine from "./machine.js";
 
 // Slot module
 export { Slot } from "./slot.js";
@@ -30,8 +30,8 @@ export {
 } from "./errors.js";
 
 // Schema-first State/Event definitions
-export { State, Event } from "./machine-schema.js";
-export type { MachineStateSchema, MachineEventSchema } from "./machine-schema.js";
+export { State, Event } from "./schema.js";
+export type { MachineStateSchema, MachineEventSchema } from "./schema.js";
 
 // Core machine types (for advanced use)
 export type {

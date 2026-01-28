@@ -8,8 +8,8 @@ import {
   Machine,
   Slot,
   State,
-} from "../../src/index.js";
-import { describe, expect, it, yieldFibers } from "../utils/effect-test.js";
+} from "../src/index.js";
+import { describe, expect, it, yieldFibers } from "./utils/effect-test.js";
 
 describe("Timeout Transitions via Spawn", () => {
   const NotifState = State({
