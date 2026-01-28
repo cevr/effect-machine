@@ -1,7 +1,14 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
 import { Effect, Schema, TestClock } from "effect";
 
-import { ActorSystemDefault, ActorSystemService, Event, Machine, State } from "../../src/index.js";
+import {
+  ActorSystemDefault,
+  ActorSystemService,
+  Event,
+  Machine,
+  Slot,
+  State,
+} from "../../src/index.js";
 import { describe, expect, it, yieldFibers } from "../utils/effect-test.js";
 
 describe("reenter Transitions", () => {
@@ -15,6 +22,10 @@ describe("reenter Transitions", () => {
     Poll: {},
     Reset: {},
     Finish: {},
+  });
+
+  const PollEffects = Slot.Effects({
+    runPollingEffect: {},
   });
 
   it.scopedLive("reenter runs exit/enter for same state tag", () =>
@@ -73,18 +84,23 @@ describe("reenter Transitions", () => {
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
 
-  it.scoped("reenter restarts delay timer", () =>
+  it.scoped("reenter restarts spawn timeout timer", () =>
     Effect.gen(function* () {
       const machine = Machine.make({
         state: PollState,
         event: PollEvent,
+        effects: PollEffects,
         initial: PollState.Polling({ attempts: 0 }),
       })
         .on(PollState.Polling, PollEvent.Poll, () => PollState.Done)
         .reenter(PollState.Polling, PollEvent.Reset, ({ state }) =>
           PollState.Polling({ attempts: state.attempts + 1 }),
         )
-        .delay(PollState.Polling, "5 seconds", PollEvent.Poll);
+        .spawn(PollState.Polling, ({ effects }) => effects.runPollingEffect())
+        .provide({
+          runPollingEffect: (_, { self }) =>
+            Effect.sleep("5 seconds").pipe(Effect.andThen(self.send(PollEvent.Poll))),
+        });
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("poller", machine);

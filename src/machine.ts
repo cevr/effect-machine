@@ -1,5 +1,5 @@
 import type { Schema, Schedule } from "effect";
-import { Context, Duration, Effect } from "effect";
+import { Context, Effect } from "effect";
 import type { Pipeable } from "effect/Pipeable";
 import { pipeArguments } from "effect/Pipeable";
 
@@ -9,7 +9,7 @@ import { getTag } from "./internal/get-tag.js";
 import type { MachineStateSchema, MachineEventSchema, VariantsUnion } from "./machine-schema.js";
 import type { PersistentMachine, WithPersistenceConfig } from "./persistence/persistent-machine.js";
 import { persist as persistImpl } from "./persistence/persistent-machine.js";
-import { MissingSlotHandlerError, UnknownSlotError } from "./errors.js";
+import { SlotProvisionError, ProvisionValidationError } from "./errors.js";
 import type {
   GuardsSchema,
   EffectsSchema,
@@ -95,9 +95,6 @@ export interface BackgroundEffect<State, Event, ED extends EffectsDef, R> {
 // ============================================================================
 // Options types
 // ============================================================================
-
-/** Duration input for delay */
-export type DurationOrFn<S> = Duration.DurationInput | ((state: S) => Duration.DurationInput);
 
 /** Options for `persist` */
 export interface PersistOptions {
@@ -393,40 +390,6 @@ export class Machine<
     return this as unknown as Machine<State, Event, R | R2, _SD, _ED, GD, EFD>;
   }
 
-  // ---- delay ----
-
-  /**
-   * Schedule an event to be sent after a delay when entering a state.
-   * The timer is automatically cancelled when exiting the state.
-   */
-  delay<NS extends VariantsUnion<_SD> & BrandedState, NE extends VariantsUnion<_ED> & BrandedEvent>(
-    state: TaggedOrConstructor<NS>,
-    duration: DurationOrFn<NS>,
-    event: TaggedOrConstructor<NE>,
-  ): Machine<State, Event, R, _SD, _ED, GD, EFD> {
-    const stateTag = getTag(state);
-
-    // Get event value (if constructor, call it)
-    const eventValue = typeof event === "function" ? (event as () => BrandedEvent)() : event;
-
-    // Pre-decode if static duration
-    const staticDuration = typeof duration !== "function" ? Duration.decode(duration) : null;
-
-    // Use spawn for delay - the effect is automatically cancelled on state exit
-    const delayHandler = (ctx: StateHandlerContext<State, Event, EFD>) => {
-      const dur =
-        staticDuration ??
-        Duration.decode(
-          (duration as (s: NS) => Duration.DurationInput)(ctx.state as unknown as NS),
-        );
-      return Effect.sleep(dur).pipe(Effect.andThen(ctx.self.send(eventValue as Event)));
-    };
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (this._spawnEffects as any[]).push({ stateTag, handler: delayHandler });
-    return this;
-  }
-
   // ---- final ----
 
   final<NS extends VariantsUnion<_SD> & BrandedState>(
@@ -446,35 +409,38 @@ export class Machine<
   provide<R2>(
     handlers: ProvideHandlers<State, Event, GD, EFD, R2>,
   ): Machine<State, Event, R | NormalizeR<R2>, _SD, _ED, GD, EFD> {
-    // Collect all required slot names
+    // Collect all required slot names in a single pass
     const requiredSlots = new Set<string>();
-
-    // Guards from schema
     if (this._guardsSchema !== undefined) {
       for (const name of Object.keys(this._guardsSchema.definitions)) {
         requiredSlots.add(name);
       }
     }
-
-    // Effects from schema
     if (this._effectsSchema !== undefined) {
       for (const name of Object.keys(this._effectsSchema.definitions)) {
         requiredSlots.add(name);
       }
     }
 
-    // Validate all slots have handlers
+    // Single-pass validation: collect all missing and extra handlers
+    const providedSlots = new Set(Object.keys(handlers));
+    const missing: string[] = [];
+    const extra: string[] = [];
+
     for (const name of requiredSlots) {
-      if (!(name in handlers)) {
-        throw new MissingSlotHandlerError({ slotName: name });
+      if (!providedSlots.has(name)) {
+        missing.push(name);
+      }
+    }
+    for (const name of providedSlots) {
+      if (!requiredSlots.has(name)) {
+        extra.push(name);
       }
     }
 
-    // Validate no extra handlers
-    for (const name of Object.keys(handlers)) {
-      if (!requiredSlots.has(name)) {
-        throw new UnknownSlotError({ slotName: name });
-      }
+    // Report all validation errors at once
+    if (missing.length > 0 || extra.length > 0) {
+      throw new ProvisionValidationError({ missing, extra });
     }
 
     // Create new machine to preserve original for reuse with different providers
@@ -568,7 +534,7 @@ export class Machine<
         ? this._guardsSchema._createSlots((name: string, params: unknown) => {
             const handler = machine._guardHandlers.get(name);
             if (handler === undefined) {
-              return Effect.die(new Error(`Guard handler not found: ${name}`));
+              return Effect.die(new SlotProvisionError({ slotName: name, slotType: "guard" }));
             }
             const result = handler(params, ctx);
             // Handler may return boolean or Effect<boolean>
@@ -587,7 +553,7 @@ export class Machine<
         ? this._effectsSchema._createSlots((name: string, params: unknown) => {
             const handler = machine._effectHandlers.get(name);
             if (handler === undefined) {
-              return Effect.die(new Error(`Effect handler not found: ${name}`));
+              return Effect.die(new SlotProvisionError({ slotName: name, slotType: "effect" }));
             }
             return handler(params, ctx).pipe(
               Effect.provideService(machine.Context, ctx),

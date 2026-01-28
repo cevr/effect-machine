@@ -167,19 +167,28 @@ const machine = Machine.make({
 
 ## Delayed Events
 
-Auto-send events after a duration:
+Schedule events after a duration using spawn. Timer is automatically cancelled when state exits.
 
 ```typescript
+const MyEffects = Slot.Effects({
+  scheduleAutoDismiss: {},
+});
+
 Machine.make({
   state: MyState,
   event: MyEvent,
+  effects: MyEffects,
   initial: MyState.Success({ message: "Done" }),
 })
   .on(MyState.Success, MyEvent.Dismiss, () => MyState.Dismissed)
-  .delay(MyState.Success, "3 seconds", MyEvent.Dismiss);
+  .spawn(MyState.Success, ({ effects }) => effects.scheduleAutoDismiss())
+  .provide({
+    scheduleAutoDismiss: (_, { self }) =>
+      Effect.sleep("3 seconds").pipe(Effect.andThen(self.send(MyEvent.Dismiss))),
+  });
 ```
 
-Timer is cancelled if state exits before duration.
+Use `reenter` to reset the timer on activity (timer restarts when spawn effects re-run).
 
 ## Final States
 

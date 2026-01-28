@@ -26,6 +26,8 @@ export {
   MissingMatchHandlerError,
   MissingSchemaError,
   MissingSlotHandlerError,
+  ProvisionValidationError,
+  SlotProvisionError,
   UnknownSlotError,
   UnprovidedSlotsError,
 } from "./errors.js";

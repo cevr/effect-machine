@@ -1,10 +1,17 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
 import { Effect, Schema, TestClock } from "effect";
 
-import { ActorSystemDefault, ActorSystemService, Event, Machine, State } from "../../src/index.js";
+import {
+  ActorSystemDefault,
+  ActorSystemService,
+  Event,
+  Machine,
+  Slot,
+  State,
+} from "../../src/index.js";
 import { describe, expect, it, yieldFibers } from "../utils/effect-test.js";
 
-describe("Delay Transitions", () => {
+describe("Timeout Transitions via Spawn", () => {
   const NotifState = State({
     Showing: { message: Schema.String },
     Dismissed: {},
@@ -16,15 +23,24 @@ describe("Delay Transitions", () => {
   });
   type NotifEvent = typeof NotifEvent.Type;
 
+  const NotifEffects = Slot.Effects({
+    scheduleAutoDismiss: {},
+  });
+
   it.scoped("schedules event after duration with TestClock", () =>
     Effect.gen(function* () {
       const machine = Machine.make({
         state: NotifState,
         event: NotifEvent,
+        effects: NotifEffects,
         initial: NotifState.Showing({ message: "Hello" }),
       })
         .on(NotifState.Showing, NotifEvent.Dismiss, () => NotifState.Dismissed)
-        .delay(NotifState.Showing, "3 seconds", NotifEvent.Dismiss)
+        .spawn(NotifState.Showing, ({ effects }) => effects.scheduleAutoDismiss())
+        .provide({
+          scheduleAutoDismiss: (_, { self }) =>
+            Effect.sleep("3 seconds").pipe(Effect.andThen(self.send(NotifEvent.Dismiss))),
+        })
         .final(NotifState.Dismissed);
 
       const system = yield* ActorSystemService;
@@ -46,15 +62,20 @@ describe("Delay Transitions", () => {
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
 
-  it.scoped("cancels timer on state exit before delay", () =>
+  it.scoped("cancels timer on state exit before timeout", () =>
     Effect.gen(function* () {
       const machine = Machine.make({
         state: NotifState,
         event: NotifEvent,
+        effects: NotifEffects,
         initial: NotifState.Showing({ message: "Hello" }),
       })
         .on(NotifState.Showing, NotifEvent.Dismiss, () => NotifState.Dismissed)
-        .delay(NotifState.Showing, "3 seconds", NotifEvent.Dismiss)
+        .spawn(NotifState.Showing, ({ effects }) => effects.scheduleAutoDismiss())
+        .provide({
+          scheduleAutoDismiss: (_, { self }) =>
+            Effect.sleep("3 seconds").pipe(Effect.andThen(self.send(NotifEvent.Dismiss))),
+        })
         .final(NotifState.Dismissed);
 
       const system = yield* ActorSystemService;

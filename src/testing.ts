@@ -1,10 +1,9 @@
 import { Effect, SubscriptionRef } from "effect";
 
-import type { Machine, MachineRef, HandlerContext } from "./machine.js";
-import { resolveTransition } from "./internal/loop.js";
+import type { Machine, MachineRef } from "./machine.js";
 import { AssertionError } from "./errors.js";
-import type { GuardsDef, EffectsDef, MachineContext } from "./slot.js";
-import { isEffect } from "./internal/is-effect.js";
+import type { GuardsDef, EffectsDef } from "./slot.js";
+import { executeTransition } from "./internal/execute-transition.js";
 
 /**
  * Result of simulating events through a machine
@@ -55,37 +54,13 @@ export const simulate = <
     const states: S[] = [currentState];
 
     for (const event of events) {
-      // Use shared resolver for transition lookup
-      const transition = yield* resolveTransition(machine, currentState, event);
+      const result = yield* executeTransition(machine, currentState, event, dummySelf);
 
-      if (transition === undefined) {
+      if (!result.transitioned) {
         continue;
       }
 
-      // Create context for handler
-      const ctx: MachineContext<S, E, MachineRef<E>> = {
-        state: currentState,
-        event,
-        self: dummySelf,
-      };
-      const { guards, effects } = machine._createSlotAccessors(ctx);
-
-      const handlerCtx: HandlerContext<S, E, GD, EFD> = {
-        state: currentState,
-        event,
-        guards,
-        effects,
-      };
-
-      // Compute new state
-      const newStateResult = transition.handler(handlerCtx);
-      let newState = isEffect(newStateResult)
-        ? yield* (newStateResult as Effect.Effect<S, never, R>).pipe(
-            Effect.provideService(machine.Context, ctx),
-          )
-        : newStateResult;
-
-      currentState = newState;
+      currentState = result.newState;
       states.push(currentState);
 
       // Stop if final state
@@ -282,35 +257,13 @@ export const createTestHarness = <
       Effect.gen(function* () {
         const currentState = yield* SubscriptionRef.get(stateRef);
 
-        // Use shared resolver for transition lookup
-        const transition = yield* resolveTransition(machine, currentState, event);
+        const result = yield* executeTransition(machine, currentState, event, dummySelf);
 
-        if (transition === undefined) {
+        if (!result.transitioned) {
           return currentState;
         }
 
-        // Create context for handler
-        const ctx: MachineContext<S, E, MachineRef<E>> = {
-          state: currentState,
-          event,
-          self: dummySelf,
-        };
-        const { guards, effects } = machine._createSlotAccessors(ctx);
-
-        const handlerCtx: HandlerContext<S, E, GD, EFD> = {
-          state: currentState,
-          event,
-          guards,
-          effects,
-        };
-
-        const newStateResult = transition.handler(handlerCtx);
-        let newState = isEffect(newStateResult)
-          ? yield* (newStateResult as Effect.Effect<S, never, R>).pipe(
-              Effect.provideService(machine.Context, ctx),
-            )
-          : newStateResult;
-
+        const newState = result.newState;
         yield* SubscriptionRef.set(stateRef, newState);
 
         // Call transition observer

@@ -1,10 +1,17 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
 import { Duration, Effect, Schema, TestClock } from "effect";
 
-import { ActorSystemDefault, ActorSystemService, Event, Machine, State } from "../../src/index.js";
+import {
+  ActorSystemDefault,
+  ActorSystemService,
+  Event,
+  Machine,
+  Slot,
+  State,
+} from "../../src/index.js";
 import { describe, expect, it, yieldFibers } from "../utils/effect-test.js";
 
-describe("Dynamic Delay Duration", () => {
+describe("Dynamic Timeout Duration via Spawn", () => {
   const WaitState = State({
     Waiting: { timeout: Schema.Number },
     TimedOut: {},
@@ -15,15 +22,28 @@ describe("Dynamic Delay Duration", () => {
     Timeout: {},
   });
 
+  const WaitEffects = Slot.Effects({
+    scheduleTimeout: {},
+  });
+
   it.scoped("dynamic duration computed from state", () =>
     Effect.gen(function* () {
       const machine = Machine.make({
         state: WaitState,
         event: WaitEvent,
+        effects: WaitEffects,
         initial: WaitState.Waiting({ timeout: 5 }),
       })
         .on(WaitState.Waiting, WaitEvent.Timeout, () => WaitState.TimedOut)
-        .delay(WaitState.Waiting, (state) => Duration.seconds(state.timeout), WaitEvent.Timeout)
+        .spawn(WaitState.Waiting, ({ effects }) => effects.scheduleTimeout())
+        .provide({
+          scheduleTimeout: (_, { self, state }) => {
+            const s = state as WaitState & { _tag: "Waiting" };
+            return Effect.sleep(Duration.seconds(s.timeout)).pipe(
+              Effect.andThen(self.send(WaitEvent.Timeout)),
+            );
+          },
+        })
         .final(WaitState.TimedOut);
 
       const system = yield* ActorSystemService;
@@ -63,9 +83,14 @@ describe("Dynamic Delay Duration", () => {
         GiveUp: {},
       });
 
+      const RetryEffects = Slot.Effects({
+        scheduleGiveUp: {},
+      });
+
       const machine = Machine.make({
         state: RetryState,
         event: RetryEvent,
+        effects: RetryEffects,
         initial: RetryState.Retrying({ attempt: 1, backoff: 1 }),
       })
         .reenter(RetryState.Retrying, RetryEvent.Retry, ({ state }) =>
@@ -73,7 +98,15 @@ describe("Dynamic Delay Duration", () => {
         )
         .on(RetryState.Retrying, RetryEvent.GiveUp, () => RetryState.Failed)
         // Exponential backoff based on state
-        .delay(RetryState.Retrying, (state) => Duration.seconds(state.backoff), RetryEvent.GiveUp)
+        .spawn(RetryState.Retrying, ({ effects }) => effects.scheduleGiveUp())
+        .provide({
+          scheduleGiveUp: (_, { self, state }) => {
+            const s = state as RetryState & { _tag: "Retrying" };
+            return Effect.sleep(Duration.seconds(s.backoff)).pipe(
+              Effect.andThen(self.send(RetryEvent.GiveUp)),
+            );
+          },
+        })
         .final(RetryState.Failed);
 
       const system = yield* ActorSystemService;
@@ -112,11 +145,16 @@ describe("Dynamic Delay Duration", () => {
       const machine = Machine.make({
         state: WaitState,
         event: WaitEvent,
+        effects: WaitEffects,
         initial: WaitState.Waiting({ timeout: 999 }),
       })
         .on(WaitState.Waiting, WaitEvent.Timeout, () => WaitState.TimedOut)
         // Static "3 seconds" ignores state.timeout
-        .delay(WaitState.Waiting, "3 seconds", WaitEvent.Timeout)
+        .spawn(WaitState.Waiting, ({ effects }) => effects.scheduleTimeout())
+        .provide({
+          scheduleTimeout: (_, { self }) =>
+            Effect.sleep("3 seconds").pipe(Effect.andThen(self.send(WaitEvent.Timeout))),
+        })
         .final(WaitState.TimedOut);
 
       const system = yield* ActorSystemService;

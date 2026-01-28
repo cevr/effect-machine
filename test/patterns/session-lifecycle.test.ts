@@ -7,6 +7,7 @@ import {
   assertPath,
   Event,
   Machine,
+  Slot,
   State,
 } from "../../src/index.js";
 import { describe, expect, it, yieldFibers } from "../utils/effect-test.js";
@@ -37,6 +38,10 @@ describe("Session Lifecycle Pattern", () => {
     Logout: {},
   });
 
+  const SessionEffects = Slot.Effects({
+    scheduleTimeout: {},
+  });
+
   // Helper to compute initial state based on token
   const makeSessionMachine = (token: string | null) => {
     // Initial state computed inline - no need for .always()
@@ -48,6 +53,7 @@ describe("Session Lifecycle Pattern", () => {
     return Machine.make({
       state: SessionState,
       event: SessionEvent,
+      effects: SessionEffects,
       initial,
     })
       .on(SessionState.Guest, SessionEvent.Login, ({ event }) =>
@@ -60,7 +66,11 @@ describe("Session Lifecycle Pattern", () => {
         SessionState.Maintenance({ message: event.message, previousState: "Guest" }),
       )
       .on(SessionState.Active, SessionEvent.SessionTimeout, () => SessionState.SessionExpired)
-      .delay(SessionState.Active, "30 minutes", SessionEvent.SessionTimeout)
+      .spawn(SessionState.Active, ({ effects }) => effects.scheduleTimeout())
+      .provide({
+        scheduleTimeout: (_, { self }) =>
+          Effect.sleep("30 minutes").pipe(Effect.andThen(self.send(SessionEvent.SessionTimeout))),
+      })
       .on(SessionState.Maintenance, SessionEvent.MaintenanceEnded, ({ state }) =>
         state.previousState === "Active"
           ? SessionState.Active({ userId: "restored", role: "user", lastActivity: Date.now() })
@@ -129,6 +139,7 @@ describe("Session Lifecycle Pattern", () => {
       const activeMachine = Machine.make({
         state: SessionState,
         event: SessionEvent,
+        effects: SessionEffects,
         initial: SessionState.Active({
           userId: "user-1",
           role: "user",
@@ -136,7 +147,11 @@ describe("Session Lifecycle Pattern", () => {
         }),
       })
         .on(SessionState.Active, SessionEvent.SessionTimeout, () => SessionState.SessionExpired)
-        .delay(SessionState.Active, "30 minutes", SessionEvent.SessionTimeout)
+        .spawn(SessionState.Active, ({ effects }) => effects.scheduleTimeout())
+        .provide({
+          scheduleTimeout: (_, { self }) =>
+            Effect.sleep("30 minutes").pipe(Effect.andThen(self.send(SessionEvent.SessionTimeout))),
+        })
         .final(SessionState.SessionExpired);
 
       const system = yield* ActorSystemService;
@@ -168,15 +183,20 @@ describe("Session Lifecycle Pattern", () => {
       const activeMachine = Machine.make({
         state: SessionState,
         event: SessionEvent,
+        effects: SessionEffects,
         initial: SessionState.Active({
           userId: "user-1",
           role: "user",
           lastActivity: Date.now(),
         }),
       })
-        .delay(SessionState.Active, "30 minutes", SessionEvent.SessionTimeout)
+        .spawn(SessionState.Active, ({ effects }) => effects.scheduleTimeout())
+        .provide({
+          scheduleTimeout: (_, { self }) =>
+            Effect.sleep("30 minutes").pipe(Effect.andThen(self.send(SessionEvent.SessionTimeout))),
+        })
         .on(SessionState.Active, SessionEvent.SessionTimeout, () => SessionState.SessionExpired)
-        // Use reenter to reenter the state, resetting the delay timer
+        // Use reenter to reenter the state, resetting the spawn timer
         .reenter(SessionState.Active, SessionEvent.Activity, ({ state }) =>
           SessionState.Active({ ...state, lastActivity: Date.now() }),
         )

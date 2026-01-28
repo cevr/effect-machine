@@ -94,7 +94,6 @@ console.log(result.finalState._tag); // "Done"
 | Function                                 | Purpose                                     |
 | ---------------------------------------- | ------------------------------------------- |
 | `Machine.choose(state, event, branches)` | Guard cascade                               |
-| `Machine.delay(state, duration, event)`  | Auto-send event after delay                 |
 | `Machine.spawn(state, handler)`          | State-scoped effect (calls effect slot)     |
 | `Machine.background(handler)`            | Machine-lifetime effect (calls effect slot) |
 | `Machine.provide(machine, handlers)`     | Wire handlers to slots                      |

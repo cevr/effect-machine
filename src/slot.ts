@@ -194,6 +194,54 @@ export interface EffectsSchema<D extends EffectsDef> {
 // ============================================================================
 
 /**
+ * Generic slot schema factory. Used internally by Guards() and Effects().
+ * @internal
+ */
+const createSlotSchema = <
+  Tag extends "GuardsSchema" | "EffectsSchema",
+  SlotTag extends "GuardSlot" | "EffectSlot",
+  D extends Record<string, Fields>,
+  ReturnType,
+>(
+  tag: Tag,
+  slotTag: SlotTag,
+  definitions: D,
+): {
+  readonly _tag: Tag;
+  readonly definitions: D;
+  readonly _createSlots: (
+    resolve: <N extends keyof D & string>(
+      name: N,
+      params: FieldsToParams<D[N]>,
+    ) => Effect.Effect<ReturnType>,
+  ) => Record<string, unknown>;
+} => {
+  const createSlots = (
+    resolve: <N extends keyof D & string>(
+      name: N,
+      params: FieldsToParams<D[N]>,
+    ) => Effect.Effect<ReturnType>,
+  ): Record<string, unknown> => {
+    const slots: Record<string, unknown> = {};
+
+    for (const name of Object.keys(definitions)) {
+      const slot = (params: unknown) => resolve(name, params as FieldsToParams<D[typeof name]>);
+      Object.defineProperty(slot, "_tag", { value: slotTag, enumerable: true });
+      Object.defineProperty(slot, "name", { value: name, enumerable: true });
+      slots[name] = slot;
+    }
+
+    return slots;
+  };
+
+  return {
+    _tag: tag,
+    definitions,
+    _createSlots: createSlots,
+  };
+};
+
+/**
  * Create a guards schema with parameterized guard definitions.
  *
  * @example
@@ -204,32 +252,8 @@ export interface EffectsSchema<D extends EffectsDef> {
  * })
  * ```
  */
-export const Guards = <D extends GuardsDef>(definitions: D): GuardsSchema<D> => {
-  const createSlots = (
-    resolve: <N extends keyof D & string>(
-      name: N,
-      params: FieldsToParams<D[N]>,
-    ) => Effect.Effect<boolean>,
-  ): GuardSlots<D> => {
-    const slots = {} as Record<string, GuardSlot<string, unknown>>;
-
-    for (const name of Object.keys(definitions)) {
-      const slot = ((params: unknown) =>
-        resolve(name, params as FieldsToParams<D[typeof name]>)) as GuardSlot<string, unknown>;
-      Object.defineProperty(slot, "_tag", { value: "GuardSlot", enumerable: true });
-      Object.defineProperty(slot, "name", { value: name, enumerable: true });
-      slots[name] = slot;
-    }
-
-    return slots as GuardSlots<D>;
-  };
-
-  return {
-    _tag: "GuardsSchema",
-    definitions,
-    _createSlots: createSlots,
-  };
-};
+export const Guards = <D extends GuardsDef>(definitions: D): GuardsSchema<D> =>
+  createSlotSchema("GuardsSchema", "GuardSlot", definitions) as GuardsSchema<D>;
 
 /**
  * Create an effects schema with parameterized effect definitions.
@@ -242,42 +266,8 @@ export const Guards = <D extends GuardsDef>(definitions: D): GuardsSchema<D> => 
  * })
  * ```
  */
-export const Effects = <D extends EffectsDef>(definitions: D): EffectsSchema<D> => {
-  const createSlots = (
-    resolve: <N extends keyof D & string>(
-      name: N,
-      params: FieldsToParams<D[N]>,
-    ) => Effect.Effect<void>,
-  ): EffectSlots<D> => {
-    const slots = {} as Record<string, EffectSlot<string, unknown>>;
-
-    for (const name of Object.keys(definitions)) {
-      const slot = ((params: unknown) =>
-        resolve(name, params as FieldsToParams<D[typeof name]>)) as EffectSlot<string, unknown>;
-      Object.defineProperty(slot, "_tag", { value: "EffectSlot", enumerable: true });
-      Object.defineProperty(slot, "name", { value: name, enumerable: true });
-      slots[name] = slot;
-    }
-
-    return slots as EffectSlots<D>;
-  };
-
-  return {
-    _tag: "EffectsSchema",
-    definitions,
-    _createSlots: createSlots,
-  };
-};
-
-// ============================================================================
-// Empty schemas (for machines without guards/effects)
-// ============================================================================
-
-/** Empty guards schema */
-export const NoGuards: GuardsSchema<Record<string, never>> = Guards({});
-
-/** Empty effects schema */
-export const NoEffects: EffectsSchema<Record<string, never>> = Effects({});
+export const Effects = <D extends EffectsDef>(definitions: D): EffectsSchema<D> =>
+  createSlotSchema("EffectsSchema", "EffectSlot", definitions) as EffectsSchema<D>;
 
 // ============================================================================
 // Type extraction helpers
@@ -302,6 +292,4 @@ export type EffectSlotsOf<E> = E extends EffectsSchema<infer D> ? EffectSlots<D>
 export const Slot = {
   Guards,
   Effects,
-  NoGuards,
-  NoEffects,
 } as const;

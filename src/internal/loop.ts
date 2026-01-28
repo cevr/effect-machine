@@ -1,16 +1,27 @@
 import { Effect, Exit, Fiber, Option, Queue, Scope, SubscriptionRef } from "effect";
 
 import type { ActorRef } from "../actor-ref.js";
-import type { Machine, MachineRef, HandlerContext } from "../machine.js";
+import type { Machine, MachineRef } from "../machine.js";
 import type { InspectionEvent, Inspector } from "../inspection.js";
 import { Inspector as InspectorTag } from "../inspection.js";
 import { findTransitions, findSpawnEffects } from "./transition-index.js";
-import { isEffect } from "./is-effect.js";
 import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
+import { executeTransition } from "./execute-transition.js";
 import { INTERNAL_INIT_EVENT, INTERNAL_ENTER_EVENT } from "./constants.js";
 
 /** Listener set for sync subscriptions */
 type Listeners<S> = Set<(state: S) => void>;
+
+/** Create machine context for slot accessors */
+const createMachineContext = <S, E>(
+  state: S,
+  event: E,
+  self: MachineRef<E>,
+): MachineContext<S, E, MachineRef<E>> => ({
+  state,
+  event,
+  self,
+});
 
 // ============================================================================
 // Inspection Helpers
@@ -111,11 +122,16 @@ const buildActorRef = <
 });
 
 /**
- * Notify all listeners of state change
+ * Notify all listeners of state change.
+ * Swallows exceptions from listeners to prevent one bad listener from breaking the machine.
  */
 const notifyListeners = <S>(listeners: Listeners<S>, state: S): void => {
   for (const listener of listeners) {
-    listener(state);
+    try {
+      listener(state);
+    } catch {
+      // Swallow listener exceptions - one bad listener shouldn't break the machine
+    }
   }
 };
 
@@ -350,10 +366,10 @@ const processEvent = <
       });
     }
 
-    // Find matching transition
-    const transition = yield* resolveTransition(machine, currentState, event, actorId, inspector);
+    // Execute transition using shared helper
+    const result = yield* executeTransition(machine, currentState, event, self);
 
-    if (transition === undefined) {
+    if (!result.transitioned) {
       // No transition for this state/event pair - ignore
       yield* Effect.annotateCurrentSpan("effect_machine.transition.matched", false);
       return false;
@@ -361,35 +377,14 @@ const processEvent = <
 
     yield* Effect.annotateCurrentSpan("effect_machine.transition.matched", true);
 
-    // Create context for handler
-    const ctx: MachineContext<S, E, MachineRef<E>> = {
-      state: currentState,
-      event,
-      self,
-    };
-    const { guards, effects } = machine._createSlotAccessors(ctx);
-
-    const handlerCtx: HandlerContext<S, E, GD, EFD> = {
-      state: currentState,
-      event,
-      guards,
-      effects,
-    };
-
-    // Compute new state - provide machine context for slot handlers
-    const newStateResult = transition.handler(handlerCtx);
-    let newState = isEffect(newStateResult)
-      ? yield* (newStateResult as Effect.Effect<S, never, R>).pipe(
-          Effect.provideService(machine.Context, ctx),
-        )
-      : newStateResult;
+    const newState = result.newState;
 
     // Determine if we should run lifecycle effects
     const stateTagChanged = newState._tag !== currentState._tag;
     // Run lifecycle if:
     // - State tag changed (always run entry/spawn)
     // - reenter=true (force lifecycle even for same tag)
-    const runLifecycle = stateTagChanged || transition.reenter === true;
+    const runLifecycle = stateTagChanged || result.reenter;
 
     if (runLifecycle) {
       // Close old state scope (interrupts spawn fibers via forkScoped)
@@ -397,10 +392,7 @@ const processEvent = <
 
       yield* Effect.annotateCurrentSpan("effect_machine.state.from", currentState._tag);
       yield* Effect.annotateCurrentSpan("effect_machine.state.to", newState._tag);
-      yield* Effect.annotateCurrentSpan(
-        "effect_machine.transition.reenter",
-        transition.reenter ?? false,
-      );
+      yield* Effect.annotateCurrentSpan("effect_machine.transition.reenter", result.reenter);
 
       // Emit transition event
       if (inspector !== undefined) {
@@ -458,6 +450,7 @@ const processEvent = <
 
 /**
  * Run spawn effects for a state (forked into state scope, auto-cancelled on state exit)
+ * @internal
  */
 export const runSpawnEffects = <
   S extends { readonly _tag: string },
@@ -476,12 +469,7 @@ export const runSpawnEffects = <
 ): Effect.Effect<void, never, R> =>
   Effect.gen(function* () {
     const spawnEffects = findSpawnEffects(machine, state._tag);
-
-    const ctx: MachineContext<S, E, MachineRef<E>> = {
-      state,
-      event,
-      self,
-    };
+    const ctx = createMachineContext(state, event, self);
     const { effects: effectSlots } = machine._createSlotAccessors(ctx);
 
     for (const spawnEffect of spawnEffects) {

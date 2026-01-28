@@ -53,7 +53,7 @@ machine.reenter(MyState.Active, MyEvent.Refresh, ({ state }) =>
 );
 ```
 
-Useful for restarting delay timers or re-running spawn effects.
+Useful for restarting spawn timers or re-running spawn effects.
 
 ### final
 
@@ -99,6 +99,47 @@ machine
 ```
 
 The effect is forked into a state-scoped scope. When the state exits, the fiber is interrupted and finalizers run.
+
+### Timeout Pattern with spawn
+
+Schedule an event after a duration using spawn. The timer is automatically cancelled when exiting the state.
+
+```typescript
+const MyEffects = Slot.Effects({
+  scheduleTimeout: {},
+});
+
+machine
+  .spawn(MyState.Active, ({ effects }) => effects.scheduleTimeout())
+  .provide({
+    scheduleTimeout: (_, { self }) =>
+      Effect.sleep("30 seconds").pipe(Effect.andThen(self.send(MyEvent.Timeout))),
+  });
+```
+
+**Dynamic duration based on state:**
+
+```typescript
+.provide({
+  scheduleTimeout: (_, { self, state }) => {
+    const s = state as MyState & { _tag: "Active" };
+    return Effect.sleep(Duration.seconds(s.retryCount * 2)).pipe(
+      Effect.andThen(self.send(MyEvent.Timeout))
+    );
+  },
+})
+```
+
+**Reset timer with reenter:**
+
+```typescript
+// Timer restarts because reenter runs exit/enter effects
+machine
+  .spawn(MyState.Active, ({ effects }) => effects.scheduleTimeout())
+  .reenter(MyState.Active, MyEvent.Activity, ({ state }) =>
+    MyState.Active({ ...state, lastActivity: Date.now() }),
+  );
+```
 
 ### background
 
@@ -211,36 +252,6 @@ machine.choose(MyState.Input, MyEvent.Classify, [
   { to: () => MyState.Low }, // Fallback (no guard)
 ]);
 ```
-
-## Delayed Events
-
-### delay
-
-Schedule event after duration.
-
-```typescript
-machine.delay(
-  stateConstructor,
-  duration, // DurationInput: "3 seconds", 3000, etc.
-  event, // Event to send
-);
-```
-
-**Example:**
-
-```typescript
-machine.delay(MyState.Success, "3 seconds", MyEvent.Dismiss);
-
-// Dynamic duration based on state
-machine.delay(MyState.Retrying, (state) => `${state.attempts * 2} seconds`, MyEvent.Retry);
-```
-
-Timer is cancelled if:
-
-- State exits before duration
-- Actor is stopped
-
-Works with TestClock for deterministic testing.
 
 ## See Also
 

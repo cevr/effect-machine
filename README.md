@@ -5,10 +5,10 @@ Type-safe state machines for Effect. XState-inspired API with full Effect integr
 ## Features
 
 - **Schema-first** - `State` and `Event` ARE schemas. Single source of truth for types and serialization
-- **Fluent builder** - Chain `.on()`, `.spawn()`, `.delay()` etc. with full type inference
+- **Fluent builder** - Chain `.on()`, `.spawn()`, `.background()` etc. with full type inference
 - **Type-safe transitions** - types inferred from schemas, no manual type params needed
 - **Guard composition** - `Guard.and`, `Guard.or`, `Guard.not`
-- **Delayed transitions** - `delay` with TestClock support
+- **State-scoped effects** - spawn effects auto-cancelled on state exit (timeouts, polling, etc.)
 - **Actor model** - spawn machines as actors with lifecycle management
 - **Persistence** - snapshot and event sourcing with pluggable adapters
 - **Cluster support** - `toEntity` for @effect/cluster integration
@@ -153,7 +153,6 @@ See the [primer](./primer/) for comprehensive documentation:
 | --------------- | ------------------------------------------------ |
 | `.on()`         | Add state/event transition                       |
 | `.reenter()`    | Transition with forced reentry (runs exit/enter) |
-| `.delay()`      | Schedule event after duration                    |
 | `.spawn()`      | State-scoped effect (cancelled on exit)          |
 | `.background()` | Machine-lifetime effect                          |
 | `.provide()`    | Wire handlers to guard/effect slots              |

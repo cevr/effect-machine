@@ -41,10 +41,10 @@ test/
 ├── inspection.test.ts    # Inspector tests
 ├── features/             # Feature-specific tests
 │   ├── any.test.ts
-│   ├── delay.test.ts
-│   ├── dynamic-delay.test.ts
+│   ├── delay.test.ts         # Timeout via spawn patterns
+│   ├── dynamic-delay.test.ts # Dynamic timeout via spawn
 │   ├── effects.test.ts
-│   ├── force.test.ts
+│   ├── force.test.ts         # reenter transition tests
 │   ├── from.test.ts
 │   ├── guards.test.ts
 │   └── same-state.test.ts
@@ -172,13 +172,13 @@ const MyEffects = Slot.Effects({
 
 ## Fiber Storage Pattern
 
-`delay` and `spawn` use shared utility from `internal/fiber-storage.ts`:
+`spawn` uses shared utility from `internal/fiber-storage.ts`:
 
 ```ts
 import { createFiberStorage } from "../internal/fiber-storage.js";
 
 const getFiberMap = createFiberStorage(); // WeakMap-backed, per-actor
-const instanceKey = Symbol("delay"); // unique per combinator instance
+const instanceKey = Symbol("spawn"); // unique per combinator instance
 getFiberMap(self).set(instanceKey, fiber);
 ```
 

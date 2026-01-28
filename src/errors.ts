@@ -57,6 +57,24 @@ export class GuardProvisionError extends Schema.TaggedError<GuardProvisionError>
   { guardName: Schema.String },
 ) {}
 
+/** Slot handler not found at runtime (internal error) */
+export class SlotProvisionError extends Schema.TaggedError<SlotProvisionError>()(
+  "SlotProvisionError",
+  {
+    slotName: Schema.String,
+    slotType: Schema.Literal("guard", "effect"),
+  },
+) {}
+
+/** Machine.provide() validation failed - missing or extra handlers */
+export class ProvisionValidationError extends Schema.TaggedError<ProvisionValidationError>()(
+  "ProvisionValidationError",
+  {
+    missing: Schema.Array(Schema.String),
+    extra: Schema.Array(Schema.String),
+  },
+) {}
+
 /** Assertion failed in testing utilities */
 export class AssertionError extends Schema.TaggedError<AssertionError>()("AssertionError", {
   message: Schema.String,
