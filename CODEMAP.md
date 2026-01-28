@@ -23,12 +23,14 @@ src/
 │   ├── index.ts          # Cluster exports
 │   └── entity-machine.ts # toEntity - generates Entity from machine
 └── internal/
-    ├── loop.ts           # Event loop, transition resolver, lifecycle effects
-    ├── transition-index.ts # O(1) lookup for transitions
-    ├── fiber-storage.ts  # Per-actor WeakMap fiber storage utility
-    ├── brands.ts         # StateBrand/EventBrand + BrandedState/BrandedEvent
-    ├── is-effect.ts      # Shared isEffect type guard
-    └── get-tag.ts        # Tag extraction from constructors
+    ├── loop.ts              # Event loop, transition resolver, lifecycle effects
+    ├── execute-transition.ts # Shared transition execution (loop, simulate, harness)
+    ├── transition-index.ts  # O(1) lookup for transitions
+    ├── fiber-storage.ts     # Per-actor WeakMap fiber storage utility
+    ├── brands.ts            # StateBrand/EventBrand + BrandedState/BrandedEvent
+    ├── types.ts             # Internal utility types
+    ├── is-effect.ts         # Shared isEffect type guard
+    └── get-tag.ts           # Tag extraction from constructors
 
 test/
 ├── machine.test.ts       # Core machine tests

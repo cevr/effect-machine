@@ -39,13 +39,12 @@ const machine = Machine.make({ state, event, initial })
 
 ## Gotchas
 
-- `delay` requires `Effect.scoped` + `ActorSystemDefault` layer
+- Timeouts via spawn: use `spawn` + `Effect.sleep` for timeouts (auto-cancelled on state exit)
 - TestClock: use `Layer.merge(ActorSystemDefault, TestContext.TestContext)`
 - `simulate`/`createTestHarness` run guard/effect slots in handlers but no spawn/background effects
 - Actor testing needs `Effect.yieldNow()` after `send()` to let effects run
 - Same-state transitions skip spawn/finalizers by default
 - `.reenter()` runs exit/enter even on same state tag - use to restart timers/spawn
-- Dynamic delay: duration fn evaluated at state entry, not registration time
 - `namespace.ts` exports Machine namespace (not `Machine.ts` - macOS case-insensitivity)
 - Branded types: `State<T>` / `Event<T>` prevent accidental swap at compile time
 - Brand is phantom (type-level only) - runtime values identical to `Data.TaggedEnum`

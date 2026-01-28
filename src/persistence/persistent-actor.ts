@@ -1,7 +1,7 @@
 // @effect-diagnostics missingEffectContext:off
 // @effect-diagnostics anyUnknownInErrorContext:off
 
-import { Effect, Fiber, Option, Queue, Ref, SubscriptionRef } from "effect";
+import { Clock, Effect, Fiber, Option, Queue, Ref, SubscriptionRef } from "effect";
 
 import type { ActorRef } from "../actor-ref.js";
 import type { MachineRef, HandlerContext, Machine } from "../machine.js";
@@ -58,6 +58,9 @@ const notifyListeners = <S>(listeners: Listeners<S>, state: S): void => {
   }
 };
 
+/** Get current time in milliseconds using Effect Clock */
+const now = Clock.currentTimeMillis;
+
 /**
  * Build PersistentActorRef with all methods
  */
@@ -92,10 +95,11 @@ const buildPersistentActorRef = <
     function* () {
       const state = yield* SubscriptionRef.get(stateRef);
       const version = yield* Ref.get(versionRef);
+      const timestamp = yield* now;
       const snapshot: Snapshot<S> = {
         state,
         version,
-        timestamp: Date.now(),
+        timestamp,
       };
       yield* adapter.saveSnapshot(id, snapshot, persistence.stateSchema);
     },
@@ -124,19 +128,7 @@ const buildPersistentActorRef = <
             for (const persistedEvent of events) {
               if (persistedEvent.version > targetVersion) break;
 
-              /**
-               * INVARIANT: R=never for machines passed to persistent actors.
-               * Machine.provide eliminates R requirements before spawning.
-               */
-              const transition = yield* resolveTransition(
-                typedMachine,
-                state,
-                persistedEvent.event,
-              ) as Effect.Effect<
-                (typeof typedMachine.transitions)[number] | undefined,
-                never,
-                never
-              >;
+              const transition = resolveTransition(typedMachine, state, persistedEvent.event);
               if (transition !== undefined) {
                 // Create context for handler
                 const ctx: MachineContext<S, E, MachineRef<E>> = {
@@ -180,33 +172,13 @@ const buildPersistentActorRef = <
     matches: (tag) => Effect.map(SubscriptionRef.get(stateRef), (s) => s._tag === tag),
     matchesSync: (tag) => Effect.runSync(SubscriptionRef.get(stateRef))._tag === tag,
     can: (event) =>
-      Effect.gen(function* () {
-        const s = yield* SubscriptionRef.get(stateRef);
-        /**
-         * INVARIANT: R=never for machines passed to persistent actors.
-         * Machine.provide eliminates R requirements before spawning.
-         */
-        const transition = yield* resolveTransition(typedMachine, s, event) as Effect.Effect<
-          (typeof typedMachine.transitions)[number] | undefined,
-          never,
-          never
-        >;
-        return transition !== undefined;
-      }),
+      Effect.map(
+        SubscriptionRef.get(stateRef),
+        (s) => resolveTransition(typedMachine, s, event) !== undefined,
+      ),
     canSync: (event) => {
       const state = Effect.runSync(SubscriptionRef.get(stateRef));
-      /**
-       * INVARIANT: R=never for machines passed to persistent actors.
-       * canSync only works with sync guards - async guards will throw.
-       */
-      const transition = Effect.runSync(
-        resolveTransition(typedMachine, state, event) as Effect.Effect<
-          (typeof typedMachine.transitions)[number] | undefined,
-          never,
-          never
-        >,
-      );
-      return transition !== undefined;
+      return resolveTransition(typedMachine, state, event) !== undefined;
     },
     changes: stateRef.changes,
     subscribe: (fn) => {
@@ -275,11 +247,7 @@ export const createPersistentActor = <
 
         // Replay events after snapshot (synchronous state computation only)
         for (const persistedEvent of initialEvents) {
-          const transition = yield* resolveTransition(
-            typedMachine,
-            resolvedInitial,
-            persistedEvent.event,
-          );
+          const transition = resolveTransition(typedMachine, resolvedInitial, persistedEvent.event);
           if (transition !== undefined) {
             // Create context for handler
             const ctx: MachineContext<S, E, MachineRef<E>> = {
@@ -330,16 +298,17 @@ export const createPersistentActor = <
           ? existingMeta.value.createdAt
           : initialSnapshot.value.timestamp; // fallback to snapshot time
       } else {
-        createdAt = Date.now();
+        createdAt = yield* now;
       }
 
       // Emit spawn event
       if (inspector !== undefined) {
+        const timestamp = yield* now;
         inspector.onInspect({
           type: "@machine.spawn",
           actorId: id,
           initialState: resolvedInitial,
-          timestamp: Date.now(),
+          timestamp,
         });
       }
 
@@ -356,11 +325,12 @@ export const createPersistentActor = <
       // Check if initial state is final
       if (typedMachine.finalStates.has(resolvedInitial._tag)) {
         if (inspector !== undefined) {
+          const timestamp = yield* now;
           inspector.onInspect({
             type: "@machine.stop",
             actorId: id,
             finalState: resolvedInitial,
-            timestamp: Date.now(),
+            timestamp,
           });
         }
         return buildPersistentActorRef(
@@ -401,11 +371,12 @@ export const createPersistentActor = <
         Effect.gen(function* () {
           const finalState = yield* SubscriptionRef.get(stateRef);
           if (inspector !== undefined) {
+            const timestamp = yield* now;
             inspector.onInspect({
               type: "@machine.stop",
               actorId: id,
               finalState,
-              timestamp: Date.now(),
+              timestamp,
             });
           }
           yield* Queue.shutdown(eventQueue);
@@ -456,17 +427,18 @@ const persistentEventLoop = <
 
       // Emit event received
       if (inspector !== undefined) {
+        const timestamp = yield* now;
         inspector.onInspect({
           type: "@machine.event",
           actorId: id,
           state: currentState,
           event,
-          timestamp: Date.now(),
+          timestamp,
         });
       }
 
       // Find matching transition
-      const transition = yield* resolveTransition(typedMachine, currentState, event, id, inspector);
+      const transition = resolveTransition(typedMachine, currentState, event);
       if (transition === undefined) {
         continue;
       }
@@ -477,10 +449,11 @@ const persistentEventLoop = <
 
       // Journal event if enabled
       if (persistence.journalEvents) {
+        const timestamp = yield* now;
         const persistedEvent: PersistedEvent<E> = {
           event,
           version: newVersion,
-          timestamp: Date.now(),
+          timestamp,
         };
         yield* adapter
           .appendEvent(id, persistedEvent, persistence.eventSchema)
@@ -522,13 +495,14 @@ const persistentEventLoop = <
 
         // Emit transition event
         if (inspector !== undefined) {
+          const timestamp = yield* now;
           inspector.onInspect({
             type: "@machine.transition",
             actorId: id,
             fromState: currentState,
             toState: newState,
             event,
-            timestamp: Date.now(),
+            timestamp,
           });
         }
 
@@ -548,11 +522,12 @@ const persistentEventLoop = <
         // Check if final
         if (typedMachine.finalStates.has(newState._tag)) {
           if (inspector !== undefined) {
+            const timestamp = yield* now;
             inspector.onInspect({
               type: "@machine.stop",
               actorId: id,
               finalState: newState,
-              timestamp: Date.now(),
+              timestamp,
             });
           }
           notifyListeners(listeners, newState);
@@ -581,16 +556,20 @@ const saveSnapshot = <S extends { readonly _tag: string }, E extends { readonly 
   version: number,
   persistence: PersistentMachine<S, E, never>["persistence"],
   adapter: PersistenceAdapter,
-): Effect.Effect<void> => {
-  const snapshot: Snapshot<S> = {
-    state,
-    version,
-    timestamp: Date.now(),
-  };
-  return adapter
-    .saveSnapshot(id, snapshot, persistence.stateSchema)
-    .pipe(Effect.catchAll((e) => Effect.logWarning(`Failed to save snapshot for actor ${id}`, e)));
-};
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    const timestamp = yield* now;
+    const snapshot: Snapshot<S> = {
+      state,
+      version,
+      timestamp,
+    };
+    yield* adapter
+      .saveSnapshot(id, snapshot, persistence.stateSchema)
+      .pipe(
+        Effect.catchAll((e) => Effect.logWarning(`Failed to save snapshot for actor ${id}`, e)),
+      );
+  });
 
 /**
  * Save or update actor metadata if adapter supports registry.
@@ -604,20 +583,24 @@ const saveMetadata = <S extends { readonly _tag: string }, E extends { readonly 
   persistence: PersistentMachine<S, E, never>["persistence"],
   adapter: PersistenceAdapter,
 ): Effect.Effect<void> => {
-  if (adapter.saveMetadata === undefined) {
+  const save = adapter.saveMetadata;
+  if (save === undefined) {
     return Effect.void;
   }
-  const metadata: ActorMetadata = {
-    id,
-    machineType: persistence.machineType ?? "unknown",
-    createdAt,
-    lastActivityAt: Date.now(),
-    version,
-    stateTag: state._tag,
-  };
-  return adapter
-    .saveMetadata(metadata)
-    .pipe(Effect.catchAll((e) => Effect.logWarning(`Failed to save metadata for actor ${id}`, e)));
+  return Effect.gen(function* () {
+    const lastActivityAt = yield* now;
+    const metadata: ActorMetadata = {
+      id,
+      machineType: persistence.machineType ?? "unknown",
+      createdAt,
+      lastActivityAt,
+      version,
+      stateTag: state._tag,
+    };
+    yield* save(metadata).pipe(
+      Effect.catchAll((e) => Effect.logWarning(`Failed to save metadata for actor ${id}`, e)),
+    );
+  });
 };
 
 /**

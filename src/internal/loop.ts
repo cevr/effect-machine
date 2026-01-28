@@ -1,4 +1,4 @@
-import { Effect, Exit, Fiber, Option, Queue, Scope, SubscriptionRef } from "effect";
+import { Clock, Effect, Exit, Fiber, Option, Queue, Scope, SubscriptionRef } from "effect";
 
 import type { ActorRef } from "../actor-ref.js";
 import type { Machine, MachineRef } from "../machine.js";
@@ -27,44 +27,34 @@ const createMachineContext = <S, E>(
 // Inspection Helpers
 // ============================================================================
 
-/** Emit an inspection event if inspector is available */
-const emit = <S, E>(inspector: Inspector<S, E> | undefined, event: InspectionEvent<S, E>): void => {
-  inspector?.onInspect(event);
-};
-
-/** Get current timestamp */
-const now = (): number => Date.now();
+/** Emit an inspection event with timestamp from Clock */
+const emitWithTimestamp = <S, E>(
+  inspector: Inspector<S, E> | undefined,
+  makeEvent: (timestamp: number) => InspectionEvent<S, E>,
+): Effect.Effect<void> =>
+  inspector === undefined
+    ? Effect.void
+    : Effect.flatMap(Clock.currentTimeMillis, (timestamp) =>
+        Effect.sync(() => inspector.onInspect(makeEvent(timestamp))),
+      );
 
 /**
  * Resolve which transition should fire for a given state and event.
- * Uses indexed O(1) lookup, then evaluates guards in registration order.
- * First guard pass wins.
- *
- * Returns Effect because handler may return Effect<State>.
+ * Uses indexed O(1) lookup. First matching transition wins.
  */
 export const resolveTransition = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
-  GD extends GuardsDef,
-  EFD extends EffectsDef,
 >(
-  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
+  machine: Machine<S, E, R, any, any, any, any>,
   currentState: S,
   event: E,
-  _actorId?: string,
-  _inspector?: Inspector<S, E>,
-): Effect.Effect<(typeof machine.transitions)[number] | undefined, never, R> =>
-  Effect.sync(() => {
-    const candidates = findTransitions(machine, currentState._tag, event._tag);
-
-    // With the new API, there are no guards on transitions - logic is in handler body
-    // So first matching transition wins
-    for (const transition of candidates) {
-      return transition;
-    }
-    return undefined;
-  });
+): (typeof machine.transitions)[number] | undefined => {
+  const candidates = findTransitions(machine, currentState._tag, event._tag);
+  return candidates[0];
+};
 
 /**
  * Build ActorRef with all methods
@@ -92,25 +82,13 @@ const buildActorRef = <
   matches: (tag) => Effect.map(SubscriptionRef.get(stateRef), (s) => s._tag === tag),
   matchesSync: (tag) => Effect.runSync(SubscriptionRef.get(stateRef))._tag === tag,
   can: (event) =>
-    Effect.gen(function* () {
-      const s = yield* SubscriptionRef.get(stateRef);
-      const transition = yield* resolveTransition(machine, s, event) as Effect.Effect<
-        (typeof machine.transitions)[number] | undefined,
-        never,
-        never
-      >;
-      return transition !== undefined;
-    }),
+    Effect.map(
+      SubscriptionRef.get(stateRef),
+      (s) => resolveTransition(machine, s, event) !== undefined,
+    ),
   canSync: (event) => {
     const state = Effect.runSync(SubscriptionRef.get(stateRef));
-    const transition = Effect.runSync(
-      resolveTransition(machine, state, event) as Effect.Effect<
-        (typeof machine.transitions)[number] | undefined,
-        never,
-        never
-      >,
-    );
-    return transition !== undefined;
+    return resolveTransition(machine, state, event) !== undefined;
   },
   changes: stateRef.changes,
   subscribe: (fn) => {
@@ -167,14 +145,12 @@ export const createActor = <
       yield* Effect.annotateCurrentSpan("effect_machine.actor.initial_state", machine.initial._tag);
 
       // Emit spawn event
-      if (inspectorValue !== undefined) {
-        emit(inspectorValue, {
-          type: "@machine.spawn",
-          actorId: id,
-          initialState: machine.initial,
-          timestamp: now(),
-        });
-      }
+      yield* emitWithTimestamp(inspectorValue, (timestamp) => ({
+        type: "@machine.spawn",
+        actorId: id,
+        initialState: machine.initial,
+        timestamp,
+      }));
 
       // Initialize state
       const stateRef = yield* SubscriptionRef.make(machine.initial);
@@ -217,14 +193,12 @@ export const createActor = <
         // Close state scope and interrupt background effects
         yield* Scope.close(stateScopeRef.current, Exit.void);
         yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
-        if (inspectorValue !== undefined) {
-          emit(inspectorValue, {
-            type: "@machine.stop",
-            actorId: id,
-            finalState: machine.initial,
-            timestamp: now(),
-          });
-        }
+        yield* emitWithTimestamp(inspectorValue, (timestamp) => ({
+          type: "@machine.stop",
+          actorId: id,
+          finalState: machine.initial,
+          timestamp,
+        }));
         return buildActorRef(
           id,
           machine,
@@ -258,14 +232,12 @@ export const createActor = <
         listeners,
         Effect.gen(function* () {
           const finalState = yield* SubscriptionRef.get(stateRef);
-          if (inspectorValue !== undefined) {
-            emit(inspectorValue, {
-              type: "@machine.stop",
-              actorId: id,
-              finalState,
-              timestamp: now(),
-            });
-          }
+          yield* emitWithTimestamp(inspectorValue, (timestamp) => ({
+            type: "@machine.stop",
+            actorId: id,
+            finalState,
+            timestamp,
+          }));
           yield* Queue.shutdown(eventQueue);
           yield* Fiber.interrupt(loopFiber);
           // Close state scope (interrupts spawn fibers)
@@ -356,15 +328,13 @@ const processEvent = <
 ): Effect.Effect<boolean, never, R> =>
   Effect.gen(function* () {
     // Emit event received
-    if (inspector !== undefined) {
-      emit(inspector, {
-        type: "@machine.event",
-        actorId,
-        state: currentState,
-        event,
-        timestamp: now(),
-      });
-    }
+    yield* emitWithTimestamp(inspector, (timestamp) => ({
+      type: "@machine.event",
+      actorId,
+      state: currentState,
+      event,
+      timestamp,
+    }));
 
     // Execute transition using shared helper
     const result = yield* executeTransition(machine, currentState, event, self);
@@ -395,16 +365,14 @@ const processEvent = <
       yield* Effect.annotateCurrentSpan("effect_machine.transition.reenter", result.reenter);
 
       // Emit transition event
-      if (inspector !== undefined) {
-        emit(inspector, {
-          type: "@machine.transition",
-          actorId,
-          fromState: currentState,
-          toState: newState,
-          event,
-          timestamp: now(),
-        });
-      }
+      yield* emitWithTimestamp(inspector, (timestamp) => ({
+        type: "@machine.transition",
+        actorId,
+        fromState: currentState,
+        toState: newState,
+        event,
+        timestamp,
+      }));
 
       // Update state
       yield* SubscriptionRef.set(stateRef, newState);
@@ -429,14 +397,12 @@ const processEvent = <
 
       // Check if new state is final
       if (machine.finalStates.has(newState._tag)) {
-        if (inspector !== undefined) {
-          emit(inspector, {
-            type: "@machine.stop",
-            actorId,
-            finalState: newState,
-            timestamp: now(),
-          });
-        }
+        yield* emitWithTimestamp(inspector, (timestamp) => ({
+          type: "@machine.stop",
+          actorId,
+          finalState: newState,
+          timestamp,
+        }));
         return true; // Stop the loop
       }
     } else {
@@ -473,14 +439,14 @@ export const runSpawnEffects = <
     const { effects: effectSlots } = machine._createSlotAccessors(ctx);
 
     for (const spawnEffect of spawnEffects) {
-      if (actorId !== undefined && inspector !== undefined) {
-        emit(inspector, {
+      if (actorId !== undefined) {
+        yield* emitWithTimestamp(inspector, (timestamp) => ({
           type: "@machine.effect",
           actorId,
           effectType: "spawn",
           state,
-          timestamp: now(),
-        });
+          timestamp,
+        }));
       }
       // Fork the spawn effect into the state scope - it will be interrupted when scope closes
       yield* Effect.forkScoped(

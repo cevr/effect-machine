@@ -21,14 +21,11 @@ export type {
 export {
   AssertionError,
   DuplicateActorError,
-  GuardProvisionError,
   InvalidSchemaError,
   MissingMatchHandlerError,
   MissingSchemaError,
-  MissingSlotHandlerError,
   ProvisionValidationError,
   SlotProvisionError,
-  UnknownSlotError,
   UnprovidedSlotsError,
 } from "./errors.js";
 
@@ -70,14 +67,10 @@ export {
 } from "./testing.js";
 export type { SimulationResult, TestHarness, TestHarnessOptions } from "./testing.js";
 
-// Internal types for handlers
-export type { InstanceOf, StateEffectContext } from "./internal/types.js";
-
 // Inspection
 export type {
   EffectEvent,
   EventReceivedEvent,
-  GuardEvaluatedEvent,
   InspectionEvent,
   Inspector,
   SpawnEvent,

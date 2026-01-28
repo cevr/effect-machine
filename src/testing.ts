@@ -196,7 +196,7 @@ export const assertNeverReaches = <
 /**
  * Create a controllable test harness for a machine
  */
-export interface TestHarness<S, E, R, _GD extends GuardsDef, _EFD extends EffectsDef> {
+export interface TestHarness<S, E, R> {
   readonly state: SubscriptionRef.SubscriptionRef<S>;
   readonly send: (event: E) => Effect.Effect<S, never, R>;
   readonly getState: Effect.Effect<S>;
@@ -244,7 +244,7 @@ export const createTestHarness = <
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
   machine: Machine<S, E, R, any, any, GD, EFD>,
   options?: TestHarnessOptions<S, E>,
-): Effect.Effect<TestHarness<S, E, R, GD, EFD>, never, R> =>
+): Effect.Effect<TestHarness<S, E, R>, never, R> =>
   Effect.gen(function* () {
     // Create a dummy self for slot accessors
     const dummySelf: MachineRef<E> = {

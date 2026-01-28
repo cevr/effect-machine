@@ -50,8 +50,8 @@ const processEvent = <
   Effect.gen(function* () {
     const currentState = yield* Ref.get(stateRef);
 
-    // Find matching transition using guard cascade
-    const transition = yield* resolveTransition(machine, currentState, event);
+    // Find matching transition
+    const transition = resolveTransition(machine, currentState, event);
 
     if (transition === undefined) {
       // No valid transition - ignore event

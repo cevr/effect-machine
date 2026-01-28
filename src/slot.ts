@@ -47,36 +47,24 @@ type FieldsToParams<F extends Fields> = keyof F extends never
   ? void
   : Schema.Schema.Type<Schema.Struct<F>>;
 
-/** Brand for guard slots */
-declare const GuardSlotBrand: unique symbol;
-type GuardSlotBrand = typeof GuardSlotBrand;
-
-/** Brand for effect slots */
-declare const EffectSlotBrand: unique symbol;
-type EffectSlotBrand = typeof EffectSlotBrand;
-
 // ============================================================================
 // Slot Types
 // ============================================================================
 
 /**
  * A guard slot - callable function that returns Effect<boolean>.
- * The params are validated against the schema at runtime.
  */
 export interface GuardSlot<Name extends string, Params> {
   readonly _tag: "GuardSlot";
-  readonly _brand: GuardSlotBrand;
   readonly name: Name;
   (params: Params): Effect.Effect<boolean>;
 }
 
 /**
  * An effect slot - callable function that returns Effect<void>.
- * The params are validated against the schema at runtime.
  */
 export interface EffectSlot<Name extends string, Params> {
   readonly _tag: "EffectSlot";
-  readonly _brand: EffectSlotBrand;
   readonly name: Name;
   (params: Params): Effect.Effect<void>;
 }

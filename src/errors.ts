@@ -40,23 +40,6 @@ export class MissingMatchHandlerError extends Schema.TaggedError<MissingMatchHan
   { tag: Schema.String },
 ) {}
 
-/** Machine.provide() missing handler for declared slot */
-export class MissingSlotHandlerError extends Schema.TaggedError<MissingSlotHandlerError>()(
-  "MissingSlotHandlerError",
-  { slotName: Schema.String },
-) {}
-
-/** Machine.provide() given handler for unknown slot */
-export class UnknownSlotError extends Schema.TaggedError<UnknownSlotError>()("UnknownSlotError", {
-  slotName: Schema.String,
-}) {}
-
-/** Guard slot not provided via Machine.provide() */
-export class GuardProvisionError extends Schema.TaggedError<GuardProvisionError>()(
-  "GuardProvisionError",
-  { guardName: Schema.String },
-) {}
-
 /** Slot handler not found at runtime (internal error) */
 export class SlotProvisionError extends Schema.TaggedError<SlotProvisionError>()(
   "SlotProvisionError",

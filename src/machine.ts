@@ -312,7 +312,7 @@ export class Machine<
       stateTag,
       eventTag,
       handler: handler as unknown as Transition<State, Event, GD, EFD, R | R2>["handler"],
-      reenter: reenter || undefined,
+      reenter,
     };
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -466,37 +466,17 @@ export class Machine<
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (result as any)._backgroundEffects = this._backgroundEffects;
 
-    // Copy existing handlers
-    for (const [k, v] of this._guardHandlers) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (result._guardHandlers as Map<string, any>).set(k, v);
-    }
-    for (const [k, v] of this._effectHandlers) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (result._effectHandlers as Map<string, any>).set(k, v);
-    }
-
-    // Register guard handlers - handlers receive (params, ctx)
+    // Register handlers from provided object
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const anyHandlers = handlers as Record<string, any>;
     if (this._guardsSchema !== undefined) {
       for (const name of Object.keys(this._guardsSchema.definitions)) {
-        const handler = (handlers as Record<string, unknown>)[name] as (
-          params: unknown,
-          ctx: SlotContext<State, Event>,
-        ) => boolean | Effect.Effect<boolean, never, R2>;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (result._guardHandlers as Map<string, any>).set(name, handler);
+        result._guardHandlers.set(name, anyHandlers[name]);
       }
     }
-
-    // Register effect handlers - handlers receive (params, ctx)
     if (this._effectsSchema !== undefined) {
       for (const name of Object.keys(this._effectsSchema.definitions)) {
-        const handler = (handlers as Record<string, unknown>)[name] as (
-          params: unknown,
-          ctx: SlotContext<State, Event>,
-        ) => Effect.Effect<void, never, R2>;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (result._effectHandlers as Map<string, any>).set(name, handler);
+        result._effectHandlers.set(name, anyHandlers[name]);
       }
     }
 

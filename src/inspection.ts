@@ -26,20 +26,6 @@ export interface EventReceivedEvent<S, E> {
 }
 
 /**
- * Event emitted when a guard is evaluated
- */
-export interface GuardEvaluatedEvent<S, E> {
-  readonly type: "@machine.guard";
-  readonly actorId: string;
-  readonly state: S;
-  readonly event: E;
-  readonly guardName: string | undefined;
-  readonly guardIndex: number;
-  readonly result: boolean;
-  readonly timestamp: number;
-}
-
-/**
  * Event emitted when a transition occurs
  */
 export interface TransitionEvent<S, E> {
@@ -78,7 +64,6 @@ export interface StopEvent<S> {
 export type InspectionEvent<S, E> =
   | SpawnEvent<S>
   | EventReceivedEvent<S, E>
-  | GuardEvaluatedEvent<S, E>
   | TransitionEvent<S, E>
   | EffectEvent<S>
   | StopEvent<S>;
@@ -127,9 +112,6 @@ export const consoleInspector = <
         break;
       case "@machine.event":
         console.log(prefix, "received", event.event._tag, "in", event.state._tag);
-        break;
-      case "@machine.guard":
-        console.log(prefix, "guard", event.guardName ?? `#${event.guardIndex}`, "→", event.result);
         break;
       case "@machine.transition":
         console.log(prefix, event.fromState._tag, "→", event.toState._tag);

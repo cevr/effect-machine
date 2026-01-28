@@ -47,7 +47,7 @@ export const executeTransition = <
 ): Effect.Effect<TransitionExecutionResult<S>, never, R> =>
   Effect.gen(function* () {
     // Find matching transition
-    const transition = yield* resolveTransition(machine, currentState, event);
+    const transition = resolveTransition(machine, currentState, event);
 
     if (transition === undefined) {
       return {
