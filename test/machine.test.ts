@@ -1,7 +1,7 @@
 import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { Machine, simulate, State, Event } from "../src/index.js";
+import { Guard, Machine, simulate, State, Event } from "../src/index.js";
 
 const CounterState = State({
   Idle: { count: Schema.Number },
@@ -75,9 +75,12 @@ describe("Machine", () => {
             CounterEvent.Increment,
             ({ state }) => CounterState.Counting({ count: state.count + 1 }),
             {
-              guard: ({ state }) => state.count < 3,
+              guard: Guard.make("belowLimit"),
             },
           )
+          .provide({
+            belowLimit: ({ state }: { state: { count: number } }) => state.count < 3,
+          })
           .on(CounterState.Counting, CounterEvent.Stop, ({ state }) =>
             CounterState.Done({ count: state.count }),
           )

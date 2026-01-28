@@ -5,6 +5,7 @@ import {
   assertNeverReaches,
   assertPath,
   Event,
+  Guard,
   Machine,
   simulate,
   State,
@@ -78,8 +79,7 @@ describe("Menu Navigation Pattern", () => {
           ({ event }) =>
             MenuState.Browsing({ pageId: event.pageId, sectionIndex: 0, itemIndex: null }),
           {
-            guard: ({ state, event }) =>
-              state.pageId !== event.pageId && pages.some((p) => p.id === event.pageId),
+            guard: Guard.make("canNavigateToPage"),
           },
         )
         // Scroll to section
@@ -88,14 +88,7 @@ describe("Menu Navigation Pattern", () => {
           ({ state, event }) =>
             MenuState.Browsing({ ...state, sectionIndex: event.sectionIndex, itemIndex: null }),
           {
-            guard: ({ state, event }) => {
-              const page = pages.find((p) => p.id === state.pageId);
-              return (
-                page !== undefined &&
-                event.sectionIndex >= 0 &&
-                event.sectionIndex < page.sections.length
-              );
-            },
+            guard: Guard.make("canScrollToSection"),
           },
         )
         // Select item
@@ -134,6 +127,27 @@ describe("Menu Navigation Pattern", () => {
     )
     // Checkout handlers
     .on(MenuState.Checkout, MenuEvent.Close, () => MenuState.Closed)
+    .provide({
+      canNavigateToPage: ({
+        state,
+        event,
+      }: {
+        state: { pageId: string };
+        event: { pageId: string };
+      }) => state.pageId !== event.pageId && pages.some((p) => p.id === event.pageId),
+      canScrollToSection: ({
+        state,
+        event,
+      }: {
+        state: { pageId: string };
+        event: { sectionIndex: number };
+      }) => {
+        const page = pages.find((p) => p.id === state.pageId);
+        return (
+          page !== undefined && event.sectionIndex >= 0 && event.sectionIndex < page.sections.length
+        );
+      },
+    })
     .final(MenuState.Closed);
 
   test("page navigation with valid page", async () => {

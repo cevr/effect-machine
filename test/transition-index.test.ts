@@ -8,7 +8,7 @@
 import { describe, expect, test } from "bun:test";
 import { Schema } from "effect";
 
-import { Event, Machine, State } from "../src/index.js";
+import { Event, Guard, Machine, State } from "../src/index.js";
 
 // Test state machine types
 const TestState = State({
@@ -68,12 +68,16 @@ describe("Transition Index", () => {
       initial: TestState.Idle,
     })
       .on(TestState.Idle, TestEvent.Start, ({ event }) => TestState.Loading({ id: event.id }), {
-        guard: ({ event }) => event.id === "special",
+        guard: Guard.make("isSpecial"),
       })
       .on(TestState.Idle, TestEvent.Start, ({ event }) => TestState.Loading({ id: event.id }), {
-        guard: ({ event }) => event.id === "normal",
+        guard: Guard.make("isNormal"),
       })
-      .on(TestState.Idle, TestEvent.Start, ({ event }) => TestState.Loading({ id: event.id }));
+      .on(TestState.Idle, TestEvent.Start, ({ event }) => TestState.Loading({ id: event.id }))
+      .provide({
+        isSpecial: ({ event }: { event: { id: string } }) => event.id === "special",
+        isNormal: ({ event }: { event: { id: string } }) => event.id === "normal",
+      });
 
     const transitions = Machine.findTransitions(machine, "Idle", "Start");
     expect(transitions.length).toBe(3);

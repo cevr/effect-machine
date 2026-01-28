@@ -68,14 +68,32 @@ const machine = Machine.make({ state, event, initial })
 - `simulate()` works without providing effects (pure transitions only)
 - Effects type param `_Slots` is phantom - TypeScript won't catch unprovided slots at compile time
 
-## Guards
+## Guards (Slots-Only)
 
-- `Guard.make(predicate)` - anonymous guard with inline predicate
-- `Guard.make("name", predicate)` - named guard for inspection/debugging
-- `Guard.make("name")` - slot only, provide via `.provide()`
-- Predicate can return `boolean` or `Effect<boolean, never, R>`
-- Composition: `Guard.and`, `Guard.or`, `Guard.not` require predicates (not slots)
-- Inline guards in `.on()` options get narrowed types from state/event params
+Guards are **named slots** that must be provided via `.provide()`:
+
+```ts
+// Define guard slot
+.on(State.Idle, Event.Start, handler, { guard: Guard.make("canStart") })
+
+// Provide implementation
+.provide({
+  canStart: ({ state }) => state.ready  // boolean or Effect<boolean>
+})
+```
+
+**Composition** - accepts strings or Guard objects:
+
+```ts
+Guard.and("isReady", "hasPermission"); // all must pass
+Guard.or("isAdmin", "isOwner"); // any must pass
+Guard.not("isLocked"); // negate
+Guard.and("isAdmin", Guard.not("isLocked")); // hierarchical nesting
+```
+
+- Composed guards evaluate children **in parallel**, then combine
+- Guard predicates receive full state/event union - narrow with `state._tag === "X"`
+- `collectGuardSlotNames(guard)` / `getGuardDisplayName(guard)` for introspection
 
 ## Effect Language Service
 

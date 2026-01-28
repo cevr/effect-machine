@@ -29,6 +29,7 @@ src/
     ├── fiber-storage.ts  # Per-actor WeakMap fiber storage utility
     ├── types.ts          # Internal types (contexts, Guard module)
     ├── brands.ts         # StateBrand/EventBrand + BrandedState/BrandedEvent
+    ├── is-effect.ts      # Shared isEffect type guard
     └── get-tag.ts        # Tag extraction from constructors
 
 test/
@@ -171,26 +172,35 @@ machine
 
 ## Guard Pattern
 
-Guards can be sync or async (Effect):
+Guards are **slots-only** - always require provision via `.provide()`:
 
 ```ts
-Guard.make(({ state }) => state.count > 0); // anonymous sync
-Guard.make("canRetry", ({ state }) => state.retries < 3); // named sync
-Guard.make(
-  "hasPermission",
-  (
-    { state }, // named async
-  ) =>
+// Declare guard slot
+Guard.make("canRetry");
+
+// Composition with string shorthand
+Guard.and("isAdmin", "isActive");
+Guard.or("isOwner", "isAdmin");
+Guard.not("isLocked");
+Guard.and(Guard.or("isAdmin", "isMod"), "isActive"); // nested
+
+// Use in transition
+.on(State.Idle, Event.Start, handler, { guard: Guard.make("canStart") })
+
+// Provide implementation (sync or async)
+.provide({
+  canStart: ({ state }) => state.ready,  // sync boolean
+  canRetry: ({ state }) =>               // async Effect<boolean>
     Effect.gen(function* () {
       const auth = yield* AuthService;
       return yield* auth.check(state.userId);
     }),
-);
+})
 ```
 
+- Guards evaluated in parallel for composition
 - Async guards add R to machine type - `simulate` requires providing R
-- Composition: `Guard.and`, `Guard.or`, `Guard.not`
-- Inline guards in `.on()` options get narrowed types automatically
+- Hierarchical tree structure: `GuardSlot | GuardAnd | GuardOr | GuardNot`
 
 ## Testing
 

@@ -3,7 +3,7 @@
 import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { Event, Machine, simulate, State } from "../../src/index.js";
+import { Event, Guard, Machine, simulate, State } from "../../src/index.js";
 
 describe("Assign and Update Helpers", () => {
   const FormState = State({
@@ -102,9 +102,12 @@ describe("Assign and Update Helpers", () => {
             FormEvent.SetName,
             Machine.assign(({ event }) => ({ name: event.name })),
             {
-              guard: ({ event }) => event.name.length <= 50,
+              guard: Guard.make("nameLengthOk"),
             },
           )
+          .provide({
+            nameLengthOk: ({ event }: { event: { name: string } }) => event.name.length <= 50,
+          })
           .on(FormState.Editing, FormEvent.Submit, ({ state }) => FormState.Submitted(state))
           .final(FormState.Submitted);
 

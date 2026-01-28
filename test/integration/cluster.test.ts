@@ -12,8 +12,53 @@ import { Rpc } from "@effect/rpc";
 import { Effect, Ref, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { Machine, simulate, State, Event } from "../../src/index.js";
+import { Guard, Machine, simulate, State, Event } from "../../src/index.js";
 import { toEntity } from "../../src/cluster/index.js";
+
+// Type for guard predicate (sync or async)
+type GuardPredicateFn<S, E> = (ctx: { state: S; event: E }) => boolean | Effect.Effect<boolean>;
+
+// Helper to evaluate guard trees for manual Entity testing
+const evaluateGuardManual = <S, E>(
+  guardHandlers: ReadonlyMap<string, GuardPredicateFn<S, E>>,
+  guard: ReturnType<typeof Guard.make>,
+  ctx: { state: S; event: E },
+): boolean | Effect.Effect<boolean, never, never> => {
+  switch (guard._tag) {
+    case "GuardSlot": {
+      const predicate = guardHandlers.get(guard.name);
+      if (predicate === undefined) {
+        throw new Error(`Guard not provided: ${guard.name}`);
+      }
+      return predicate(ctx);
+    }
+    case "GuardAnd": {
+      const results = guard.guards.map((g) => evaluateGuardManual(guardHandlers, g, ctx));
+      if (results.some((r) => Effect.isEffect(r))) {
+        return Effect.all(results.map((r) => (Effect.isEffect(r) ? r : Effect.succeed(r)))).pipe(
+          Effect.map((rs) => rs.every(Boolean)),
+        );
+      }
+      return (results as boolean[]).every(Boolean);
+    }
+    case "GuardOr": {
+      const results = guard.guards.map((g) => evaluateGuardManual(guardHandlers, g, ctx));
+      if (results.some((r) => Effect.isEffect(r))) {
+        return Effect.all(results.map((r) => (Effect.isEffect(r) ? r : Effect.succeed(r)))).pipe(
+          Effect.map((rs) => rs.some(Boolean)),
+        );
+      }
+      return (results as boolean[]).some(Boolean);
+    }
+    case "GuardNot": {
+      const result = evaluateGuardManual(guardHandlers, guard.guard, ctx);
+      if (Effect.isEffect(result)) {
+        return Effect.map(result, (r) => !r);
+      }
+      return !result;
+    }
+  }
+};
 
 // =============================================================================
 // Schema-first definitions using MachineSchema
@@ -197,11 +242,14 @@ describe("Entity.makeTestClient with machine handler", () => {
       CounterState.Counting,
       CounterEvent.Increment,
       ({ state }) => CounterState.Counting({ count: state.count + 1 }),
-      { guard: ({ state }) => state.count < 3 },
+      { guard: Guard.make("underLimit") },
     )
     .on(CounterState.Counting, CounterEvent.Finish, ({ state }) =>
       CounterState.Done({ count: state.count }),
     )
+    .provide({
+      underLimit: ({ state }: { state: { count: number } }) => state.count < 3,
+    })
     .final(CounterState.Done);
 
   // Entity using MachineSchema directly as schemas
@@ -241,7 +289,10 @@ describe("Entity.makeTestClient with machine handler", () => {
                   transition = t;
                   break;
                 }
-                const guardResult = t.guard({ state: currentState, event });
+                const guardResult = evaluateGuardManual(orderMachine.guardHandlers, t.guard, {
+                  state: currentState,
+                  event,
+                });
                 const ok = Effect.isEffect(guardResult) ? yield* guardResult : guardResult;
                 if (ok) {
                   transition = t;
@@ -308,7 +359,10 @@ describe("Entity.makeTestClient with machine handler", () => {
                   transition = t;
                   break;
                 }
-                const guardResult = t.guard({ state: currentState, event });
+                const guardResult = evaluateGuardManual(counterMachine.guardHandlers, t.guard, {
+                  state: currentState,
+                  event,
+                });
                 const ok = Effect.isEffect(guardResult) ? yield* guardResult : guardResult;
                 if (ok) {
                   transition = t;

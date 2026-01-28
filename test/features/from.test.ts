@@ -1,7 +1,7 @@
 import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { Event, Machine, simulate, State } from "../../src/index.js";
+import { Event, Guard, Machine, simulate, State } from "../../src/index.js";
 
 // ============================================================================
 // Test fixtures
@@ -70,15 +70,19 @@ describe("Machine.from", () => {
           state: EditorState,
           event: EditorEvent,
           initial: EditorState.Typing({ text: "" }),
-        }).from(EditorState.Typing, (scope) =>
-          scope
-            .on(
-              EditorEvent.KeyPress,
-              ({ state, event }) => EditorState.Typing({ text: state.text + event.key }),
-              { guard: ({ state }) => state.text.length < 3 },
-            )
-            .on(EditorEvent.Submit, ({ state }) => EditorState.Submitted({ text: state.text })),
-        );
+        })
+          .from(EditorState.Typing, (scope) =>
+            scope
+              .on(
+                EditorEvent.KeyPress,
+                ({ state, event }) => EditorState.Typing({ text: state.text + event.key }),
+                { guard: Guard.make("textUnderLimit") },
+              )
+              .on(EditorEvent.Submit, ({ state }) => EditorState.Submitted({ text: state.text })),
+          )
+          .provide({
+            textUnderLimit: ({ state }: { state: { text: string } }) => state.text.length < 3,
+          });
 
         const result = yield* simulate(machine, [
           EditorEvent.KeyPress({ key: "a" }),

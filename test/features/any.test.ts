@@ -1,7 +1,7 @@
 import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { Event, Machine, simulate, State } from "../../src/index.js";
+import { Event, Guard, Machine, simulate, State } from "../../src/index.js";
 
 // ============================================================================
 // Test fixtures
@@ -74,8 +74,12 @@ describe("Machine.any", () => {
             [EditorState.Typing, EditorState.Submitting],
             EditorEvent.Cancel,
             () => EditorState.Cancelled,
-            { guard: ({ state }) => "text" in state && state.text.length > 0 },
-          );
+            { guard: Guard.make("hasText") },
+          )
+          .provide({
+            hasText: ({ state }: { state: { text?: string } }) =>
+              "text" in state && state.text !== undefined && state.text.length > 0,
+          });
 
         const result = yield* simulate(machine, [EditorEvent.Cancel]);
         expect(result.finalState._tag).toBe("Cancelled");

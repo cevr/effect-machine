@@ -5,6 +5,7 @@ import {
   ActorSystemDefault,
   ActorSystemService,
   collectingInspector,
+  getGuardDisplayName,
   Guard,
   type InspectionEvent,
   InspectorService,
@@ -107,16 +108,23 @@ describe("Inspection", () => {
 
   it.scopedLive("emits guard evaluation events", () => {
     const events: InspectionEvent<TestState, TestEvent>[] = [];
-    const canFetch = Guard.make<TestState, TestEvent>("canFetch", () => true);
+    const canFetch = Guard.make("canFetch");
 
     return Effect.gen(function* () {
       const machine = Machine.make({
         state: TestState,
         event: TestEvent,
         initial: TestState.Idle,
-      }).on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }), {
-        guard: canFetch,
-      });
+      })
+        .on(
+          TestState.Idle,
+          TestEvent.Fetch,
+          ({ event }) => TestState.Loading({ url: (event as { url: string }).url }),
+          { guard: canFetch },
+        )
+        .provide({
+          canFetch: () => true,
+        });
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
@@ -251,18 +259,25 @@ describe("Inspection", () => {
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
 
-  it.scopedLive("guard naming with Guard.named", () => {
+  it.scopedLive("guard naming with Guard.make", () => {
     const events: InspectionEvent<TestState, TestEvent>[] = [];
-    const namedGuard = Guard.make<TestState, TestEvent>("myGuard", () => true);
+    const namedGuard = Guard.make("myGuard");
 
     return Effect.gen(function* () {
       const machine = Machine.make({
         state: TestState,
         event: TestEvent,
         initial: TestState.Idle,
-      }).on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }), {
-        guard: namedGuard,
-      });
+      })
+        .on(
+          TestState.Idle,
+          TestEvent.Fetch,
+          ({ event }) => TestState.Loading({ url: (event as { url: string }).url }),
+          { guard: namedGuard },
+        )
+        .provide({
+          myGuard: () => true,
+        });
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
@@ -280,22 +295,22 @@ describe("Inspection", () => {
   });
 
   test("composite guard names", () => {
-    const guardA = Guard.make<TestState, TestEvent>("guardA", () => true);
-    const guardB = Guard.make<TestState, TestEvent>("guardB", () => true);
+    const guardA = Guard.make("guardA");
+    const guardB = Guard.make("guardB");
     const combined = Guard.and(guardA, guardB);
 
-    expect(combined.name).toBe("and(guardA, guardB)");
+    expect(getGuardDisplayName(combined)).toBe("and(guardA, guardB)");
 
     const orCombined = Guard.or(guardA, guardB);
-    expect(orCombined.name).toBe("or(guardA, guardB)");
+    expect(getGuardDisplayName(orCombined)).toBe("or(guardA, guardB)");
 
     const negated = Guard.not(guardA);
-    expect(negated.name).toBe("not(guardA)");
+    expect(getGuardDisplayName(negated)).toBe("not(guardA)");
   });
 
   it.scopedLive("event order is correct", () => {
     const events: InspectionEvent<TestState, TestEvent>[] = [];
-    const canFetch = Guard.make<TestState, TestEvent>("canFetch", () => true);
+    const canFetch = Guard.make("canFetch");
 
     return Effect.gen(function* () {
       const machine = Machine.make({
@@ -303,15 +318,20 @@ describe("Inspection", () => {
         event: TestEvent,
         initial: TestState.Idle,
       })
-        .on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }), {
-          guard: canFetch,
-        })
+        .on(
+          TestState.Idle,
+          TestEvent.Fetch,
+          ({ event }) => TestState.Loading({ url: (event as { url: string }).url }),
+          { guard: canFetch },
+        )
         .onExit(TestState.Idle, "exitIdle")
         .onEnter(TestState.Loading, "enterLoading")
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- guard slot tracking issue
         .provide({
+          canFetch: () => true,
           exitIdle: () => Effect.void,
           enterLoading: () => Effect.void,
-        });
+        } as any);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);

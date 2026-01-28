@@ -1,60 +1,78 @@
 # Guards
 
-Conditional transitions with composable guard functions.
+Conditional transitions with composable guard slots.
 
-## Basic Guards
+## Guard Slots
 
-Inline guard on a transition:
-
-```typescript
-on(State.Form, Event.Submit, () => State.Submitting(), {
-  guard: ({ state }) => state.isValid,
-});
-```
-
-If guard returns `false`, transition is skipped.
-
-## Reusable Guards
-
-Create named guards with `Guard.make`:
+Guards are **slots-only** - declare with a name, provide implementation via `.provide()`:
 
 ```typescript
 import { Guard } from "effect-machine";
 
-const isValid = Guard.make<FormState, SubmitEvent>(({ state }) => state.isValid);
+// Declare guard slot
+const isValid = Guard.make("isValid");
 
-const hasEmail = Guard.make<FormState, SubmitEvent>(({ state }) => state.email.length > 0);
-
-on(State.Form, Event.Submit, () => State.Submitting(), {
+// Use in transition
+machine.on(State.Form, Event.Submit, () => State.Submitting, {
   guard: isValid,
+});
+
+// Provide implementation
+const provided = machine.provide({
+  isValid: ({ state }) => state.email.includes("@"),
+});
+```
+
+## Guard Handlers
+
+Handlers can return `boolean` (sync) or `Effect<boolean>` (async):
+
+```typescript
+machine.provide({
+  // Sync - simple boolean
+  isValid: ({ state }) => state.email.includes("@"),
+
+  // Async - Effect<boolean> (adds R to machine type)
+  hasPermission: ({ state }) =>
+    Effect.gen(function* () {
+      const auth = yield* AuthService;
+      return yield* auth.check(state.userId);
+    }),
 });
 ```
 
 ## Guard Composition
 
-### Guard.and
+### String Shorthand
 
-Both guards must pass:
+Compose guards using string names directly:
 
 ```typescript
-const canSubmit = Guard.and(isValid, hasEmail);
+Guard.and("isValid", "hasEmail");
+Guard.or("isAdmin", "isModerator");
+Guard.not("isBanned");
+```
 
-on(State.Form, Event.Submit, () => State.Submitting(), {
+### Guard.and
+
+All guards must pass (evaluated in parallel):
+
+```typescript
+const canSubmit = Guard.and("isValid", "hasEmail");
+
+machine.on(State.Form, Event.Submit, () => State.Submitting, {
   guard: canSubmit,
 });
 ```
 
 ### Guard.or
 
-Either guard can pass:
+Any guard can pass (evaluated in parallel):
 
 ```typescript
-const isAdmin = Guard.make(({ state }) => state.role === "admin");
-const isModerator = Guard.make(({ state }) => state.role === "moderator");
+const canModerate = Guard.or("isAdmin", "isModerator");
 
-const canModerate = Guard.or(isAdmin, isModerator);
-
-on(State.LoggedIn, Event.Moderate, () => State.Moderating(), {
+machine.on(State.LoggedIn, Event.Moderate, () => State.Moderating, {
   guard: canModerate,
 });
 ```
@@ -64,47 +82,44 @@ on(State.LoggedIn, Event.Moderate, () => State.Moderating(), {
 Negate a guard:
 
 ```typescript
-const isGuest = Guard.make(({ state }) => state.role === "guest");
-const isNotGuest = Guard.not(isGuest);
+const isNotGuest = Guard.not("isGuest");
 
-on(State.LoggedIn, Event.AccessDashboard, () => State.Dashboard(), {
+machine.on(State.LoggedIn, Event.AccessDashboard, () => State.Dashboard, {
   guard: isNotGuest,
 });
 ```
 
-## Complex Compositions
+## Nested Composition
 
-Guards compose naturally:
-
-```typescript
-const isAdmin = Guard.make(({ state }) => state.role === "admin");
-const isActive = Guard.make(({ state }) => state.active);
-const isNotBanned = Guard.not(Guard.make(({ state }) => state.banned));
-
-// Admin AND active AND not banned
-const canAccessAdmin = Guard.and(Guard.and(isAdmin, isActive), isNotBanned);
-```
-
-## Type Narrowing
-
-With fluent `on()`, inline guards automatically get narrowed types:
+Guards compose hierarchically:
 
 ```typescript
-machine.on(State.Idle, Event.Start, () => State.Running, {
-  // guard receives { state: IdleState, event: StartEvent }
-  guard: ({ state, event }) => state.ready && event.force,
+// (admin OR moderator) AND active AND NOT banned
+const canAccessAdmin = Guard.and(
+  Guard.or("isAdmin", "isModerator"),
+  "isActive",
+  Guard.not("isBanned"),
+);
+
+// Provide all leaf guards
+machine.provide({
+  isAdmin: ({ state }) => state.role === "admin",
+  isModerator: ({ state }) => state.role === "moderator",
+  isActive: ({ state }) => state.active,
+  isBanned: ({ state }) => state.banned,
 });
 ```
 
-For reusable guards, use type annotations:
+## Parallel Evaluation
 
-````typescript
-type IdleState = State & { readonly _tag: "Idle" };
-type StartEvent = Event & { readonly _tag: "Start" };
+Composition guards evaluate their children in parallel:
 
-const canStart = Guard.make<IdleState, StartEvent>(({ state, event }) => {
-  return state.ready && event.force;
-});
+```typescript
+// isAdmin and isActive checked simultaneously
+Guard.and("isAdmin", "isActive");
+```
+
+This is especially useful for async guards that hit external services.
 
 ## Guard Cascade Order
 
@@ -112,22 +127,23 @@ When multiple transitions match the same state + event, guards are evaluated in 
 
 ```typescript
 // First registered, first checked
-on(State.A, Event.X, () => State.B(), {
-  guard: ({ state }) => state.value > 100,  // Checked first
-}),
-on(State.A, Event.X, () => State.C(), {
-  guard: ({ state }) => state.value > 50,   // Checked second
-}),
-on(State.A, Event.X, () => State.D()),      // Fallback (no guard)
-````
+machine
+  .on(State.A, Event.X, () => State.B, {
+    guard: Guard.make("highValue"), // Checked first
+  })
+  .on(State.A, Event.X, () => State.C, {
+    guard: Guard.make("mediumValue"), // Checked second
+  })
+  .on(State.A, Event.X, () => State.D); // Fallback (no guard)
+```
 
 First passing guard wins. Use `choose` for explicit cascade:
 
 ```typescript
-choose(State.A, Event.X, [
-  { guard: ({ state }) => state.value > 100, to: () => State.B() },
-  { guard: ({ state }) => state.value > 50, to: () => State.C() },
-  { to: () => State.D() }, // Fallback (no guard)
+machine.choose(State.A, Event.X, [
+  { guard: Guard.make("highValue"), to: () => State.B },
+  { guard: Guard.make("mediumValue"), to: () => State.C },
+  { to: () => State.D }, // Fallback (no guard)
 ]);
 ```
 
@@ -136,37 +152,11 @@ choose(State.A, Event.X, [
 `always` transitions use simpler guards (state only, no event):
 
 ```typescript
-always(State.Calculating, [
-  { guard: (state) => state.value >= 70, to: () => State.High() },
-  { guard: (state) => state.value >= 40, to: () => State.Medium() },
-  { to: () => State.Low() }, // Fallback (no guard)
+machine.always(State.Calculating, [
+  { guard: Guard.make("isHigh"), to: () => State.High },
+  { guard: Guard.make("isMedium"), to: () => State.Medium },
+  { to: () => State.Low }, // Fallback (no guard)
 ]);
-```
-
-## Testing Guards
-
-Test guards in isolation:
-
-```typescript
-import { Guard } from "effect-machine";
-
-const isValid = Guard.make<FormState, SubmitEvent>(({ state }) => state.email.includes("@"));
-
-test("isValid passes for valid email", () => {
-  const ctx = {
-    state: State.Form({ email: "test@example.com" }),
-    event: Event.Submit(),
-  };
-  expect(Guard.toFn(isValid)(ctx)).toBe(true);
-});
-
-test("isValid fails for invalid email", () => {
-  const ctx = {
-    state: State.Form({ email: "invalid" }),
-    event: Event.Submit(),
-  };
-  expect(Guard.toFn(isValid)(ctx)).toBe(false);
-});
 ```
 
 ## See Also

@@ -203,30 +203,39 @@ See the [primer](./primer/) for comprehensive documentation:
 
 ### Guards
 
-| Export       | Description                         |
-| ------------ | ----------------------------------- |
-| `Guard.make` | Create guard (sync or async Effect) |
-| `Guard.and`  | Combine guards with AND             |
-| `Guard.or`   | Combine guards with OR              |
-| `Guard.not`  | Negate a guard                      |
+| Export       | Description                        |
+| ------------ | ---------------------------------- |
+| `Guard.make` | Create named guard slot            |
+| `Guard.and`  | Combine guards with AND (parallel) |
+| `Guard.or`   | Combine guards with OR (parallel)  |
+| `Guard.not`  | Negate a guard                     |
 
-Guards can return `boolean` or `Effect<boolean>`:
+Guards are **slots-only** - declare with name, provide implementation via `.provide()`:
 
 ```typescript
-// Sync guard
-const canRetry = Guard.make("canRetry", ({ state }) => state.retries < 3);
+// Declare guard slot
+const canRetry = Guard.make("canRetry");
 
-// Async guard (adds R to machine type)
-const hasPermission = Guard.make("hasPermission", ({ state }) =>
-  Effect.gen(function* () {
-    const auth = yield* AuthService;
-    return yield* auth.check(state.userId);
-  }),
-);
+// Composition with string shorthand
+Guard.and("isAdmin", "isActive");
+Guard.or("isOwner", "isAdmin");
+Guard.and(Guard.or("isAdmin", "isMod"), "isActive"); // nested
 
-// Inline guard with auto-narrowed types
+// Use in transition
 machine.on(State.Idle, Event.Start, () => State.Running, {
-  guard: ({ state }) => state.ready, // state is narrowed to Idle
+  guard: canRetry,
+});
+
+// Provide implementation (sync boolean or async Effect<boolean>)
+const provided = machine.provide({
+  canRetry: ({ state }) => state.retries < 3, // sync
+  hasPermission: (
+    { state }, // async
+  ) =>
+    Effect.gen(function* () {
+      const auth = yield* AuthService;
+      return yield* auth.check(state.userId);
+    }),
 });
 ```
 

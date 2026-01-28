@@ -1,7 +1,7 @@
 import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { Event, Machine, simulate, State } from "../../src/index.js";
+import { Event, Guard, Machine, simulate, State } from "../../src/index.js";
 
 describe("Choose Combinator", () => {
   test("first matching guard wins", async () => {
@@ -11,12 +11,10 @@ describe("Choose Combinator", () => {
       Medium: {},
       Low: {},
     });
-    type TestState = typeof TestState.Type;
 
     const TestEvent = Event({
       Check: {},
     });
-    type TestEvent = typeof TestEvent.Type;
 
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -26,13 +24,19 @@ describe("Choose Combinator", () => {
           initial: TestState.Idle({ value: 75 }),
         })
           .choose(TestState.Idle, TestEvent.Check, [
-            { guard: ({ state }) => state.value >= 70, to: () => TestState.High },
-            { guard: ({ state }) => state.value >= 40, to: () => TestState.Medium },
+            { guard: Guard.make("isHigh"), to: () => TestState.High },
+            { guard: Guard.make("isMedium"), to: () => TestState.Medium },
             { otherwise: true, to: () => TestState.Low },
           ])
           .final(TestState.High)
           .final(TestState.Medium)
-          .final(TestState.Low);
+          .final(TestState.Low)
+          .provide({
+            isHigh: ({ state }: { state: { _tag: string; value?: number } }) =>
+              state._tag === "Idle" && (state.value ?? 0) >= 70,
+            isMedium: ({ state }: { state: { _tag: string; value?: number } }) =>
+              state._tag === "Idle" && (state.value ?? 0) >= 40,
+          });
 
         const result = yield* simulate(machine, [TestEvent.Check]);
         expect(result.finalState._tag).toBe("High");
@@ -46,12 +50,10 @@ describe("Choose Combinator", () => {
       High: {},
       Low: {},
     });
-    type TestState = typeof TestState.Type;
 
     const TestEvent = Event({
       Check: {},
     });
-    type TestEvent = typeof TestEvent.Type;
 
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -61,11 +63,15 @@ describe("Choose Combinator", () => {
           initial: TestState.Idle({ value: 10 }),
         })
           .choose(TestState.Idle, TestEvent.Check, [
-            { guard: ({ state }) => state.value >= 70, to: () => TestState.High },
+            { guard: Guard.make("isHigh"), to: () => TestState.High },
             { otherwise: true, to: () => TestState.Low },
           ])
           .final(TestState.High)
-          .final(TestState.Low);
+          .final(TestState.Low)
+          .provide({
+            isHigh: ({ state }: { state: { _tag: string; value?: number } }) =>
+              state._tag === "Idle" && (state.value ?? 0) >= 70,
+          });
 
         const result = yield* simulate(machine, [TestEvent.Check]);
         expect(result.finalState._tag).toBe("Low");
@@ -78,12 +84,10 @@ describe("Choose Combinator", () => {
       Idle: {},
       Done: {},
     });
-    type TestState = typeof TestState.Type;
 
     const TestEvent = Event({
       Go: {},
     });
-    type TestEvent = typeof TestEvent.Type;
 
     await Effect.runPromise(
       Effect.gen(function* () {

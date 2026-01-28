@@ -1,7 +1,14 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
 import { Effect, Schema, Stream } from "effect";
 
-import { ActorSystemDefault, ActorSystemService, Machine, State, Event } from "../src/index.js";
+import {
+  ActorSystemDefault,
+  ActorSystemService,
+  Guard,
+  Machine,
+  State,
+  Event,
+} from "../src/index.js";
 import { describe, expect, it, yieldFibers } from "./utils/effect-test.js";
 
 const TestState = State({
@@ -37,9 +44,12 @@ const createTestMachine = () =>
       TestEvent.Update,
       ({ state }) => TestState.Active({ value: state.value * 2 }),
       {
-        guard: ({ event }) => event.value > 100,
+        guard: Guard.make("isHighValue"),
       },
     )
+    .provide({
+      isHighValue: ({ event }: { event: { value: number } }) => event.value > 100,
+    })
     .final(TestState.Done);
 
 describe("ActorRef ergonomics", () => {

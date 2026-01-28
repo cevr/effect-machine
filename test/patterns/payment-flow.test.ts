@@ -7,6 +7,7 @@ import {
   assertNeverReaches,
   assertPath,
   Event,
+  Guard,
   Machine,
   State,
 } from "../../src/index.js";
@@ -101,8 +102,12 @@ describe("Payment Flow Pattern", () => {
           amount: state.amount,
           attempts: state.attempts + 1,
         }),
-      { guard: ({ state }) => state.canRetry && state.attempts < 3 },
+      { guard: Guard.make("canRetry") },
     )
+    .provide({
+      canRetry: ({ state }: { state: { canRetry: boolean; attempts: number } }) =>
+        state.canRetry && state.attempts < 3,
+    })
     // Auto-dismiss goes back to idle
     .on(PaymentState.PaymentError, PaymentEvent.AutoDismissError, () => PaymentState.Idle)
     // Delays
