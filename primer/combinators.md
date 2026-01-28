@@ -43,12 +43,12 @@ machine.on(MyState.Form, MyEvent.Submit, ({ state, guards }) =>
 );
 ```
 
-### on.force
+### reenter
 
 Like `on` but forces exit/enter effects even for same state tag.
 
 ```typescript
-machine.on.force(MyState.Active, MyEvent.Refresh, ({ state }) =>
+machine.reenter(MyState.Active, MyEvent.Refresh, ({ state }) =>
   MyState.Active({ ...state, lastRefresh: Date.now() }),
 );
 ```
@@ -271,52 +271,6 @@ Timer is cancelled if:
 - Actor is stopped
 
 Works with TestClock for deterministic testing.
-
-## Scoped Builders
-
-### from
-
-Scope multiple transitions to a single state.
-
-```typescript
-machine.from(stateConstructor, (scope) => scope.on(Event1, handler1).on(Event2, handler2));
-```
-
-**Example:**
-
-```typescript
-machine.from(MyState.Form, (scope) =>
-  scope
-    .on(MyEvent.SetName, ({ state, event }) => MyState.Form({ ...state, name: event.name }))
-    .on(MyEvent.SetEmail, ({ state, event }) => MyState.Form({ ...state, email: event.email }))
-    .on(MyEvent.Submit, ({ state, guards }) =>
-      Effect.gen(function* () {
-        if (yield* guards.isValid()) {
-          return MyState.Submitting({ data: state });
-        }
-        return state;
-      }),
-    ),
-);
-```
-
-### onAny
-
-Same transition for multiple states.
-
-```typescript
-machine.onAny([State1, State2, State3], eventConstructor, handler);
-```
-
-**Example:**
-
-```typescript
-machine.onAny(
-  [MyState.Loading, MyState.Retrying, MyState.Processing],
-  MyEvent.Cancel,
-  () => MyState.Cancelled,
-);
-```
 
 ## State Updates
 

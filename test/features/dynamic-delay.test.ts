@@ -68,7 +68,7 @@ describe("Dynamic Delay Duration", () => {
         event: RetryEvent,
         initial: RetryState.Retrying({ attempt: 1, backoff: 1 }),
       })
-        .on.force(RetryState.Retrying, RetryEvent.Retry, ({ state }) =>
+        .reenter(RetryState.Retrying, RetryEvent.Retry, ({ state }) =>
           RetryState.Retrying({ attempt: state.attempt + 1, backoff: state.backoff * 2 }),
         )
         .on(RetryState.Retrying, RetryEvent.GiveUp, () => RetryState.Failed)

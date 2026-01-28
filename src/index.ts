@@ -39,20 +39,12 @@ export type {
   Machine as MachineType,
   MachineRef,
   MakeConfig,
-  AnySlot,
-  EffectSlot,
-  EffectSlotType,
   Transition,
   AlwaysTransition,
   StateEffect,
-  RootInvoke,
-  DurationOrFn,
   PersistOptions,
-  FromScope,
   HandlerContext,
   StateHandlerContext,
-  TransitionHandler,
-  StateEffectHandler,
   ProvideHandlers,
 } from "./machine.js";
 
@@ -77,13 +69,8 @@ export {
 } from "./testing.js";
 export type { SimulationResult, TestHarness, TestHarnessOptions } from "./testing.js";
 
-// Legacy types for backward compatibility
-export type {
-  InstanceOf,
-  StateEffectContext,
-  TransitionContext,
-  TransitionResult,
-} from "./internal/types.js";
+// Internal types for handlers
+export type { InstanceOf, StateEffectContext } from "./internal/types.js";
 
 // Inspection
 export type {

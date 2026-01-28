@@ -1,5 +1,3 @@
-import type { TransitionContext } from "../internal/types.js";
-
 /**
  * Create a handler function that merges partial updates into the current state.
  * Useful for updating state without changing the state tag.
@@ -10,8 +8,8 @@ import type { TransitionContext } from "../internal/types.js";
  * ```
  */
 export function assign<S extends { readonly _tag: string }, E>(
-  updater: (ctx: TransitionContext<S, E>) => Partial<Omit<S, "_tag">>,
-): (ctx: TransitionContext<S, E>) => S {
+  updater: (ctx: { readonly state: S; readonly event: E }) => Partial<Omit<S, "_tag">>,
+): (ctx: { readonly state: S; readonly event: E }) => S {
   return (ctx) => ({
     ...ctx.state,
     ...updater(ctx),

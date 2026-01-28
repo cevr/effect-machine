@@ -77,63 +77,57 @@ describe("Menu Navigation Pattern", () => {
     initial: MenuState.Browsing({ pageId: "food", sectionIndex: 0, itemIndex: null }),
   })
     // Browsing handlers
-    .from(MenuState.Browsing, (scope) =>
-      scope
-        // Navigate to different page (reset section)
-        .on(MenuEvent.NavigateToPage, ({ state, event, guards }) =>
-          Effect.gen(function* () {
-            if (yield* guards.canNavigateToPage()) {
-              return MenuState.Browsing({ pageId: event.pageId, sectionIndex: 0, itemIndex: null });
-            }
-            return state;
-          }),
-        )
-        // Scroll to section
-        .on(MenuEvent.ScrollToSection, ({ state, event, guards }) =>
-          Effect.gen(function* () {
-            if (yield* guards.canScrollToSection()) {
-              return MenuState.Browsing({
-                ...state,
-                sectionIndex: event.sectionIndex,
-                itemIndex: null,
-              });
-            }
-            return state;
-          }),
-        )
-        // Select item
-        .on(MenuEvent.SelectItem, ({ state, event }) =>
-          MenuState.ItemSelected({
-            pageId: state.pageId,
-            sectionIndex: state.sectionIndex,
-            itemId: event.itemId,
-          }),
-        )
-        // Go to checkout
-        .on(MenuEvent.GoToCheckout, () => MenuState.Checkout({ items: [...cart] }))
-        // Close menu
-        .on(MenuEvent.Close, () => MenuState.Closed),
+    // Navigate to different page (reset section)
+    .on(MenuState.Browsing, MenuEvent.NavigateToPage, ({ state, event, guards }) =>
+      Effect.gen(function* () {
+        if (yield* guards.canNavigateToPage()) {
+          return MenuState.Browsing({ pageId: event.pageId, sectionIndex: 0, itemIndex: null });
+        }
+        return state;
+      }),
     )
-    // ItemSelected handlers
-    .from(MenuState.ItemSelected, (scope) =>
-      scope
-        // Add to cart and return to browsing
-        .on(MenuEvent.AddToCart, ({ state }) => {
-          cart.push(state.itemId);
+    // Scroll to section
+    .on(MenuState.Browsing, MenuEvent.ScrollToSection, ({ state, event, guards }) =>
+      Effect.gen(function* () {
+        if (yield* guards.canScrollToSection()) {
           return MenuState.Browsing({
-            pageId: state.pageId,
-            sectionIndex: state.sectionIndex,
+            ...state,
+            sectionIndex: event.sectionIndex,
             itemIndex: null,
           });
-        })
-        // Cancel selection - return to browsing
-        .on(MenuEvent.Close, ({ state }) =>
-          MenuState.Browsing({
-            pageId: state.pageId,
-            sectionIndex: state.sectionIndex,
-            itemIndex: null,
-          }),
-        ),
+        }
+        return state;
+      }),
+    )
+    // Select item
+    .on(MenuState.Browsing, MenuEvent.SelectItem, ({ state, event }) =>
+      MenuState.ItemSelected({
+        pageId: state.pageId,
+        sectionIndex: state.sectionIndex,
+        itemId: event.itemId,
+      }),
+    )
+    // Go to checkout
+    .on(MenuState.Browsing, MenuEvent.GoToCheckout, () => MenuState.Checkout({ items: [...cart] }))
+    // Close menu
+    .on(MenuState.Browsing, MenuEvent.Close, () => MenuState.Closed)
+    // ItemSelected handlers
+    // Add to cart and return to browsing
+    .on(MenuState.ItemSelected, MenuEvent.AddToCart, ({ state }) => {
+      cart.push(state.itemId);
+      return MenuState.Browsing({
+        pageId: state.pageId,
+        sectionIndex: state.sectionIndex,
+        itemIndex: null,
+      });
+    })
+    // Cancel selection - return to browsing
+    .on(MenuState.ItemSelected, MenuEvent.Close, ({ state }) =>
+      MenuState.Browsing({
+        pageId: state.pageId,
+        sectionIndex: state.sectionIndex,
+        itemIndex: null,
+      }),
     )
     // Checkout handlers
     .on(MenuState.Checkout, MenuEvent.Close, () => MenuState.Closed)

@@ -12,6 +12,7 @@ import {
 } from "./transition-index.js";
 import { isEffect } from "./is-effect.js";
 import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
+import { DUMMY_ENTER_EVENT, DUMMY_EXIT_EVENT, DUMMY_ALWAYS_EVENT } from "./constants.js";
 
 /** Listener set for sync subscriptions */
 type Listeners<S> = Set<(state: S) => void>;
@@ -108,7 +109,7 @@ export const applyAlways = <
     const dummySelf: MachineRef<E> = self ?? {
       send: () => Effect.void,
     };
-    const dummyEvent = { _tag: "__always__" } as E;
+    const dummyEvent = { _tag: DUMMY_ALWAYS_EVENT } as E;
     const ctx: MachineContext<S, E, MachineRef<E>> = {
       state: currentState,
       event: dummyEvent,
@@ -508,7 +509,7 @@ export const runEntryEffects = <
     const effects = findOnEnterEffects(machine, state._tag);
 
     // Create context for effect slots
-    const dummyEvent = { _tag: "__enter__" } as E;
+    const dummyEvent = { _tag: DUMMY_ENTER_EVENT } as E;
     const ctx: MachineContext<S, E, MachineRef<E>> = {
       state,
       event: dummyEvent,
@@ -556,7 +557,7 @@ export const runExitEffects = <
     const effects = findOnExitEffects(machine, state._tag);
 
     // Create context for effect slots
-    const dummyEvent = { _tag: "__exit__" } as E;
+    const dummyEvent = { _tag: DUMMY_EXIT_EVENT } as E;
     const ctx: MachineContext<S, E, MachineRef<E>> = {
       state,
       event: dummyEvent,

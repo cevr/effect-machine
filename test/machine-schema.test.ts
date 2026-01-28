@@ -278,12 +278,11 @@ describe("State/Event with Machine", () => {
       initial: EditorState.Idle,
     })
       .on(EditorState.Idle, EditorEvent.Focus, () => EditorState.Typing({ text: "" }))
-      .from(EditorState.Typing, (scope) =>
-        scope
-          .on(EditorEvent.KeyPress, ({ state, event }) =>
-            EditorState.Typing({ text: state.text + event.key }),
-          )
-          .on(EditorEvent.Submit, ({ state }) => EditorState.Submitted({ text: state.text })),
+      .on(EditorState.Typing, EditorEvent.KeyPress, ({ state, event }) =>
+        EditorState.Typing({ text: state.text + event.key }),
+      )
+      .on(EditorState.Typing, EditorEvent.Submit, ({ state }) =>
+        EditorState.Submitted({ text: state.text }),
       )
       .final(EditorState.Submitted);
 
@@ -303,7 +302,7 @@ describe("State/Event with Machine", () => {
     expect((result.finalState as { text: string }).text).toBe("hi");
   });
 
-  test("fluent onAny() matches multiple states", async () => {
+  test("multiple state transitions with chained .on()", async () => {
     const WorkflowState = State({
       Draft: {},
       Review: {},
@@ -324,11 +323,8 @@ describe("State/Event with Machine", () => {
     })
       .on(WorkflowState.Draft, WorkflowEvent.Submit, () => WorkflowState.Review)
       .on(WorkflowState.Review, WorkflowEvent.Approve, () => WorkflowState.Approved)
-      .onAny(
-        [WorkflowState.Draft, WorkflowState.Review],
-        WorkflowEvent.Cancel,
-        () => WorkflowState.Cancelled,
-      )
+      .on(WorkflowState.Draft, WorkflowEvent.Cancel, () => WorkflowState.Cancelled)
+      .on(WorkflowState.Review, WorkflowEvent.Cancel, () => WorkflowState.Cancelled)
       .final(WorkflowState.Approved)
       .final(WorkflowState.Cancelled);
 

@@ -38,41 +38,42 @@ describe("Keyboard Input Pattern", () => {
     .on(KeyboardState.Idle, KeyboardEvent.Focus, ({ state }) =>
       KeyboardState.Typing({ value: state.value, mode: state.mode }),
     )
-    // Typing state handlers using from() scope
-    .from(KeyboardState.Typing, (scope) =>
-      scope
-        // Key input - different modes (same state, no lifecycle by default)
-        .on(KeyboardEvent.KeyPress, ({ state, event }) => {
-          let newValue: string;
-          switch (state.mode) {
-            case "insert":
-              newValue = state.value + event.key;
-              break;
-            case "append":
-              newValue = state.value + event.key;
-              break;
-            case "replace":
-              newValue = event.key;
-              break;
-          }
-          return KeyboardState.Typing({ value: newValue, mode: state.mode });
-        })
-        // Backspace
-        .on(KeyboardEvent.Backspace, ({ state }) =>
-          KeyboardState.Typing({ value: state.value.slice(0, -1), mode: state.mode }),
-        )
-        // Clear all input
-        .on(KeyboardEvent.Clear, ({ state }) =>
-          KeyboardState.Typing({ value: "", mode: state.mode }),
-        )
-        // Mode switching
-        .on(KeyboardEvent.SwitchMode, ({ state, event }) =>
-          KeyboardState.Typing({ value: state.value, mode: event.mode }),
-        )
-        // Submit
-        .on(KeyboardEvent.Submit, ({ state }) => KeyboardState.Confirming({ value: state.value }))
-        // Cancel
-        .on(KeyboardEvent.Cancel, () => KeyboardState.Idle({ value: "", mode: "insert" })),
+    // Typing state handlers
+    // Key input - different modes (same state, no lifecycle by default)
+    .on(KeyboardState.Typing, KeyboardEvent.KeyPress, ({ state, event }) => {
+      let newValue: string;
+      switch (state.mode) {
+        case "insert":
+          newValue = state.value + event.key;
+          break;
+        case "append":
+          newValue = state.value + event.key;
+          break;
+        case "replace":
+          newValue = event.key;
+          break;
+      }
+      return KeyboardState.Typing({ value: newValue, mode: state.mode });
+    })
+    // Backspace
+    .on(KeyboardState.Typing, KeyboardEvent.Backspace, ({ state }) =>
+      KeyboardState.Typing({ value: state.value.slice(0, -1), mode: state.mode }),
+    )
+    // Clear all input
+    .on(KeyboardState.Typing, KeyboardEvent.Clear, ({ state }) =>
+      KeyboardState.Typing({ value: "", mode: state.mode }),
+    )
+    // Mode switching
+    .on(KeyboardState.Typing, KeyboardEvent.SwitchMode, ({ state, event }) =>
+      KeyboardState.Typing({ value: state.value, mode: event.mode }),
+    )
+    // Submit
+    .on(KeyboardState.Typing, KeyboardEvent.Submit, ({ state }) =>
+      KeyboardState.Confirming({ value: state.value }),
+    )
+    // Cancel
+    .on(KeyboardState.Typing, KeyboardEvent.Cancel, () =>
+      KeyboardState.Idle({ value: "", mode: "insert" }),
     )
     // Confirming state - cancel returns to typing
     .on(KeyboardState.Confirming, KeyboardEvent.Cancel, ({ state }) =>

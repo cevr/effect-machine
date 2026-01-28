@@ -4,7 +4,7 @@ import { Effect, Schema, TestClock } from "effect";
 import { ActorSystemDefault, ActorSystemService, Event, Machine, State } from "../../src/index.js";
 import { describe, expect, it, yieldFibers } from "../utils/effect-test.js";
 
-describe("on.force Transitions", () => {
+describe("reenter Transitions", () => {
   const PollState = State({
     Polling: { attempts: Schema.Number },
     Done: {},
@@ -17,7 +17,7 @@ describe("on.force Transitions", () => {
     Finish: {},
   });
 
-  it.scopedLive("on.force runs exit/enter for same state tag", () =>
+  it.scopedLive("reenter runs exit/enter for same state tag", () =>
     Effect.gen(function* () {
       const effects: string[] = [];
 
@@ -27,7 +27,7 @@ describe("on.force Transitions", () => {
         initial: PollState.Polling({ attempts: 0 }),
       })
         .on(PollState.Polling, PollEvent.Finish, () => PollState.Done)
-        .on.force(PollState.Polling, PollEvent.Reset, ({ state }) =>
+        .reenter(PollState.Polling, PollEvent.Reset, ({ state }) =>
           PollState.Polling({ attempts: state.attempts + 1 }),
         )
         .onEnter(PollState.Polling, ({ state }) =>
@@ -47,7 +47,7 @@ describe("on.force Transitions", () => {
       // Initial enter
       expect(effects).toEqual(["enter:Polling:0"]);
 
-      // on.force runs exit/enter
+      // reenter runs exit/enter
       yield* actor.send(PollEvent.Reset);
       yield* yieldFibers;
 
@@ -56,7 +56,7 @@ describe("on.force Transitions", () => {
       expect((state as PollState & { _tag: "Polling" }).attempts).toBe(1);
       expect(effects).toEqual(["enter:Polling:0", "exit:Polling:0", "enter:Polling:1"]);
 
-      // Another force transition
+      // Another reenter transition
       yield* actor.send(PollEvent.Reset);
       yield* yieldFibers;
 
@@ -70,7 +70,7 @@ describe("on.force Transitions", () => {
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
 
-  it.scoped("on.force restarts delay timer", () =>
+  it.scoped("reenter restarts delay timer", () =>
     Effect.gen(function* () {
       const machine = Machine.make({
         state: PollState,
@@ -78,7 +78,7 @@ describe("on.force Transitions", () => {
         initial: PollState.Polling({ attempts: 0 }),
       })
         .on(PollState.Polling, PollEvent.Poll, () => PollState.Done)
-        .on.force(PollState.Polling, PollEvent.Reset, ({ state }) =>
+        .reenter(PollState.Polling, PollEvent.Reset, ({ state }) =>
           PollState.Polling({ attempts: state.attempts + 1 }),
         )
         .delay(PollState.Polling, "5 seconds", PollEvent.Poll);

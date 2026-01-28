@@ -7,9 +7,13 @@ import { Entity } from "@effect/cluster";
 import type { Rpc } from "@effect/rpc";
 import { Effect, type Layer, Queue, Ref } from "effect";
 
-import type { Machine, MachineRef, HandlerContext, StateHandlerContext } from "../machine.js";
-import { findOnEnterEffects, findOnExitEffects } from "../internal/transition-index.js";
-import { applyAlways, resolveTransition } from "../internal/loop.js";
+import type { Machine, MachineRef, HandlerContext } from "../machine.js";
+import {
+  applyAlways,
+  resolveTransition,
+  runEntryEffects,
+  runExitEffects,
+} from "../internal/loop.js";
 import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
 import { isEffect } from "../internal/is-effect.js";
 
@@ -30,82 +34,6 @@ export interface EntityMachineOptions<S> {
    */
   readonly initializeState?: (entityId: string) => S;
 }
-
-/**
- * Run entry effects for a state (simple version without inspector)
- */
-const runEntryEffectsSimple = <
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
-  R,
-  GD extends GuardsDef = Record<string, never>,
-  EFD extends EffectsDef = Record<string, never>,
->(
-  machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
-  state: S,
-  self: MachineRef<E>,
-): Effect.Effect<void, never, R> =>
-  Effect.gen(function* () {
-    const effects = findOnEnterEffects(machine, state._tag);
-
-    // Create context for effect slots
-    const dummyEvent = { _tag: "__enter__" } as E;
-    const ctx: MachineContext<S, E, MachineRef<E>> = {
-      state,
-      event: dummyEvent,
-      self,
-    };
-    const { effects: effectSlots } = machine._createSlotAccessors(ctx);
-
-    for (const effect of effects) {
-      const handlerCtx: StateHandlerContext<S, E, EFD> = {
-        state,
-        self,
-        effects: effectSlots,
-      };
-      yield* (effect.handler(handlerCtx) as Effect.Effect<void, never, R>).pipe(
-        Effect.provideService(machine.Context, ctx),
-      );
-    }
-  });
-
-/**
- * Run exit effects for a state (simple version without inspector)
- */
-const runExitEffectsSimple = <
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
-  R,
-  GD extends GuardsDef = Record<string, never>,
-  EFD extends EffectsDef = Record<string, never>,
->(
-  machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
-  state: S,
-  self: MachineRef<E>,
-): Effect.Effect<void, never, R> =>
-  Effect.gen(function* () {
-    const effects = findOnExitEffects(machine, state._tag);
-
-    // Create context for effect slots
-    const dummyEvent = { _tag: "__exit__" } as E;
-    const ctx: MachineContext<S, E, MachineRef<E>> = {
-      state,
-      event: dummyEvent,
-      self,
-    };
-    const { effects: effectSlots } = machine._createSlotAccessors(ctx);
-
-    for (const effect of effects) {
-      const handlerCtx: StateHandlerContext<S, E, EFD> = {
-        state,
-        self,
-        effects: effectSlots,
-      };
-      yield* (effect.handler(handlerCtx) as Effect.Effect<void, never, R>).pipe(
-        Effect.provideService(machine.Context, ctx),
-      );
-    }
-  });
 
 /**
  * Process a single event through the machine
@@ -162,7 +90,7 @@ const processEvent = <
 
     if (runLifecycle) {
       // Run exit effects for old state
-      yield* runExitEffectsSimple(machine, currentState, self);
+      yield* runExitEffects(machine, currentState, self);
 
       // Apply always transitions (only if tag changed)
       if (stateTagChanged) {
@@ -173,7 +101,7 @@ const processEvent = <
       yield* Ref.set(stateRef, newState);
 
       // Run entry effects for new state
-      yield* runEntryEffectsSimple(machine, newState, self);
+      yield* runEntryEffects(machine, newState, self);
     } else {
       // Same state tag without reenter - just update state
       yield* Ref.set(stateRef, newState);
@@ -256,7 +184,7 @@ export const EntityMachine = {
         const stateRef = yield* Ref.make<S>(resolvedInitial);
 
         // Run initial entry effects
-        yield* runEntryEffectsSimple(machine, resolvedInitial, self);
+        yield* runEntryEffects(machine, resolvedInitial, self);
 
         // Process internal events in background
         yield* Effect.forkScoped(

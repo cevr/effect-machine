@@ -70,7 +70,7 @@ describe("Same-state Transitions", () => {
         event: FormEvent,
         initial: FormState.Form({ name: "", count: 0 }),
       })
-        .on.force(FormState.Form, FormEvent.SetName, ({ state, event }) =>
+        .reenter(FormState.Form, FormEvent.SetName, ({ state, event }) =>
           FormState.Form({ name: event.name, count: state.count + 1 }),
         )
         .onEnter(FormState.Form, () => Effect.sync(() => effects.push("enter:Form")))
@@ -82,7 +82,7 @@ describe("Same-state Transitions", () => {
       // Initial enter
       expect(effects).toEqual(["enter:Form"]);
 
-      // on.force runs exit/enter even for same state tag
+      // reenter runs exit/enter even for same state tag
       yield* actor.send(FormEvent.SetName({ name: "Alice" }));
       yield* yieldFibers;
 

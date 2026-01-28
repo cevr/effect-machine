@@ -45,10 +45,8 @@ const machine = Machine.make({ state, event, initial })
 - `simulate`/`createTestHarness` run guard/effect slots in handlers but no onEnter/onExit/invoke
 - Actor testing needs `yieldFibers` after `send()` to let effects run
 - Same-state transitions skip exit/enter by default
-- `.on.force()` runs exit/enter even on same state tag - use to restart timers/invoke
+- `.reenter()` runs exit/enter even on same state tag - use to restart timers/invoke
 - Dynamic delay: duration fn evaluated at state entry, not registration time
-- `.from(State, build)` scopes `on` calls - omit state arg inside scope
-- `.onAny([S1, S2], Event, handler)` creates transitions for each state
 - `namespace.ts` exports Machine namespace (not `Machine.ts` - macOS case-insensitivity)
 - Branded types: `State<T>` / `Event<T>` prevent accidental swap at compile time
 - Brand is phantom (type-level only) - runtime values identical to `Data.TaggedEnum`

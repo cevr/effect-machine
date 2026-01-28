@@ -46,38 +46,3 @@ export interface StateEffectContext<State, Event> {
   readonly state: State;
   readonly self: MachineRef<Event>;
 }
-
-// ============================================================================
-// Handlers (legacy types for backward compatibility)
-// ============================================================================
-
-/**
- * Transition handler function with context (legacy)
- * @deprecated Use HandlerContext from machine.ts instead
- */
-export type TransitionHandler<S, E, NewState, R> = (
-  ctx: TransitionContext<S, E>,
-) => TransitionResult<NewState, R>;
-
-/**
- * Guard predicate with context (legacy)
- * @deprecated Guards are now schema-based slots
- */
-export type GuardFn<S, E> = (ctx: TransitionContext<S, E>) => boolean;
-
-/**
- * State effect handler with context (legacy)
- * @deprecated Use StateEffectHandler from machine.ts instead
- */
-export type StateEffectHandler<S, E, R> = (
-  ctx: StateEffectContext<S, E>,
-) => Effect.Effect<void, never, R>;
-
-/**
- * Options for transition handlers (legacy)
- * @deprecated No longer used - guard/effect logic goes in handler body
- */
-export interface TransitionOptions<S, E, R> {
-  readonly guard?: GuardFn<S, E>;
-  readonly effect?: (ctx: TransitionContext<S, E>) => Effect.Effect<void, never, R>;
-}

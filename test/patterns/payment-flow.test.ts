@@ -130,16 +130,14 @@ describe("Payment Flow Pattern", () => {
     // This works because the timer still fires, but the transition handler can check state
     .delay(PaymentState.PaymentError, "5 seconds", PaymentEvent.AutoDismissError)
     // Cancel from multiple states
-    .onAny(
-      [
-        PaymentState.SelectingMethod,
-        PaymentState.ProcessingPayment,
-        PaymentState.AwaitingBridgeConfirm,
-        PaymentState.PaymentError,
-      ],
+    .on(PaymentState.SelectingMethod, PaymentEvent.Cancel, () => PaymentState.PaymentCancelled)
+    .on(PaymentState.ProcessingPayment, PaymentEvent.Cancel, () => PaymentState.PaymentCancelled)
+    .on(
+      PaymentState.AwaitingBridgeConfirm,
       PaymentEvent.Cancel,
       () => PaymentState.PaymentCancelled,
     )
+    .on(PaymentState.PaymentError, PaymentEvent.Cancel, () => PaymentState.PaymentCancelled)
     .final(PaymentState.PaymentSuccess)
     .final(PaymentState.PaymentCancelled);
 

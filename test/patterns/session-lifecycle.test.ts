@@ -183,8 +183,8 @@ describe("Session Lifecycle Pattern", () => {
       })
         .delay(SessionState.Active, "30 minutes", SessionEvent.SessionTimeout)
         .on(SessionState.Active, SessionEvent.SessionTimeout, () => SessionState.SessionExpired)
-        // Use on.force to reenter the state, resetting the delay timer
-        .on.force(SessionState.Active, SessionEvent.Activity, ({ state }) =>
+        // Use reenter to reenter the state, resetting the delay timer
+        .reenter(SessionState.Active, SessionEvent.Activity, ({ state }) =>
           SessionState.Active({ ...state, lastActivity: Date.now() }),
         )
         .final(SessionState.SessionExpired);

@@ -105,7 +105,7 @@ Event → resolveTransition → onExit → handler (w/ guards/effects) → apply
 - Handler receives `{ state, event, guards, effects }` context
 - Guards checked inside handler via `yield* guards.xxx(params)`
 - Same-state transitions skip onExit/onEnter by default
-- `.on.force()`: force onExit/onEnter even for same state tag
+- `.reenter()`: force onExit/onEnter even for same state tag
 - `applyAlways`: loops until no match or final state (max 100 iterations)
 - Final states stop the actor
 

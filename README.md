@@ -70,36 +70,6 @@ Effect.runPromise(
 );
 ```
 
-## State Scoping with `.from()`
-
-Group transitions by source state:
-
-```typescript
-const machine = Machine.make({
-  state: MyState,
-  event: MyEvent,
-  initial: MyState.Idle,
-})
-  .from(MyState.Idle, (s) =>
-    s.on(MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url })),
-  )
-  .from(MyState.Loading, (s) =>
-    s
-      .on(MyEvent.Resolve, ({ event }) => MyState.Success({ data: event.data }))
-      .on(MyEvent.Reject, ({ event }) => MyState.Error({ message: event.message })),
-  )
-  .final(MyState.Success)
-  .final(MyState.Error);
-```
-
-## Multi-State Transitions with `.onAny()`
-
-Handle events from multiple states:
-
-```typescript
-machine.onAny([MyState.Loading, MyState.Success], MyEvent.Reset, () => MyState.Idle);
-```
-
 ## Effect Slots
 
 Effects (`invoke`, `onEnter`, `onExit`) use named slots. Provide handlers via `.provide()`:
@@ -179,21 +149,18 @@ See the [primer](./primer/) for comprehensive documentation:
 
 ### Fluent Methods
 
-| Method        | Description                                 |
-| ------------- | ------------------------------------------- |
-| `.on()`       | Add state/event transition                  |
-| `.on.force()` | Transition with forced reentry              |
-| `.onAny()`    | Transition from multiple states             |
-| `.from()`     | Scope transitions to a source state         |
-| `.always()`   | Eventless transitions with guard cascade    |
-| `.choose()`   | Guard cascade for event transitions         |
-| `.delay()`    | Schedule event after duration               |
-| `.invoke()`   | Register invoke slot (state-scoped or root) |
-| `.onEnter()`  | Register entry effect slot                  |
-| `.onExit()`   | Register exit effect slot                   |
-| `.provide()`  | Wire effect handlers to named slots         |
-| `.final()`    | Mark state as final                         |
-| `.persist()`  | Add persistence (schemas from machine)      |
+| Method       | Description                                      |
+| ------------ | ------------------------------------------------ |
+| `.on()`      | Add state/event transition                       |
+| `.reenter()` | Transition with forced reentry (runs exit/enter) |
+| `.always()`  | Eventless transitions with guard cascade         |
+| `.delay()`   | Schedule event after duration                    |
+| `.invoke()`  | Register invoke slot (state-scoped or root)      |
+| `.onEnter()` | Register entry effect slot                       |
+| `.onExit()`  | Register exit effect slot                        |
+| `.provide()` | Wire effect handlers to named slots              |
+| `.final()`   | Mark state as final                              |
+| `.persist()` | Add persistence (schemas from machine)           |
 
 ### Helpers
 
