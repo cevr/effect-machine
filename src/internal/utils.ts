@@ -46,7 +46,6 @@ export type TransitionResult<State, R> = State | Effect.Effect<State, never, R>;
  */
 export const INTERNAL_INIT_EVENT = "$init" as const;
 export const INTERNAL_ENTER_EVENT = "$enter" as const;
-export const INTERNAL_EXIT_EVENT = "$exit" as const;
 
 // ============================================================================
 // Runtime Utilities

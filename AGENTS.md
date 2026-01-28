@@ -39,6 +39,7 @@ const machine = Machine.make({ state, event, initial })
 
 ## Gotchas
 
+- Never `throw` inside Effect.gen - use `yield* new ErrorClass()` or `yield* Effect.fail()`
 - Timeouts via spawn: use `spawn` + `Effect.sleep` for timeouts (auto-cancelled on state exit)
 - TestClock: use `Layer.merge(ActorSystemDefault, TestContext.TestContext)`
 - `simulate`/`createTestHarness` run guard/effect slots in handlers but no spawn/background effects

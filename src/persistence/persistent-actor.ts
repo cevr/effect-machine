@@ -10,6 +10,7 @@ import { Inspector as InspectorTag } from "../inspection.js";
 import { resolveTransition } from "../internal/loop.js";
 import { isEffect } from "../internal/utils.js";
 import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
+import { type Listeners, notifyListeners, buildActorRefCore } from "../internal/actor-core.js";
 
 import type {
   ActorMetadata,
@@ -45,18 +46,6 @@ export interface PersistentActorRef<
    */
   readonly replayTo: (version: number) => Effect.Effect<void, PersistenceError>;
 }
-
-/** Listener set for sync subscriptions */
-type Listeners<S> = Set<(state: S) => void>;
-
-/**
- * Notify all listeners of state change
- */
-const notifyListeners = <S>(listeners: Listeners<S>, state: S): void => {
-  for (const listener of listeners) {
-    listener(state);
-  }
-};
 
 /** Get current time in milliseconds using Effect Clock */
 const now = Clock.currentTimeMillis;
@@ -162,31 +151,10 @@ const buildPersistentActorRef = <
       }
     });
 
+  const core = buildActorRefCore(id, typedMachine, stateRef, eventQueue, listeners, stop);
+
   return {
-    id,
-    send: (event) => Queue.offer(eventQueue, event),
-    state: stateRef,
-    stop,
-    snapshot: SubscriptionRef.get(stateRef),
-    snapshotSync: () => Effect.runSync(SubscriptionRef.get(stateRef)),
-    matches: (tag) => Effect.map(SubscriptionRef.get(stateRef), (s) => s._tag === tag),
-    matchesSync: (tag) => Effect.runSync(SubscriptionRef.get(stateRef))._tag === tag,
-    can: (event) =>
-      Effect.map(
-        SubscriptionRef.get(stateRef),
-        (s) => resolveTransition(typedMachine, s, event) !== undefined,
-      ),
-    canSync: (event) => {
-      const state = Effect.runSync(SubscriptionRef.get(stateRef));
-      return resolveTransition(typedMachine, state, event) !== undefined;
-    },
-    changes: stateRef.changes,
-    subscribe: (fn) => {
-      listeners.add(fn);
-      return () => {
-        listeners.delete(fn);
-      };
-    },
+    ...core,
     persist,
     version: Ref.get(versionRef),
     replayTo,

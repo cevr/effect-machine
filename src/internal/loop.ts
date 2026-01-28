@@ -5,23 +5,15 @@ import type { Machine, MachineRef } from "../machine.js";
 import type { InspectionEvent, Inspector } from "../inspection.js";
 import { Inspector as InspectorTag } from "../inspection.js";
 import { findTransitions, findSpawnEffects } from "./transition-index.js";
-import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
+import type { GuardsDef, EffectsDef } from "../slot.js";
 import { executeTransition } from "./execute-transition.js";
 import { INTERNAL_INIT_EVENT, INTERNAL_ENTER_EVENT } from "./utils.js";
-
-/** Listener set for sync subscriptions */
-type Listeners<S> = Set<(state: S) => void>;
-
-/** Create machine context for slot accessors */
-const createMachineContext = <S, E>(
-  state: S,
-  event: E,
-  self: MachineRef<E>,
-): MachineContext<S, E, MachineRef<E>> => ({
-  state,
-  event,
-  self,
-});
+import {
+  type Listeners,
+  createMachineContext,
+  notifyListeners,
+  buildActorRefCore,
+} from "./actor-core.js";
 
 // ============================================================================
 // Inspection Helpers
@@ -54,63 +46,6 @@ export const resolveTransition = <
 ): (typeof machine.transitions)[number] | undefined => {
   const candidates = findTransitions(machine, currentState._tag, event._tag);
   return candidates[0];
-};
-
-/**
- * Build ActorRef with all methods
- */
-const buildActorRef = <
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
-  R,
-  GD extends GuardsDef,
-  EFD extends EffectsDef,
->(
-  id: string,
-  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
-  stateRef: SubscriptionRef.SubscriptionRef<S>,
-  eventQueue: Queue.Queue<E>,
-  listeners: Listeners<S>,
-  stop: Effect.Effect<void>,
-): ActorRef<S, E> => ({
-  id,
-  send: (event) => Queue.offer(eventQueue, event),
-  state: stateRef,
-  stop,
-  snapshot: SubscriptionRef.get(stateRef),
-  snapshotSync: () => Effect.runSync(SubscriptionRef.get(stateRef)),
-  matches: (tag) => Effect.map(SubscriptionRef.get(stateRef), (s) => s._tag === tag),
-  matchesSync: (tag) => Effect.runSync(SubscriptionRef.get(stateRef))._tag === tag,
-  can: (event) =>
-    Effect.map(
-      SubscriptionRef.get(stateRef),
-      (s) => resolveTransition(machine, s, event) !== undefined,
-    ),
-  canSync: (event) => {
-    const state = Effect.runSync(SubscriptionRef.get(stateRef));
-    return resolveTransition(machine, state, event) !== undefined;
-  },
-  changes: stateRef.changes,
-  subscribe: (fn) => {
-    listeners.add(fn);
-    return () => {
-      listeners.delete(fn);
-    };
-  },
-});
-
-/**
- * Notify all listeners of state change.
- * Swallows exceptions from listeners to prevent one bad listener from breaking the machine.
- */
-const notifyListeners = <S>(listeners: Listeners<S>, state: S): void => {
-  for (const listener of listeners) {
-    try {
-      listener(state);
-    } catch {
-      // Swallow listener exceptions - one bad listener shouldn't break the machine
-    }
-  }
 };
 
 /**
@@ -199,7 +134,7 @@ export const createActor = <
           finalState: machine.initial,
           timestamp,
         }));
-        return buildActorRef(
+        return buildActorRefCore(
           id,
           machine,
           stateRef,
@@ -224,7 +159,7 @@ export const createActor = <
         ),
       );
 
-      return buildActorRef(
+      return buildActorRefCore(
         id,
         machine,
         stateRef,

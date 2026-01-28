@@ -61,7 +61,7 @@ export interface ActorSystem {
       id: string,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
       machine: Machine<S, E, R, any, any, GD, EFD>,
-    ): Effect.Effect<ActorRef<S, E>, never, R | Scope.Scope>;
+    ): Effect.Effect<ActorRef<S, E>, DuplicateActorError, R | Scope.Scope>;
 
     // Persistent machine overload
     <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
@@ -69,7 +69,7 @@ export interface ActorSystem {
       machine: PersistentMachine<S, E, R>,
     ): Effect.Effect<
       PersistentActorRef<S, E>,
-      PersistenceError | VersionConflictError,
+      PersistenceError | VersionConflictError | DuplicateActorError,
       R | Scope.Scope | PersistenceAdapterTag
     >;
   };
@@ -93,7 +93,7 @@ export interface ActorSystem {
     machine: PersistentMachine<S, E, R>,
   ) => Effect.Effect<
     Option.Option<PersistentActorRef<S, E>>,
-    PersistenceError,
+    PersistenceError | DuplicateActorError,
     R | Scope.Scope | PersistenceAdapterTag
   >;
 
@@ -185,12 +185,12 @@ const make = Effect.gen(function* () {
   const registerActor = <T extends { stop: Effect.Effect<void> }>(
     id: string,
     actor: T,
-  ): Effect.Effect<T, never, Scope.Scope> =>
+  ): Effect.Effect<T, DuplicateActorError, Scope.Scope> =>
     Effect.gen(function* () {
       // Check if actor already exists
       const existing = yield* SynchronizedRef.get(actors);
       if (existing.has(id)) {
-        throw new DuplicateActorError({ actorId: id });
+        return yield* new DuplicateActorError({ actorId: id });
       }
 
       // Register it
@@ -224,7 +224,7 @@ const make = Effect.gen(function* () {
   >(
     id: string,
     machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
-  ): Effect.Effect<ActorRef<S, E>, never, R | Scope.Scope> =>
+  ): Effect.Effect<ActorRef<S, E>, DuplicateActorError, R | Scope.Scope> =>
     Effect.gen(function* () {
       // Create and register the actor
       const actor = yield* createActor(id, machine);
@@ -240,7 +240,7 @@ const make = Effect.gen(function* () {
     persistentMachine: PersistentMachine<S, E, R>,
   ): Effect.Effect<
     PersistentActorRef<S, E>,
-    PersistenceError | VersionConflictError,
+    PersistenceError | VersionConflictError | DuplicateActorError,
     R | Scope.Scope | PersistenceAdapterTag
   > =>
     Effect.gen(function* () {
@@ -276,13 +276,13 @@ const make = Effect.gen(function* () {
   >(
     id: string,
     machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
-  ): Effect.Effect<ActorRef<S, E>, never, R | Scope.Scope>;
+  ): Effect.Effect<ActorRef<S, E>, DuplicateActorError, R | Scope.Scope>;
   function spawn<S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
     id: string,
     machine: PersistentMachine<S, E, R>,
   ): Effect.Effect<
     PersistentActorRef<S, E>,
-    PersistenceError | VersionConflictError,
+    PersistenceError | VersionConflictError | DuplicateActorError,
     R | Scope.Scope | PersistenceAdapterTag
   >;
   function spawn<
@@ -297,10 +297,10 @@ const make = Effect.gen(function* () {
       | Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>
       | PersistentMachine<S, E, R>,
   ):
-    | Effect.Effect<ActorRef<S, E>, never, R | Scope.Scope>
+    | Effect.Effect<ActorRef<S, E>, DuplicateActorError, R | Scope.Scope>
     | Effect.Effect<
         PersistentActorRef<S, E>,
-        PersistenceError | VersionConflictError,
+        PersistenceError | VersionConflictError | DuplicateActorError,
         R | Scope.Scope | PersistenceAdapterTag
       > {
     if (isPersistentMachine(machine)) {
@@ -319,7 +319,7 @@ const make = Effect.gen(function* () {
     persistentMachine: PersistentMachine<S, E, R>,
   ): Effect.Effect<
     Option.Option<PersistentActorRef<S, E>>,
-    PersistenceError,
+    PersistenceError | DuplicateActorError,
     R | Scope.Scope | PersistenceAdapterTag
   > =>
     Effect.gen(function* () {
@@ -376,7 +376,7 @@ const make = Effect.gen(function* () {
   ): Effect.Effect<RestoreResult<S, E>, never, R | Scope.Scope | PersistenceAdapterTag> =>
     Effect.gen(function* () {
       const restored: PersistentActorRef<S, E>[] = [];
-      const failed: { id: string; error: PersistenceError }[] = [];
+      const failed: { id: string; error: PersistenceError | DuplicateActorError }[] = [];
 
       for (const id of ids) {
         // Skip if already running

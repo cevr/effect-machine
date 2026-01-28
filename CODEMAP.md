@@ -25,6 +25,7 @@ src/
     ├── loop.ts              # Event loop, transition resolver, lifecycle effects
     ├── execute-transition.ts # Shared transition execution (loop, simulate, harness)
     ├── transition-index.ts  # O(1) lookup for transitions
+    ├── actor-core.ts        # Shared actor building (buildActorRefCore, notifyListeners)
     ├── brands.ts            # StateBrand/EventBrand + BrandedState/BrandedEvent
     └── utils.ts             # Type helpers, constants, isEffect, getTag
 
@@ -57,17 +58,18 @@ test/
 
 ## Key Files
 
-| File                                | Purpose                                                     |
-| ----------------------------------- | ----------------------------------------------------------- |
-| `machine.ts`                        | Machine class + namespace - fluent builder, all combinators |
-| `schema.ts`                         | Schema-first `State`/`Event` - single source of truth       |
-| `slot.ts`                           | `Slot.Guards`/`Slot.Effects` - parameterized slot factories |
-| `internal/loop.ts`                  | Event processing, `resolveTransition`, spawn effect forking |
-| `internal/transition-index.ts`      | O(1) lookup for transitions                                 |
-| `internal/brands.ts`                | Branded types: `StateBrand`, `BrandedState`, etc.           |
-| `internal/utils.ts`                 | Shared utilities: types, constants, `isEffect`, `getTag`    |
-| `persistence/persistent-machine.ts` | `Machine.persist` - schemas from machine                    |
-| `cluster/entity-machine.ts`         | `toEntity` - schemas from machine                           |
+| File                                | Purpose                                                       |
+| ----------------------------------- | ------------------------------------------------------------- |
+| `machine.ts`                        | Machine class + namespace - fluent builder, all combinators   |
+| `schema.ts`                         | Schema-first `State`/`Event` - single source of truth         |
+| `slot.ts`                           | `Slot.Guards`/`Slot.Effects` - parameterized slot factories   |
+| `internal/loop.ts`                  | Event processing, `resolveTransition`, spawn effect forking   |
+| `internal/transition-index.ts`      | O(1) lookup for transitions                                   |
+| `internal/brands.ts`                | Branded types: `StateBrand`, `BrandedState`, etc.             |
+| `internal/utils.ts`                 | Shared utilities: types, constants, `isEffect`, `getTag`      |
+| `internal/actor-core.ts`            | Shared actor building: `buildActorRefCore`, `notifyListeners` |
+| `persistence/persistent-machine.ts` | `Machine.persist` - schemas from machine                      |
+| `cluster/entity-machine.ts`         | `toEntity` - schemas from machine                             |
 
 ## Machine Class Architecture
 
