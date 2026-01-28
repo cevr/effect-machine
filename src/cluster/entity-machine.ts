@@ -219,8 +219,8 @@ export const EntityMachine = {
             }),
 
           GetState: () => Ref.get(stateRef),
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- generic entity handler typing
-        } as any);
+          // Entity.of expects handlers matching Rpcs type param - dynamic construction requires cast
+        } as unknown as Parameters<typeof entity.of>[0]);
       }),
     ) as unknown as Layer.Layer<never, never, R>;
   },

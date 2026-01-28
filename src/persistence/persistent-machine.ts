@@ -101,7 +101,7 @@ export const isPersistentMachine = (
  * );
  * ```
  */
-interface WithPersistenceConfig {
+export interface WithPersistenceConfig {
   readonly snapshotSchedule: Schedule.Schedule<unknown, { readonly _tag: string }>;
   readonly journalEvents: boolean;
   readonly machineType?: string;

@@ -38,20 +38,15 @@ describe("Machine.from", () => {
           state: EditorState,
           event: EditorEvent,
           initial: EditorState.Idle,
-        }).pipe(
-          Machine.on(EditorState.Idle, EditorEvent.Focus, () => EditorState.Typing({ text: "" })),
-          Machine.from(EditorState.Typing).pipe(
-            Machine.on(EditorEvent.KeyPress, ({ state, event }) =>
-              EditorState.Typing({ text: state.text + event.key }),
-            ),
-            Machine.on(EditorEvent.Backspace, ({ state }) =>
-              EditorState.Typing({ text: state.text.slice(0, -1) }),
-            ),
-            Machine.on(EditorEvent.Submit, ({ state }) =>
-              EditorState.Submitted({ text: state.text }),
-            ),
-          ),
-        );
+        })
+          .on(EditorState.Idle, EditorEvent.Focus, () => EditorState.Typing({ text: "" }))
+          .from(EditorState.Typing, (scope) =>
+            scope
+              .on(EditorEvent.KeyPress, ({ state, event }) =>
+                EditorState.Typing({ text: state.text + event.key }),
+              )
+              .on(EditorEvent.Submit, ({ state }) => EditorState.Submitted({ text: state.text })),
+          );
 
         const result = yield* simulate(machine, [
           EditorEvent.Focus,
@@ -68,24 +63,21 @@ describe("Machine.from", () => {
     );
   });
 
-  test("from().pipe() transitions work with guards", async () => {
+  test("from() transitions work with guards", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.make({
           state: EditorState,
           event: EditorEvent,
           initial: EditorState.Typing({ text: "" }),
-        }).pipe(
-          Machine.from(EditorState.Typing).pipe(
-            Machine.on(
+        }).from(EditorState.Typing, (scope) =>
+          scope
+            .on(
               EditorEvent.KeyPress,
               ({ state, event }) => EditorState.Typing({ text: state.text + event.key }),
               { guard: ({ state }) => state.text.length < 3 },
-            ),
-            Machine.on(EditorEvent.Submit, ({ state }) =>
-              EditorState.Submitted({ text: state.text }),
-            ),
-          ),
+            )
+            .on(EditorEvent.Submit, ({ state }) => EditorState.Submitted({ text: state.text })),
         );
 
         const result = yield* simulate(machine, [
@@ -104,7 +96,7 @@ describe("Machine.from", () => {
     );
   });
 
-  test("from().pipe() transitions work with effects", async () => {
+  test("from() transitions work with effects", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const logs: string[] = [];
@@ -113,9 +105,9 @@ describe("Machine.from", () => {
           state: EditorState,
           event: EditorEvent,
           initial: EditorState.Typing({ text: "" }),
-        }).pipe(
-          Machine.from(EditorState.Typing).pipe(
-            Machine.on(
+        }).from(EditorState.Typing, (scope) =>
+          scope
+            .on(
               EditorEvent.KeyPress,
               ({ state, event }) => EditorState.Typing({ text: state.text + event.key }),
               {
@@ -124,11 +116,8 @@ describe("Machine.from", () => {
                     logs.push(`key: ${event.key}`);
                   }),
               },
-            ),
-            Machine.on(EditorEvent.Submit, ({ state }) =>
-              EditorState.Submitted({ text: state.text }),
-            ),
-          ),
+            )
+            .on(EditorEvent.Submit, ({ state }) => EditorState.Submitted({ text: state.text })),
         );
 
         yield* simulate(machine, [
@@ -149,24 +138,22 @@ describe("Machine.from", () => {
           state: EditorState,
           event: EditorEvent,
           initial: EditorState.Idle,
-        }).pipe(
-          Machine.from(EditorState.Idle).pipe(
-            Machine.on(EditorEvent.Focus, () => EditorState.Typing({ text: "" })),
-          ),
-          Machine.from(EditorState.Typing).pipe(
-            Machine.on(EditorEvent.KeyPress, ({ state, event }) =>
-              EditorState.Typing({ text: state.text + event.key }),
-            ),
-            Machine.on(EditorEvent.Submit, ({ state }) =>
-              EditorState.Submitting({ text: state.text }),
-            ),
-          ),
-          Machine.from(EditorState.Submitting).pipe(
-            Machine.on(EditorEvent.Success, ({ state }) =>
+        })
+          .from(EditorState.Idle, (scope) =>
+            scope.on(EditorEvent.Focus, () => EditorState.Typing({ text: "" })),
+          )
+          .from(EditorState.Typing, (scope) =>
+            scope
+              .on(EditorEvent.KeyPress, ({ state, event }) =>
+                EditorState.Typing({ text: state.text + event.key }),
+              )
+              .on(EditorEvent.Submit, ({ state }) => EditorState.Submitting({ text: state.text })),
+          )
+          .from(EditorState.Submitting, (scope) =>
+            scope.on(EditorEvent.Success, ({ state }) =>
               EditorState.Submitted({ text: state.text }),
             ),
-          ),
-        );
+          );
 
         const result = yield* simulate(machine, [
           EditorEvent.Focus,

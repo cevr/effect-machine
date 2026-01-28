@@ -22,11 +22,10 @@ describe("Delay Transitions", () => {
         state: NotifState,
         event: NotifEvent,
         initial: NotifState.Showing({ message: "Hello" }),
-      }).pipe(
-        Machine.on(NotifState.Showing, NotifEvent.Dismiss, () => NotifState.Dismissed),
-        Machine.delay(NotifState.Showing, "3 seconds", NotifEvent.Dismiss),
-        Machine.final(NotifState.Dismissed),
-      );
+      })
+        .on(NotifState.Showing, NotifEvent.Dismiss, () => NotifState.Dismissed)
+        .delay(NotifState.Showing, "3 seconds", NotifEvent.Dismiss)
+        .final(NotifState.Dismissed);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("notification", machine);
@@ -53,11 +52,10 @@ describe("Delay Transitions", () => {
         state: NotifState,
         event: NotifEvent,
         initial: NotifState.Showing({ message: "Hello" }),
-      }).pipe(
-        Machine.on(NotifState.Showing, NotifEvent.Dismiss, () => NotifState.Dismissed),
-        Machine.delay(NotifState.Showing, "3 seconds", NotifEvent.Dismiss),
-        Machine.final(NotifState.Dismissed),
-      );
+      })
+        .on(NotifState.Showing, NotifEvent.Dismiss, () => NotifState.Dismissed)
+        .delay(NotifState.Showing, "3 seconds", NotifEvent.Dismiss)
+        .final(NotifState.Dismissed);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("notification", machine);

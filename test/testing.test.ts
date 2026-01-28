@@ -31,17 +31,14 @@ const testMachine = Machine.make({
   state: TestState,
   event: TestEvent,
   initial: TestState.Idle,
-}).pipe(
-  Machine.on(TestState.Idle, TestEvent.Fetch, () => TestState.Loading),
-  Machine.on(TestState.Loading, TestEvent.Resolve, ({ event }) =>
-    TestState.Success({ data: event.data }),
-  ),
-  Machine.on(TestState.Loading, TestEvent.Reject, ({ event }) =>
+})
+  .on(TestState.Idle, TestEvent.Fetch, () => TestState.Loading)
+  .on(TestState.Loading, TestEvent.Resolve, ({ event }) => TestState.Success({ data: event.data }))
+  .on(TestState.Loading, TestEvent.Reject, ({ event }) =>
     TestState.Error({ message: event.message }),
-  ),
-  Machine.final(TestState.Success),
-  Machine.final(TestState.Error),
-);
+  )
+  .final(TestState.Success)
+  .final(TestState.Error);
 
 describe("Testing", () => {
   describe("simulate", () => {

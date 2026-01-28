@@ -1,10 +1,4 @@
-import type { Effect } from "effect";
-
-import type { AnySlot, Machine, OnOptions, Transition } from "../machine.js";
-import { addTransition, normalizeOnOptions } from "../machine.js";
-import { getTag } from "../internal/get-tag.js";
 import type { TransitionContext } from "../internal/types.js";
-import type { BrandedState, BrandedEvent, TaggedOrConstructor } from "../internal/brands.js";
 
 /**
  * Create a handler function that merges partial updates into the current state.
@@ -12,11 +6,7 @@ import type { BrandedState, BrandedEvent, TaggedOrConstructor } from "../interna
  *
  * @example
  * ```ts
- * pipe(
- *   Machine.make<FormState, FormEvent>(State.Form({ name: "", email: "" })),
- *   on(State.Form, Event.SetName, assign(({ event }) => ({ name: event.name }))),
- *   on(State.Form, Event.SetEmail, assign(({ event }) => ({ email: event.email }))),
- * )
+ * machine.on(State.Form, Event.SetName, Machine.assign(({ event }) => ({ name: event.name })))
  * ```
  */
 export function assign<S extends { readonly _tag: string }, E>(
@@ -26,55 +16,4 @@ export function assign<S extends { readonly _tag: string }, E>(
     ...ctx.state,
     ...updater(ctx),
   });
-}
-
-/**
- * Shorthand for `on(State, Event, assign(...))`.
- * Updates the current state by merging partial data without changing the tag.
- *
- * @example
- * ```ts
- * pipe(
- *   Machine.make<FormState, FormEvent>(State.Form({ name: "", email: "" })),
- *   update(State.Form, Event.SetName, ({ event }) => ({ name: event.name })),
- *   update(State.Form, Event.SetEmail, ({ event }) => ({ email: event.email })),
- * )
- * ```
- */
-export function update<
-  NarrowedState extends BrandedState,
-  NarrowedEvent extends BrandedEvent,
-  R2 = never,
->(
-  state: TaggedOrConstructor<NarrowedState>,
-  event: TaggedOrConstructor<NarrowedEvent>,
-  updater: (
-    ctx: TransitionContext<NarrowedState, NarrowedEvent>,
-  ) => Partial<Omit<NarrowedState, "_tag">>,
-  options?: OnOptions<NarrowedState, NarrowedEvent, R2>,
-) {
-  const stateTag = getTag(state);
-  const eventTag = getTag(event);
-  const normalizedOptions = normalizeOnOptions(options);
-
-  return <State extends BrandedState, Event extends BrandedEvent, R, Slots extends AnySlot>(
-    builder: Machine<State, Event, R, Slots>,
-  ): Machine<State, Event, R | R2, Slots> => {
-    const transition: Transition<State, Event, R2> = {
-      stateTag,
-      eventTag,
-      handler: (ctx) => ({
-        ...ctx.state,
-        ...updater(ctx as unknown as TransitionContext<NarrowedState, NarrowedEvent>),
-      }),
-      guard: normalizedOptions?.guard as unknown as
-        | ((ctx: TransitionContext<State, Event>) => boolean)
-        | undefined,
-      effect: normalizedOptions?.effect as unknown as
-        | ((ctx: TransitionContext<State, Event>) => Effect.Effect<void, never, R2>)
-        | undefined,
-    };
-
-    return addTransition(transition)(builder) as Machine<State, Event, R | R2, Slots>;
-  };
 }

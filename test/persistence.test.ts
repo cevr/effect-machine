@@ -11,6 +11,7 @@ import {
   makeInMemoryPersistenceAdapter,
   PersistenceAdapterTag,
   type PersistentActorRef,
+  type PersistentMachine,
   State,
 } from "../src/index.js";
 import { describe, expect, it, yieldFibers } from "./utils/effect-test.js";
@@ -35,25 +36,21 @@ type OrderEvent = typeof OrderEvent.Type;
 const TestLayer = Layer.merge(ActorSystemDefault, InMemoryPersistenceAdapter);
 
 describe("Persistence", () => {
-  const createPersistentMachine = () =>
+  const createPersistentMachine = (): PersistentMachine<OrderState, OrderEvent> =>
     Machine.make({
       state: OrderState,
       event: OrderEvent,
       initial: OrderState.Idle,
-    }).pipe(
-      Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
+    })
+      .on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
         OrderState.Pending({ orderId: event.orderId }),
-      ),
-      Machine.on(OrderState.Pending, OrderEvent.Pay, ({ state, event }) =>
+      )
+      .on(OrderState.Pending, OrderEvent.Pay, ({ state, event }) =>
         OrderState.Paid({ orderId: state.orderId, amount: event.amount }),
-      ),
-      Machine.on(OrderState.Paid, OrderEvent.Complete, () => OrderState.Done),
-      Machine.final(OrderState.Done),
-      Machine.persist({
-        snapshotSchedule: Schedule.forever,
-        journalEvents: true,
-      }),
-    );
+      )
+      .on(OrderState.Paid, OrderEvent.Complete, () => OrderState.Done)
+      .final(OrderState.Done)
+      .persist({ snapshotSchedule: Schedule.forever, journalEvents: true });
 
   it.scopedLive("spawn persistent actor and process events", () =>
     Effect.gen(function* () {
@@ -197,23 +194,22 @@ describe("Persistence", () => {
         Effect.gen(function* () {
           const system = yield* ActorSystemService;
 
-          // Create machine with no automatic snapshots (using stop which never triggers)
+          // Create machine with no automatic snapshots (never trigger schedule)
           const noAutoSnapshotMachine = Machine.make({
             state: OrderState,
             event: OrderEvent,
             initial: OrderState.Idle,
-          }).pipe(
-            Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
+          })
+            .on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
               OrderState.Pending({ orderId: event.orderId }),
-            ),
-            Machine.on(OrderState.Pending, OrderEvent.Pay, ({ state, event }) =>
+            )
+            .on(OrderState.Pending, OrderEvent.Pay, ({ state, event }) =>
               OrderState.Paid({ orderId: state.orderId, amount: event.amount }),
-            ),
-            Machine.persist({
-              snapshotSchedule: Schedule.stop, // Never auto-snapshot
+            )
+            .persist({
+              snapshotSchedule: Schedule.stop,
               journalEvents: true,
-            }),
-          );
+            });
 
           const actor = yield* system.spawn("order-4", noAutoSnapshotMachine) as Effect.Effect<
             PersistentActorRef<OrderState, OrderEvent>
@@ -261,23 +257,22 @@ describe("Persistence", () => {
         Effect.gen(function* () {
           const system = yield* ActorSystemService;
 
-          // Create machine that snapshots infrequently
+          // Create machine that snapshots infrequently (only manually)
           const infrequentSnapshotMachine = Machine.make({
             state: OrderState,
             event: OrderEvent,
             initial: OrderState.Idle,
-          }).pipe(
-            Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
+          })
+            .on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
               OrderState.Pending({ orderId: event.orderId }),
-            ),
-            Machine.on(OrderState.Pending, OrderEvent.Pay, ({ state, event }) =>
+            )
+            .on(OrderState.Pending, OrderEvent.Pay, ({ state, event }) =>
               OrderState.Paid({ orderId: state.orderId, amount: event.amount }),
-            ),
-            Machine.persist({
-              snapshotSchedule: Schedule.stop, // Never auto-snapshot
+            )
+            .persist({
+              snapshotSchedule: Schedule.stop,
               journalEvents: true,
-            }),
-          );
+            });
 
           const actor = yield* system.spawn("order-5", infrequentSnapshotMachine) as Effect.Effect<
             PersistentActorRef<OrderState, OrderEvent>
@@ -428,26 +423,27 @@ describe("Persistence", () => {
 });
 
 describe("Persistence Registry", () => {
-  const createPersistentMachine = (machineType?: string) =>
+  const createPersistentMachine = (
+    machineType?: string,
+  ): PersistentMachine<OrderState, OrderEvent> =>
     Machine.make({
       state: OrderState,
       event: OrderEvent,
       initial: OrderState.Idle,
-    }).pipe(
-      Machine.on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
+    })
+      .on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
         OrderState.Pending({ orderId: event.orderId }),
-      ),
-      Machine.on(OrderState.Pending, OrderEvent.Pay, ({ state, event }) =>
+      )
+      .on(OrderState.Pending, OrderEvent.Pay, ({ state, event }) =>
         OrderState.Paid({ orderId: state.orderId, amount: event.amount }),
-      ),
-      Machine.on(OrderState.Paid, OrderEvent.Complete, () => OrderState.Done),
-      Machine.final(OrderState.Done),
-      Machine.persist({
+      )
+      .on(OrderState.Paid, OrderEvent.Complete, () => OrderState.Done)
+      .final(OrderState.Done)
+      .persist({
         snapshotSchedule: Schedule.forever,
         journalEvents: true,
         machineType,
-      }),
-    );
+      });
 
   it.scopedLive("listPersisted returns empty for no actors", () =>
     Effect.gen(function* () {

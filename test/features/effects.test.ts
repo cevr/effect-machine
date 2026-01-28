@@ -36,22 +36,19 @@ describe("Effect Slots", () => {
     state: FetchState,
     event: FetchEvent,
     initial: FetchState.Idle,
-  }).pipe(
-    Machine.on(FetchState.Idle, FetchEvent.Fetch, ({ event }) =>
-      FetchState.Loading({ url: event.url }),
-    ),
-    Machine.on(FetchState.Loading, FetchEvent.Resolve, ({ event }) =>
+  })
+    .on(FetchState.Idle, FetchEvent.Fetch, ({ event }) => FetchState.Loading({ url: event.url }))
+    .on(FetchState.Loading, FetchEvent.Resolve, ({ event }) =>
       FetchState.Success({ data: event.data }),
-    ),
-    Machine.on(FetchState.Loading, FetchEvent.Reject, ({ event }) =>
+    )
+    .on(FetchState.Loading, FetchEvent.Reject, ({ event }) =>
       FetchState.Error({ message: event.message }),
-    ),
-    Machine.invoke(FetchState.Loading, "fetchData"),
-    Machine.onEnter(FetchState.Success, "notifySuccess"),
-    Machine.onExit(FetchState.Loading, "cleanup"),
-    Machine.final(FetchState.Success),
-    Machine.final(FetchState.Error),
-  );
+    )
+    .invoke(FetchState.Loading, "fetchData")
+    .onEnter(FetchState.Success, "notifySuccess")
+    .onExit(FetchState.Loading, "cleanup")
+    .final(FetchState.Success)
+    .final(FetchState.Error);
 
   test("effectSlots tracks slot names", () => {
     const built = baseMachine;
@@ -90,13 +87,12 @@ describe("Effect Slots", () => {
     }),
   );
 
-  it.scopedLive("Machine.provide wires in effect handlers", () =>
+  it.scopedLive("provide wires in effect handlers", () =>
     Effect.gen(function* () {
       const log: string[] = [];
-      const built = baseMachine;
 
-      // Provide effect implementations
-      const providedMachine = Machine.provide(built, {
+      // Provide effect implementations via fluent API
+      const providedMachine = baseMachine.provide({
         fetchData: ({ self }) =>
           Effect.gen(function* () {
             log.push("fetchData:start");
@@ -136,12 +132,10 @@ describe("Effect Slots", () => {
 
   it.scopedLive("can swap effect implementations for testing", () =>
     Effect.gen(function* () {
-      const built = baseMachine;
-
       const mockData = yield* Ref.make<string>("test-mock-data");
 
       // Test implementation - uses mock data
-      const testMachine = Machine.provide(built, {
+      const testMachine = baseMachine.provide({
         fetchData: ({ self }) =>
           Effect.gen(function* () {
             const data = yield* Ref.get(mockData);
@@ -163,12 +157,10 @@ describe("Effect Slots", () => {
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
 
-  test("Machine.provide throws on missing handler", () => {
-    const built = baseMachine;
-
+  test("provide throws on missing handler", () => {
     try {
       // @ts-expect-error - intentionally missing handlers for testing
-      Machine.provide(built, {
+      baseMachine.provide({
         fetchData: () => Effect.void,
         // Missing notifySuccess and cleanup
       });
@@ -179,11 +171,9 @@ describe("Effect Slots", () => {
     }
   });
 
-  test("Machine.provide throws on extra handler", () => {
-    const built = baseMachine;
-
+  test("provide throws on extra handler", () => {
     try {
-      Machine.provide(built, {
+      baseMachine.provide({
         fetchData: () => Effect.void,
         notifySuccess: () => Effect.void,
         cleanup: () => Effect.void,
@@ -199,8 +189,6 @@ describe("Effect Slots", () => {
 
   it.scopedLive("spawning unprovided machine throws runtime error", () =>
     Effect.gen(function* () {
-      const built = baseMachine;
-
       // Note: TypeScript doesn't catch this at compile time because Slots is a phantom type.
       // The runtime validation in spawn() will catch it.
       // We use a type assertion to bypass the type check for testing.
@@ -209,7 +197,7 @@ describe("Effect Slots", () => {
       const system = yield* ActorSystemService;
 
       let caughtError: UnprovidedSlotsError | undefined;
-      yield* system.spawn("bad", built as unknown as ProvidedMachineType).pipe(
+      yield* system.spawn("bad", baseMachine as unknown as ProvidedMachineType).pipe(
         Effect.catchAllDefect((defect) => {
           caughtError = defect as UnprovidedSlotsError;
           return Effect.void;
@@ -222,34 +210,33 @@ describe("Effect Slots", () => {
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
 
-  it.scopedLive("Machine.provide is pipeable (data-last)", () =>
+  it.scopedLive("provide is chainable", () =>
     Effect.gen(function* () {
       const log: string[] = [];
 
-      // Using the pipeable form - handlers first, then machine
+      // Using fluent chaining with provide at the end
       const providedMachine = Machine.make({
         state: FetchState,
         event: FetchEvent,
         initial: FetchState.Idle,
-      }).pipe(
-        Machine.on(FetchState.Idle, FetchEvent.Fetch, ({ event }) =>
+      })
+        .on(FetchState.Idle, FetchEvent.Fetch, ({ event }) =>
           FetchState.Loading({ url: event.url }),
-        ),
-        Machine.on(FetchState.Loading, FetchEvent.Resolve, ({ event }) =>
+        )
+        .on(FetchState.Loading, FetchEvent.Resolve, ({ event }) =>
           FetchState.Success({ data: event.data }),
-        ),
-        Machine.invoke(FetchState.Loading, "fetchData"),
-        Machine.onEnter(FetchState.Success, "notify"),
-        Machine.final(FetchState.Success),
-        Machine.provide({
+        )
+        .invoke(FetchState.Loading, "fetchData")
+        .onEnter(FetchState.Success, "notify")
+        .final(FetchState.Success)
+        .provide({
           fetchData: ({ self }) =>
             Effect.gen(function* () {
               log.push("fetch");
               yield* self.send(FetchEvent.Resolve({ data: "piped" }));
             }),
           notify: () => Effect.sync(() => log.push("notify")),
-        }),
-      );
+        });
 
       expect(providedMachine.effectSlots.size).toBe(0);
 
@@ -282,10 +269,9 @@ describe("Effect Slots", () => {
         state: TestState,
         event: TestEvent,
         initial: TestState.Idle,
-      }).pipe(
-        Machine.on(TestState.Idle, TestEvent.Finish, () => TestState.Done),
-        Machine.final(TestState.Done),
-      );
+      })
+        .on(TestState.Idle, TestEvent.Finish, () => TestState.Done)
+        .final(TestState.Done);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
@@ -312,41 +298,37 @@ describe("Effect Slots", () => {
         Running: {},
         Stopped: {},
       });
-      type TimerState = typeof TimerState.Type;
 
       const TimerEvent = Event({
         Stop: {},
         Tick: {},
       });
-      type TimerEvent = typeof TimerEvent.Type;
 
       const timerMachine = Machine.make({
         state: TimerState,
         event: TimerEvent,
         initial: TimerState.Running,
-      }).pipe(
-        Machine.on(TimerState.Running, TimerEvent.Stop, () => TimerState.Stopped),
-        Machine.invoke(TimerState.Running, "runTimer"),
-        Machine.final(TimerState.Stopped),
-      );
-
-      const providedMachine = Machine.provide(timerMachine, {
-        runTimer: () =>
-          Effect.gen(function* () {
-            log.push("timer:start");
-            yield* Effect.sleep("10 seconds");
-            log.push("timer:done"); // Should not run if cancelled
-          }).pipe(
-            Effect.onInterrupt(() =>
-              Effect.sync(() => {
-                log.push("timer:interrupted");
-              }),
+      })
+        .on(TimerState.Running, TimerEvent.Stop, () => TimerState.Stopped)
+        .invoke(TimerState.Running, "runTimer")
+        .final(TimerState.Stopped)
+        .provide({
+          runTimer: () =>
+            Effect.gen(function* () {
+              log.push("timer:start");
+              yield* Effect.sleep("10 seconds");
+              log.push("timer:done"); // Should not run if cancelled
+            }).pipe(
+              Effect.onInterrupt(() =>
+                Effect.sync(() => {
+                  log.push("timer:interrupted");
+                }),
+              ),
             ),
-          ),
-      });
+        });
 
       const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("timer", providedMachine);
+      const actor = yield* system.spawn("timer", timerMachine);
 
       // Give the timer a chance to start
       yield* yieldFibers;

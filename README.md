@@ -5,6 +5,7 @@ Type-safe state machines for Effect. XState-inspired API with full Effect integr
 ## Features
 
 - **Schema-first** - `State` and `Event` ARE schemas. Single source of truth for types and serialization
+- **Fluent builder** - Chain `.on()`, `.always()`, `.delay()` etc. with full type inference
 - **Type-safe transitions** - types inferred from schemas, no manual type params needed
 - **Guard composition** - `Guard.and`, `Guard.or`, `Guard.not`
 - **Eventless transitions** - `always` for computed state changes
@@ -27,8 +28,8 @@ import { Effect, Schema } from "effect";
 import { Machine, State, Event, simulate } from "effect-machine";
 
 // Define states with schema (schema-first - no separate type definition needed)
-// Empty structs: State.Idle() - no args required
-// Non-empty: State.Loading({ url }) - args required
+// Empty structs: State.Idle - plain value, not callable
+// Non-empty: State.Loading({ url }) - constructor requiring args
 const MyState = State({
   Idle: {},
   Loading: { url: Schema.String },
@@ -45,22 +46,17 @@ const MyEvent = Event({
 });
 type MyEvent = typeof MyEvent.Type;
 
-// Build machine - types inferred from schemas
+// Build machine with fluent API - types inferred from schemas
 const machine = Machine.make({
   state: MyState,
   event: MyEvent,
-  initial: MyState.Idle(),
-}).pipe(
-  Machine.on(MyState.Idle, MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url })),
-  Machine.on(MyState.Loading, MyEvent.Resolve, ({ event }) =>
-    MyState.Success({ data: event.data }),
-  ),
-  Machine.on(MyState.Loading, MyEvent.Reject, ({ event }) =>
-    MyState.Error({ message: event.message }),
-  ),
-  Machine.final(MyState.Success),
-  Machine.final(MyState.Error),
-);
+  initial: MyState.Idle,
+})
+  .on(MyState.Idle, MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url }))
+  .on(MyState.Loading, MyEvent.Resolve, ({ event }) => MyState.Success({ data: event.data }))
+  .on(MyState.Loading, MyEvent.Reject, ({ event }) => MyState.Error({ message: event.message }))
+  .final(MyState.Success)
+  .final(MyState.Error);
 
 // Test with simulate
 Effect.runPromise(
@@ -74,7 +70,7 @@ Effect.runPromise(
 );
 ```
 
-## State Scoping with `Machine.from`
+## State Scoping with `.from()`
 
 Group transitions by source state:
 
@@ -82,50 +78,47 @@ Group transitions by source state:
 const machine = Machine.make({
   state: MyState,
   event: MyEvent,
-  initial: MyState.Idle(),
-}).pipe(
-  Machine.from(MyState.Idle).pipe(
-    Machine.on(MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url })),
-  ),
-  Machine.from(MyState.Loading).pipe(
-    Machine.on(MyEvent.Resolve, ({ event }) => MyState.Success({ data: event.data })),
-    Machine.on(MyEvent.Reject, ({ event }) => MyState.Error({ message: event.message })),
-  ),
-  Machine.final(MyState.Success),
-  Machine.final(MyState.Error),
-);
+  initial: MyState.Idle,
+})
+  .from(MyState.Idle, (s) =>
+    s.on(MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url })),
+  )
+  .from(MyState.Loading, (s) =>
+    s
+      .on(MyEvent.Resolve, ({ event }) => MyState.Success({ data: event.data }))
+      .on(MyEvent.Reject, ({ event }) => MyState.Error({ message: event.message })),
+  )
+  .final(MyState.Success)
+  .final(MyState.Error);
 ```
 
-## Multi-State Transitions with `Machine.any`
+## Multi-State Transitions with `.onAny()`
 
 Handle events from multiple states:
 
 ```typescript
-Machine.on(Machine.any(MyState.Loading, MyState.Success), MyEvent.Reset, () => MyState.Idle());
+machine.onAny([MyState.Loading, MyState.Success], MyEvent.Reset, () => MyState.Idle);
 ```
 
 ## Effect Slots
 
-Effects (`invoke`, `onEnter`, `onExit`) use named slots. Provide handlers via `Machine.provide`:
+Effects (`invoke`, `onEnter`, `onExit`) use named slots. Provide handlers via `.provide()`:
 
 ```typescript
 // Define machine with effect slots
 const baseMachine = Machine.make({
   state: MyState,
   event: MyEvent,
-  initial: MyState.Idle(),
-}).pipe(
-  Machine.on(MyState.Idle, MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url })),
-  Machine.on(MyState.Loading, MyEvent.Resolve, ({ event }) =>
-    MyState.Success({ data: event.data }),
-  ),
-  Machine.invoke(MyState.Loading, "fetchData"),
-  Machine.onEnter(MyState.Success, "notifyUser"),
-  Machine.final(MyState.Success),
-);
+  initial: MyState.Idle,
+})
+  .on(MyState.Idle, MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url }))
+  .on(MyState.Loading, MyEvent.Resolve, ({ event }) => MyState.Success({ data: event.data }))
+  .invoke(MyState.Loading, "fetchData")
+  .onEnter(MyState.Success, "notifyUser")
+  .final(MyState.Success);
 
 // Production: provide real implementations
-const machine = Machine.provide(baseMachine, {
+const machine = baseMachine.provide({
   fetchData: ({ state, self }) =>
     Effect.gen(function* () {
       const data = yield* fetchFromApi(state.url);
@@ -135,7 +128,7 @@ const machine = Machine.provide(baseMachine, {
 });
 
 // Test: provide mock implementations
-const testMachine = Machine.provide(baseMachine, {
+const testMachine = baseMachine.provide({
   fetchData: ({ self }) => self.send(MyEvent.Resolve({ data: "mock" })),
   notifyUser: () => Effect.void,
 });
@@ -152,16 +145,15 @@ const persistentMachine = Machine.make({
   state: OrderState,
   event: OrderEvent,
   initial: OrderState.Pending({ orderId: "" }),
-}).pipe(
-  Machine.on(OrderState.Pending, OrderEvent.Ship, ({ event }) =>
+})
+  .on(OrderState.Pending, OrderEvent.Ship, ({ event }) =>
     OrderState.Shipped({ trackingId: event.trackingId }),
-  ),
-  Machine.final(OrderState.Shipped),
-  Machine.persist({
+  )
+  .final(OrderState.Shipped)
+  .persist({
     snapshotSchedule: Schedule.forever,
     journalEvents: true,
-  }),
-);
+  });
 ```
 
 ## Documentation
@@ -179,40 +171,44 @@ See the [primer](./primer/) for comprehensive documentation:
 
 ### Core
 
-| Export          | Description                                    |
-| --------------- | ---------------------------------------------- |
-| `State({...})`  | Schema-first state definition                  |
-| `Event({...})`  | Schema-first event definition                  |
-| `Machine.make`  | Create machine with `{ state, event, initial}` |
-| `Machine.on`    | Add state/event transition                     |
-| `Machine.final` | Mark state as final                            |
+| Export         | Description                                    |
+| -------------- | ---------------------------------------------- |
+| `State({...})` | Schema-first state definition                  |
+| `Event({...})` | Schema-first event definition                  |
+| `Machine.make` | Create machine with `{ state, event, initial}` |
 
-### Combinators
+### Fluent Methods
 
-| Export            | Description                                  |
-| ----------------- | -------------------------------------------- |
-| `Machine.from`    | Scope transitions to a source state          |
-| `Machine.any`     | Match multiple states for transitions        |
-| `Machine.always`  | Eventless transitions with guard cascade     |
-| `Machine.choose`  | Guard cascade for event transitions          |
-| `Machine.delay`   | Schedule event after duration                |
-| `Machine.assign`  | Helper for partial state updates             |
-| `Machine.update`  | Shorthand for `on` + `assign`                |
-| `Machine.invoke`  | Register invoke slot (state-scoped or root)  |
-| `Machine.onEnter` | Register entry effect slot (provide handler) |
-| `Machine.onExit`  | Register exit effect slot (provide handler)  |
-| `Machine.provide` | Wire effect handlers to named slots          |
-| `Machine.persist` | Add persistence (schemas from machine)       |
+| Method        | Description                                 |
+| ------------- | ------------------------------------------- |
+| `.on()`       | Add state/event transition                  |
+| `.on.force()` | Transition with forced reentry              |
+| `.onAny()`    | Transition from multiple states             |
+| `.from()`     | Scope transitions to a source state         |
+| `.always()`   | Eventless transitions with guard cascade    |
+| `.choose()`   | Guard cascade for event transitions         |
+| `.delay()`    | Schedule event after duration               |
+| `.invoke()`   | Register invoke slot (state-scoped or root) |
+| `.onEnter()`  | Register entry effect slot                  |
+| `.onExit()`   | Register exit effect slot                   |
+| `.provide()`  | Wire effect handlers to named slots         |
+| `.final()`    | Mark state as final                         |
+| `.persist()`  | Add persistence (schemas from machine)      |
+
+### Helpers
+
+| Export           | Description                      |
+| ---------------- | -------------------------------- |
+| `Machine.assign` | Helper for partial state updates |
 
 ### Guards
 
-| Export       | Description                           |
-| ------------ | ------------------------------------- |
-| `Guard.make` | Create guard (sync or async Effect)   |
-| `Guard.and`  | Combine guards with AND               |
-| `Guard.or`   | Combine guards with OR                |
-| `Guard.not`  | Negate a guard                        |
-| `Guard.for`  | Create guard with auto-narrowed types |
+| Export       | Description                         |
+| ------------ | ----------------------------------- |
+| `Guard.make` | Create guard (sync or async Effect) |
+| `Guard.and`  | Combine guards with AND             |
+| `Guard.or`   | Combine guards with OR              |
+| `Guard.not`  | Negate a guard                      |
 
 Guards can return `boolean` or `Effect<boolean>`:
 
@@ -227,6 +223,11 @@ const hasPermission = Guard.make("hasPermission", ({ state }) =>
     return yield* auth.check(state.userId);
   }),
 );
+
+// Inline guard with auto-narrowed types
+machine.on(State.Idle, Event.Start, () => State.Running, {
+  guard: ({ state }) => state.ready, // state is narrowed to Idle
+});
 ```
 
 ### Testing
@@ -249,7 +250,6 @@ const hasPermission = Guard.make("hasPermission", ({ state }) =>
 
 | Export                       | Description                    |
 | ---------------------------- | ------------------------------ |
-| `Machine.persist`            | Add persistence to a machine   |
 | `InMemoryPersistenceAdapter` | In-memory adapter for testing  |
 | `PersistenceAdapterTag`      | Service tag for custom adapter |
 

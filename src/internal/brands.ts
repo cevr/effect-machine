@@ -18,6 +18,30 @@ export interface EventBrand extends Brand.Brand<EventTypeId> {}
 export type BrandedState = { readonly _tag: string } & StateBrand;
 export type BrandedEvent = { readonly _tag: string } & EventBrand;
 
+// Unique symbols for schema-level branding (ties brand to specific schema definition)
+declare const SchemaIdTypeId: unique symbol;
+type SchemaIdTypeId = typeof SchemaIdTypeId;
+
+/**
+ * Brand that captures the schema definition type D.
+ * Two schemas with identical definition shapes will have compatible brands.
+ * Different definitions = incompatible brands.
+ */
+export interface SchemaIdBrand<
+  _D extends Record<string, unknown>,
+  // eslint-disable-next-line import/namespace
+> extends Brand.Brand<SchemaIdTypeId> {}
+
+/**
+ * Full state brand: combines base state brand with schema-specific brand
+ */
+export type FullStateBrand<D extends Record<string, unknown>> = StateBrand & SchemaIdBrand<D>;
+
+/**
+ * Full event brand: combines base event brand with schema-specific brand
+ */
+export type FullEventBrand<D extends Record<string, unknown>> = EventBrand & SchemaIdBrand<D>;
+
 /**
  * Value or constructor for a tagged type.
  * Accepts both plain values (empty structs) and constructor functions (non-empty structs).

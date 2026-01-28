@@ -43,22 +43,21 @@ const orderMachine = Machine.make({
   state: OrderState,
   event: OrderEvent,
   initial: OrderState.Pending({ orderId: "" }),
-}).pipe(
-  Machine.on(OrderState.Pending, OrderEvent.Process, ({ state }) =>
+})
+  .on(OrderState.Pending, OrderEvent.Process, ({ state }) =>
     OrderState.Processing({ orderId: state.orderId, startedAt: Date.now() }),
-  ),
-  Machine.on(OrderState.Processing, OrderEvent.Ship, ({ state, event }) =>
+  )
+  .on(OrderState.Processing, OrderEvent.Ship, ({ state, event }) =>
     OrderState.Shipped({ orderId: state.orderId, trackingId: event.trackingId }),
-  ),
-  Machine.on(OrderState.Pending, OrderEvent.Cancel, ({ state, event }) =>
+  )
+  .on(OrderState.Pending, OrderEvent.Cancel, ({ state, event }) =>
     OrderState.Cancelled({ orderId: state.orderId, reason: event.reason }),
-  ),
-  Machine.on(OrderState.Processing, OrderEvent.Cancel, ({ state, event }) =>
+  )
+  .on(OrderState.Processing, OrderEvent.Cancel, ({ state, event }) =>
     OrderState.Cancelled({ orderId: state.orderId, reason: event.reason }),
-  ),
-  Machine.final(OrderState.Shipped),
-  Machine.final(OrderState.Cancelled),
-);
+  )
+  .final(OrderState.Shipped)
+  .final(OrderState.Cancelled);
 
 // =============================================================================
 // Entity definition using toEntity helper
@@ -92,15 +91,14 @@ describe("Cluster Integration with MachineSchema", () => {
           state: OrderState,
           event: OrderEvent,
           initial: OrderState.Pending({ orderId: "order-123" }),
-        }).pipe(
-          Machine.on(OrderState.Pending, OrderEvent.Process, ({ state }) =>
+        })
+          .on(OrderState.Pending, OrderEvent.Process, ({ state }) =>
             OrderState.Processing({ orderId: state.orderId, startedAt: 1000 }),
-          ),
-          Machine.on(OrderState.Processing, OrderEvent.Ship, ({ state, event }) =>
+          )
+          .on(OrderState.Processing, OrderEvent.Ship, ({ state, event }) =>
             OrderState.Shipped({ orderId: state.orderId, trackingId: event.trackingId }),
-          ),
-          Machine.final(OrderState.Shipped),
-        );
+          )
+          .final(OrderState.Shipped);
 
         const result = yield* simulate(machineWithInitial, [
           OrderEvent.Process,
@@ -194,18 +192,17 @@ describe("Entity.makeTestClient with machine handler", () => {
     state: CounterState,
     event: CounterEvent,
     initial: CounterState.Counting({ count: 0 }),
-  }).pipe(
-    Machine.on(
+  })
+    .on(
       CounterState.Counting,
       CounterEvent.Increment,
       ({ state }) => CounterState.Counting({ count: state.count + 1 }),
       { guard: ({ state }) => state.count < 3 },
-    ),
-    Machine.on(CounterState.Counting, CounterEvent.Finish, ({ state }) =>
+    )
+    .on(CounterState.Counting, CounterEvent.Finish, ({ state }) =>
       CounterState.Done({ count: state.count }),
-    ),
-    Machine.final(CounterState.Done),
-  );
+    )
+    .final(CounterState.Done);
 
   // Entity using MachineSchema directly as schemas
   const CounterEntity = Entity.make("Counter", [

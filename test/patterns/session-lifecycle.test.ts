@@ -38,59 +38,34 @@ describe("Session Lifecycle Pattern", () => {
     SessionTimeout: {},
     Logout: {},
   });
-  type SessionEvent = typeof SessionEvent.Type;
 
   const sessionMachine = Machine.make({
     state: SessionState,
     event: SessionEvent,
     initial: SessionState.Initializing({ token: null }),
-  }).pipe(
-    // Always transition: if no token, go straight to Guest
-    Machine.always(SessionState.Initializing, [
+  })
+    .always(SessionState.Initializing, [
       { guard: (state) => state.token === null, to: () => SessionState.Guest },
-    ]),
-
-    // Initializing state handlers
-    Machine.from(SessionState.Initializing).pipe(
-      Machine.on(SessionEvent.TokenValidated, ({ event }) =>
-        SessionState.Active({ userId: event.userId, role: event.role, lastActivity: Date.now() }),
-      ),
-      Machine.on(SessionEvent.TokenInvalid, () => SessionState.Guest),
-    ),
-
-    // Active state handlers
-    Machine.from(SessionState.Active).pipe(
-      Machine.on(SessionEvent.Activity, ({ state }) =>
-        SessionState.Active({ ...state, lastActivity: Date.now() }),
-      ),
-      Machine.on(SessionEvent.SessionTimeout, () => SessionState.SessionExpired),
-      Machine.on(SessionEvent.MaintenanceStarted, ({ event }) =>
-        SessionState.Maintenance({ message: event.message, previousState: "Active" }),
-      ),
-      Machine.on(SessionEvent.Logout, () => SessionState.LoggedOut),
-    ),
-
-    // Session timeout delay
-    Machine.delay(SessionState.Active, "30 minutes", SessionEvent.SessionTimeout),
-
-    // Guest state handlers
-    Machine.from(SessionState.Guest).pipe(
-      Machine.on(SessionEvent.MaintenanceStarted, ({ event }) =>
-        SessionState.Maintenance({ message: event.message, previousState: "Guest" }),
-      ),
-      Machine.on(SessionEvent.Logout, () => SessionState.LoggedOut),
-    ),
-
-    // Maintenance state handler
-    Machine.on(SessionState.Maintenance, SessionEvent.MaintenanceEnded, ({ state }) =>
+    ])
+    .on(SessionState.Initializing, SessionEvent.TokenValidated, ({ event }) =>
+      SessionState.Active({ userId: event.userId, role: event.role, lastActivity: Date.now() }),
+    )
+    .on(SessionState.Active, SessionEvent.MaintenanceStarted, ({ event }) =>
+      SessionState.Maintenance({ message: event.message, previousState: "Active" }),
+    )
+    .on(SessionState.Guest, SessionEvent.MaintenanceStarted, ({ event }) =>
+      SessionState.Maintenance({ message: event.message, previousState: "Guest" }),
+    )
+    .on(SessionState.Active, SessionEvent.SessionTimeout, () => SessionState.SessionExpired)
+    .delay(SessionState.Active, "30 minutes", SessionEvent.SessionTimeout)
+    .on(SessionState.Maintenance, SessionEvent.MaintenanceEnded, ({ state }) =>
       state.previousState === "Active"
         ? SessionState.Active({ userId: "restored", role: "user", lastActivity: Date.now() })
         : SessionState.Guest,
-    ),
-
-    Machine.final(SessionState.SessionExpired),
-    Machine.final(SessionState.LoggedOut),
-  );
+    )
+    .on(SessionState.Active, SessionEvent.Logout, () => SessionState.LoggedOut)
+    .final(SessionState.SessionExpired)
+    .final(SessionState.LoggedOut);
 
   it.live("always transition calculates initial state from no token", () =>
     Effect.gen(function* () {
@@ -112,23 +87,13 @@ describe("Session Lifecycle Pattern", () => {
         state: SessionState,
         event: SessionEvent,
         initial: SessionState.Initializing({ token: "valid-token" }),
-      }).pipe(
-        // With token, wait for validation
-        Machine.always(SessionState.Initializing, [
+      })
+        .always(SessionState.Initializing, [
           { guard: (state) => state.token === null, to: () => SessionState.Guest },
-        ]),
-
-        Machine.from(SessionState.Initializing).pipe(
-          Machine.on(SessionEvent.TokenValidated, ({ event }) =>
-            SessionState.Active({
-              userId: event.userId,
-              role: event.role,
-              lastActivity: Date.now(),
-            }),
-          ),
-          Machine.on(SessionEvent.TokenInvalid, () => SessionState.Guest),
-        ),
-      );
+        ])
+        .on(SessionState.Initializing, SessionEvent.TokenValidated, ({ event }) =>
+          SessionState.Active({ userId: event.userId, role: event.role, lastActivity: Date.now() }),
+        );
 
       const result = yield* assertPath(
         machineWithToken,
@@ -144,17 +109,15 @@ describe("Session Lifecycle Pattern", () => {
       state: SessionState,
       event: SessionEvent,
       initial: SessionState.Active({ userId: "user-1", role: "user", lastActivity: Date.now() }),
-    }).pipe(
-      Machine.on(SessionState.Active, SessionEvent.MaintenanceStarted, ({ event }) =>
+    })
+      .on(SessionState.Active, SessionEvent.MaintenanceStarted, ({ event }) =>
         SessionState.Maintenance({ message: event.message, previousState: "Active" }),
-      ),
-
-      Machine.on(SessionState.Maintenance, SessionEvent.MaintenanceEnded, ({ state }) =>
+      )
+      .on(SessionState.Maintenance, SessionEvent.MaintenanceEnded, ({ state }) =>
         state.previousState === "Active"
           ? SessionState.Active({ userId: "restored", role: "user", lastActivity: Date.now() })
           : SessionState.Guest,
-      ),
-    );
+      );
 
     return assertPath(
       machineWithToken,
@@ -176,16 +139,10 @@ describe("Session Lifecycle Pattern", () => {
           role: "user",
           lastActivity: Date.now(),
         }),
-      }).pipe(
-        Machine.from(SessionState.Active).pipe(
-          Machine.on(SessionEvent.Activity, ({ state }) =>
-            SessionState.Active({ ...state, lastActivity: Date.now() }),
-          ),
-          Machine.on(SessionEvent.SessionTimeout, () => SessionState.SessionExpired),
-        ),
-        Machine.delay(SessionState.Active, "30 minutes", SessionEvent.SessionTimeout),
-        Machine.final(SessionState.SessionExpired),
-      );
+      })
+        .on(SessionState.Active, SessionEvent.SessionTimeout, () => SessionState.SessionExpired)
+        .delay(SessionState.Active, "30 minutes", SessionEvent.SessionTimeout)
+        .final(SessionState.SessionExpired);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("session", activeMachine);
@@ -221,18 +178,14 @@ describe("Session Lifecycle Pattern", () => {
           role: "user",
           lastActivity: Date.now(),
         }),
-      }).pipe(
-        Machine.on.force(SessionState.Active, SessionEvent.Activity, ({ state }) =>
+      })
+        .delay(SessionState.Active, "30 minutes", SessionEvent.SessionTimeout)
+        .on(SessionState.Active, SessionEvent.SessionTimeout, () => SessionState.SessionExpired)
+        // Use on.force to reenter the state, resetting the delay timer
+        .on.force(SessionState.Active, SessionEvent.Activity, ({ state }) =>
           SessionState.Active({ ...state, lastActivity: Date.now() }),
-        ),
-        Machine.delay(SessionState.Active, "30 minutes", SessionEvent.SessionTimeout),
-        Machine.on(
-          SessionState.Active,
-          SessionEvent.SessionTimeout,
-          () => SessionState.SessionExpired,
-        ),
-        Machine.final(SessionState.SessionExpired),
-      );
+        )
+        .final(SessionState.SessionExpired);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("session", activeMachine);
@@ -266,10 +219,9 @@ describe("Session Lifecycle Pattern", () => {
       state: SessionState,
       event: SessionEvent,
       initial: SessionState.Active({ userId: "user-1", role: "user", lastActivity: Date.now() }),
-    }).pipe(
-      Machine.on(SessionState.Active, SessionEvent.Logout, () => SessionState.LoggedOut),
-      Machine.final(SessionState.LoggedOut),
-    );
+    })
+      .on(SessionState.Active, SessionEvent.Logout, () => SessionState.LoggedOut)
+      .final(SessionState.LoggedOut);
 
     return assertPath(activeMachine, [SessionEvent.Logout], ["Active", "LoggedOut"]);
   });

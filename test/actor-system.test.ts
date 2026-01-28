@@ -25,16 +25,15 @@ describe("ActorSystem", () => {
         state: TestState,
         event: TestEvent,
         initial: TestState.Idle,
-      }).pipe(
-        Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
+      })
+        .on(TestState.Idle, TestEvent.Start, ({ event }) =>
           TestState.Active({ value: event.value }),
-        ),
-        Machine.on(TestState.Active, TestEvent.Update, ({ event }) =>
+        )
+        .on(TestState.Active, TestEvent.Update, ({ event }) =>
           TestState.Active({ value: event.value }),
-        ),
-        Machine.on(TestState.Active, TestEvent.Stop, () => TestState.Done),
-        Machine.final(TestState.Done),
-      );
+        )
+        .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
+        .final(TestState.Done);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test-actor", machine);
@@ -68,10 +67,8 @@ describe("ActorSystem", () => {
         state: TestState,
         event: TestEvent,
         initial: TestState.Idle,
-      }).pipe(
-        Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
-          TestState.Active({ value: event.value }),
-        ),
+      }).on(TestState.Idle, TestEvent.Start, ({ event }) =>
+        TestState.Active({ value: event.value }),
       );
 
       const system = yield* ActorSystemService;

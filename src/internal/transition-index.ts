@@ -124,8 +124,8 @@ const getIndex = <S extends { readonly _tag: string }, E extends { readonly _tag
     index = {
       transitions: buildTransitionIndex(machine.transitions),
       always: buildAlwaysIndex(machine.alwaysTransitions),
-      onEnter: buildEffectIndex(machine.onEnter),
-      onExit: buildEffectIndex(machine.onExit),
+      onEnter: buildEffectIndex(machine.onEnterEffects),
+      onExit: buildEffectIndex(machine.onExitEffects),
     };
     indexCache.set(machine, index as MachineIndex<unknown, unknown, unknown>);
   }

@@ -37,11 +37,7 @@ describe("Inspection", () => {
         state: TestState,
         event: TestEvent,
         initial: TestState.Idle,
-      }).pipe(
-        Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
-          TestState.Loading({ url: event.url }),
-        ),
-      );
+      }).on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }));
 
       const system = yield* ActorSystemService;
       yield* system.spawn("test", machine);
@@ -65,11 +61,7 @@ describe("Inspection", () => {
         state: TestState,
         event: TestEvent,
         initial: TestState.Idle,
-      }).pipe(
-        Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
-          TestState.Loading({ url: event.url }),
-        ),
-      );
+      }).on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }));
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
@@ -95,11 +87,7 @@ describe("Inspection", () => {
         state: TestState,
         event: TestEvent,
         initial: TestState.Idle,
-      }).pipe(
-        Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
-          TestState.Loading({ url: event.url }),
-        ),
-      );
+      }).on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }));
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
@@ -126,16 +114,9 @@ describe("Inspection", () => {
         state: TestState,
         event: TestEvent,
         initial: TestState.Idle,
-      }).pipe(
-        Machine.on(
-          TestState.Idle,
-          TestEvent.Fetch,
-          ({ event }) => TestState.Loading({ url: event.url }),
-          {
-            guard: canFetch,
-          },
-        ),
-      );
+      }).on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }), {
+        guard: canFetch,
+      });
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
@@ -157,24 +138,20 @@ describe("Inspection", () => {
     const events: InspectionEvent<TestState, TestEvent>[] = [];
 
     return Effect.gen(function* () {
-      const baseMachine = Machine.make({
+      const machine = Machine.make({
         state: TestState,
         event: TestEvent,
         initial: TestState.Idle,
-      }).pipe(
-        Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
-          TestState.Loading({ url: event.url }),
-        ),
-        Machine.onEnter(TestState.Idle, "enterIdle"),
-        Machine.onExit(TestState.Idle, "exitIdle"),
-        Machine.onEnter(TestState.Loading, "enterLoading"),
-      );
-
-      const machine = Machine.provide(baseMachine, {
-        enterIdle: () => Effect.void,
-        exitIdle: () => Effect.void,
-        enterLoading: () => Effect.void,
-      });
+      })
+        .on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }))
+        .onEnter(TestState.Idle, "enterIdle")
+        .onExit(TestState.Idle, "exitIdle")
+        .onEnter(TestState.Loading, "enterLoading")
+        .provide({
+          enterIdle: () => Effect.void,
+          exitIdle: () => Effect.void,
+          enterLoading: () => Effect.void,
+        });
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
@@ -207,15 +184,12 @@ describe("Inspection", () => {
         state: TestState,
         event: TestEvent,
         initial: TestState.Idle,
-      }).pipe(
-        Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
-          TestState.Loading({ url: event.url }),
-        ),
-        Machine.on(TestState.Loading, TestEvent.Success, ({ event }) =>
+      })
+        .on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }))
+        .on(TestState.Loading, TestEvent.Success, ({ event }) =>
           TestState.Done({ result: event.result }),
-        ),
-        Machine.final(TestState.Done),
-      );
+        )
+        .final(TestState.Done);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
@@ -242,11 +216,7 @@ describe("Inspection", () => {
         state: TestState,
         event: TestEvent,
         initial: TestState.Idle,
-      }).pipe(
-        Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
-          TestState.Loading({ url: event.url }),
-        ),
-      );
+      }).on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }));
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
@@ -268,11 +238,7 @@ describe("Inspection", () => {
         state: TestState,
         event: TestEvent,
         initial: TestState.Idle,
-      }).pipe(
-        Machine.on(TestState.Idle, TestEvent.Fetch, ({ event }) =>
-          TestState.Loading({ url: event.url }),
-        ),
-      );
+      }).on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }));
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
@@ -294,16 +260,9 @@ describe("Inspection", () => {
         state: TestState,
         event: TestEvent,
         initial: TestState.Idle,
-      }).pipe(
-        Machine.on(
-          TestState.Idle,
-          TestEvent.Fetch,
-          ({ event }) => TestState.Loading({ url: event.url }),
-          {
-            guard: namedGuard,
-          },
-        ),
-      );
+      }).on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }), {
+        guard: namedGuard,
+      });
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
@@ -339,27 +298,20 @@ describe("Inspection", () => {
     const canFetch = Guard.make<TestState, TestEvent>("canFetch", () => true);
 
     return Effect.gen(function* () {
-      const baseMachine = Machine.make({
+      const machine = Machine.make({
         state: TestState,
         event: TestEvent,
         initial: TestState.Idle,
-      }).pipe(
-        Machine.on(
-          TestState.Idle,
-          TestEvent.Fetch,
-          ({ event }) => TestState.Loading({ url: event.url }),
-          {
-            guard: canFetch,
-          },
-        ),
-        Machine.onExit(TestState.Idle, "exitIdle"),
-        Machine.onEnter(TestState.Loading, "enterLoading"),
-      );
-
-      const machine = Machine.provide(baseMachine, {
-        exitIdle: () => Effect.void,
-        enterLoading: () => Effect.void,
-      });
+      })
+        .on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }), {
+          guard: canFetch,
+        })
+        .onExit(TestState.Idle, "exitIdle")
+        .onEnter(TestState.Loading, "enterLoading")
+        .provide({
+          exitIdle: () => Effect.void,
+          enterLoading: () => Effect.void,
+        });
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);

@@ -16,35 +16,32 @@ describe("on.force Transitions", () => {
     Reset: {},
     Finish: {},
   });
-  type PollEvent = typeof PollEvent.Type;
 
   it.scopedLive("on.force runs exit/enter for same state tag", () =>
     Effect.gen(function* () {
       const effects: string[] = [];
 
-      const baseMachine = Machine.make({
+      const machine = Machine.make({
         state: PollState,
         event: PollEvent,
         initial: PollState.Polling({ attempts: 0 }),
-      }).pipe(
-        Machine.on.force(PollState.Polling, PollEvent.Reset, ({ state }) =>
+      })
+        .on(PollState.Polling, PollEvent.Finish, () => PollState.Done)
+        .on.force(PollState.Polling, PollEvent.Reset, ({ state }) =>
           PollState.Polling({ attempts: state.attempts + 1 }),
-        ),
-        Machine.on(PollState.Polling, PollEvent.Finish, () => PollState.Done),
-        Machine.onEnter(PollState.Polling, "enterPolling"),
-        Machine.onExit(PollState.Polling, "exitPolling"),
-      );
-
-      const machine = Machine.provide(baseMachine, {
-        enterPolling: ({ state }) =>
-          Effect.sync(() =>
-            effects.push(`enter:Polling:${(state as PollState & { _tag: "Polling" }).attempts}`),
-          ),
-        exitPolling: ({ state }) =>
-          Effect.sync(() =>
-            effects.push(`exit:Polling:${(state as PollState & { _tag: "Polling" }).attempts}`),
-          ),
-      });
+        )
+        .onEnter(PollState.Polling, "enterPolling")
+        .onExit(PollState.Polling, "exitPolling")
+        .provide({
+          enterPolling: ({ state }) =>
+            Effect.sync(() =>
+              effects.push(`enter:Polling:${(state as PollState & { _tag: "Polling" }).attempts}`),
+            ),
+          exitPolling: ({ state }) =>
+            Effect.sync(() =>
+              effects.push(`exit:Polling:${(state as PollState & { _tag: "Polling" }).attempts}`),
+            ),
+        });
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("poller", machine);
@@ -81,13 +78,12 @@ describe("on.force Transitions", () => {
         state: PollState,
         event: PollEvent,
         initial: PollState.Polling({ attempts: 0 }),
-      }).pipe(
-        Machine.on.force(PollState.Polling, PollEvent.Reset, ({ state }) =>
+      })
+        .on(PollState.Polling, PollEvent.Poll, () => PollState.Done)
+        .on.force(PollState.Polling, PollEvent.Reset, ({ state }) =>
           PollState.Polling({ attempts: state.attempts + 1 }),
-        ),
-        Machine.on(PollState.Polling, PollEvent.Poll, () => PollState.Done),
-        Machine.delay(PollState.Polling, "5 seconds", PollEvent.Poll),
-      );
+        )
+        .delay(PollState.Polling, "5 seconds", PollEvent.Poll);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("poller", machine);

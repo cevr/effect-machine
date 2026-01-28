@@ -11,7 +11,6 @@ describe("invoke", () => {
       Running: {},
       Done: {},
     });
-    type TestState = typeof TestState.Type;
 
     const TestEvent = Event({
       Start: {},
@@ -19,14 +18,13 @@ describe("invoke", () => {
       SecondDone: {},
       Stop: {},
     });
-    type TestEvent = typeof TestEvent.Type;
 
     test("array syntax registers multiple effect slots", () => {
       const machine = Machine.make({
         state: TestState,
         event: TestEvent,
         initial: TestState.Idle,
-      }).pipe(Machine.invoke(TestState.Running, ["firstTask", "secondTask"] as const));
+      }).invoke(TestState.Running, ["firstTask", "secondTask"] as const);
 
       expect(machine.effectSlots.size).toBe(2);
       expect(machine.effectSlots.has("firstTask")).toBe(true);
@@ -49,30 +47,28 @@ describe("invoke", () => {
           state: TestState,
           event: TestEvent,
           initial: TestState.Idle,
-        }).pipe(
-          Machine.on(TestState.Idle, TestEvent.Start, () => TestState.Running),
-          Machine.on(TestState.Running, TestEvent.Stop, () => TestState.Done),
-          Machine.invoke(TestState.Running, ["firstTask", "secondTask"]),
-          Machine.final(TestState.Done),
-        );
-
-        const provided = Machine.provide(machine, {
-          firstTask: () =>
-            Effect.gen(function* () {
-              log.push("first:start");
-              yield* Effect.sleep("10 seconds");
-              log.push("first:done");
-            }),
-          secondTask: () =>
-            Effect.gen(function* () {
-              log.push("second:start");
-              yield* Effect.sleep("10 seconds");
-              log.push("second:done");
-            }),
-        });
+        })
+          .on(TestState.Idle, TestEvent.Start, () => TestState.Running)
+          .on(TestState.Running, TestEvent.Stop, () => TestState.Done)
+          .invoke(TestState.Running, ["firstTask", "secondTask"])
+          .final(TestState.Done)
+          .provide({
+            firstTask: () =>
+              Effect.gen(function* () {
+                log.push("first:start");
+                yield* Effect.sleep("10 seconds");
+                log.push("first:done");
+              }),
+            secondTask: () =>
+              Effect.gen(function* () {
+                log.push("second:start");
+                yield* Effect.sleep("10 seconds");
+                log.push("second:done");
+              }),
+          });
 
         const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", provided);
+        const actor = yield* system.spawn("test", machine);
 
         yield* actor.send(TestEvent.Start);
         yield* yieldFibers;
@@ -90,30 +86,28 @@ describe("invoke", () => {
           state: TestState,
           event: TestEvent,
           initial: TestState.Idle,
-        }).pipe(
-          Machine.on(TestState.Idle, TestEvent.Start, () => TestState.Running),
-          Machine.on(TestState.Running, TestEvent.Stop, () => TestState.Done),
-          Machine.invoke(TestState.Running, ["firstTask", "secondTask"] as const),
-          Machine.final(TestState.Done),
-        );
-
-        const provided = Machine.provide(machine, {
-          firstTask: () =>
-            Effect.gen(function* () {
-              log.push("first:start");
-              yield* Effect.sleep("10 seconds");
-              log.push("first:done");
-            }).pipe(Effect.onInterrupt(() => Effect.sync(() => log.push("first:interrupted")))),
-          secondTask: () =>
-            Effect.gen(function* () {
-              log.push("second:start");
-              yield* Effect.sleep("10 seconds");
-              log.push("second:done");
-            }).pipe(Effect.onInterrupt(() => Effect.sync(() => log.push("second:interrupted")))),
-        });
+        })
+          .on(TestState.Idle, TestEvent.Start, () => TestState.Running)
+          .on(TestState.Running, TestEvent.Stop, () => TestState.Done)
+          .invoke(TestState.Running, ["firstTask", "secondTask"] as const)
+          .final(TestState.Done)
+          .provide({
+            firstTask: () =>
+              Effect.gen(function* () {
+                log.push("first:start");
+                yield* Effect.sleep("10 seconds");
+                log.push("first:done");
+              }).pipe(Effect.onInterrupt(() => Effect.sync(() => log.push("first:interrupted")))),
+            secondTask: () =>
+              Effect.gen(function* () {
+                log.push("second:start");
+                yield* Effect.sleep("10 seconds");
+                log.push("second:done");
+              }).pipe(Effect.onInterrupt(() => Effect.sync(() => log.push("second:interrupted")))),
+          });
 
         const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", provided);
+        const actor = yield* system.spawn("test", machine);
 
         yield* actor.send(TestEvent.Start);
         yield* yieldFibers;
@@ -137,21 +131,19 @@ describe("invoke", () => {
       Active: {},
       Done: {},
     });
-    type TestState = typeof TestState.Type;
 
     const TestEvent = Event({
       Activate: {},
       Finish: {},
       BackgroundEvent: { data: Schema.String },
     });
-    type TestEvent = typeof TestEvent.Type;
 
     test("root invoke slot has null stateTag", () => {
       const machine = Machine.make({
         state: TestState,
         event: TestEvent,
         initial: TestState.Idle,
-      }).pipe(Machine.invoke("backgroundTask"));
+      }).invoke("backgroundTask");
 
       expect(machine.effectSlots.size).toBe(1);
       const slot = machine.effectSlots.get("backgroundTask");
@@ -167,22 +159,20 @@ describe("invoke", () => {
           state: TestState,
           event: TestEvent,
           initial: TestState.Idle,
-        }).pipe(
-          Machine.on(TestState.Idle, TestEvent.Activate, () => TestState.Active),
-          Machine.invoke("backgroundTask"),
-        );
-
-        const provided = Machine.provide(machine, {
-          backgroundTask: () =>
-            Effect.gen(function* () {
-              log.push("background:start");
-              yield* Effect.sleep("10 seconds");
-              log.push("background:done");
-            }),
-        });
+        })
+          .on(TestState.Idle, TestEvent.Activate, () => TestState.Active)
+          .invoke("backgroundTask")
+          .provide({
+            backgroundTask: () =>
+              Effect.gen(function* () {
+                log.push("background:start");
+                yield* Effect.sleep("10 seconds");
+                log.push("background:done");
+              }),
+          });
 
         const system = yield* ActorSystemService;
-        yield* system.spawn("test", provided);
+        yield* system.spawn("test", machine);
         yield* yieldFibers;
 
         // Background task should start immediately on spawn
@@ -198,26 +188,24 @@ describe("invoke", () => {
           state: TestState,
           event: TestEvent,
           initial: TestState.Idle,
-        }).pipe(
-          Machine.on(TestState.Idle, TestEvent.Activate, () => TestState.Active),
-          Machine.on(TestState.Active, TestEvent.Finish, () => TestState.Done),
-          Machine.invoke("counter"),
-          Machine.final(TestState.Done),
-        );
-
-        const provided = Machine.provide(machine, {
-          counter: () =>
-            Effect.gen(function* () {
-              // Increment counter in a loop
-              while (true) {
-                yield* Ref.update(counterRef, (n) => n + 1);
-                yield* Effect.sleep("1 millis");
-              }
-            }),
-        });
+        })
+          .on(TestState.Idle, TestEvent.Activate, () => TestState.Active)
+          .on(TestState.Active, TestEvent.Finish, () => TestState.Done)
+          .invoke("counter")
+          .final(TestState.Done)
+          .provide({
+            counter: () =>
+              Effect.gen(function* () {
+                // Increment counter in a loop
+                while (true) {
+                  yield* Ref.update(counterRef, (n) => n + 1);
+                  yield* Effect.sleep("1 millis");
+                }
+              }),
+          });
 
         const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", provided);
+        const actor = yield* system.spawn("test", machine);
 
         // Let it run a bit
         yield* Effect.sleep("10 millis");
@@ -247,25 +235,23 @@ describe("invoke", () => {
           state: TestState,
           event: TestEvent,
           initial: TestState.Idle,
-        }).pipe(
-          Machine.on(TestState.Idle, TestEvent.Finish, () => TestState.Done),
-          Machine.invoke("backgroundTask"),
-          Machine.final(TestState.Done),
-        );
-
-        const provided = Machine.provide(machine, {
-          backgroundTask: () =>
-            Effect.gen(function* () {
-              log.push("background:start");
-              yield* Effect.sleep("10 seconds");
-              log.push("background:done");
-            }).pipe(
-              Effect.onInterrupt(() => Effect.sync(() => log.push("background:interrupted"))),
-            ),
-        });
+        })
+          .on(TestState.Idle, TestEvent.Finish, () => TestState.Done)
+          .invoke("backgroundTask")
+          .final(TestState.Done)
+          .provide({
+            backgroundTask: () =>
+              Effect.gen(function* () {
+                log.push("background:start");
+                yield* Effect.sleep("10 seconds");
+                log.push("background:done");
+              }).pipe(
+                Effect.onInterrupt(() => Effect.sync(() => log.push("background:interrupted"))),
+              ),
+          });
 
         const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", provided);
+        const actor = yield* system.spawn("test", machine);
         yield* yieldFibers;
 
         expect(log).toEqual(["background:start"]);
@@ -286,29 +272,27 @@ describe("invoke", () => {
           state: TestState,
           event: TestEvent,
           initial: TestState.Idle,
-        }).pipe(
-          Machine.on(TestState.Idle, TestEvent.BackgroundEvent, ({ event }) => {
+        })
+          .on(TestState.Idle, TestEvent.BackgroundEvent, ({ event }) => {
             receivedData.push(event.data);
             return TestState.Idle;
-          }),
-          Machine.on(TestState.Idle, TestEvent.Finish, () => TestState.Done),
-          Machine.invoke("emitter"),
-          Machine.final(TestState.Done),
-        );
-
-        const provided = Machine.provide(machine, {
-          emitter: ({ self }) =>
-            Effect.gen(function* () {
-              yield* self.send(TestEvent.BackgroundEvent({ data: "first" }));
-              yield* Effect.sleep("1 millis");
-              yield* self.send(TestEvent.BackgroundEvent({ data: "second" }));
-              yield* Effect.sleep("1 millis");
-              yield* self.send(TestEvent.BackgroundEvent({ data: "third" }));
-            }),
-        });
+          })
+          .on(TestState.Idle, TestEvent.Finish, () => TestState.Done)
+          .invoke("emitter")
+          .final(TestState.Done)
+          .provide({
+            emitter: ({ self }) =>
+              Effect.gen(function* () {
+                yield* self.send(TestEvent.BackgroundEvent({ data: "first" }));
+                yield* Effect.sleep("1 millis");
+                yield* self.send(TestEvent.BackgroundEvent({ data: "second" }));
+                yield* Effect.sleep("1 millis");
+                yield* self.send(TestEvent.BackgroundEvent({ data: "third" }));
+              }),
+          });
 
         const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", provided);
+        const actor = yield* system.spawn("test", machine);
 
         // Wait for events to be processed
         yield* Effect.sleep("10 millis");
@@ -329,25 +313,23 @@ describe("invoke", () => {
           state: TestState,
           event: TestEvent,
           initial: TestState.Idle,
-        }).pipe(
-          Machine.on(TestState.Idle, TestEvent.Finish, () => TestState.Done),
-          Machine.invoke("backgroundTask"),
-          Machine.final(TestState.Done),
-        );
-
-        const provided = Machine.provide(machine, {
-          backgroundTask: () =>
-            Effect.gen(function* () {
-              log.push("background:start");
-              yield* Effect.sleep("10 seconds");
-              log.push("background:done");
-            }).pipe(
-              Effect.onInterrupt(() => Effect.sync(() => log.push("background:interrupted"))),
-            ),
-        });
+        })
+          .on(TestState.Idle, TestEvent.Finish, () => TestState.Done)
+          .invoke("backgroundTask")
+          .final(TestState.Done)
+          .provide({
+            backgroundTask: () =>
+              Effect.gen(function* () {
+                log.push("background:start");
+                yield* Effect.sleep("10 seconds");
+                log.push("background:done");
+              }).pipe(
+                Effect.onInterrupt(() => Effect.sync(() => log.push("background:interrupted"))),
+              ),
+          });
 
         const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", provided);
+        const actor = yield* system.spawn("test", machine);
         yield* yieldFibers;
 
         expect(log).toEqual(["background:start"]);
@@ -369,13 +351,11 @@ describe("invoke", () => {
       Loading: {},
       Done: {},
     });
-    type TestState = typeof TestState.Type;
 
     const TestEvent = Event({
       Start: {},
       Finish: {},
     });
-    type TestEvent = typeof TestEvent.Type;
 
     it.scopedLive("root + state-scoped invokes work together", () =>
       Effect.gen(function* () {
@@ -385,29 +365,27 @@ describe("invoke", () => {
           state: TestState,
           event: TestEvent,
           initial: TestState.Idle,
-        }).pipe(
-          Machine.on(TestState.Idle, TestEvent.Start, () => TestState.Loading),
-          Machine.on(TestState.Loading, TestEvent.Finish, () => TestState.Done),
-          Machine.invoke("rootTask"),
-          Machine.invoke(TestState.Loading, "loadingTask"),
-          Machine.final(TestState.Done),
-        );
-
-        const provided = Machine.provide(machine, {
-          rootTask: () =>
-            Effect.gen(function* () {
-              log.push("root:start");
-              yield* Effect.sleep("10 seconds");
-            }).pipe(Effect.onInterrupt(() => Effect.sync(() => log.push("root:interrupted")))),
-          loadingTask: () =>
-            Effect.gen(function* () {
-              log.push("loading:start");
-              yield* Effect.sleep("10 seconds");
-            }).pipe(Effect.onInterrupt(() => Effect.sync(() => log.push("loading:interrupted")))),
-        });
+        })
+          .on(TestState.Idle, TestEvent.Start, () => TestState.Loading)
+          .on(TestState.Loading, TestEvent.Finish, () => TestState.Done)
+          .invoke("rootTask")
+          .invoke(TestState.Loading, "loadingTask")
+          .final(TestState.Done)
+          .provide({
+            rootTask: () =>
+              Effect.gen(function* () {
+                log.push("root:start");
+                yield* Effect.sleep("10 seconds");
+              }).pipe(Effect.onInterrupt(() => Effect.sync(() => log.push("root:interrupted")))),
+            loadingTask: () =>
+              Effect.gen(function* () {
+                log.push("loading:start");
+                yield* Effect.sleep("10 seconds");
+              }).pipe(Effect.onInterrupt(() => Effect.sync(() => log.push("loading:interrupted")))),
+          });
 
         const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", provided);
+        const actor = yield* system.spawn("test", machine);
         yield* yieldFibers;
 
         // Root task starts immediately
@@ -442,19 +420,17 @@ describe("invoke", () => {
       Idle: {},
       Done: {},
     });
-    type TestState = typeof TestState.Type;
 
     const TestEvent = Event({
       Finish: {},
     });
-    type TestEvent = typeof TestEvent.Type;
 
     test("array syntax registers multiple root slots", () => {
       const machine = Machine.make({
         state: TestState,
         event: TestEvent,
         initial: TestState.Idle,
-      }).pipe(Machine.invoke(["firstRoot", "secondRoot"] as const));
+      }).invoke(["firstRoot", "secondRoot"] as const);
 
       expect(machine.effectSlots.size).toBe(2);
       expect(machine.effectSlots.has("firstRoot")).toBe(true);
@@ -477,29 +453,27 @@ describe("invoke", () => {
           state: TestState,
           event: TestEvent,
           initial: TestState.Idle,
-        }).pipe(
-          Machine.on(TestState.Idle, TestEvent.Finish, () => TestState.Done),
-          Machine.invoke(["firstRoot", "secondRoot"] as const),
-          Machine.final(TestState.Done),
-        );
-
-        const provided = Machine.provide(machine, {
-          firstRoot: () =>
-            Effect.gen(function* () {
-              log.push("first:start");
-              yield* Effect.sleep("10 seconds");
-              log.push("first:done");
-            }),
-          secondRoot: () =>
-            Effect.gen(function* () {
-              log.push("second:start");
-              yield* Effect.sleep("10 seconds");
-              log.push("second:done");
-            }),
-        });
+        })
+          .on(TestState.Idle, TestEvent.Finish, () => TestState.Done)
+          .invoke(["firstRoot", "secondRoot"] as const)
+          .final(TestState.Done)
+          .provide({
+            firstRoot: () =>
+              Effect.gen(function* () {
+                log.push("first:start");
+                yield* Effect.sleep("10 seconds");
+                log.push("first:done");
+              }),
+            secondRoot: () =>
+              Effect.gen(function* () {
+                log.push("second:start");
+                yield* Effect.sleep("10 seconds");
+                log.push("second:done");
+              }),
+          });
 
         const system = yield* ActorSystemService;
-        yield* system.spawn("test", provided);
+        yield* system.spawn("test", machine);
         yield* yieldFibers;
 
         expect(log).toEqual(["first:start", "second:start"]);
@@ -514,29 +488,27 @@ describe("invoke", () => {
           state: TestState,
           event: TestEvent,
           initial: TestState.Idle,
-        }).pipe(
-          Machine.on(TestState.Idle, TestEvent.Finish, () => TestState.Done),
-          Machine.invoke(["firstRoot", "secondRoot"] as const),
-          Machine.final(TestState.Done),
-        );
-
-        const provided = Machine.provide(machine, {
-          firstRoot: () =>
-            Effect.gen(function* () {
-              log.push("first:start");
-              yield* Effect.sleep("10 seconds");
-              log.push("first:done");
-            }).pipe(Effect.onInterrupt(() => Effect.sync(() => log.push("first:interrupted")))),
-          secondRoot: () =>
-            Effect.gen(function* () {
-              log.push("second:start");
-              yield* Effect.sleep("10 seconds");
-              log.push("second:done");
-            }).pipe(Effect.onInterrupt(() => Effect.sync(() => log.push("second:interrupted")))),
-        });
+        })
+          .on(TestState.Idle, TestEvent.Finish, () => TestState.Done)
+          .invoke(["firstRoot", "secondRoot"] as const)
+          .final(TestState.Done)
+          .provide({
+            firstRoot: () =>
+              Effect.gen(function* () {
+                log.push("first:start");
+                yield* Effect.sleep("10 seconds");
+                log.push("first:done");
+              }).pipe(Effect.onInterrupt(() => Effect.sync(() => log.push("first:interrupted")))),
+            secondRoot: () =>
+              Effect.gen(function* () {
+                log.push("second:start");
+                yield* Effect.sleep("10 seconds");
+                log.push("second:done");
+              }).pipe(Effect.onInterrupt(() => Effect.sync(() => log.push("second:interrupted")))),
+          });
 
         const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", provided);
+        const actor = yield* system.spawn("test", machine);
         yield* yieldFibers;
 
         expect(log).toEqual(["first:start", "second:start"]);

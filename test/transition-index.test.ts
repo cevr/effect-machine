@@ -33,17 +33,14 @@ describe("Transition Index", () => {
       state: TestState,
       event: TestEvent,
       initial: TestState.Idle,
-    }).pipe(
-      Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
-        TestState.Loading({ id: event.id }),
-      ),
-      Machine.on(TestState.Loading, TestEvent.Succeed, ({ event }) =>
+    })
+      .on(TestState.Idle, TestEvent.Start, ({ event }) => TestState.Loading({ id: event.id }))
+      .on(TestState.Loading, TestEvent.Succeed, ({ event }) =>
         TestState.Success({ data: event.data }),
-      ),
-      Machine.on(TestState.Loading, TestEvent.Fail, ({ event }) =>
+      )
+      .on(TestState.Loading, TestEvent.Fail, ({ event }) =>
         TestState.Error({ message: event.message }),
-      ),
-    );
+      );
 
     // Find transitions for Idle + Start
     const idleStartTransitions = Machine.findTransitions(machine, "Idle", "Start");
@@ -69,24 +66,14 @@ describe("Transition Index", () => {
       state: TestState,
       event: TestEvent,
       initial: TestState.Idle,
-    }).pipe(
-      // Multiple transitions with guards for same state/event
-      Machine.on(
-        TestState.Idle,
-        TestEvent.Start,
-        ({ event }) => TestState.Loading({ id: event.id }),
-        { guard: ({ event }) => event.id === "special" },
-      ),
-      Machine.on(
-        TestState.Idle,
-        TestEvent.Start,
-        ({ event }) => TestState.Loading({ id: event.id }),
-        { guard: ({ event }) => event.id === "normal" },
-      ),
-      Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
-        TestState.Loading({ id: event.id }),
-      ), // fallback
-    );
+    })
+      .on(TestState.Idle, TestEvent.Start, ({ event }) => TestState.Loading({ id: event.id }), {
+        guard: ({ event }) => event.id === "special",
+      })
+      .on(TestState.Idle, TestEvent.Start, ({ event }) => TestState.Loading({ id: event.id }), {
+        guard: ({ event }) => event.id === "normal",
+      })
+      .on(TestState.Idle, TestEvent.Start, ({ event }) => TestState.Loading({ id: event.id }));
 
     const transitions = Machine.findTransitions(machine, "Idle", "Start");
     expect(transitions.length).toBe(3);
@@ -111,17 +98,16 @@ describe("Transition Index", () => {
       state: CounterState,
       event: CounterEvent,
       initial: CounterState.Counting({ count: 0 }),
-    }).pipe(
-      Machine.on(CounterState.Counting, CounterEvent.Increment, ({ state }) =>
+    })
+      .on(CounterState.Counting, CounterEvent.Increment, ({ state }) =>
         CounterState.Counting({ count: state.count + 1 }),
-      ),
-      Machine.always(CounterState.Counting, [
+      )
+      .always(CounterState.Counting, [
         {
           guard: (state) => state.count >= 10,
           to: (state) => CounterState.Done({ count: state.count }),
         },
-      ]),
-    );
+      ]);
 
     const alwaysTransitions = Machine.findAlwaysTransitions(machine, "Counting");
     expect(alwaysTransitions.length).toBe(1);
@@ -136,11 +122,7 @@ describe("Transition Index", () => {
       state: TestState,
       event: TestEvent,
       initial: TestState.Idle,
-    }).pipe(
-      Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
-        TestState.Loading({ id: event.id }),
-      ),
-    );
+    }).on(TestState.Idle, TestEvent.Start, ({ event }) => TestState.Loading({ id: event.id }));
 
     // Call multiple times - should use cached index
     const t1 = Machine.findTransitions(machine, "Idle", "Start");
@@ -157,22 +139,15 @@ describe("Transition Index", () => {
       state: TestState,
       event: TestEvent,
       initial: TestState.Idle,
-    }).pipe(
-      Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
-        TestState.Loading({ id: event.id }),
-      ),
-    );
+    }).on(TestState.Idle, TestEvent.Start, ({ event }) => TestState.Loading({ id: event.id }));
 
     const machine2 = Machine.make({
       state: TestState,
       event: TestEvent,
       initial: TestState.Idle,
-    }).pipe(
-      Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
-        TestState.Loading({ id: event.id }),
-      ),
-      Machine.on(TestState.Idle, TestEvent.Reset, () => TestState.Idle),
-    );
+    })
+      .on(TestState.Idle, TestEvent.Start, ({ event }) => TestState.Loading({ id: event.id }))
+      .on(TestState.Idle, TestEvent.Reset, () => TestState.Idle);
 
     const m1Transitions = Machine.findTransitions(machine1, "Idle", "Start");
     const m2Transitions = Machine.findTransitions(machine2, "Idle", "Start");

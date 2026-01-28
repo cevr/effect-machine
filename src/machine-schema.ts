@@ -36,7 +36,7 @@
  * @module
  */
 import { Schema } from "effect";
-import type { StateBrand, EventBrand } from "./internal/brands.js";
+import type { FullStateBrand, FullEventBrand } from "./internal/brands.js";
 import { InvalidSchemaError, MissingMatchHandlerError } from "./errors.js";
 
 // ============================================================================
@@ -58,9 +58,10 @@ type VariantSchemas<D extends Record<string, Schema.Struct.Fields>> = {
 };
 
 /**
- * Build union type from variant schemas
+ * Build union type from variant schemas.
+ * Used for constraining fluent method type params.
  */
-type VariantsUnion<D extends Record<string, Schema.Struct.Fields>> = {
+export type VariantsUnion<D extends Record<string, Schema.Struct.Fields>> = {
   [K in keyof D & string]: TaggedStructType<K, D[K]>;
 }[keyof D & string];
 
@@ -124,25 +125,31 @@ interface MachineSchemaBase<D extends Record<string, Schema.Struct.Fields>, Bran
  * - Variant constructors: `OrderState.Pending({ orderId: "x" })`
  * - Pattern matching: `$is`, `$match`
  * - Type inference: `typeof OrderState.Type`
+ *
+ * The D type parameter captures the definition, creating a unique brand
+ * per distinct schema definition shape.
  */
 export type MachineStateSchema<D extends Record<string, Schema.Struct.Fields>> = Schema.Schema<
-  VariantsUnion<D> & StateBrand,
+  VariantsUnion<D> & FullStateBrand<D>,
   VariantsUnion<D>,
   never
 > &
-  MachineSchemaBase<D, StateBrand> &
-  VariantConstructors<D, StateBrand>;
+  MachineSchemaBase<D, FullStateBrand<D>> &
+  VariantConstructors<D, FullStateBrand<D>>;
 
 /**
  * Schema-first event definition (same structure as state, different brand)
+ *
+ * The D type parameter captures the definition, creating a unique brand
+ * per distinct schema definition shape.
  */
 export type MachineEventSchema<D extends Record<string, Schema.Struct.Fields>> = Schema.Schema<
-  VariantsUnion<D> & EventBrand,
+  VariantsUnion<D> & FullEventBrand<D>,
   VariantsUnion<D>,
   never
 > &
-  MachineSchemaBase<D, EventBrand> &
-  VariantConstructors<D, EventBrand>;
+  MachineSchemaBase<D, FullEventBrand<D>> &
+  VariantConstructors<D, FullEventBrand<D>>;
 
 // ============================================================================
 // Implementation
@@ -245,6 +252,10 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
 /**
  * Create a schema-first State definition.
  *
+ * The schema's definition type D creates a unique brand, preventing
+ * accidental use of constructors from different state schemas
+ * (unless they have identical definitions).
+ *
  * @example
  * ```ts
  * const OrderState = MachineSchema.State({
@@ -267,7 +278,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
  * Schema.decodeUnknownSync(OrderState)(rawJson)
  * ```
  */
-export const State = <D extends Record<string, Schema.Struct.Fields>>(
+export const State = <const D extends Record<string, Schema.Struct.Fields>>(
   definition: D,
 ): MachineStateSchema<D> => {
   const { schema, variants, constructors, $is, $match } = buildMachineSchema(definition);
@@ -286,6 +297,10 @@ export const State = <D extends Record<string, Schema.Struct.Fields>>(
 /**
  * Create a schema-first Event definition.
  *
+ * The schema's definition type D creates a unique brand, preventing
+ * accidental use of constructors from different event schemas
+ * (unless they have identical definitions).
+ *
  * @example
  * ```ts
  * const OrderEvent = MachineSchema.Event({
@@ -299,7 +314,7 @@ export const State = <D extends Record<string, Schema.Struct.Fields>>(
  * const e = OrderEvent.Ship({ trackingId: "abc" })
  * ```
  */
-export const Event = <D extends Record<string, Schema.Struct.Fields>>(
+export const Event = <const D extends Record<string, Schema.Struct.Fields>>(
   definition: D,
 ): MachineEventSchema<D> => {
   const { schema, variants, constructors, $is, $match } = buildMachineSchema(definition);

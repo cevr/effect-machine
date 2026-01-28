@@ -220,15 +220,14 @@ describe("State/Event with Machine", () => {
       state: OrderState,
       event: OrderEvent,
       initial: OrderState.Pending({ orderId: "test-order" }),
-    }).pipe(
-      Machine.on(OrderState.Pending, OrderEvent.Process, ({ state }) =>
+    })
+      .on(OrderState.Pending, OrderEvent.Process, ({ state }) =>
         OrderState.Processing({ orderId: state.orderId }),
-      ),
-      Machine.on(OrderState.Processing, OrderEvent.Ship, ({ state, event }) =>
+      )
+      .on(OrderState.Processing, OrderEvent.Ship, ({ state, event }) =>
         OrderState.Shipped({ orderId: state.orderId, trackingId: event.trackingId }),
-      ),
-      Machine.final(OrderState.Shipped),
-    );
+      )
+      .final(OrderState.Shipped);
 
     const result = await Effect.runPromise(
       simulate(machine, [OrderEvent.Process, OrderEvent.Ship({ trackingId: "TRACK-123" })]),
@@ -255,12 +254,98 @@ describe("State/Event with Machine", () => {
       state: TestState,
       event: TestEvent,
       initial: TestState.A({ value: 0 }),
-    }).pipe(
-      Machine.on(TestState.A, TestEvent.Next, ({ state }) =>
-        TestState.B({ value: state.value + 1 }),
-      ),
-    );
+    }).on(TestState.A, TestEvent.Next, ({ state }) => TestState.B({ value: state.value + 1 }));
 
     expect(machine.transitions.length).toBe(1);
+  });
+
+  test("fluent from() scopes transitions to a state", async () => {
+    const EditorState = State({
+      Idle: {},
+      Typing: { text: Schema.String },
+      Submitted: { text: Schema.String },
+    });
+
+    const EditorEvent = Event({
+      Focus: {},
+      KeyPress: { key: Schema.String },
+      Submit: {},
+    });
+
+    const machine = Machine.make({
+      state: EditorState,
+      event: EditorEvent,
+      initial: EditorState.Idle,
+    })
+      .on(EditorState.Idle, EditorEvent.Focus, () => EditorState.Typing({ text: "" }))
+      .from(EditorState.Typing, (scope) =>
+        scope
+          .on(EditorEvent.KeyPress, ({ state, event }) =>
+            EditorState.Typing({ text: state.text + event.key }),
+          )
+          .on(EditorEvent.Submit, ({ state }) => EditorState.Submitted({ text: state.text })),
+      )
+      .final(EditorState.Submitted);
+
+    // 3 transitions: Idle->Focus, Typing->KeyPress, Typing->Submit
+    expect(machine.transitions.length).toBe(3);
+
+    const result = await Effect.runPromise(
+      simulate(machine, [
+        EditorEvent.Focus,
+        EditorEvent.KeyPress({ key: "h" }),
+        EditorEvent.KeyPress({ key: "i" }),
+        EditorEvent.Submit,
+      ]),
+    );
+
+    expect(result.finalState._tag).toBe("Submitted");
+    expect((result.finalState as { text: string }).text).toBe("hi");
+  });
+
+  test("fluent onAny() matches multiple states", async () => {
+    const WorkflowState = State({
+      Draft: {},
+      Review: {},
+      Approved: {},
+      Cancelled: {},
+    });
+
+    const WorkflowEvent = Event({
+      Submit: {},
+      Approve: {},
+      Cancel: {},
+    });
+
+    const machine = Machine.make({
+      state: WorkflowState,
+      event: WorkflowEvent,
+      initial: WorkflowState.Draft,
+    })
+      .on(WorkflowState.Draft, WorkflowEvent.Submit, () => WorkflowState.Review)
+      .on(WorkflowState.Review, WorkflowEvent.Approve, () => WorkflowState.Approved)
+      .onAny(
+        [WorkflowState.Draft, WorkflowState.Review],
+        WorkflowEvent.Cancel,
+        () => WorkflowState.Cancelled,
+      )
+      .final(WorkflowState.Approved)
+      .final(WorkflowState.Cancelled);
+
+    // Cancel from Draft
+    const result1 = await Effect.runPromise(simulate(machine, [WorkflowEvent.Cancel]));
+    expect(result1.finalState._tag).toBe("Cancelled");
+
+    // Cancel from Review
+    const result2 = await Effect.runPromise(
+      simulate(machine, [WorkflowEvent.Submit, WorkflowEvent.Cancel]),
+    );
+    expect(result2.finalState._tag).toBe("Cancelled");
+
+    // Normal flow
+    const result3 = await Effect.runPromise(
+      simulate(machine, [WorkflowEvent.Submit, WorkflowEvent.Approve]),
+    );
+    expect(result3.finalState._tag).toBe("Approved");
   });
 });

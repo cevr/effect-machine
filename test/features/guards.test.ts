@@ -2,17 +2,10 @@
 import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import {
-  Event,
-  Guard,
-  Machine,
-  MissingSlotHandlerError,
-  simulate,
-  State,
-  type TransitionContext,
-} from "../../src/index.js";
+import { Event, Guard, Machine, simulate, State } from "../../src/index.js";
+import type { TransitionContext } from "../../src/index.js";
 
-describe("Named Guards (Effect Slots)", () => {
+describe("Named Guards (via on options)", () => {
   const TestState = State({
     Ready: { canPrint: Schema.Boolean },
     Printing: {},
@@ -26,12 +19,19 @@ describe("Named Guards (Effect Slots)", () => {
   });
   type TestEventType = typeof TestEvent.Type;
 
-  test("guard slot registered in effectSlots", () => {
+  test("guard slot registered via on() with named guard", () => {
+    const canPrint = Guard.make<
+      { readonly _tag: "Ready"; readonly canPrint: boolean },
+      { readonly _tag: "Print" }
+    >("canPrint");
+
     const machine = Machine.make({
       state: TestState,
       event: TestEvent,
       initial: TestState.Ready({ canPrint: true }),
-    }).pipe(Machine.guard(TestState.Ready, TestEvent.Print, "canPrint"));
+    }).on(TestState.Ready, TestEvent.Print, () => TestState.Printing, {
+      guard: canPrint,
+    });
 
     expect(machine.effectSlots.size).toBe(1);
 
@@ -48,15 +48,22 @@ describe("Named Guards (Effect Slots)", () => {
   });
 
   test("provide() accepts Effect<boolean> for guard", () => {
+    const canPrint = Guard.make<
+      { readonly _tag: "Ready"; readonly canPrint: boolean },
+      { readonly _tag: "Print" }
+    >("canPrint");
+
     const machine = Machine.make({
       state: TestState,
       event: TestEvent,
       initial: TestState.Ready({ canPrint: true }),
-    }).pipe(Machine.guard(TestState.Ready, TestEvent.Print, "canPrint"));
+    }).on(TestState.Ready, TestEvent.Print, () => TestState.Printing, {
+      guard: canPrint,
+    });
 
     // This should type-check - guards return Effect<boolean>
-    const provided = Machine.provide(machine, {
-      canPrint: ({ state }) =>
+    const provided = machine.provide({
+      canPrint: ({ state }: TransitionContext<TestStateType, TestEventType>) =>
         // Narrow state to Ready variant to access canPrint
         state._tag === "Ready" ? Effect.succeed(state.canPrint) : Effect.succeed(false),
     });
@@ -64,93 +71,6 @@ describe("Named Guards (Effect Slots)", () => {
     // Guard handler should be in guardHandlers map
     expect(provided.guardHandlers.size).toBe(1);
     expect(provided.guardHandlers.has("canPrint")).toBe(true);
-  });
-
-  test("multiple guard slots compose correctly", () => {
-    const machine = Machine.make({
-      state: TestState,
-      event: TestEvent,
-      initial: TestState.Ready({ canPrint: true }),
-    }).pipe(
-      Machine.guard(TestState.Ready, TestEvent.Print, "canPrint"),
-      Machine.guard(TestState.Ready, TestEvent.Print, "hasPermission"),
-    );
-
-    expect(machine.effectSlots.size).toBe(2);
-    expect(machine.effectSlots.has("canPrint")).toBe(true);
-    expect(machine.effectSlots.has("hasPermission")).toBe(true);
-  });
-
-  test("mixed slots (guard + invoke) work together", () => {
-    const machine = Machine.make({
-      state: TestState,
-      event: TestEvent,
-      initial: TestState.Ready({ canPrint: true }),
-    }).pipe(
-      Machine.guard(TestState.Ready, TestEvent.Print, "canPrint"),
-      Machine.invoke(TestState.Printing, "doPrint"),
-    );
-
-    expect(machine.effectSlots.size).toBe(2);
-
-    const guardSlot = machine.effectSlots.get("canPrint");
-    expect(guardSlot?.type).toBe("guard");
-
-    const invokeSlot = machine.effectSlots.get("doPrint");
-    expect(invokeSlot?.type).toBe("invoke");
-  });
-
-  test("provide() requires all slots including guards", () => {
-    const machine = Machine.make({
-      state: TestState,
-      event: TestEvent,
-      initial: TestState.Ready({ canPrint: true }),
-    }).pipe(
-      Machine.guard(TestState.Ready, TestEvent.Print, "canPrint"),
-      Machine.invoke(TestState.Printing, "doPrint"),
-    );
-
-    // TypeScript now catches missing guard at compile time
-    // Runtime also throws if somehow bypassed
-    try {
-      Machine.provide(
-        machine,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- testing runtime error
-        { doPrint: () => Effect.void } as any,
-      );
-      expect.unreachable("Should have thrown");
-    } catch (e) {
-      expect(e).toBeInstanceOf(MissingSlotHandlerError);
-      expect((e as MissingSlotHandlerError).slotName).toBe("canPrint");
-    }
-  });
-
-  test("guard handler stored separately from other effects", () => {
-    const machine = Machine.make({
-      state: TestState,
-      event: TestEvent,
-      initial: TestState.Ready({ canPrint: true }),
-    }).pipe(
-      Machine.guard(TestState.Ready, TestEvent.Print, "canPrint"),
-      Machine.invoke(TestState.Printing, "doPrint"),
-      Machine.on(TestState.Ready, TestEvent.Print, () => TestState.Printing),
-      Machine.on(TestState.Printing, TestEvent.Finish, () => TestState.Done),
-      Machine.final(TestState.Done),
-    );
-
-    const provided = Machine.provide(machine, {
-      canPrint: ({ state }) =>
-        state._tag === "Ready" ? Effect.succeed(state.canPrint) : Effect.succeed(false),
-      doPrint: () => Effect.void,
-    });
-
-    // Guards go to guardHandlers, not onEnter/onExit
-    expect(provided.guardHandlers.size).toBe(1);
-    expect(provided.guardHandlers.has("canPrint")).toBe(true);
-
-    // Invoke creates onEnter + onExit
-    expect(provided.onEnter.length).toBe(1);
-    expect(provided.onExit.length).toBe(1);
   });
 
   test("named guard slot blocks transition when handler returns false", async () => {
@@ -168,18 +88,33 @@ describe("Named Guards (Effect Slots)", () => {
           state: TestState,
           event: TestEvent,
           initial: TestState.Ready({ canPrint: false }),
-        }).pipe(
-          Machine.on(TestState.Ready, TestEvent.Print, () => TestState.Printing, {
+        })
+          .on(TestState.Ready, TestEvent.Print, () => TestState.Printing, {
             guard: canPrint,
-          }),
-        );
+          })
+          .provide({
+            canPrint: ({ state }: TransitionContext<TestStateType, TestEventType>) =>
+              Effect.succeed(state._tag === "Ready" ? state.canPrint : false),
+          });
 
-        const provided = Machine.provide(machine, {
-          canPrint: ({ state }: TransitionContext<TestStateType, TestEventType>) =>
-            Effect.succeed(state._tag === "Ready" ? state.canPrint : false),
+        const result = yield* simulate(machine, [TestEvent.Print]);
+        expect(result.finalState._tag).toBe("Ready");
+      }),
+    );
+  });
+
+  test("inline predicate guard works without named slot", async () => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Ready({ canPrint: false }),
+        }).on(TestState.Ready, TestEvent.Print, () => TestState.Printing, {
+          guard: Guard.make(({ state }) => state._tag === "Ready" && state.canPrint),
         });
 
-        const result = yield* simulate(provided, [TestEvent.Print]);
+        const result = yield* simulate(machine, [TestEvent.Print]);
         expect(result.finalState._tag).toBe("Ready");
       }),
     );
@@ -214,12 +149,11 @@ describe("Guard Composition", () => {
           state: AuthState,
           event: AuthEvent,
           initial: AuthState.Idle({ role: "admin", age: 25 }),
-        }).pipe(
-          Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed, {
+        })
+          .on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed, {
             guard: Guard.and(isAdmin, isAdult),
-          }),
-          Machine.final(AuthState.Allowed),
-        );
+          })
+          .final(AuthState.Allowed);
 
         const result = yield* simulate(machine, [AuthEvent.Access]);
         expect(result.finalState._tag).toBe("Allowed");
@@ -233,12 +167,11 @@ describe("Guard Composition", () => {
           state: AuthState,
           event: AuthEvent,
           initial: AuthState.Idle({ role: "admin", age: 16 }),
-        }).pipe(
-          Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed, {
+        })
+          .on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed, {
             guard: Guard.and(isAdmin, isAdult),
-          }),
-          Machine.final(AuthState.Allowed),
-        );
+          })
+          .final(AuthState.Allowed);
 
         const result = yield* simulate(machine, [AuthEvent.Access]);
         expect(result.finalState._tag).toBe("Idle");
@@ -258,12 +191,11 @@ describe("Guard Composition", () => {
           state: AuthState,
           event: AuthEvent,
           initial: AuthState.Idle({ role: "moderator", age: 20 }),
-        }).pipe(
-          Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed, {
+        })
+          .on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed, {
             guard: Guard.or(isAdmin, isModerator),
-          }),
-          Machine.final(AuthState.Allowed),
-        );
+          })
+          .final(AuthState.Allowed);
 
         const result = yield* simulate(machine, [AuthEvent.Access]);
         expect(result.finalState._tag).toBe("Allowed");
@@ -280,12 +212,11 @@ describe("Guard Composition", () => {
           state: AuthState,
           event: AuthEvent,
           initial: AuthState.Idle({ role: "user", age: 20 }),
-        }).pipe(
-          Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed, {
+        })
+          .on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed, {
             guard: Guard.not(isGuest),
-          }),
-          Machine.final(AuthState.Allowed),
-        );
+          })
+          .final(AuthState.Allowed);
 
         const result = yield* simulate(machine, [AuthEvent.Access]);
         expect(result.finalState._tag).toBe("Allowed");
@@ -293,26 +224,20 @@ describe("Guard Composition", () => {
     );
   });
 
-  test("Guard.for auto-narrows types from constructors", async () => {
-    // Guard.for infers types from constructors - no manual type annotations needed
-    const isAdmin = Guard.for(
-      AuthState.Idle,
-      AuthEvent.Access,
-    )(({ state }) => state.role === "admin");
-    const isAdult = Guard.for(AuthState.Idle, AuthEvent.Access)(({ state }) => state.age >= 18);
-
+  test("inline guard gets narrowed types from on() params", async () => {
+    // With fluent on(), guards get narrowed types from state/event params
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.make({
           state: AuthState,
           event: AuthEvent,
           initial: AuthState.Idle({ role: "admin", age: 25 }),
-        }).pipe(
-          Machine.on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed, {
-            guard: Guard.and(isAdmin, isAdult),
-          }),
-          Machine.final(AuthState.Allowed),
-        );
+        })
+          .on(AuthState.Idle, AuthEvent.Access, () => AuthState.Allowed, {
+            // Guard predicate is narrowed to IdleState & AccessEvent
+            guard: ({ state }) => state.role === "admin" && state.age >= 18,
+          })
+          .final(AuthState.Allowed);
 
         const result = yield* simulate(machine, [AuthEvent.Access]);
         expect(result.finalState._tag).toBe("Allowed");

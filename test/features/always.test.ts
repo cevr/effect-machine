@@ -23,14 +23,13 @@ describe("Always Transitions", () => {
           state: TestState,
           event: TestEvent,
           initial: TestState.Calculating({ value: 75 }),
-        }).pipe(
-          Machine.always(TestState.Calculating, [
+        })
+          .always(TestState.Calculating, [
             { guard: (s) => s.value >= 70, to: (s) => TestState.High({ value: s.value }) },
             { to: (s) => TestState.Low({ value: s.value }) },
-          ]),
-          Machine.final(TestState.High),
-          Machine.final(TestState.Low),
-        );
+          ])
+          .final(TestState.High)
+          .final(TestState.Low);
 
         // Initial state should already be High due to always transition
         const result = yield* simulate(machine, []);
@@ -57,12 +56,11 @@ describe("Always Transitions", () => {
           state: TestState,
           event: TestEvent,
           initial: TestState.A({ n: 0 }),
-        }).pipe(
-          Machine.always(TestState.A, [{ to: (s) => TestState.B({ n: s.n + 1 }) }]),
-          Machine.always(TestState.B, [{ to: (s) => TestState.C({ n: s.n + 1 }) }]),
-          Machine.always(TestState.C, [{ to: (s) => TestState.Done({ n: s.n + 1 }) }]),
-          Machine.final(TestState.Done),
-        );
+        })
+          .always(TestState.A, [{ to: (s) => TestState.B({ n: s.n + 1 }) }])
+          .always(TestState.B, [{ to: (s) => TestState.C({ n: s.n + 1 }) }])
+          .always(TestState.C, [{ to: (s) => TestState.Done({ n: s.n + 1 }) }])
+          .final(TestState.Done);
 
         const result = yield* simulate(machine, []);
         expect(result.finalState._tag).toBe("Done");
@@ -91,16 +89,15 @@ describe("Always Transitions", () => {
           state: TestState,
           event: TestEvent,
           initial: TestState.Input({ value: 50 }),
-        }).pipe(
-          Machine.always(TestState.Input, [
+        })
+          .always(TestState.Input, [
             { guard: (s) => s.value >= 70, to: () => TestState.High },
             { guard: (s) => s.value >= 40, to: () => TestState.Medium },
             { to: () => TestState.Low },
-          ]),
-          Machine.final(TestState.High),
-          Machine.final(TestState.Medium),
-          Machine.final(TestState.Low),
-        );
+          ])
+          .final(TestState.High)
+          .final(TestState.Medium)
+          .final(TestState.Low);
 
         const result = yield* simulate(machine, []);
         expect(result.finalState._tag).toBe("Medium");

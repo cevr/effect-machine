@@ -30,19 +30,6 @@ on(State.Form, Event.Submit, () => State.Submitting(), {
 });
 ```
 
-## Guard.for - Auto-narrowed Types
-
-Use `Guard.for` to create guards without manual type annotations:
-
-```typescript
-import { Guard } from "effect-machine";
-
-// Types inferred from constructors
-const isValid = Guard.for(State.Form, Event.Submit)(({ state }) => state.isValid);
-
-const hasEmail = Guard.for(State.Form, Event.Submit)(({ state }) => state.email.length > 0);
-```
-
 ## Guard Composition
 
 ### Guard.and
@@ -100,29 +87,24 @@ const canAccessAdmin = Guard.and(Guard.and(isAdmin, isActive), isNotBanned);
 
 ## Type Narrowing
 
-Guards can be typed to specific state/event combinations:
+With fluent `on()`, inline guards automatically get narrowed types:
 
 ```typescript
+machine.on(State.Idle, Event.Start, () => State.Running, {
+  // guard receives { state: IdleState, event: StartEvent }
+  guard: ({ state, event }) => state.ready && event.force,
+});
+```
+
+For reusable guards, use type annotations:
+
+````typescript
 type IdleState = State & { readonly _tag: "Idle" };
 type StartEvent = Event & { readonly _tag: "Start" };
 
 const canStart = Guard.make<IdleState, StartEvent>(({ state, event }) => {
-  // state is narrowed to IdleState
-  // event is narrowed to StartEvent
   return state.ready && event.force;
 });
-```
-
-Or use `Guard.for` for automatic narrowing:
-
-```typescript
-const canStart = Guard.for(
-  State.Idle,
-  Event.Start,
-)(({ state, event }) => {
-  return state.ready && event.force;
-});
-```
 
 ## Guard Cascade Order
 
@@ -137,7 +119,7 @@ on(State.A, Event.X, () => State.C(), {
   guard: ({ state }) => state.value > 50,   // Checked second
 }),
 on(State.A, Event.X, () => State.D()),      // Fallback (no guard)
-```
+````
 
 First passing guard wins. Use `choose` for explicit cascade:
 

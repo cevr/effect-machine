@@ -38,16 +38,15 @@ describe("Machine.any", () => {
           state: EditorState,
           event: EditorEvent,
           initial: EditorState.Typing({ text: "hello" }),
-        }).pipe(
-          Machine.on(EditorState.Typing, EditorEvent.Submit, ({ state }) =>
+        })
+          .on(EditorState.Typing, EditorEvent.Submit, ({ state }) =>
             EditorState.Submitting({ text: state.text }),
-          ),
-          Machine.on(
-            Machine.any(EditorState.Typing, EditorState.Submitting),
+          )
+          .onAny(
+            [EditorState.Typing, EditorState.Submitting],
             EditorEvent.Cancel,
             () => EditorState.Cancelled,
-          ),
-        );
+          );
 
         // Cancel from Typing
         const result1 = yield* simulate(machine, [EditorEvent.Cancel]);
@@ -67,18 +66,16 @@ describe("Machine.any", () => {
           state: EditorState,
           event: EditorEvent,
           initial: EditorState.Typing({ text: "abc" }),
-        }).pipe(
-          Machine.on(EditorState.Typing, EditorEvent.Submit, ({ state }) =>
+        })
+          .on(EditorState.Typing, EditorEvent.Submit, ({ state }) =>
             EditorState.Submitting({ text: state.text }),
-          ),
-          Machine.on(
-            Machine.any(EditorState.Typing, EditorState.Submitting),
+          )
+          .onAny(
+            [EditorState.Typing, EditorState.Submitting],
             EditorEvent.Cancel,
             () => EditorState.Cancelled,
-            // Guard tests state has text field - both Typing and Submitting have it
             { guard: ({ state }) => "text" in state && state.text.length > 0 },
-          ),
-        );
+          );
 
         const result = yield* simulate(machine, [EditorEvent.Cancel]);
         expect(result.finalState._tag).toBe("Cancelled");
@@ -95,12 +92,12 @@ describe("Machine.any", () => {
           state: EditorState,
           event: EditorEvent,
           initial: EditorState.Typing({ text: "" }),
-        }).pipe(
-          Machine.on(EditorState.Typing, EditorEvent.Submit, ({ state }) =>
+        })
+          .on(EditorState.Typing, EditorEvent.Submit, ({ state }) =>
             EditorState.Submitting({ text: state.text }),
-          ),
-          Machine.on(
-            Machine.any(EditorState.Typing, EditorState.Submitting),
+          )
+          .onAny(
+            [EditorState.Typing, EditorState.Submitting],
             EditorEvent.Cancel,
             () => EditorState.Cancelled,
             {
@@ -109,8 +106,7 @@ describe("Machine.any", () => {
                   logs.push(`cancelled from: ${state._tag}`);
                 }),
             },
-          ),
-        );
+          );
 
         yield* simulate(machine, [EditorEvent.Cancel]);
         expect(logs).toEqual(["cancelled from: Typing"]);
@@ -142,12 +138,11 @@ describe("Machine.any", () => {
           state: S,
           event: E,
           initial: S.A,
-        }).pipe(
-          Machine.on(S.A, E.Next, () => S.B),
-          Machine.on(S.B, E.Next, () => S.C),
-          Machine.on(S.C, E.Next, () => S.D),
-          Machine.on(Machine.any(S.A, S.B, S.C, S.D), E.Finish, () => S.Done),
-        );
+        })
+          .on(S.A, E.Next, () => S.B)
+          .on(S.B, E.Next, () => S.C)
+          .on(S.C, E.Next, () => S.D)
+          .onAny([S.A, S.B, S.C, S.D], E.Finish, () => S.Done);
 
         // Finish from A
         const r1 = yield* simulate(machine, [E.Finish]);
@@ -181,26 +176,21 @@ describe("Machine namespace", () => {
           state: EditorState,
           event: EditorEvent,
           initial: EditorState.Idle,
-        }).pipe(
-          Machine.from(EditorState.Idle).pipe(
-            Machine.on(EditorEvent.Focus, () => EditorState.Typing({ text: "" })),
-          ),
-          Machine.from(EditorState.Typing).pipe(
-            Machine.on(EditorEvent.KeyPress, ({ state, event }) =>
-              EditorState.Typing({ text: state.text + event.key }),
-            ),
-            Machine.on(EditorEvent.Submit, ({ state }) =>
-              EditorState.Submitted({ text: state.text }),
-            ),
-          ),
-          Machine.on(
-            Machine.any(EditorState.Idle, EditorState.Typing),
+        })
+          .on(EditorState.Idle, EditorEvent.Focus, () => EditorState.Typing({ text: "" }))
+          .on(EditorState.Typing, EditorEvent.KeyPress, ({ state, event }) =>
+            EditorState.Typing({ text: state.text + event.key }),
+          )
+          .on(EditorState.Typing, EditorEvent.Submit, ({ state }) =>
+            EditorState.Submitted({ text: state.text }),
+          )
+          .onAny(
+            [EditorState.Idle, EditorState.Typing],
             EditorEvent.Cancel,
             () => EditorState.Cancelled,
-          ),
-          Machine.final(EditorState.Submitted),
-          Machine.final(EditorState.Cancelled),
-        );
+          )
+          .final(EditorState.Submitted)
+          .final(EditorState.Cancelled);
 
         const result = yield* simulate(machine, [
           EditorEvent.Focus,

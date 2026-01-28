@@ -23,10 +23,8 @@ describe("Machine", () => {
       state: CounterState,
       event: CounterEvent,
       initial: CounterState.Idle({ count: 0 }),
-    }).pipe(
-      Machine.on(CounterState.Idle, CounterEvent.Start, ({ state }) =>
-        CounterState.Counting({ count: state.count }),
-      ),
+    }).on(CounterState.Idle, CounterEvent.Start, ({ state }) =>
+      CounterState.Counting({ count: state.count }),
     );
     expect(machine.initial._tag).toBe("Idle");
     expect(machine.initial.count).toBe(0);
@@ -39,18 +37,17 @@ describe("Machine", () => {
           state: CounterState,
           event: CounterEvent,
           initial: CounterState.Idle({ count: 0 }),
-        }).pipe(
-          Machine.on(CounterState.Idle, CounterEvent.Start, ({ state }) =>
+        })
+          .on(CounterState.Idle, CounterEvent.Start, ({ state }) =>
             CounterState.Counting({ count: state.count }),
-          ),
-          Machine.on(CounterState.Counting, CounterEvent.Increment, ({ state }) =>
+          )
+          .on(CounterState.Counting, CounterEvent.Increment, ({ state }) =>
             CounterState.Counting({ count: state.count + 1 }),
-          ),
-          Machine.on(CounterState.Counting, CounterEvent.Stop, ({ state }) =>
+          )
+          .on(CounterState.Counting, CounterEvent.Stop, ({ state }) =>
             CounterState.Done({ count: state.count }),
-          ),
-          Machine.final(CounterState.Done),
-        );
+          )
+          .final(CounterState.Done);
 
         const result = yield* simulate(machine, [
           CounterEvent.Start,
@@ -72,20 +69,19 @@ describe("Machine", () => {
           state: CounterState,
           event: CounterEvent,
           initial: CounterState.Counting({ count: 0 }),
-        }).pipe(
-          Machine.on(
+        })
+          .on(
             CounterState.Counting,
             CounterEvent.Increment,
             ({ state }) => CounterState.Counting({ count: state.count + 1 }),
             {
               guard: ({ state }) => state.count < 3,
             },
-          ),
-          Machine.on(CounterState.Counting, CounterEvent.Stop, ({ state }) =>
+          )
+          .on(CounterState.Counting, CounterEvent.Stop, ({ state }) =>
             CounterState.Done({ count: state.count }),
-          ),
-          Machine.final(CounterState.Done),
-        );
+          )
+          .final(CounterState.Done);
 
         const result = yield* simulate(machine, [
           CounterEvent.Increment,
@@ -109,8 +105,8 @@ describe("Machine", () => {
           state: CounterState,
           event: CounterEvent,
           initial: CounterState.Idle({ count: 0 }),
-        }).pipe(
-          Machine.on(
+        })
+          .on(
             CounterState.Idle,
             CounterEvent.Start,
             ({ state }) => CounterState.Counting({ count: state.count }),
@@ -120,12 +116,11 @@ describe("Machine", () => {
                   logs.push(`Starting from count ${state.count}`);
                 }),
             },
-          ),
-          Machine.on(CounterState.Counting, CounterEvent.Stop, ({ state }) =>
+          )
+          .on(CounterState.Counting, CounterEvent.Stop, ({ state }) =>
             CounterState.Done({ count: state.count }),
-          ),
-          Machine.final(CounterState.Done),
-        );
+          )
+          .final(CounterState.Done);
 
         yield* simulate(machine, [CounterEvent.Start, CounterEvent.Stop]);
         expect(logs).toEqual(["Starting from count 0"]);
@@ -138,10 +133,9 @@ describe("Machine", () => {
       state: CounterState,
       event: CounterEvent,
       initial: CounterState.Idle({ count: 0 }),
-    }).pipe(
-      Machine.on(CounterState.Idle, CounterEvent.Start, () => CounterState.Done({ count: 0 })),
-      Machine.final(CounterState.Done),
-    );
+    })
+      .on(CounterState.Idle, CounterEvent.Start, () => CounterState.Done({ count: 0 }))
+      .final(CounterState.Done);
     expect(machine.finalStates.has("Done")).toBe(true);
     expect(machine.finalStates.has("Idle")).toBe(false);
   });

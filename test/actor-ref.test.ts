@@ -25,27 +25,22 @@ const createTestMachine = () =>
     state: TestState,
     event: TestEvent,
     initial: TestState.Idle,
-  }).pipe(
-    Machine.on(TestState.Idle, TestEvent.Start, ({ event }) =>
-      TestState.Loading({ value: event.value }),
-    ),
-    Machine.on(TestState.Loading, TestEvent.Complete, ({ state }) =>
+  })
+    .on(TestState.Idle, TestEvent.Start, ({ event }) => TestState.Loading({ value: event.value }))
+    .on(TestState.Loading, TestEvent.Complete, ({ state }) =>
       TestState.Active({ value: state.value }),
-    ),
-    Machine.on(TestState.Active, TestEvent.Update, ({ event }) =>
-      TestState.Active({ value: event.value }),
-    ),
-    Machine.on(TestState.Active, TestEvent.Stop, () => TestState.Done),
-    Machine.on(
+    )
+    .on(TestState.Active, TestEvent.Update, ({ event }) => TestState.Active({ value: event.value }))
+    .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
+    .on(
       TestState.Active,
       TestEvent.Update,
       ({ state }) => TestState.Active({ value: state.value * 2 }),
       {
         guard: ({ event }) => event.value > 100,
       },
-    ),
-    Machine.final(TestState.Done),
-  );
+    )
+    .final(TestState.Done);
 
 describe("ActorRef ergonomics", () => {
   describe("snapshot / snapshotSync", () => {
