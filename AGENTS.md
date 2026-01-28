@@ -13,7 +13,7 @@ bun run fmt           # oxfmt
 
 ## Conventions
 
-- Files: kebab-case (`actor-system.ts`, `on-enter.ts`)
+- Files: kebab-case (`actor-system.ts`, `spawn.ts`)
 - States/Events: schema-first with `State({...})` / `Event({...})` - they ARE schemas
 - Empty structs: plain values - `State.Idle` (not callable)
 - Non-empty: `State.Loading({ url })` - constructor requiring args
@@ -35,17 +35,16 @@ const machine = Machine.make({ state, event, initial })
 
 - All builder methods mutate internal state, return `this`
 - Exception: `provide()` creates new instance (supports reusing base machine with different effects)
-- Internal fields prefixed `_` (`_transitions`, `_effectSlots`), public getters expose readonly views
+- Internal fields prefixed `_` (`_transitions`, `_spawnEffects`), public getters expose readonly views
 
 ## Gotchas
 
-- `always` transitions max 100 iterations (infinite loop protection)
 - `delay` requires `Effect.scoped` + `ActorSystemDefault` layer
 - TestClock: use `Layer.merge(ActorSystemDefault, TestContext.TestContext)`
-- `simulate`/`createTestHarness` run guard/effect slots in handlers but no onEnter/onExit/invoke
-- Actor testing needs `yieldFibers` after `send()` to let effects run
-- Same-state transitions skip exit/enter by default
-- `.reenter()` runs exit/enter even on same state tag - use to restart timers/invoke
+- `simulate`/`createTestHarness` run guard/effect slots in handlers but no spawn/background effects
+- Actor testing needs `Effect.yieldNow()` after `send()` to let effects run
+- Same-state transitions skip spawn/finalizers by default
+- `.reenter()` runs exit/enter even on same state tag - use to restart timers/spawn
 - Dynamic delay: duration fn evaluated at state entry, not registration time
 - `namespace.ts` exports Machine namespace (not `Machine.ts` - macOS case-insensitivity)
 - Branded types: `State<T>` / `Event<T>` prevent accidental swap at compile time
@@ -106,21 +105,34 @@ const machine = Machine.make({
 - Provide signature: `(params, ctx) => ...` where ctx = `{ state, event, self }`
 - Guard logic in handler body - no more `guard:` option on `.on()`
 
-## Invoke Slots
+## State Effects with spawn
 
-State-scoped or root-level effects (string names, not parameterized):
+Use `.spawn()` for state-scoped effects. Use `Effect.addFinalizer` for cleanup:
 
 ```ts
-machine
-  .invoke(State.Loading, "fetchData")   // state-scoped
-  .invoke("background")                  // root-level (machine lifetime)
-  .invoke(State.X, ["a", "b"])          // parallel state invokes
-  .invoke(["a", "b"])                    // parallel root invokes
-  .provide({ fetchData: ({ state, self }) => ... })
+machine.spawn(State.Loading, ({ state, self }) =>
+  Effect.gen(function* () {
+    // Cleanup via finalizer
+    yield* Effect.addFinalizer(() => Effect.log("Leaving Loading"));
+
+    // Main work - auto-cancelled when exiting Loading
+    const data = yield* Http.get(state.url);
+    yield* self.send(Event.Loaded({ data }));
+  }),
+);
 ```
 
-- Spawning machine with unprovided slots -> runtime error
-- `simulate()` works without providing invoke effects (pure transitions only)
+Use `.background()` for machine-lifetime effects:
+
+```ts
+machine.background("heartbeat", ({ self }) =>
+  Effect.forever(Effect.sleep("30 seconds").pipe(Effect.andThen(self.send(Event.Ping)))),
+);
+```
+
+- Spawn effects are forked into state scope - cancelled on state exit
+- Background effects are forked into machine scope - cancelled on stop/final
+- `simulate()` works without providing spawn/background effects (pure transitions only)
 
 ## Effect Language Service
 

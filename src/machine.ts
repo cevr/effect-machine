@@ -1,10 +1,9 @@
 import type { Schema, Schedule } from "effect";
-import { Context, Duration, Effect, Fiber } from "effect";
+import { Context, Duration, Effect } from "effect";
 import type { Pipeable } from "effect/Pipeable";
 import { pipeArguments } from "effect/Pipeable";
-import { createFiberStorage } from "./internal/fiber-storage.js";
 
-import type { StateEffectContext, TransitionResult } from "./internal/types.js";
+import type { TransitionResult } from "./internal/types.js";
 import type { TaggedOrConstructor, BrandedState, BrandedEvent } from "./internal/brands.js";
 import { getTag } from "./internal/get-tag.js";
 import type { MachineStateSchema, MachineEventSchema, VariantsUnion } from "./machine-schema.js";
@@ -45,10 +44,11 @@ export interface HandlerContext<State, Event, GD extends GuardsDef, ED extends E
 }
 
 /**
- * Handler context passed to state effect handlers (onEnter, onExit)
+ * Handler context passed to state effect handlers (onEnter, spawn, background)
  */
 export interface StateHandlerContext<State, Event, ED extends EffectsDef> {
   readonly state: State;
+  readonly event: Event;
   readonly self: MachineRef<Event>;
   readonly effects: EffectSlots<ED>;
 }
@@ -78,52 +78,20 @@ export interface Transition<State, Event, GD extends GuardsDef, ED extends Effec
 }
 
 /**
- * Always (eventless) transition definition
+ * Spawn effect - state-scoped forked effect
  */
-export interface AlwaysTransition<State, GD extends GuardsDef, ED extends EffectsDef, R> {
-  readonly stateTag: string;
-  readonly handler: (
-    state: State,
-    guards: GuardSlots<GD>,
-    effects: EffectSlots<ED>,
-  ) => TransitionResult<State, R>;
-}
-
-/**
- * Entry/exit effect definition
- */
-export interface StateEffect<State, Event, ED extends EffectsDef, R> {
+export interface SpawnEffect<State, Event, ED extends EffectsDef, R> {
   readonly stateTag: string;
   readonly handler: StateEffectHandler<State, Event, ED, R>;
 }
 
 /**
- * Root invoke effect - runs for entire machine lifetime
+ * Background effect - runs for entire machine lifetime
  */
-export interface RootInvoke<State, Event, R> {
+export interface BackgroundEffect<State, Event, ED extends EffectsDef, R> {
   readonly name: string;
-  readonly handler: (ctx: StateEffectContext<State, Event>) => Effect.Effect<void, never, R>;
+  readonly handler: StateEffectHandler<State, Event, ED, R>;
 }
-
-/**
- * Invoke slot record - tracks named invoke slots for provision
- * @internal
- */
-export type InvokeSlotRecord =
-  | { readonly type: "invoke"; readonly stateTag: string | null; readonly name: string }
-  | { readonly type: "onEnter"; readonly stateTag: string; readonly name: string }
-  | { readonly type: "onExit"; readonly stateTag: string; readonly name: string };
-
-/**
- * Type-level effect slot for phantom type tracking
- */
-export type EffectSlotType<Type extends "invoke" | "onEnter" | "onExit", Name extends string> = {
-  readonly type: Type;
-  readonly name: Name;
-};
-
-/** Any effect slot type (for constraints) */
-export type AnySlot = EffectSlotType<"invoke" | "onEnter" | "onExit", string>;
 
 // ============================================================================
 // Options types
@@ -146,12 +114,6 @@ export interface PersistOptions {
 type IsAny<T> = 0 extends 1 & T ? true : false;
 type IsUnknown<T> = unknown extends T ? ([T] extends [unknown] ? true : false) : false;
 type NormalizeR<T> = IsAny<T> extends true ? T : IsUnknown<T> extends true ? never : T;
-
-type InvokeSlots<Names extends readonly string[]> = Names[number] extends infer Name
-  ? Name extends string
-    ? EffectSlotType<"invoke", Name>
-    : never
-  : never;
 
 // ============================================================================
 // MakeConfig
@@ -193,25 +155,17 @@ type HasEffectKeys<EFD extends EffectsDef> = [keyof EFD] extends [never]
 /** Context type passed to guard/effect handlers */
 export type SlotContext<State, Event> = MachineContext<State, Event, MachineRef<Event>>;
 
-/** Combined handlers for provide() */
+/** Combined handlers for provide() - guards and effects only */
 export type ProvideHandlers<
   State,
   Event,
   GD extends GuardsDef,
   EFD extends EffectsDef,
-  _Slots extends AnySlot,
   R,
 > = (HasGuardKeys<GD> extends true ? GuardHandlers<GD, SlotContext<State, Event>, R> : object) &
   (HasEffectKeys<EFD> extends true
     ? SlotEffectHandlers<EFD, SlotContext<State, Event>, R>
-    : object) &
-  ([_Slots] extends [never]
-    ? object
-    : {
-        [K in _Slots["name"]]: (
-          ctx: StateEffectContext<State, Event>,
-        ) => Effect.Effect<void, never, R>;
-      });
+    : object);
 
 // ============================================================================
 // Machine class
@@ -224,7 +178,6 @@ export type ProvideHandlers<
  * - `State`: The state union type
  * - `Event`: The event union type
  * - `R`: Effect requirements
- * - `_Slots`: Phantom type tracking unprovided effect slots
  * - `_SD`: State schema definition (for compile-time validation)
  * - `_ED`: Event schema definition (for compile-time validation)
  * - `GD`: Guard definitions
@@ -234,7 +187,6 @@ export class Machine<
   State,
   Event,
   R = never,
-  _Slots extends AnySlot = never,
   _SD extends Record<string, Schema.Struct.Fields> = Record<string, Schema.Struct.Fields>,
   _ED extends Record<string, Schema.Struct.Fields> = Record<string, Schema.Struct.Fields>,
   GD extends GuardsDef = Record<string, never>,
@@ -242,12 +194,9 @@ export class Machine<
 > implements Pipeable {
   readonly initial: State;
   /** @internal */ readonly _transitions: Array<Transition<State, Event, GD, EFD, R>>;
-  /** @internal */ readonly _alwaysTransitions: Array<AlwaysTransition<State, GD, EFD, R>>;
-  /** @internal */ readonly _onEnterEffects: Array<StateEffect<State, Event, EFD, R>>;
-  /** @internal */ readonly _onExitEffects: Array<StateEffect<State, Event, EFD, R>>;
-  /** @internal */ readonly _rootInvokes: Array<RootInvoke<State, Event, R>>;
+  /** @internal */ readonly _spawnEffects: Array<SpawnEffect<State, Event, EFD, R>>;
+  /** @internal */ readonly _backgroundEffects: Array<BackgroundEffect<State, Event, EFD, R>>;
   /** @internal */ readonly _finalStates: Set<string>;
-  /** @internal */ readonly _effectSlots: Map<string, InvokeSlotRecord>;
   /** @internal */ readonly _guardsSchema?: GuardsSchema<GD>;
   /** @internal */ readonly _effectsSchema?: EffectsSchema<EFD>;
   /** @internal */ readonly _guardHandlers: Map<
@@ -274,23 +223,14 @@ export class Machine<
   get transitions(): ReadonlyArray<Transition<State, Event, GD, EFD, R>> {
     return this._transitions;
   }
-  get alwaysTransitions(): ReadonlyArray<AlwaysTransition<State, GD, EFD, R>> {
-    return this._alwaysTransitions;
+  get spawnEffects(): ReadonlyArray<SpawnEffect<State, Event, EFD, R>> {
+    return this._spawnEffects;
   }
-  get onEnterEffects(): ReadonlyArray<StateEffect<State, Event, EFD, R>> {
-    return this._onEnterEffects;
-  }
-  get onExitEffects(): ReadonlyArray<StateEffect<State, Event, EFD, R>> {
-    return this._onExitEffects;
-  }
-  get rootInvokes(): ReadonlyArray<RootInvoke<State, Event, R>> {
-    return this._rootInvokes;
+  get backgroundEffects(): ReadonlyArray<BackgroundEffect<State, Event, EFD, R>> {
+    return this._backgroundEffects;
   }
   get finalStates(): ReadonlySet<string> {
     return this._finalStates;
-  }
-  get effectSlots(): ReadonlyMap<string, InvokeSlotRecord> {
-    return this._effectSlots;
   }
   get guardsSchema(): GuardsSchema<GD> | undefined {
     return this._guardsSchema;
@@ -309,12 +249,9 @@ export class Machine<
   ) {
     this.initial = initial;
     this._transitions = [];
-    this._alwaysTransitions = [];
-    this._onEnterEffects = [];
-    this._onExitEffects = [];
-    this._rootInvokes = [];
+    this._spawnEffects = [];
+    this._backgroundEffects = [];
     this._finalStates = new Set();
-    this._effectSlots = new Map();
     this._guardsSchema = guardsSchema;
     this._effectsSchema = effectsSchema;
     this._guardHandlers = new Map();
@@ -342,15 +279,15 @@ export class Machine<
     state: TaggedOrConstructor<NS>,
     event: TaggedOrConstructor<NE>,
     handler: TransitionHandler<NS, NE, RS, GD, EFD, R2>,
-  ): Machine<State, Event, R | R2, _Slots, _SD, _ED, GD, EFD> {
+  ): Machine<State, Event, R | R2, _SD, _ED, GD, EFD> {
     return this.addTransition(state, event, handler, false);
   }
 
   // ---- reenter ----
 
   /**
-   * Like `on()`, but forces onExit/onEnter to run even when transitioning to the same state tag.
-   * Use this to restart timers, re-run invoke effects, or reset state-scoped effects.
+   * Like `on()`, but forces onEnter/spawn to run even when transitioning to the same state tag.
+   * Use this to restart timers, re-run spawned effects, or reset state-scoped effects.
    */
   reenter<
     NS extends VariantsUnion<_SD> & BrandedState,
@@ -361,7 +298,7 @@ export class Machine<
     state: TaggedOrConstructor<NS>,
     event: TaggedOrConstructor<NE>,
     handler: TransitionHandler<NS, NE, RS, GD, EFD, R2>,
-  ): Machine<State, Event, R | R2, _Slots, _SD, _ED, GD, EFD> {
+  ): Machine<State, Event, R | R2, _SD, _ED, GD, EFD> {
     return this.addTransition(state, event, handler, true);
   }
 
@@ -371,7 +308,7 @@ export class Machine<
     event: TaggedOrConstructor<NE>,
     handler: TransitionHandler<NS, NE, BrandedState, GD, EFD, R2>,
     reenter: boolean,
-  ): Machine<State, Event, R | R2, _Slots, _SD, _ED, GD, EFD> {
+  ): Machine<State, Event, R | R2, _SD, _ED, GD, EFD> {
     const stateTag = getTag(state);
     const eventTag = getTag(event);
 
@@ -385,114 +322,79 @@ export class Machine<
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (this._transitions as any[]).push(transition);
 
-    return this as unknown as Machine<State, Event, R | R2, _Slots, _SD, _ED, GD, EFD>;
+    return this as unknown as Machine<State, Event, R | R2, _SD, _ED, GD, EFD>;
   }
 
-  // ---- always ----
+  // ---- spawn ----
 
-  always<NS extends VariantsUnion<_SD> & BrandedState, R2 = never>(
-    state: TaggedOrConstructor<NS>,
-    handler: (
-      state: NS,
-      guards: GuardSlots<GD>,
-      effects: EffectSlots<EFD>,
-    ) => TransitionResult<VariantsUnion<_SD> & BrandedState, R2>,
-  ): Machine<State, Event, R | R2, _Slots, _SD, _ED, GD, EFD> {
-    const stateTag = getTag(state);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (this._alwaysTransitions as any[]).push({
-      stateTag,
-      handler: handler as unknown as AlwaysTransition<State, GD, EFD, R | R2>["handler"],
-    });
-    return this as unknown as Machine<State, Event, R | R2, _Slots, _SD, _ED, GD, EFD>;
-  }
-
-  // ---- invoke ----
-
-  invoke<NS extends VariantsUnion<_SD> & BrandedState, Name extends string>(
-    state: TaggedOrConstructor<NS>,
-    name: Name,
-  ): Machine<State, Event, R, _Slots | EffectSlotType<"invoke", Name>, _SD, _ED, GD, EFD>;
-
-  invoke<NS extends VariantsUnion<_SD> & BrandedState, const Names extends readonly string[]>(
-    state: TaggedOrConstructor<NS>,
-    names: Names,
-  ): Machine<State, Event, R, _Slots | InvokeSlots<Names>, _SD, _ED, GD, EFD>;
-
-  invoke<Name extends string>(
-    name: Name,
-  ): Machine<State, Event, R, _Slots | EffectSlotType<"invoke", Name>, _SD, _ED, GD, EFD>;
-
-  invoke<const Names extends readonly string[]>(
-    names: Names,
-  ): Machine<State, Event, R, _Slots | InvokeSlots<Names>, _SD, _ED, GD, EFD>;
-
-  invoke(
-    stateOrName: TaggedOrConstructor<BrandedState> | string | readonly string[],
-    nameOrNames?: string | readonly string[],
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ): any {
-    // Root invoke: invoke(name) or invoke([names])
-    if (nameOrNames === undefined) {
-      const names =
-        typeof stateOrName === "string" ? [stateOrName] : (stateOrName as readonly string[]);
-      for (const name of names) {
-        this._effectSlots.set(name, { type: "invoke", stateTag: null, name });
-      }
-      return this;
-    }
-
-    // State invoke: invoke(state, name) or invoke(state, [names])
-    const stateTag = getTag(stateOrName as TaggedOrConstructor<BrandedState>);
-    const names = typeof nameOrNames === "string" ? [nameOrNames] : nameOrNames;
-    for (const name of names) {
-      this._effectSlots.set(name, { type: "invoke", stateTag, name });
-    }
-    return this;
-  }
-
-  // ---- onEnter ----
-
-  onEnter<NS extends VariantsUnion<_SD> & BrandedState, R2 = never>(
+  /**
+   * State-scoped effect that is forked on state entry and automatically cancelled on state exit.
+   * Use `Effect.addFinalizer` inside the handler for cleanup logic.
+   *
+   * @example
+   * ```ts
+   * .spawn(State.Loading, ({ state, self }) =>
+   *   Effect.gen(function* () {
+   *     yield* Effect.addFinalizer(() => Effect.log("Leaving Loading"))
+   *     const data = yield* Http.get(state.url)
+   *     yield* self.send(Event.Loaded({ data }))
+   *   })
+   * )
+   * ```
+   */
+  spawn<NS extends VariantsUnion<_SD> & BrandedState, R2 = never>(
     state: TaggedOrConstructor<NS>,
     handler: StateEffectHandler<NS, VariantsUnion<_ED> & BrandedEvent, EFD, R2>,
-  ): Machine<State, Event, R | R2, _Slots, _SD, _ED, GD, EFD> {
+  ): Machine<State, Event, R | R2, _SD, _ED, GD, EFD> {
     const stateTag = getTag(state);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (this._onEnterEffects as any[]).push({
+    (this._spawnEffects as any[]).push({
       stateTag,
-      handler: handler as unknown as StateEffect<State, Event, EFD, R | R2>["handler"],
+      handler: handler as unknown as SpawnEffect<State, Event, EFD, R | R2>["handler"],
     });
-    return this as unknown as Machine<State, Event, R | R2, _Slots, _SD, _ED, GD, EFD>;
+    return this as unknown as Machine<State, Event, R | R2, _SD, _ED, GD, EFD>;
   }
 
-  // ---- onExit ----
+  // ---- background ----
 
-  onExit<NS extends VariantsUnion<_SD> & BrandedState, R2 = never>(
-    state: TaggedOrConstructor<NS>,
-    handler: StateEffectHandler<NS, VariantsUnion<_ED> & BrandedEvent, EFD, R2>,
-  ): Machine<State, Event, R | R2, _Slots, _SD, _ED, GD, EFD> {
-    const stateTag = getTag(state);
+  /**
+   * Machine-lifetime effect that is forked on actor spawn and runs until the actor stops.
+   *
+   * @example
+   * ```ts
+   * .background("heartbeat", ({ self }) =>
+   *   Effect.forever(
+   *     Effect.sleep("30 seconds").pipe(
+   *       Effect.andThen(self.send(Event.Ping))
+   *     )
+   *   )
+   * )
+   * ```
+   */
+  background<R2 = never>(
+    name: string,
+    handler: StateEffectHandler<State, Event, EFD, R2>,
+  ): Machine<State, Event, R | R2, _SD, _ED, GD, EFD> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (this._onExitEffects as any[]).push({
-      stateTag,
-      handler: handler as unknown as StateEffect<State, Event, EFD, R | R2>["handler"],
+    (this._backgroundEffects as any[]).push({
+      name,
+      handler: handler as unknown as BackgroundEffect<State, Event, EFD, R | R2>["handler"],
     });
-    return this as unknown as Machine<State, Event, R | R2, _Slots, _SD, _ED, GD, EFD>;
+    return this as unknown as Machine<State, Event, R | R2, _SD, _ED, GD, EFD>;
   }
 
   // ---- delay ----
 
+  /**
+   * Schedule an event to be sent after a delay when entering a state.
+   * The timer is automatically cancelled when exiting the state.
+   */
   delay<NS extends VariantsUnion<_SD> & BrandedState, NE extends VariantsUnion<_ED> & BrandedEvent>(
     state: TaggedOrConstructor<NS>,
     duration: DurationOrFn<NS>,
     event: TaggedOrConstructor<NE>,
-  ): Machine<State, Event, R, _Slots, _SD, _ED, GD, EFD> {
+  ): Machine<State, Event, R, _SD, _ED, GD, EFD> {
     const stateTag = getTag(state);
-
-    // Create fiber storage for this delay instance
-    const getFiberMap = createFiberStorage();
-    const delayKey = Symbol("delay");
 
     // Get event value (if constructor, call it)
     const eventValue = typeof event === "function" ? (event as () => BrandedEvent)() : event;
@@ -500,36 +402,18 @@ export class Machine<
     // Pre-decode if static duration
     const staticDuration = typeof duration !== "function" ? Duration.decode(duration) : null;
 
-    const enterHandler = (ctx: StateHandlerContext<State, Event, EFD>) => {
+    // Use spawn for delay - the effect is automatically cancelled on state exit
+    const delayHandler = (ctx: StateHandlerContext<State, Event, EFD>) => {
       const dur =
         staticDuration ??
         Duration.decode(
           (duration as (s: NS) => Duration.DurationInput)(ctx.state as unknown as NS),
         );
-      return Effect.gen(function* () {
-        const fiberMap = getFiberMap(ctx.self);
-        const fiber = yield* Effect.sleep(dur).pipe(
-          Effect.andThen(ctx.self.send(eventValue as Event)),
-          Effect.fork,
-        );
-        fiberMap.set(delayKey, fiber);
-      });
+      return Effect.sleep(dur).pipe(Effect.andThen(ctx.self.send(eventValue as Event)));
     };
 
-    const exitHandler = (ctx: StateHandlerContext<State, Event, EFD>) =>
-      Effect.gen(function* () {
-        const fiberMap = getFiberMap(ctx.self);
-        const fiber = fiberMap.get(delayKey);
-        if (fiber !== undefined) {
-          fiberMap.delete(delayKey);
-          yield* Fiber.interrupt(fiber);
-        }
-      });
-
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (this._onEnterEffects as any[]).push({ stateTag, handler: enterHandler });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (this._onExitEffects as any[]).push({ stateTag, handler: exitHandler });
+    (this._spawnEffects as any[]).push({ stateTag, handler: delayHandler });
     return this;
   }
 
@@ -537,7 +421,7 @@ export class Machine<
 
   final<NS extends VariantsUnion<_SD> & BrandedState>(
     state: TaggedOrConstructor<NS>,
-  ): Machine<State, Event, R, _Slots, _SD, _ED, GD, EFD> {
+  ): Machine<State, Event, R, _SD, _ED, GD, EFD> {
     const stateTag = getTag(state);
     this._finalStates.add(stateTag);
     return this;
@@ -545,9 +429,13 @@ export class Machine<
 
   // ---- provide ----
 
+  /**
+   * Provide implementations for guard and effect slots.
+   * Creates a new machine instance (the original can be reused with different providers).
+   */
   provide<R2>(
-    handlers: ProvideHandlers<State, Event, GD, EFD, _Slots, R2>,
-  ): Machine<State, Event, R | NormalizeR<R2>, never, _SD, _ED, GD, EFD> {
+    handlers: ProvideHandlers<State, Event, GD, EFD, R2>,
+  ): Machine<State, Event, R | NormalizeR<R2>, _SD, _ED, GD, EFD> {
     // Collect all required slot names
     const requiredSlots = new Set<string>();
 
@@ -565,11 +453,6 @@ export class Machine<
       }
     }
 
-    // Legacy effect slots (invoke)
-    for (const [name] of this._effectSlots) {
-      requiredSlots.add(name);
-    }
-
     // Validate all slots have handlers
     for (const name of requiredSlots) {
       if (!(name in handlers)) {
@@ -585,7 +468,7 @@ export class Machine<
     }
 
     // Create new machine to preserve original for reuse with different providers
-    const result = new Machine<State, Event, R | R2, never, _SD, _ED, GD, EFD>(
+    const result = new Machine<State, Event, R | R2, _SD, _ED, GD, EFD>(
       this.initial,
       this.stateSchema as Schema.Schema<State, unknown, never>,
       this.eventSchema as Schema.Schema<Event, unknown, never>,
@@ -601,17 +484,11 @@ export class Machine<
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (result as any)._transitions = this._transitions;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (result as any)._alwaysTransitions = this._alwaysTransitions;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (result as any)._finalStates = this._finalStates;
-
-    // Copy arrays that will be mutated by provide (add slot handlers)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (result._onEnterEffects as any[]).push(...this._onEnterEffects);
+    (result as any)._spawnEffects = this._spawnEffects;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (result._onExitEffects as any[]).push(...this._onExitEffects);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (result._rootInvokes as any[]).push(...this._rootInvokes);
+    (result as any)._backgroundEffects = this._backgroundEffects;
 
     // Copy existing handlers
     for (const [k, v] of this._guardHandlers) {
@@ -647,62 +524,7 @@ export class Machine<
       }
     }
 
-    // Handle legacy effect slots (invoke)
-    for (const [name, slot] of this._effectSlots) {
-      const handler = (
-        handlers as Record<
-          string,
-          (ctx: StateEffectContext<State, Event>) => Effect.Effect<void, never, R2>
-        >
-      )[name];
-      if (handler === undefined) continue;
-
-      if (slot.type === "invoke") {
-        if (slot.stateTag === null) {
-          // Root-level invoke - runs for entire machine lifetime
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (result._rootInvokes as any[]).push({
-            name,
-            handler: handler as (
-              ctx: StateEffectContext<State, Event>,
-            ) => Effect.Effect<void, never, R | R2>,
-          });
-        } else {
-          // State-scoped invoke - creates onEnter (fork) and onExit (cancel)
-          const invokeKey = Symbol(`invoke:${name}`);
-          const getFiberMap = createFiberStorage();
-
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (result._onEnterEffects as any[]).push({
-            stateTag: slot.stateTag,
-            handler: (ctx: StateHandlerContext<State, Event, EFD>) =>
-              Effect.gen(function* () {
-                const fiber = yield* Effect.fork(handler({ state: ctx.state, self: ctx.self }));
-                getFiberMap(ctx.self).set(invokeKey, fiber);
-              }),
-          });
-
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (result._onExitEffects as any[]).push({
-            stateTag: slot.stateTag,
-            handler: ({ self }: StateHandlerContext<State, Event, EFD>) =>
-              Effect.suspend(() => {
-                const fiberMap = getFiberMap(self);
-                const fiber = fiberMap.get(invokeKey);
-                if (fiber !== undefined) {
-                  fiberMap.delete(invokeKey);
-                  return Fiber.interrupt(fiber).pipe(Effect.asVoid);
-                }
-                return Effect.void;
-              }),
-          });
-        }
-      }
-    }
-
-    // Note: do NOT copy effectSlots to result - they are resolved
-
-    return result as unknown as Machine<State, Event, R | NormalizeR<R2>, never, _SD, _ED, GD, EFD>;
+    return result as unknown as Machine<State, Event, R | NormalizeR<R2>, _SD, _ED, GD, EFD>;
   }
 
   // ---- persist ----
@@ -775,8 +597,8 @@ export class Machine<
     E extends BrandedEvent,
     GD extends GuardsDef = Record<string, never>,
     EFD extends EffectsDef = Record<string, never>,
-  >(config: MakeConfig<SD, ED, S, E, GD, EFD>): Machine<S, E, never, never, SD, ED, GD, EFD> {
-    return new Machine<S, E, never, never, SD, ED, GD, EFD>(
+  >(config: MakeConfig<SD, ED, S, E, GD, EFD>): Machine<S, E, never, SD, ED, GD, EFD> {
+    return new Machine<S, E, never, SD, ED, GD, EFD>(
       config.initial,
       config.state as unknown as Schema.Schema<S, unknown, never>,
       config.event as unknown as Schema.Schema<E, unknown, never>,

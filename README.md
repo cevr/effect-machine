@@ -5,10 +5,9 @@ Type-safe state machines for Effect. XState-inspired API with full Effect integr
 ## Features
 
 - **Schema-first** - `State` and `Event` ARE schemas. Single source of truth for types and serialization
-- **Fluent builder** - Chain `.on()`, `.always()`, `.delay()` etc. with full type inference
+- **Fluent builder** - Chain `.on()`, `.spawn()`, `.delay()` etc. with full type inference
 - **Type-safe transitions** - types inferred from schemas, no manual type params needed
 - **Guard composition** - `Guard.and`, `Guard.or`, `Guard.not`
-- **Eventless transitions** - `always` for computed state changes
 - **Delayed transitions** - `delay` with TestClock support
 - **Actor model** - spawn machines as actors with lifecycle management
 - **Persistence** - snapshot and event sourcing with pluggable adapters
@@ -70,41 +69,40 @@ Effect.runPromise(
 );
 ```
 
-## Effect Slots
+## State Effects with spawn
 
-Effects (`invoke`, `onEnter`, `onExit`) use named slots. Provide handlers via `.provide()`:
+Use `.spawn()` for state-scoped effects. Use `Effect.addFinalizer` for cleanup:
 
 ```typescript
-// Define machine with effect slots
-const baseMachine = Machine.make({
+const machine = Machine.make({
   state: MyState,
   event: MyEvent,
   initial: MyState.Idle,
 })
   .on(MyState.Idle, MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url }))
   .on(MyState.Loading, MyEvent.Resolve, ({ event }) => MyState.Success({ data: event.data }))
-  .invoke(MyState.Loading, "fetchData")
-  .onEnter(MyState.Success, "notifyUser")
-  .final(MyState.Success);
-
-// Production: provide real implementations
-const machine = baseMachine.provide({
-  fetchData: ({ state, self }) =>
+  .spawn(MyState.Loading, ({ state, self }) =>
     Effect.gen(function* () {
+      // Cleanup runs when state exits
+      yield* Effect.addFinalizer(() => Effect.log("Leaving Loading"));
+
+      // Main work - auto-cancelled on state exit
       const data = yield* fetchFromApi(state.url);
       yield* self.send(MyEvent.Resolve({ data }));
     }),
-  notifyUser: ({ state }) => Effect.log(`Success: ${state.data}`),
-});
-
-// Test: provide mock implementations
-const testMachine = baseMachine.provide({
-  fetchData: ({ self }) => self.send(MyEvent.Resolve({ data: "mock" })),
-  notifyUser: () => Effect.void,
-});
+  )
+  .final(MyState.Success);
 ```
 
-`simulate()` works without providing effects (pure transitions only).
+Use `.background()` for machine-lifetime effects:
+
+```typescript
+machine.background("heartbeat", ({ self }) =>
+  Effect.forever(Effect.sleep("30 seconds").pipe(Effect.andThen(self.send(MyEvent.Ping)))),
+);
+```
+
+`simulate()` works without spawn/background effects (pure transitions only).
 
 ## Persistence
 
@@ -149,61 +147,50 @@ See the [primer](./primer/) for comprehensive documentation:
 
 ### Fluent Methods
 
-| Method       | Description                                      |
-| ------------ | ------------------------------------------------ |
-| `.on()`      | Add state/event transition                       |
-| `.reenter()` | Transition with forced reentry (runs exit/enter) |
-| `.always()`  | Eventless transitions with guard cascade         |
-| `.delay()`   | Schedule event after duration                    |
-| `.invoke()`  | Register invoke slot (state-scoped or root)      |
-| `.onEnter()` | Register entry effect slot                       |
-| `.onExit()`  | Register exit effect slot                        |
-| `.provide()` | Wire effect handlers to named slots              |
-| `.final()`   | Mark state as final                              |
-| `.persist()` | Add persistence (schemas from machine)           |
-
-### Helpers
-
-| Export           | Description                      |
-| ---------------- | -------------------------------- |
-| `Machine.assign` | Helper for partial state updates |
+| Method          | Description                                      |
+| --------------- | ------------------------------------------------ |
+| `.on()`         | Add state/event transition                       |
+| `.reenter()`    | Transition with forced reentry (runs exit/enter) |
+| `.delay()`      | Schedule event after duration                    |
+| `.spawn()`      | State-scoped effect (cancelled on exit)          |
+| `.background()` | Machine-lifetime effect                          |
+| `.provide()`    | Wire handlers to guard/effect slots              |
+| `.final()`      | Mark state as final                              |
+| `.persist()`    | Add persistence (schemas from machine)           |
 
 ### Guards
 
-| Export       | Description                        |
-| ------------ | ---------------------------------- |
-| `Guard.make` | Create named guard slot            |
-| `Guard.and`  | Combine guards with AND (parallel) |
-| `Guard.or`   | Combine guards with OR (parallel)  |
-| `Guard.not`  | Negate a guard                     |
+| Export        | Description                        |
+| ------------- | ---------------------------------- |
+| `Slot.Guards` | Define guard slots with params     |
+| `Guard.and`   | Combine guards with AND (parallel) |
+| `Guard.or`    | Combine guards with OR (parallel)  |
+| `Guard.not`   | Negate a guard                     |
 
-Guards are **slots-only** - declare with name, provide implementation via `.provide()`:
+Guards are **slots-only** - declare with schema params, provide implementation via `.provide()`:
 
 ```typescript
-// Declare guard slot
-const canRetry = Guard.make("canRetry");
-
-// Composition with string shorthand
-Guard.and("isAdmin", "isActive");
-Guard.or("isOwner", "isAdmin");
-Guard.and(Guard.or("isAdmin", "isMod"), "isActive"); // nested
-
-// Use in transition
-machine.on(State.Idle, Event.Start, () => State.Running, {
-  guard: canRetry,
+const MyGuards = Slot.Guards({
+  canRetry: { max: Schema.Number },
 });
 
-// Provide implementation (sync boolean or async Effect<boolean>)
-const provided = machine.provide({
-  canRetry: ({ state }) => state.retries < 3, // sync
-  hasPermission: (
-    { state }, // async
-  ) =>
+const machine = Machine.make({
+  state: MyState,
+  event: MyEvent,
+  guards: MyGuards,
+  initial: MyState.Idle,
+})
+  .on(MyState.Error, MyEvent.Retry, ({ state, guards }) =>
     Effect.gen(function* () {
-      const auth = yield* AuthService;
-      return yield* auth.check(state.userId);
+      if (yield* guards.canRetry({ max: 3 })) {
+        return MyState.Retrying;
+      }
+      return MyState.Failed;
     }),
-});
+  )
+  .provide({
+    canRetry: ({ max }, { state }) => state.attempts < max,
+  });
 ```
 
 ### Testing
@@ -213,7 +200,6 @@ const provided = machine.provide({
 | `simulate`          | Run events and get all states |
 | `createTestHarness` | Step-by-step testing          |
 | `assertReaches`     | Assert machine reaches state  |
-| `yieldFibers`       | Yield to background fibers    |
 
 ### Actors
 

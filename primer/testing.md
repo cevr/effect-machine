@@ -44,7 +44,6 @@ test("transitions through states", async () => {
 
 - Pure - no side effects executed
 - No actor system needed
-- Includes `always` transitions
 - Stops at final states
 
 ## createTestHarness
@@ -119,23 +118,22 @@ test("fetch fails", async () => {
 
 ## Actor Testing
 
-For testing with real effects (entry/exit, delays).
+For testing with real effects (spawn, delays).
 
 ```typescript
 import { Effect, Layer, TestClock, TestContext } from "effect";
-import { ActorSystemDefault, ActorSystemService, yieldFibers } from "effect-machine";
+import { ActorSystemDefault, ActorSystemService } from "effect-machine";
 
 test("actor with effects", async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
+      yield* Effect.yieldNow(); // Let spawn effect run
 
       // Send event
-      yield* actor.send(MyEvent.Start());
-
-      // Let effects run
-      yield* yieldFibers;
+      yield* actor.send(MyEvent.Start);
+      yield* Effect.yieldNow(); // Let async effects run
 
       // Check state
       const state = yield* actor.state.get;
@@ -160,7 +158,7 @@ test("auto-dismiss after delay", async () => {
 
       // Advance time
       yield* TestClock.adjust("3 seconds");
-      yield* yieldFibers;
+      yield* Effect.yieldNow();
 
       // Should have auto-dismissed
       state = yield* actor.state.get;
@@ -175,71 +173,45 @@ test("auto-dismiss after delay", async () => {
 
 **Key:** Use `Layer.merge` to provide both ActorSystem and TestContext.
 
-## yieldFibers
+## Yielding to Effects
 
-Let background fibers execute:
+Use `Effect.yieldNow()` to let background fibers execute:
 
 ```typescript
-import { yieldFibers } from "effect-machine";
-
 // After sending event that triggers async effect
-yield * actor.send(MyEvent.Start());
-yield * yieldFibers; // Effects run here
+yield * actor.send(MyEvent.Start);
+yield * Effect.yieldNow(); // Effects run here
 const state = yield * actor.state.get;
 ```
 
 ## Testing Guards
 
-Test guards in isolation:
+Test guards via machine transitions:
 
 ```typescript
-const isAdmin = Guard.make<UserState, AccessEvent>(({ state }) => state.role === "admin");
-
-test("isAdmin guard", () => {
-  const adminCtx = {
-    state: MyState.User({ role: "admin" }),
-    event: MyEvent.Access(),
-  };
-  const userCtx = {
-    state: MyState.User({ role: "user" }),
-    event: MyEvent.Access(),
-  };
-
-  expect(isAdmin(adminCtx)).toBe(true);
-  expect(isAdmin(userCtx)).toBe(false);
-});
-```
-
-## Testing always Transitions
-
-`simulate` includes always transitions:
-
-```typescript
-test("always transitions fire immediately", async () => {
-  type MyState = State<{
-    Calculating: { value: number };
-    High: {};
-    Low: {};
-  }>;
-  const MyState = State<MyState>();
-
-  type MyEvent = Event<{ Check: {} }>;
-  const MyEvent = Event<MyEvent>();
-
-  const machine = Machine.make<MyState, MyEvent>(MyState.Calculating({ value: 75 })).pipe(
-    Machine.always(MyState.Calculating, [
-      { guard: (s) => s.value >= 70, to: () => MyState.High() },
-      { to: () => MyState.Low() }, // Fallback
-    ]),
-    Machine.final(MyState.High),
-    Machine.final(MyState.Low),
-  );
-
+test("guard blocks transition", async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
-      // No events needed - always fires on initial state
-      const result = yield* simulate(machine, []);
-      expect(result.finalState._tag).toBe("High");
+      const machine = Machine.make({
+        state: MyState,
+        event: MyEvent,
+        guards: MyGuards,
+        initial: MyState.Form({ retries: 5 }),
+      })
+        .on(MyState.Form, MyEvent.Submit, ({ state, guards }) =>
+          Effect.gen(function* () {
+            if (yield* guards.canRetry({ max: 3 })) {
+              return MyState.Submitting;
+            }
+            return state;
+          }),
+        )
+        .provide({
+          canRetry: ({ max }, { state }) => state.retries < max,
+        });
+
+      const result = yield* simulate(machine, [MyEvent.Submit]);
+      expect(result.finalState._tag).toBe("Form"); // Blocked - retries >= max
     }),
   );
 });
@@ -249,31 +221,34 @@ test("always transitions fire immediately", async () => {
 
 ```typescript
 test("choose cascade - first match wins", async () => {
-  type MyState = State<{
-    Input: { value: number };
-    High: {};
-    Medium: {};
-    Low: {};
-  }>;
-  const MyState = State<MyState>();
+  const MyState = State({
+    Input: { value: Schema.Number },
+    High: {},
+    Medium: {},
+    Low: {},
+  });
+  type MyState = typeof MyState.Type;
 
-  type MyEvent = Event<{ Classify: {} }>;
-  const MyEvent = Event<MyEvent>();
+  const MyEvent = Event({ Classify: {} });
+  type MyEvent = typeof MyEvent.Type;
 
-  const machine = Machine.make<MyState, MyEvent>(MyState.Input({ value: 50 })).pipe(
-    Machine.choose(MyState.Input, MyEvent.Classify, [
-      { guard: ({ state }) => state.value >= 70, to: () => MyState.High() },
-      { guard: ({ state }) => state.value >= 40, to: () => MyState.Medium() },
-      { to: () => MyState.Low() }, // Fallback
-    ]),
-    Machine.final(MyState.High),
-    Machine.final(MyState.Medium),
-    Machine.final(MyState.Low),
-  );
+  const machine = Machine.make({
+    state: MyState,
+    event: MyEvent,
+    initial: MyState.Input({ value: 50 }),
+  })
+    .choose(MyState.Input, MyEvent.Classify, [
+      { guard: ({ state }) => state.value >= 70, to: () => MyState.High },
+      { guard: ({ state }) => state.value >= 40, to: () => MyState.Medium },
+      { to: () => MyState.Low }, // Fallback
+    ])
+    .final(MyState.High)
+    .final(MyState.Medium)
+    .final(MyState.Low);
 
   await Effect.runPromise(
     Effect.gen(function* () {
-      const result = yield* simulate(machine, [MyEvent.Classify()]);
+      const result = yield* simulate(machine, [MyEvent.Classify]);
       expect(result.finalState._tag).toBe("Medium"); // 50 >= 40
     }),
   );

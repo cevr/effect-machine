@@ -1,7 +1,8 @@
 /**
- * Dummy event tags used for lifecycle effect contexts
+ * Internal event tags used for lifecycle effect contexts.
+ * Prefixed with $ to distinguish from user events.
  * @internal
  */
-export const DUMMY_ENTER_EVENT = "__enter__" as const;
-export const DUMMY_EXIT_EVENT = "__exit__" as const;
-export const DUMMY_ALWAYS_EVENT = "__always__" as const;
+export const INTERNAL_INIT_EVENT = "$init" as const;
+export const INTERNAL_ENTER_EVENT = "$enter" as const;
+export const INTERNAL_EXIT_EVENT = "$exit" as const;

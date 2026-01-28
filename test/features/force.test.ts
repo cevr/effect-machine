@@ -30,19 +30,22 @@ describe("reenter Transitions", () => {
         .reenter(PollState.Polling, PollEvent.Reset, ({ state }) =>
           PollState.Polling({ attempts: state.attempts + 1 }),
         )
-        .onEnter(PollState.Polling, ({ state }) =>
-          Effect.sync(() =>
-            effects.push(`enter:Polling:${(state as PollState & { _tag: "Polling" }).attempts}`),
-          ),
-        )
-        .onExit(PollState.Polling, ({ state }) =>
-          Effect.sync(() =>
-            effects.push(`exit:Polling:${(state as PollState & { _tag: "Polling" }).attempts}`),
-          ),
+        .spawn(PollState.Polling, ({ state }) =>
+          Effect.gen(function* () {
+            // Log entry
+            effects.push(`enter:Polling:${(state as PollState & { _tag: "Polling" }).attempts}`);
+            // Log exit via finalizer
+            yield* Effect.addFinalizer(() =>
+              Effect.sync(() =>
+                effects.push(`exit:Polling:${(state as PollState & { _tag: "Polling" }).attempts}`),
+              ),
+            );
+          }),
         );
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("poller", machine);
+      yield* yieldFibers; // Let spawn effect run
 
       // Initial enter
       expect(effects).toEqual(["enter:Polling:0"]);

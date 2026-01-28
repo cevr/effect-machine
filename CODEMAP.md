@@ -14,8 +14,6 @@ src/
 ├── testing.ts            # Test utilities (simulate, harness, assertions)
 ├── inspection.ts         # Inspector service for debugging
 ├── errors.ts             # TaggedError classes
-├── combinators/
-│   └── assign.ts         # Partial state update helper (assign function)
 ├── persistence/
 │   ├── adapter.ts        # PersistenceAdapter interface + tags
 │   ├── persistent-machine.ts  # Machine.persist combinator
@@ -26,7 +24,7 @@ src/
 │   └── entity-machine.ts # toEntity - generates Entity from machine
 └── internal/
     ├── loop.ts           # Event loop, transition resolver, lifecycle effects
-    ├── transition-index.ts # O(1) lookup for transitions and effects
+    ├── transition-index.ts # O(1) lookup for transitions
     ├── fiber-storage.ts  # Per-actor WeakMap fiber storage utility
     ├── brands.ts         # StateBrand/EventBrand + BrandedState/BrandedEvent
     ├── is-effect.ts      # Shared isEffect type guard
@@ -42,16 +40,13 @@ test/
 ├── transition-index.test.ts # O(1) transition lookup tests
 ├── inspection.test.ts    # Inspector tests
 ├── features/             # Feature-specific tests
-│   ├── always.test.ts
 │   ├── any.test.ts
-│   ├── assign.test.ts
 │   ├── delay.test.ts
 │   ├── dynamic-delay.test.ts
 │   ├── effects.test.ts
 │   ├── force.test.ts
 │   ├── from.test.ts
 │   ├── guards.test.ts
-│   ├── invoke.test.ts    # Root/parallel invokes
 │   └── same-state.test.ts
 ├── patterns/             # Real-world pattern tests
 │   ├── payment-flow.test.ts
@@ -70,8 +65,8 @@ test/
 | `machine-schema.ts`                 | Schema-first `State`/`Event` - single source of truth       |
 | `slot.ts`                           | `Slot.Guards`/`Slot.Effects` - parameterized slot factories |
 | `namespace.ts`                      | Machine namespace export (named for macOS compat)           |
-| `internal/loop.ts`                  | Event processing, `resolveTransition`, lifecycle effects    |
-| `internal/transition-index.ts`      | O(1) lookup for transitions, always, onEnter, onExit        |
+| `internal/loop.ts`                  | Event processing, `resolveTransition`, spawn effect forking |
+| `internal/transition-index.ts`      | O(1) lookup for transitions                                 |
 | `internal/brands.ts`                | Branded types: `StateBrand`, `BrandedState`, etc.           |
 | `internal/fiber-storage.ts`         | `createFiberStorage()` - per-actor WeakMap utility          |
 | `persistence/persistent-machine.ts` | `Machine.persist` - schemas from machine                    |
@@ -99,14 +94,13 @@ get transitions(): ReadonlyArray<Transition<...>> { return this._transitions; }
 ## Event Flow
 
 ```
-Event → resolveTransition → onExit → handler (w/ guards/effects) → applyAlways → onEnter → update state
+Event → resolveTransition → handler (w/ guards/effects) → update state → spawn effects
 ```
 
 - Handler receives `{ state, event, guards, effects }` context
 - Guards checked inside handler via `yield* guards.xxx(params)`
-- Same-state transitions skip onExit/onEnter by default
-- `.reenter()`: force onExit/onEnter even for same state tag
-- `applyAlways`: loops until no match or final state (max 100 iterations)
+- Same-state transitions skip spawn/finalizer by default
+- `.reenter()`: force spawn/finalizer even for same state tag
 - Final states stop the actor
 
 ## Schema-First Pattern
@@ -178,7 +172,7 @@ const MyEffects = Slot.Effects({
 
 ## Fiber Storage Pattern
 
-`delay` and `provide` (for invoke) use shared utility from `internal/fiber-storage.ts`:
+`delay` and `spawn` use shared utility from `internal/fiber-storage.ts`:
 
 ```ts
 import { createFiberStorage } from "../internal/fiber-storage.js";
@@ -193,35 +187,40 @@ getFiberMap(self).set(instanceKey, fiber);
 `internal/transition-index.ts` provides O(1) lookup via lazy-built WeakMap cache:
 
 - `findTransitions(machine, stateTag, eventTag)` - event transitions
-- `findAlwaysTransitions(machine, stateTag)` - always transitions
-- `findOnEnterEffects(machine, stateTag)` - entry effects
-- `findOnExitEffects(machine, stateTag)` - exit effects
 
 Index built on first access, cached per machine instance.
 
-## Invoke Slots Pattern
+## spawn Pattern
 
 ```ts
 machine
-  .invoke(State.Loading, "fetchData")   // state-scoped invoke
-  .invoke("background")                  // root-level (machine lifetime)
-  .invoke(State.X, ["a", "b"])          // parallel state invokes
-  .invoke(["a", "b"])                    // parallel root invokes
-  .provide({ fetchData: ... })          // wires handler, returns NEW machine
+  .spawn(State.Loading, ({ state, self }) =>
+    Effect.gen(function* () {
+      // Cleanup via finalizer
+      yield* Effect.addFinalizer(() => Effect.log("Leaving"));
+
+      // Main work - auto-cancelled on exit
+      const data = yield* fetchData(state.url);
+      yield* self.send(Event.Resolve({ data }));
+    }),
+  )
+  .background("heartbeat", ({ self }) =>
+    Effect.forever(Effect.sleep("30 seconds").pipe(Effect.andThen(self.send(Event.Ping)))),
+  );
 ```
 
-- `provide()` creates new machine (original reusable with different handlers)
-- Spawning validates all slots have handlers (runtime check)
-- `simulate()` ignores invoke effects - works with unprovided machines
-- Root invokes start on spawn, interrupted on stop or final state
+- `spawn` forks into state scope - cancelled on state exit
+- `background` forks into machine scope - cancelled on stop/final
+- Use `Effect.addFinalizer` for cleanup logic
+- `simulate()` ignores spawn/background effects - works without real actor
 
 ## Testing
 
-| Function              | Guard/Effect Slots | Invoke Effects | Always | Observer |
-| --------------------- | ------------------ | -------------- | ------ | -------- |
-| `simulate`            | Yes                | No             | Yes    | No       |
-| `createTestHarness`   | Yes                | No             | Yes    | Yes      |
-| Actor + `yieldFibers` | Yes                | Yes            | Yes    | No       |
+| Function            | Guard/Effect Slots | Spawn Effects | Observer |
+| ------------------- | ------------------ | ------------- | -------- |
+| `simulate`          | Yes                | No            | No       |
+| `createTestHarness` | Yes                | No            | Yes      |
+| Actor + yieldNow    | Yes                | Yes           | No       |
 
 Use `Layer.merge(ActorSystemDefault, TestContext.TestContext)` for TestClock.
 

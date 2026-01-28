@@ -5,7 +5,7 @@ import type { ActorRef } from "./actor-ref.js";
 import type { Machine } from "./machine.js";
 import { createActor } from "./internal/loop.js";
 import type { GuardsDef, EffectsDef } from "./slot.js";
-import { DuplicateActorError, UnprovidedSlotsError } from "./errors.js";
+import { DuplicateActorError } from "./errors.js";
 import type {
   ActorMetadata,
   PersistenceError,
@@ -50,7 +50,7 @@ export interface ActorSystem {
    * ```
    */
   readonly spawn: {
-    // Regular machine overload - Effects must be never (all provided)
+    // Regular machine overload
     <
       S extends { readonly _tag: string },
       E extends { readonly _tag: string },
@@ -60,7 +60,7 @@ export interface ActorSystem {
     >(
       id: string,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-      machine: Machine<S, E, R, never, any, any, GD, EFD>,
+      machine: Machine<S, E, R, any, any, GD, EFD>,
     ): Effect.Effect<ActorRef<S, E>, never, R | Scope.Scope>;
 
     // Persistent machine overload
@@ -223,30 +223,11 @@ const make = Effect.gen(function* () {
     EFD extends EffectsDef = Record<string, never>,
   >(
     id: string,
-    machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
+    machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
   ): Effect.Effect<ActorRef<S, E>, never, R | Scope.Scope> =>
     Effect.gen(function* () {
-      // Validate all effect slots are provided (runtime safety net)
-      if (machine.effectSlots.size > 0) {
-        const unprovided = Array.from(machine.effectSlots.keys());
-        throw new UnprovidedSlotsError({ slots: unprovided });
-      }
-
       // Create and register the actor
-      // Cast to the expected type for createActor
-      const actor = yield* createActor(
-        id,
-        machine as unknown as Machine<
-          S,
-          E,
-          R,
-          never,
-          Record<string, never>,
-          Record<string, never>,
-          GD,
-          EFD
-        >,
-      );
+      const actor = yield* createActor(id, machine);
       return yield* registerActor(id, actor);
     });
 
@@ -294,7 +275,7 @@ const make = Effect.gen(function* () {
     EFD extends EffectsDef = Record<string, never>,
   >(
     id: string,
-    machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
+    machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
   ): Effect.Effect<ActorRef<S, E>, never, R | Scope.Scope>;
   function spawn<S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
     id: string,
@@ -313,7 +294,7 @@ const make = Effect.gen(function* () {
   >(
     id: string,
     machine:
-      | Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>
+      | Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>
       | PersistentMachine<S, E, R>,
   ):
     | Effect.Effect<ActorRef<S, E>, never, R | Scope.Scope>
@@ -329,7 +310,7 @@ const make = Effect.gen(function* () {
     }
     return spawnRegular(
       id,
-      machine as Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
+      machine as Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
     );
   }
 

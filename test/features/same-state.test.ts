@@ -29,11 +29,16 @@ describe("Same-state Transitions", () => {
           FormState.Form({ name: event.name, count: state.count + 1 }),
         )
         .on(FormState.Form, FormEvent.Submit, () => FormState.Submitted)
-        .onEnter(FormState.Form, () => Effect.sync(() => effects.push("enter:Form")))
-        .onExit(FormState.Form, () => Effect.sync(() => effects.push("exit:Form")));
+        .spawn(FormState.Form, () =>
+          Effect.gen(function* () {
+            effects.push("enter:Form");
+            yield* Effect.addFinalizer(() => Effect.sync(() => effects.push("exit:Form")));
+          }),
+        );
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("form", machine);
+      yield* yieldFibers; // Let spawn effect run
 
       // Initial enter should fire
       expect(effects).toEqual(["enter:Form"]);
@@ -73,11 +78,16 @@ describe("Same-state Transitions", () => {
         .reenter(FormState.Form, FormEvent.SetName, ({ state, event }) =>
           FormState.Form({ name: event.name, count: state.count + 1 }),
         )
-        .onEnter(FormState.Form, () => Effect.sync(() => effects.push("enter:Form")))
-        .onExit(FormState.Form, () => Effect.sync(() => effects.push("exit:Form")));
+        .spawn(FormState.Form, () =>
+          Effect.gen(function* () {
+            effects.push("enter:Form");
+            yield* Effect.addFinalizer(() => Effect.sync(() => effects.push("exit:Form")));
+          }),
+        );
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("form", machine);
+      yield* yieldFibers; // Let spawn effect run
 
       // Initial enter
       expect(effects).toEqual(["enter:Form"]);

@@ -1,23 +1,10 @@
 import { Effect, SubscriptionRef } from "effect";
 
 import type { Machine, MachineRef, HandlerContext } from "./machine.js";
-import { applyAlways, resolveTransition } from "./internal/loop.js";
+import { resolveTransition } from "./internal/loop.js";
 import { AssertionError } from "./errors.js";
 import type { GuardsDef, EffectsDef, MachineContext } from "./slot.js";
 import { isEffect } from "./internal/is-effect.js";
-
-/**
- * Yield to other fibers. Useful in tests to allow forked effects to run.
- *
- * @deprecated Prefer `Effect.yieldNow().pipe(Effect.repeatN(9))` for tests
- * that need fiber coordination. Multiple yields are needed for complex
- * scenarios with delays or nested forks.
- */
-export const yieldFibers = Effect.gen(function* () {
-  for (let i = 0; i < 10; i++) {
-    yield* Effect.yieldNow();
-  }
-});
 
 /**
  * Result of simulating events through a machine
@@ -30,7 +17,7 @@ export interface SimulationResult<S> {
 /**
  * Simulate a sequence of events through a machine without running an actor.
  * Useful for testing state transitions in isolation.
- * Does not run onEnter/onExit/invoke effects, but does run guard/effect slots
+ * Does not run onEnter/spawn/background effects, but does run guard/effect slots
  * within transition handlers.
  *
  * @example
@@ -55,7 +42,7 @@ export const simulate = <
   EFD extends EffectsDef = Record<string, never>,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-  machine: Machine<S, E, R, never, any, any, GD, EFD>,
+  machine: Machine<S, E, R, any, any, GD, EFD>,
   events: ReadonlyArray<E>,
 ): Effect.Effect<SimulationResult<S>, never, R> =>
   Effect.gen(function* () {
@@ -64,8 +51,7 @@ export const simulate = <
       send: () => Effect.void,
     };
 
-    // Apply always transitions to initial state
-    let currentState = yield* applyAlways(machine, machine.initial, dummySelf);
+    let currentState = machine.initial;
     const states: S[] = [currentState];
 
     for (const event of events) {
@@ -99,11 +85,6 @@ export const simulate = <
           )
         : newStateResult;
 
-      // Apply always transitions if state tag changed
-      if (newState._tag !== currentState._tag) {
-        newState = yield* applyAlways(machine, newState, dummySelf);
-      }
-
       currentState = newState;
       states.push(currentState);
 
@@ -130,7 +111,7 @@ export const assertReaches = <
   EFD extends EffectsDef = Record<string, never>,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-  machine: Machine<S, E, R, never, any, any, GD, EFD>,
+  machine: Machine<S, E, R, any, any, GD, EFD>,
   events: ReadonlyArray<E>,
   expectedTag: string,
 ): Effect.Effect<S, AssertionError, R> =>
@@ -166,7 +147,7 @@ export const assertPath = <
   EFD extends EffectsDef = Record<string, never>,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-  machine: Machine<S, E, R, never, any, any, GD, EFD>,
+  machine: Machine<S, E, R, any, any, GD, EFD>,
   events: ReadonlyArray<E>,
   expectedPath: ReadonlyArray<string>,
 ): Effect.Effect<SimulationResult<S>, AssertionError, R> =>
@@ -218,7 +199,7 @@ export const assertNeverReaches = <
   EFD extends EffectsDef = Record<string, never>,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-  machine: Machine<S, E, R, never, any, any, GD, EFD>,
+  machine: Machine<S, E, R, any, any, GD, EFD>,
   events: ReadonlyArray<E>,
   forbiddenTag: string,
 ): Effect.Effect<SimulationResult<S>, AssertionError, R> =>
@@ -259,7 +240,7 @@ export interface TestHarnessOptions<S, E> {
 
 /**
  * Create a test harness for step-by-step testing.
- * Does not run onEnter/onExit/invoke effects, but does run guard/effect slots
+ * Does not run onEnter/spawn/background effects, but does run guard/effect slots
  * within transition handlers.
  *
  * @example Basic usage
@@ -286,7 +267,7 @@ export const createTestHarness = <
   EFD extends EffectsDef = Record<string, never>,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-  machine: Machine<S, E, R, never, any, any, GD, EFD>,
+  machine: Machine<S, E, R, any, any, GD, EFD>,
   options?: TestHarnessOptions<S, E>,
 ): Effect.Effect<TestHarness<S, E, R, GD, EFD>, never, R> =>
   Effect.gen(function* () {
@@ -295,9 +276,7 @@ export const createTestHarness = <
       send: () => Effect.void,
     };
 
-    // Apply always transitions to initial state
-    const resolvedInitial = yield* applyAlways(machine, machine.initial, dummySelf);
-    const stateRef = yield* SubscriptionRef.make(resolvedInitial);
+    const stateRef = yield* SubscriptionRef.make(machine.initial);
 
     const send = (event: E): Effect.Effect<S, never, R> =>
       Effect.gen(function* () {
@@ -331,11 +310,6 @@ export const createTestHarness = <
               Effect.provideService(machine.Context, ctx),
             )
           : newStateResult;
-
-        // Apply always transitions if state tag changed
-        if (newState._tag !== currentState._tag) {
-          newState = yield* applyAlways(machine, newState, dummySelf);
-        }
 
         yield* SubscriptionRef.set(stateRef, newState);
 

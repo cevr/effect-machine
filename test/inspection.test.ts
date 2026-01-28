@@ -104,7 +104,7 @@ describe("Inspection", () => {
     );
   });
 
-  it.scopedLive("emits entry and exit effect events", () => {
+  it.scopedLive("emits spawn effect events", () => {
     const events: InspectionEvent<TestState, TestEvent>[] = [];
 
     return Effect.gen(function* () {
@@ -114,9 +114,8 @@ describe("Inspection", () => {
         initial: TestState.Idle,
       })
         .on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }))
-        .onEnter(TestState.Idle, () => Effect.void)
-        .onExit(TestState.Idle, () => Effect.void)
-        .onEnter(TestState.Loading, () => Effect.void);
+        .spawn(TestState.Idle, () => Effect.addFinalizer(() => Effect.void))
+        .spawn(TestState.Loading, () => Effect.void);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
@@ -125,16 +124,12 @@ describe("Inspection", () => {
       yield* yieldFibers;
 
       const effectEvents = events.filter((e) => e.type === "@machine.effect");
-      const entryEvents = effectEvents.filter(
-        (e) => (e as { effectType: string }).effectType === "entry",
-      );
-      const exitEvents = effectEvents.filter(
-        (e) => (e as { effectType: string }).effectType === "exit",
+      const spawnEvents = effectEvents.filter(
+        (e) => (e as { effectType: string }).effectType === "spawn",
       );
 
-      // Entry for Idle (initial), exit for Idle, entry for Loading
-      expect(entryEvents.length).toBe(2);
-      expect(exitEvents.length).toBe(1);
+      // Spawn for Idle (initial), spawn for Loading
+      expect(spawnEvents.length).toBe(2);
     }).pipe(
       Effect.provide(ActorSystemDefault),
       Effect.provideService(InspectorService, collectingInspector(events)),
@@ -226,8 +221,8 @@ describe("Inspection", () => {
         initial: TestState.Idle,
       })
         .on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }))
-        .onExit(TestState.Idle, () => Effect.void)
-        .onEnter(TestState.Loading, () => Effect.void);
+        .spawn(TestState.Idle, () => Effect.addFinalizer(() => Effect.void))
+        .spawn(TestState.Loading, () => Effect.void);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
@@ -242,13 +237,13 @@ describe("Inspection", () => {
       // Filter to events between spawn and stop (the transition events)
       const transitionEvents = events.slice(1, -1); // Remove spawn at start and stop at end
 
-      // Expected order: event received -> exit effect -> transition -> entry effect
+      // Expected order: spawn effect -> event received -> transition -> spawn effect
       const types = transitionEvents.map((e) => e.type);
       expect(types).toEqual([
+        "@machine.effect", // spawn on Idle entry
         "@machine.event",
-        "@machine.effect", // exit
         "@machine.transition",
-        "@machine.effect", // entry
+        "@machine.effect", // spawn on Loading entry
       ]);
     }).pipe(
       Effect.provide(ActorSystemDefault),

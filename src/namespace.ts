@@ -50,19 +50,16 @@ export type {
   MachineRef,
   MakeConfig,
   Transition,
-  AlwaysTransition,
-  StateEffect,
+  SpawnEffect,
+  BackgroundEffect,
   PersistOptions,
   HandlerContext,
   StateHandlerContext,
   ProvideHandlers,
 } from "./machine.js";
 
-// Helpers - assign is used inside handlers
-export { assign } from "./combinators/assign.js";
-
 // Persistence types
 export type { PersistenceConfig, PersistentMachine } from "./persistence/index.js";
 
 // Transition lookup (introspection)
-export { findTransitions, findAlwaysTransitions } from "./internal/transition-index.js";
+export { findTransitions } from "./internal/transition-index.js";

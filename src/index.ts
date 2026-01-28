@@ -40,8 +40,8 @@ export type {
   MachineRef,
   MakeConfig,
   Transition,
-  AlwaysTransition,
-  StateEffect,
+  SpawnEffect,
+  BackgroundEffect,
   PersistOptions,
   HandlerContext,
   StateHandlerContext,
@@ -65,7 +65,6 @@ export {
   assertReaches,
   createTestHarness,
   simulate,
-  yieldFibers,
 } from "./testing.js";
 export type { SimulationResult, TestHarness, TestHarnessOptions } from "./testing.js";
 

@@ -6,7 +6,7 @@
  *
  * @internal
  */
-import type { Machine, Transition, AlwaysTransition, StateEffect } from "../machine.js";
+import type { Machine, Transition, SpawnEffect } from "../machine.js";
 import type { GuardsDef, EffectsDef } from "../slot.js";
 
 /**
@@ -19,26 +19,16 @@ type TransitionIndex<S, E, GD extends GuardsDef, EFD extends EffectsDef, R> = Ma
 >;
 
 /**
- * Index for always transitions: stateTag -> transitions[]
+ * Index for spawn effects: stateTag -> effects[]
  */
-type AlwaysIndex<S, GD extends GuardsDef, EFD extends EffectsDef, R> = Map<
-  string,
-  Array<AlwaysTransition<S, GD, EFD, R>>
->;
-
-/**
- * Index for state effects: stateTag -> effects[]
- */
-type EffectIndex<S, E, EFD extends EffectsDef, R> = Map<string, Array<StateEffect<S, E, EFD, R>>>;
+type SpawnIndex<S, E, EFD extends EffectsDef, R> = Map<string, Array<SpawnEffect<S, E, EFD, R>>>;
 
 /**
  * Combined index for a machine
  */
 interface MachineIndex<S, E, GD extends GuardsDef, EFD extends EffectsDef, R> {
   readonly transitions: TransitionIndex<S, E, GD, EFD, R>;
-  readonly always: AlwaysIndex<S, GD, EFD, R>;
-  readonly onEnter: EffectIndex<S, E, EFD, R>;
-  readonly onExit: EffectIndex<S, E, EFD, R>;
+  readonly spawn: SpawnIndex<S, E, EFD, R>;
 }
 
 // Module-level cache - WeakMap allows GC of unreferenced machines
@@ -80,42 +70,20 @@ const buildTransitionIndex = <
 };
 
 /**
- * Build always transition index from machine definition.
- */
-const buildAlwaysIndex = <
-  S extends { readonly _tag: string },
-  GD extends GuardsDef,
-  EFD extends EffectsDef,
-  R,
->(
-  transitions: ReadonlyArray<AlwaysTransition<S, GD, EFD, R>>,
-): AlwaysIndex<S, GD, EFD, R> => {
-  const index: AlwaysIndex<S, GD, EFD, R> = new Map();
-
-  for (const t of transitions) {
-    let stateList = index.get(t.stateTag);
-    if (stateList === undefined) {
-      stateList = [];
-      index.set(t.stateTag, stateList);
-    }
-    stateList.push(t);
-  }
-
-  return index;
-};
-
-/**
  * Build effect index from machine definition.
  */
-const buildEffectIndex = <
+/**
+ * Build spawn index from machine definition.
+ */
+const buildSpawnIndex = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   EFD extends EffectsDef,
   R,
 >(
-  effects: ReadonlyArray<StateEffect<S, E, EFD, R>>,
-): EffectIndex<S, E, EFD, R> => {
-  const index: EffectIndex<S, E, EFD, R> = new Map();
+  effects: ReadonlyArray<SpawnEffect<S, E, EFD, R>>,
+): SpawnIndex<S, E, EFD, R> => {
+  const index: SpawnIndex<S, E, EFD, R> = new Map();
 
   for (const e of effects) {
     let stateList = index.get(e.stateTag);
@@ -140,15 +108,13 @@ const getIndex = <
   EFD extends EffectsDef,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-  machine: Machine<S, E, R, never, any, any, GD, EFD>,
+  machine: Machine<S, E, R, any, any, GD, EFD>,
 ): MachineIndex<S, E, GD, EFD, R> => {
   let index = indexCache.get(machine) as MachineIndex<S, E, GD, EFD, R> | undefined;
   if (index === undefined) {
     index = {
       transitions: buildTransitionIndex(machine.transitions),
-      always: buildAlwaysIndex(machine.alwaysTransitions),
-      onEnter: buildEffectIndex(machine.onEnterEffects),
-      onExit: buildEffectIndex(machine.onExitEffects),
+      spawn: buildSpawnIndex(machine.spawnEffects),
     };
     indexCache.set(machine, index);
   }
@@ -169,7 +135,7 @@ export const findTransitions = <
   EFD extends EffectsDef = Record<string, never>,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-  machine: Machine<S, E, R, never, any, any, GD, EFD>,
+  machine: Machine<S, E, R, any, any, GD, EFD>,
   stateTag: string,
   eventTag: string,
 ): ReadonlyArray<Transition<S, E, GD, EFD, R>> => {
@@ -178,31 +144,12 @@ export const findTransitions = <
 };
 
 /**
- * Find all always transitions for a state.
- * Returns empty array if no matches.
- */
-export const findAlwaysTransitions = <
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
-  R,
-  GD extends GuardsDef = Record<string, never>,
-  EFD extends EffectsDef = Record<string, never>,
->(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-  machine: Machine<S, E, R, never, any, any, GD, EFD>,
-  stateTag: string,
-): ReadonlyArray<AlwaysTransition<S, GD, EFD, R>> => {
-  const index = getIndex(machine);
-  return index.always.get(stateTag) ?? [];
-};
-
-/**
- * Find all onEnter effects for a state.
+ * Find all spawn effects for a state.
  * Returns empty array if no matches.
  *
  * O(1) lookup after first access (index is lazily built).
  */
-export const findOnEnterEffects = <
+export const findSpawnEffects = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
@@ -210,30 +157,9 @@ export const findOnEnterEffects = <
   EFD extends EffectsDef = Record<string, never>,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-  machine: Machine<S, E, R, never, any, any, GD, EFD>,
+  machine: Machine<S, E, R, any, any, GD, EFD>,
   stateTag: string,
-): ReadonlyArray<StateEffect<S, E, EFD, R>> => {
+): ReadonlyArray<SpawnEffect<S, E, EFD, R>> => {
   const index = getIndex(machine);
-  return index.onEnter.get(stateTag) ?? [];
-};
-
-/**
- * Find all onExit effects for a state.
- * Returns empty array if no matches.
- *
- * O(1) lookup after first access (index is lazily built).
- */
-export const findOnExitEffects = <
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
-  R,
-  GD extends GuardsDef = Record<string, never>,
-  EFD extends EffectsDef = Record<string, never>,
->(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-  machine: Machine<S, E, R, never, any, any, GD, EFD>,
-  stateTag: string,
-): ReadonlyArray<StateEffect<S, E, EFD, R>> => {
-  const index = getIndex(machine);
-  return index.onExit.get(stateTag) ?? [];
+  return index.spawn.get(stateTag) ?? [];
 };

@@ -96,36 +96,6 @@ describe("Transition Index", () => {
     expect(transitions.length).toBe(1);
   });
 
-  test("findAlwaysTransitions returns always transitions for state", () => {
-    const CounterState = State({
-      Counting: { count: Schema.Number },
-      Done: { count: Schema.Number },
-    });
-    type CounterState = typeof CounterState.Type;
-
-    const CounterEvent = Event({ Increment: {} });
-
-    const machine = Machine.make({
-      state: CounterState,
-      event: CounterEvent,
-      initial: CounterState.Counting({ count: 0 }),
-    })
-      .on(CounterState.Counting, CounterEvent.Increment, ({ state }) =>
-        CounterState.Counting({ count: state.count + 1 }),
-      )
-      .always(CounterState.Counting, (state) => {
-        if (state.count >= 10) return CounterState.Done({ count: state.count });
-        return state;
-      });
-
-    const alwaysTransitions = Machine.findAlwaysTransitions(machine, "Counting");
-    expect(alwaysTransitions.length).toBe(1);
-    expect(alwaysTransitions[0]?.stateTag).toBe("Counting");
-
-    const noAlways = Machine.findAlwaysTransitions(machine, "Done");
-    expect(noAlways.length).toBe(0);
-  });
-
   test("index is cached (WeakMap behavior)", () => {
     const machine = Machine.make({
       state: TestState,

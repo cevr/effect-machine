@@ -53,7 +53,7 @@ machine.reenter(MyState.Active, MyEvent.Refresh, ({ state }) =>
 );
 ```
 
-Useful for restarting delay timers or re-running invoke effects.
+Useful for restarting delay timers or re-running spawn effects.
 
 ### final
 
@@ -71,67 +71,48 @@ machine.final(MyState.Success).final(MyState.Error);
 
 ## State Effects
 
-### onEnter
+### spawn
 
-Run effect when entering state.
+Run effect on state entry, auto-cancel on exit. Use `Effect.addFinalizer` for cleanup.
 
 ```typescript
-machine.onEnter(stateConstructor, handler);
+machine.spawn(stateConstructor, handler);
 ```
 
 **Example:**
 
 ```typescript
-machine.onEnter(MyState.Success, ({ state }) => Effect.log(`Success: ${state.data}`));
+machine.spawn(MyState.Loading, ({ state, self }) =>
+  Effect.gen(function* () {
+    // Cleanup via finalizer
+    yield* Effect.addFinalizer(() => Effect.log("Leaving Loading"));
 
-// With effects slot
-machine.onEnter(MyState.Active, ({ state, effects }) =>
-  effects.notify({ message: `User ${state.userId} is active` }),
+    // Main work - auto-cancelled on exit
+    const data = yield* httpClient.get(state.url);
+    yield* self.send(MyEvent.Resolve({ data }));
+  }),
 );
 ```
 
-### onExit
+The effect is forked into a state-scoped scope. When the state exits, the fiber is interrupted and finalizers run.
 
-Run effect when exiting state.
+### background
+
+Run effect for machine lifetime (not tied to state).
 
 ```typescript
-machine.onExit(stateConstructor, handler);
+machine.background(name, handler);
 ```
 
 **Example:**
 
 ```typescript
-machine.onExit(MyState.Editing, ({ state }) => Effect.log(`Saved draft: ${state.content}`));
+machine.background("heartbeat", ({ self }) =>
+  Effect.forever(Effect.sleep("30 seconds").pipe(Effect.andThen(self.send(MyEvent.Ping)))),
+);
 ```
 
-### invoke
-
-Run effect on entry, auto-cancel on exit. For long-running processes.
-
-```typescript
-machine.invoke(stateConstructor, slotName);
-machine.invoke(stateConstructor, [slot1, slot2]); // parallel
-machine.invoke(slotName); // root-level (machine lifetime)
-```
-
-**Example:**
-
-```typescript
-const machine = Machine.make({ state, event, initial })
-  .invoke(MyState.Polling, "poll")
-  .provide({
-    poll: ({ state, self }) =>
-      Effect.gen(function* () {
-        while (true) {
-          yield* Effect.sleep("5 seconds");
-          const data = yield* fetchStatus(state.id);
-          yield* self.send(MyEvent.StatusUpdate({ data }));
-        }
-      }),
-  });
-```
-
-The polling fiber is interrupted when exiting `Polling` state.
+Background effects start on actor spawn and are interrupted when the actor stops.
 
 ### provide
 
@@ -141,7 +122,6 @@ Wire handlers to guard/effect slots. Required before spawning.
 machine.provide({
   guardName: (params, ctx) => boolean | Effect<boolean>,
   effectName: (params, ctx) => Effect<void>,
-  invokeName: (ctx) => Effect<void>,
 });
 ```
 
@@ -181,66 +161,43 @@ const machine = Machine.make({
       return MyState.Failed;
     }),
   )
-  .invoke(MyState.Loading, "fetchData")
+  .spawn(MyState.Loading, ({ state, self }) =>
+    Effect.gen(function* () {
+      const data = yield* httpClient.get(state.url);
+      yield* self.send(MyEvent.Resolve({ data }));
+    }),
+  )
   .provide({
     canRetry: ({ max }, { state }) => state.attempts < max,
     notify: ({ message }) => Effect.log(message),
-    fetchData: ({ state, self }) =>
-      Effect.gen(function* () {
-        const data = yield* httpClient.get(state.url);
-        yield* self.send(MyEvent.Resolve({ data }));
-      }),
   });
 ```
 
 **Notes:**
 
-- All slots must have handlers - missing keys → runtime error
-- `simulate()` works without `provide()` (invoke effects skipped)
+- All guard/effect slots must have handlers - missing keys → runtime error
+- `simulate()` works without `provide()` (spawn effects skipped)
 - `provide()` returns new machine - original reusable with different handlers
 
-## Eventless Transitions
+## Guard Cascade
 
-### always
+### choose
 
-Eventless transitions - fire immediately when state matches.
-
-```typescript
-machine.always(stateConstructor, handler);
-```
-
-**Handler receives state and optional guards:**
+Event-triggered guard cascade.
 
 ```typescript
-// Without guards
-machine.always(MyState.Calculating, (state) => {
-  if (state.value >= 100) return MyState.Overflow;
-  if (state.value >= 70) return MyState.High({ value: state.value });
-  return MyState.Low({ value: state.value });
-});
-
-// With guards
-machine.always(MyState.Pending, (state, guards) =>
-  Effect.gen(function* () {
-    if (yield* guards.shouldAutoApprove()) {
-      return MyState.Approved;
-    }
-    return state; // stay in Pending
-  }),
-);
+machine.choose(stateConstructor, eventConstructor, branches);
 ```
 
-**Cascading:** Always transitions can trigger other always transitions:
+**Branches evaluated top-to-bottom, first match wins:**
 
 ```typescript
-machine
-  .always(MyState.A, () => MyState.B)
-  .always(MyState.B, () => MyState.C)
-  .always(MyState.C, () => MyState.Done);
-// A → B → C → Done happens in one step
+machine.choose(MyState.Input, MyEvent.Classify, [
+  { guard: ({ state }) => state.value >= 70, to: () => MyState.High },
+  { guard: ({ state }) => state.value >= 40, to: () => MyState.Medium },
+  { to: () => MyState.Low }, // Fallback (no guard)
+]);
 ```
-
-Max 100 iterations to prevent infinite loops.
 
 ## Delayed Events
 
@@ -271,22 +228,6 @@ Timer is cancelled if:
 - Actor is stopped
 
 Works with TestClock for deterministic testing.
-
-## State Updates
-
-### assign
-
-Helper for partial state updates (doesn't change tag).
-
-```typescript
-import { assign } from "effect-machine";
-
-machine.on(
-  MyState.Form,
-  MyEvent.SetName,
-  assign(({ event }) => ({ name: event.name })),
-);
-```
 
 ## See Also
 

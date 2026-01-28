@@ -1,24 +1,16 @@
-import { Effect, Fiber, Option, Queue, SubscriptionRef } from "effect";
+import { Effect, Exit, Fiber, Option, Queue, Scope, SubscriptionRef } from "effect";
 
 import type { ActorRef } from "../actor-ref.js";
 import type { Machine, MachineRef, HandlerContext } from "../machine.js";
 import type { InspectionEvent, Inspector } from "../inspection.js";
 import { Inspector as InspectorTag } from "../inspection.js";
-import {
-  findTransitions,
-  findAlwaysTransitions,
-  findOnEnterEffects,
-  findOnExitEffects,
-} from "./transition-index.js";
+import { findTransitions, findSpawnEffects } from "./transition-index.js";
 import { isEffect } from "./is-effect.js";
 import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
-import { DUMMY_ENTER_EVENT, DUMMY_EXIT_EVENT, DUMMY_ALWAYS_EVENT } from "./constants.js";
+import { INTERNAL_INIT_EVENT, INTERNAL_ENTER_EVENT } from "./constants.js";
 
 /** Listener set for sync subscriptions */
 type Listeners<S> = Set<(state: S) => void>;
-
-/** Maximum steps for always transitions to prevent infinite loops */
-const MAX_ALWAYS_STEPS = 100;
 
 // ============================================================================
 // Inspection Helpers
@@ -46,7 +38,7 @@ export const resolveTransition = <
   GD extends GuardsDef,
   EFD extends EffectsDef,
 >(
-  machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
+  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
   currentState: S,
   event: E,
   _actorId?: string,
@@ -64,87 +56,6 @@ export const resolveTransition = <
   });
 
 /**
- * Resolve which always transition should fire for the current state.
- * Uses indexed O(1) lookup.
- */
-export const resolveAlwaysTransition = <
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
-  R,
-  GD extends GuardsDef,
-  EFD extends EffectsDef,
->(
-  machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
-  currentState: S,
-): (typeof machine.alwaysTransitions)[number] | undefined => {
-  const candidates = findAlwaysTransitions(machine, currentState._tag);
-
-  // First transition wins - guard logic is now in handler body
-  for (const transition of candidates) {
-    return transition;
-  }
-  return undefined;
-};
-
-/**
- * Apply always transitions until none match or max steps reached.
- * Returns the final state after all always transitions are applied.
- */
-export const applyAlways = <
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
-  R,
-  GD extends GuardsDef,
-  EFD extends EffectsDef,
->(
-  machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
-  state: S,
-  self?: MachineRef<E>,
-): Effect.Effect<S, never, R> =>
-  Effect.gen(function* () {
-    let currentState = state;
-    let steps = 0;
-
-    // Create slot accessors for always handlers
-    const dummySelf: MachineRef<E> = self ?? {
-      send: () => Effect.void,
-    };
-    const dummyEvent = { _tag: DUMMY_ALWAYS_EVENT } as E;
-    const ctx: MachineContext<S, E, MachineRef<E>> = {
-      state: currentState,
-      event: dummyEvent,
-      self: dummySelf,
-    };
-    const { guards, effects } = machine._createSlotAccessors(ctx);
-
-    while (steps < MAX_ALWAYS_STEPS) {
-      const transition = resolveAlwaysTransition(machine, currentState);
-      if (transition === undefined) {
-        break;
-      }
-
-      const newStateResult = transition.handler(currentState, guards, effects);
-      const newState = isEffect(newStateResult) ? yield* newStateResult : newStateResult;
-
-      // If state didn't change, stop (prevent infinite loops)
-      if (newState._tag === currentState._tag && newState === currentState) {
-        break;
-      }
-
-      currentState = newState;
-      steps++;
-    }
-
-    if (steps >= MAX_ALWAYS_STEPS) {
-      yield* Effect.logWarning(
-        `[effect-machine] Max always transition steps (${MAX_ALWAYS_STEPS}) reached. Possible infinite loop.`,
-      );
-    }
-
-    return currentState;
-  });
-
-/**
  * Build ActorRef with all methods
  */
 const buildActorRef = <
@@ -155,7 +66,7 @@ const buildActorRef = <
   EFD extends EffectsDef,
 >(
   id: string,
-  machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
+  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
   eventQueue: Queue.Queue<E>,
   listeners: Listeners<S>,
@@ -219,7 +130,7 @@ export const createActor = <
   EFD extends EffectsDef,
 >(
   id: string,
-  machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
+  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
 ): Effect.Effect<ActorRef<S, E>, never, R> =>
   Effect.withSpan("effect-machine.actor.spawn", {
     attributes: { "effect_machine.actor.id": id },
@@ -236,45 +147,65 @@ export const createActor = <
         send: (event) => Queue.offer(eventQueue, event),
       };
 
-      // Apply always transitions to initial state
-      const resolvedInitial = yield* applyAlways(machine, machine.initial, self);
-
       // Annotate span with initial state
-      yield* Effect.annotateCurrentSpan("effect_machine.actor.initial_state", resolvedInitial._tag);
+      yield* Effect.annotateCurrentSpan("effect_machine.actor.initial_state", machine.initial._tag);
 
       // Emit spawn event
       if (inspectorValue !== undefined) {
         emit(inspectorValue, {
           type: "@machine.spawn",
           actorId: id,
-          initialState: resolvedInitial,
+          initialState: machine.initial,
           timestamp: now(),
         });
       }
 
       // Initialize state
-      const stateRef = yield* SubscriptionRef.make(resolvedInitial);
+      const stateRef = yield* SubscriptionRef.make(machine.initial);
       const listeners: Listeners<S> = new Set();
 
-      // Fork root-level invokes (run for entire machine lifetime)
-      const rootFibers: Fiber.Fiber<void, never>[] = [];
-      for (const rootInvoke of machine.rootInvokes) {
-        const fiber = yield* Effect.fork(rootInvoke.handler({ state: resolvedInitial, self }));
-        rootFibers.push(fiber);
+      // Fork background effects (run for entire machine lifetime)
+      const backgroundFibers: Fiber.Fiber<void, never>[] = [];
+      const initEvent = { _tag: INTERNAL_INIT_EVENT } as E;
+      const { effects: effectSlots } = machine._createSlotAccessors({
+        state: machine.initial,
+        event: initEvent,
+        self,
+      });
+
+      for (const bg of machine.backgroundEffects) {
+        const fiber = yield* Effect.fork(
+          bg.handler({ state: machine.initial, event: initEvent, self, effects: effectSlots }),
+        );
+        backgroundFibers.push(fiber);
       }
 
-      // Run initial entry effects
-      yield* runEntryEffects(machine, resolvedInitial, self, id, inspectorValue);
+      // Create state scope for initial state's spawn effects
+      const stateScopeRef: { current: Scope.CloseableScope } = {
+        current: yield* Scope.make(),
+      };
+
+      // Run initial spawn effects
+      yield* runSpawnEffects(
+        machine,
+        machine.initial,
+        initEvent,
+        self,
+        stateScopeRef.current,
+        id,
+        inspectorValue,
+      );
 
       // Check if initial state (after always) is final
-      if (machine.finalStates.has(resolvedInitial._tag)) {
-        // Interrupt root invokes on early stop (in parallel)
-        yield* Effect.all(rootFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
+      if (machine.finalStates.has(machine.initial._tag)) {
+        // Close state scope and interrupt background effects
+        yield* Scope.close(stateScopeRef.current, Exit.void);
+        yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
         if (inspectorValue !== undefined) {
           emit(inspectorValue, {
             type: "@machine.stop",
             actorId: id,
-            finalState: resolvedInitial,
+            finalState: machine.initial,
             timestamp: now(),
           });
         }
@@ -288,9 +219,19 @@ export const createActor = <
         );
       }
 
-      // Start the event loop (passes rootFibers so they can be interrupted on final state)
+      // Start the event loop
       const loopFiber = yield* Effect.fork(
-        eventLoop(machine, stateRef, eventQueue, self, listeners, rootFibers, id, inspectorValue),
+        eventLoop(
+          machine,
+          stateRef,
+          eventQueue,
+          self,
+          listeners,
+          backgroundFibers,
+          stateScopeRef,
+          id,
+          inspectorValue,
+        ),
       );
 
       return buildActorRef(
@@ -311,8 +252,10 @@ export const createActor = <
           }
           yield* Queue.shutdown(eventQueue);
           yield* Fiber.interrupt(loopFiber);
-          // Interrupt root-level invokes (in parallel)
-          yield* Effect.all(rootFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
+          // Close state scope (interrupts spawn fibers)
+          yield* Scope.close(stateScopeRef.current, Exit.void);
+          // Interrupt background effects (in parallel)
+          yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
         }).pipe(Effect.asVoid),
       );
     }),
@@ -328,12 +271,13 @@ const eventLoop = <
   GD extends GuardsDef,
   EFD extends EffectsDef,
 >(
-  machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
+  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
   eventQueue: Queue.Queue<E>,
   self: MachineRef<E>,
   listeners: Listeners<S>,
-  rootFibers: Fiber.Fiber<void, never>[],
+  backgroundFibers: Fiber.Fiber<void, never>[],
+  stateScopeRef: { current: Scope.CloseableScope },
   actorId: string,
   inspector?: Inspector<S, E>,
 ): Effect.Effect<void, never, R> =>
@@ -351,11 +295,24 @@ const eventLoop = <
           "effect_machine.state.current": currentState._tag,
           "effect_machine.event.type": event._tag,
         },
-      })(processEvent(machine, currentState, event, stateRef, self, listeners, actorId, inspector));
+      })(
+        processEvent(
+          machine,
+          currentState,
+          event,
+          stateRef,
+          self,
+          listeners,
+          stateScopeRef,
+          actorId,
+          inspector,
+        ),
+      );
 
       if (shouldStop) {
-        // Interrupt root-level invokes when reaching final state (in parallel)
-        yield* Effect.all(rootFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
+        // Close state scope and interrupt background effects when reaching final state
+        yield* Scope.close(stateScopeRef.current, Exit.void);
+        yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
         return;
       }
     }
@@ -371,12 +328,13 @@ const processEvent = <
   GD extends GuardsDef,
   EFD extends EffectsDef,
 >(
-  machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
+  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
   currentState: S,
   event: E,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
   self: MachineRef<E>,
   listeners: Listeners<S>,
+  stateScopeRef: { current: Scope.CloseableScope },
   actorId: string,
   inspector?: Inspector<S, E>,
 ): Effect.Effect<boolean, never, R> =>
@@ -426,21 +384,16 @@ const processEvent = <
         )
       : newStateResult;
 
-    // Determine if we should run exit/enter effects
+    // Determine if we should run lifecycle effects
     const stateTagChanged = newState._tag !== currentState._tag;
     // Run lifecycle if:
-    // - State tag changed (always run exit/enter)
+    // - State tag changed (always run entry/spawn)
     // - reenter=true (force lifecycle even for same tag)
     const runLifecycle = stateTagChanged || transition.reenter === true;
 
     if (runLifecycle) {
-      // Run exit effects for old state
-      yield* runExitEffects(machine, currentState, self, actorId, inspector);
-
-      // Apply always transitions (only if tag changed)
-      if (stateTagChanged) {
-        newState = yield* applyAlways(machine, newState, self);
-      }
+      // Close old state scope (interrupts spawn fibers via forkScoped)
+      yield* Scope.close(stateScopeRef.current, Exit.void);
 
       yield* Effect.annotateCurrentSpan("effect_machine.state.from", currentState._tag);
       yield* Effect.annotateCurrentSpan("effect_machine.state.to", newState._tag);
@@ -465,8 +418,22 @@ const processEvent = <
       yield* SubscriptionRef.set(stateRef, newState);
       notifyListeners(listeners, newState);
 
-      // Run entry effects for new state
-      yield* runEntryEffects(machine, newState, self, actorId, inspector);
+      // Create new state scope for entry/spawn effects
+      stateScopeRef.current = yield* Scope.make();
+
+      // Use $enter event for lifecycle effects
+      const enterEvent = { _tag: INTERNAL_ENTER_EVENT } as E;
+
+      // Run spawn effects for new state (forked into state scope)
+      yield* runSpawnEffects(
+        machine,
+        newState,
+        enterEvent,
+        self,
+        stateScopeRef.current,
+        actorId,
+        inspector,
+      );
 
       // Check if new state is final
       if (machine.finalStates.has(newState._tag)) {
@@ -490,97 +457,56 @@ const processEvent = <
   });
 
 /**
- * Run entry effects for a state
+ * Run spawn effects for a state (forked into state scope, auto-cancelled on state exit)
  */
-export const runEntryEffects = <
+export const runSpawnEffects = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
   GD extends GuardsDef,
   EFD extends EffectsDef,
 >(
-  machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
+  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
   state: S,
+  event: E,
   self: MachineRef<E>,
+  stateScope: Scope.CloseableScope,
   actorId?: string,
   inspector?: Inspector<S, E>,
 ): Effect.Effect<void, never, R> =>
   Effect.gen(function* () {
-    const effects = findOnEnterEffects(machine, state._tag);
+    const spawnEffects = findSpawnEffects(machine, state._tag);
 
-    // Create context for effect slots
-    const dummyEvent = { _tag: DUMMY_ENTER_EVENT } as E;
     const ctx: MachineContext<S, E, MachineRef<E>> = {
       state,
-      event: dummyEvent,
+      event,
       self,
     };
     const { effects: effectSlots } = machine._createSlotAccessors(ctx);
 
-    for (const effect of effects) {
+    for (const spawnEffect of spawnEffects) {
       if (actorId !== undefined && inspector !== undefined) {
         emit(inspector, {
           type: "@machine.effect",
           actorId,
-          effectType: "entry",
+          effectType: "spawn",
           state,
           timestamp: now(),
         });
       }
-      yield* Effect.withSpan("effect-machine.effect.entry", {
-        attributes: { "effect_machine.state": state._tag },
-      })(
-        (
-          effect.handler({ state, self, effects: effectSlots }) as Effect.Effect<void, never, R>
-        ).pipe(Effect.provideService(machine.Context, ctx)),
-      );
-    }
-  });
-
-/**
- * Run exit effects for a state
- */
-export const runExitEffects = <
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
-  R,
-  GD extends GuardsDef,
-  EFD extends EffectsDef,
->(
-  machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
-  state: S,
-  self: MachineRef<E>,
-  actorId?: string,
-  inspector?: Inspector<S, E>,
-): Effect.Effect<void, never, R> =>
-  Effect.gen(function* () {
-    const effects = findOnExitEffects(machine, state._tag);
-
-    // Create context for effect slots
-    const dummyEvent = { _tag: DUMMY_EXIT_EVENT } as E;
-    const ctx: MachineContext<S, E, MachineRef<E>> = {
-      state,
-      event: dummyEvent,
-      self,
-    };
-    const { effects: effectSlots } = machine._createSlotAccessors(ctx);
-
-    for (const effect of effects) {
-      if (actorId !== undefined && inspector !== undefined) {
-        emit(inspector, {
-          type: "@machine.effect",
-          actorId,
-          effectType: "exit",
-          state,
-          timestamp: now(),
-        });
-      }
-      yield* Effect.withSpan("effect-machine.effect.exit", {
-        attributes: { "effect_machine.state": state._tag },
-      })(
-        (
-          effect.handler({ state, self, effects: effectSlots }) as Effect.Effect<void, never, R>
-        ).pipe(Effect.provideService(machine.Context, ctx)),
-      );
+      // Fork the spawn effect into the state scope - it will be interrupted when scope closes
+      yield* Effect.forkScoped(
+        Effect.withSpan("effect-machine.effect.spawn", {
+          attributes: { "effect_machine.state": state._tag },
+        })(
+          (
+            spawnEffect.handler({ state, event, self, effects: effectSlots }) as Effect.Effect<
+              void,
+              never,
+              R
+            >
+          ).pipe(Effect.provideService(machine.Context, ctx)),
+        ),
+      ).pipe(Effect.provideService(Scope.Scope, stateScope));
     }
   });

@@ -1,15 +1,13 @@
+// @effect-diagnostics missingEffectContext:off
+// @effect-diagnostics anyUnknownInErrorContext:off
+
 import { Effect, Fiber, Option, Queue, Ref, SubscriptionRef } from "effect";
 
 import type { ActorRef } from "../actor-ref.js";
 import type { MachineRef, HandlerContext, Machine } from "../machine.js";
 import type { Inspector } from "../inspection.js";
 import { Inspector as InspectorTag } from "../inspection.js";
-import {
-  applyAlways,
-  resolveTransition,
-  runEntryEffects,
-  runExitEffects,
-} from "../internal/loop.js";
+import { resolveTransition } from "../internal/loop.js";
 import { isEffect } from "../internal/is-effect.js";
 import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
 
@@ -84,7 +82,6 @@ const buildPersistentActorRef = <
     S,
     E,
     R,
-    never,
     Record<string, never>,
     Record<string, never>,
     GD,
@@ -250,7 +247,6 @@ export const createPersistentActor = <
         S,
         E,
         R,
-        never,
         Record<string, never>,
         Record<string, never>,
         GD,
@@ -307,13 +303,13 @@ export const createPersistentActor = <
                   Effect.provideService(typedMachine.Context, ctx),
                 )
               : newStateResult;
-            resolvedInitial = yield* applyAlways(typedMachine, newState, self);
+            resolvedInitial = newState;
             initialVersion = persistedEvent.version;
           }
         }
       } else {
         // Fresh start
-        resolvedInitial = yield* applyAlways(typedMachine, typedMachine.initial, self);
+        resolvedInitial = typedMachine.initial;
         initialVersion = 0;
       }
 
@@ -447,7 +443,6 @@ const persistentEventLoop = <
       S,
       E,
       R,
-      never,
       Record<string, never>,
       Record<string, never>,
       GD,
@@ -522,13 +517,8 @@ const persistentEventLoop = <
       const runLifecycle = stateTagChanged || transition.reenter === true;
 
       if (runLifecycle) {
-        // Run exit effects
-        yield* runExitEffects(typedMachine, currentState, self, id, inspector);
-
-        // Apply always transitions
-        if (stateTagChanged) {
-          newState = yield* applyAlways(typedMachine, newState, self);
-        }
+        // Note: Spawn effects cancelled automatically when we exit state
+        // (persistent actors don't use spawn effects for now)
 
         // Emit transition event
         if (inspector !== undefined) {
@@ -552,8 +542,8 @@ const persistentEventLoop = <
         // Update metadata
         yield* saveMetadata(id, newState, newVersion, createdAt, persistence, adapter);
 
-        // Run entry effects
-        yield* runEntryEffects(typedMachine, newState, self, id, inspector);
+        // Note: Spawn effects not implemented for persistent actors yet
+        // (would need to re-fork on replay)
 
         // Check if final
         if (typedMachine.finalStates.has(newState._tag)) {

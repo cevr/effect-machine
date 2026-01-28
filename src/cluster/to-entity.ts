@@ -7,7 +7,7 @@ import { Entity } from "@effect/cluster";
 import { Rpc } from "@effect/rpc";
 import type { Schema } from "effect";
 
-import type { AnySlot, Machine } from "../machine.js";
+import type { Machine } from "../machine.js";
 import { MissingSchemaError } from "../errors.js";
 
 /**
@@ -75,10 +75,9 @@ export const toEntity = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
-  Slots extends AnySlot,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-  machine: Machine<S, E, R, Slots, any, any, any, any>,
+  machine: Machine<S, E, R, any, any, any, any>,
   options: ToEntityOptions,
 ) => {
   const stateSchema = machine.stateSchema;

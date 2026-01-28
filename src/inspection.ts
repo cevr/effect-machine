@@ -52,12 +52,12 @@ export interface TransitionEvent<S, E> {
 }
 
 /**
- * Event emitted when an entry/exit/transition effect runs
+ * Event emitted when a spawn effect runs
  */
 export interface EffectEvent<S> {
   readonly type: "@machine.effect";
   readonly actorId: string;
-  readonly effectType: "entry" | "exit" | "transition";
+  readonly effectType: "spawn";
   readonly state: S;
   readonly timestamp: number;
 }

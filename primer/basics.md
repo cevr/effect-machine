@@ -39,7 +39,7 @@ type MyEvent = typeof MyEvent.Type;
 
 ## Building Machines
 
-Use `Machine.make({ state, event, initial }).pipe()` to compose a machine definition:
+Use `Machine.make({ state, event, initial })` to compose a machine definition:
 
 ```typescript
 import { Effect, Schema } from "effect";
@@ -65,21 +65,16 @@ type MyEvent = typeof MyEvent.Type;
 const machine = Machine.make({
   state: MyState,
   event: MyEvent,
-  initial: MyState.Idle(),
-}).pipe(
+  initial: MyState.Idle,
+})
   // Transitions: from state + event → new state
-  Machine.on(MyState.Idle, MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url })),
-  Machine.on(MyState.Loading, MyEvent.Resolve, ({ event }) =>
-    MyState.Success({ data: event.data }),
-  ),
-  Machine.on(MyState.Loading, MyEvent.Reject, ({ event }) =>
-    MyState.Error({ message: event.message }),
-  ),
+  .on(MyState.Idle, MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url }))
+  .on(MyState.Loading, MyEvent.Resolve, ({ event }) => MyState.Success({ data: event.data }))
+  .on(MyState.Loading, MyEvent.Reject, ({ event }) => MyState.Error({ message: event.message }))
 
   // Final states (no transitions out)
-  Machine.final(MyState.Success),
-  Machine.final(MyState.Error),
-);
+  .final(MyState.Success)
+  .final(MyState.Error);
 ```
 
 ## Transition Handlers
@@ -87,7 +82,7 @@ const machine = Machine.make({
 Handlers receive a context object with `state` and `event`:
 
 ```typescript
-Machine.on(MyState.Loading, MyEvent.Resolve, ({ state, event }) => {
+machine.on(MyState.Loading, MyEvent.Resolve, ({ state, event }) => {
   // state is narrowed to Loading
   // event is narrowed to Resolve
   return MyState.Success({ data: event.data });
@@ -99,7 +94,7 @@ Machine.on(MyState.Loading, MyEvent.Resolve, ({ state, event }) => {
 Handlers can return an Effect for async transitions:
 
 ```typescript
-Machine.on(MyState.Idle, MyEvent.Fetch, ({ event }) =>
+machine.on(MyState.Idle, MyEvent.Fetch, ({ event }) =>
   Effect.gen(function* () {
     const data = yield* fetchData(event.url);
     return MyState.Success({ data });
@@ -109,95 +104,61 @@ Machine.on(MyState.Idle, MyEvent.Fetch, ({ event }) =>
 
 ## Guards
 
-Conditionally enable transitions:
+Conditionally enable transitions using guard slots:
 
 ```typescript
-Machine.on(MyState.Form, MyEvent.Submit, ({ state }) => MyState.Submitting(), {
-  guard: ({ state }) => state.isValid,
+const MyGuards = Slot.Guards({
+  isValid: {},
 });
+
+Machine.make({
+  state: MyState,
+  event: MyEvent,
+  guards: MyGuards,
+  initial: MyState.Form({ isValid: false }),
+})
+  .on(MyState.Form, MyEvent.Submit, ({ state, guards }) =>
+    Effect.gen(function* () {
+      if (yield* guards.isValid()) {
+        return MyState.Submitting;
+      }
+      return state;
+    }),
+  )
+  .provide({
+    isValid: (_params, { state }) => state.email.includes("@"),
+  });
 ```
 
-If guard returns `false`, the transition is skipped and state remains unchanged.
+If guard returns `false`, stay in current state.
 
-## Effects
+## State Effects with spawn
 
-Run side effects on transitions:
-
-```typescript
-Machine.on(MyState.Idle, MyEvent.Start, () => MyState.Running(), {
-  effect: ({ state, event }) => Effect.log(`Starting from ${state._tag} with ${event._tag}`),
-});
-```
-
-Effects run after the state change is committed.
-
-## Final States
-
-Mark states as terminal:
-
-```typescript
-Machine.final(MyState.Success),
-Machine.final(MyState.Error),
-```
-
-Once in a final state:
-
-- No transitions are processed
-- Actor stops automatically
-
-## State Entry/Exit (Effect Slots)
-
-Register effect slots for state entry/exit, then provide handlers:
+Run effects when entering a state. Use `Effect.addFinalizer` for cleanup:
 
 ```typescript
 import { Machine, State, Event } from "effect-machine";
 
-const baseMachine = Machine.make({
+const machine = Machine.make({
   state: MyState,
   event: MyEvent,
-  initial: MyState.Idle(),
-}).pipe(
-  Machine.on(MyState.Idle, MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url })),
-  Machine.on(MyState.Loading, MyEvent.Resolve, ({ event }) =>
-    MyState.Success({ data: event.data }),
-  ),
-  // Register effect slots
-  Machine.onEnter(MyState.Loading, "startLoading"),
-  Machine.onExit(MyState.Loading, "cleanupLoading"),
-);
-
-// Provide handlers
-const machine = Machine.provide(baseMachine, {
-  startLoading: ({ state, self }) =>
+  initial: MyState.Idle,
+})
+  .on(MyState.Idle, MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url }))
+  .on(MyState.Loading, MyEvent.Resolve, ({ event }) => MyState.Success({ data: event.data }))
+  .spawn(MyState.Loading, ({ state, self }) =>
     Effect.gen(function* () {
+      // Cleanup runs when state exits (via addFinalizer)
+      yield* Effect.addFinalizer(() => Effect.log("Leaving Loading"));
+
+      // Main work - automatically cancelled when exiting Loading
       const data = yield* fetchData(state.url);
       yield* self.send(MyEvent.Resolve({ data }));
     }),
-  cleanupLoading: () => Effect.log("Leaving Loading"),
-});
+  );
 ```
 
 `self.send` lets you send events back to the machine from effects.
-
-## Eventless Transitions (always)
-
-Transitions that fire immediately based on state:
-
-```typescript
-Machine.make({
-  state: MyState,
-  event: MyEvent,
-  initial: MyState.Calculating({ value: 75 }),
-}).pipe(
-  Machine.always(MyState.Calculating, [
-    { guard: (s) => s.value >= 70, to: (s) => MyState.High({ value: s.value }) },
-    { guard: (s) => s.value >= 40, to: (s) => MyState.Medium({ value: s.value }) },
-    { to: (s) => MyState.Low({ value: s.value }) }, // Fallback (no guard)
-  ]),
-);
-```
-
-Branches are evaluated top-to-bottom. First match wins.
 
 ## Delayed Events
 
@@ -208,13 +169,25 @@ Machine.make({
   state: MyState,
   event: MyEvent,
   initial: MyState.Success({ message: "Done" }),
-}).pipe(
-  Machine.on(MyState.Success, MyEvent.Dismiss, () => MyState.Dismissed()),
-  Machine.delay(MyState.Success, "3 seconds", MyEvent.Dismiss()),
-);
+})
+  .on(MyState.Success, MyEvent.Dismiss, () => MyState.Dismissed)
+  .delay(MyState.Success, "3 seconds", MyEvent.Dismiss);
 ```
 
 Timer is cancelled if state exits before duration.
+
+## Final States
+
+Mark states as terminal:
+
+```typescript
+machine.final(MyState.Success).final(MyState.Error);
+```
+
+Once in a final state:
+
+- No transitions are processed
+- Actor stops automatically
 
 ## See Also
 

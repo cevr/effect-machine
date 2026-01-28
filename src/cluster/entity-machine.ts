@@ -5,17 +5,13 @@
  */
 import { Entity } from "@effect/cluster";
 import type { Rpc } from "@effect/rpc";
-import { Effect, type Layer, Queue, Ref } from "effect";
+import { Effect, Exit, type Layer, Queue, Ref, Scope } from "effect";
 
 import type { Machine, MachineRef, HandlerContext } from "../machine.js";
-import {
-  applyAlways,
-  resolveTransition,
-  runEntryEffects,
-  runExitEffects,
-} from "../internal/loop.js";
+import { resolveTransition, runSpawnEffects } from "../internal/loop.js";
 import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
 import { isEffect } from "../internal/is-effect.js";
+import { INTERNAL_ENTER_EVENT } from "../internal/constants.js";
 
 /**
  * Options for EntityMachine.layer
@@ -45,10 +41,11 @@ const processEvent = <
   GD extends GuardsDef = Record<string, never>,
   EFD extends EffectsDef = Record<string, never>,
 >(
-  machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
+  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
   stateRef: Ref.Ref<S>,
   event: E,
   self: MachineRef<E>,
+  stateScopeRef: { current: Scope.CloseableScope },
 ): Effect.Effect<void, never, R> =>
   Effect.gen(function* () {
     const currentState = yield* Ref.get(stateRef);
@@ -77,31 +74,32 @@ const processEvent = <
     };
 
     // Compute new state
-    const newStateResult = transition.handler(handlerCtx);
+    const newStateResult = transition.handler(handlerCtx as HandlerContext<S, E, GD, EFD>);
     let newState = isEffect(newStateResult)
       ? yield* (newStateResult as Effect.Effect<S, never, R>).pipe(
           Effect.provideService(machine.Context, ctx),
         )
       : newStateResult;
 
-    // Determine if we should run exit/enter effects
+    // Determine if we should run lifecycle effects
     const stateTagChanged = newState._tag !== currentState._tag;
     const runLifecycle = stateTagChanged || transition.reenter === true;
 
     if (runLifecycle) {
-      // Run exit effects for old state
-      yield* runExitEffects(machine, currentState, self);
-
-      // Apply always transitions (only if tag changed)
-      if (stateTagChanged) {
-        newState = yield* applyAlways(machine, newState, self);
-      }
+      // Close old state scope (interrupts spawn fibers)
+      yield* Scope.close(stateScopeRef.current, Exit.void);
 
       // Update state
       yield* Ref.set(stateRef, newState);
 
-      // Run entry effects for new state
-      yield* runEntryEffects(machine, newState, self);
+      // Create new state scope
+      stateScopeRef.current = yield* Scope.make();
+
+      // Use $enter event for lifecycle effects
+      const enterEvent = { _tag: INTERNAL_ENTER_EVENT } as E;
+
+      // Run spawn effects for new state
+      yield* runSpawnEffects(machine, newState, enterEvent, self, stateScopeRef.current);
     } else {
       // Same state tag without reenter - just update state
       yield* Ref.set(stateRef, newState);
@@ -115,8 +113,8 @@ const processEvent = <
  * - Maintains state via Ref per entity instance
  * - Resolves transitions using the indexed lookup
  * - Evaluates guards in registration order
- * - Runs lifecycle effects (onEnter/onExit)
- * - Processes internal events from invoke effects
+ * - Runs lifecycle effects (onEnter/spawn)
+ * - Processes internal events from spawn effects
  *
  * @example
  * ```ts
@@ -142,7 +140,7 @@ export const EntityMachine = {
    * Create a layer that wires a machine to an Entity.
    *
    * @param entity - Entity created via toEntity()
-   * @param machine - Machine with all effects provided (Effects = never)
+   * @param machine - Machine with all effects provided
    * @param options - Optional configuration
    */
   layer: <
@@ -155,7 +153,7 @@ export const EntityMachine = {
     Rpcs extends Rpc.Any,
   >(
     entity: Entity.Entity<EntityType, Rpcs>,
-    machine: Machine<S, E, R, never, Record<string, never>, Record<string, never>, GD, EFD>,
+    machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
     options?: EntityMachineOptions<S>,
   ): Layer.Layer<never, never, R> => {
     return entity.toLayer(
@@ -177,21 +175,26 @@ export const EntityMachine = {
           send: (event) => Queue.offer(internalQueue, event),
         };
 
-        // Apply always transitions to initial state
-        const resolvedInitial = yield* applyAlways(machine, initialState, self);
-
         // Create state ref
-        const stateRef = yield* Ref.make<S>(resolvedInitial);
+        const stateRef = yield* Ref.make<S>(initialState);
 
-        // Run initial entry effects
-        yield* runEntryEffects(machine, resolvedInitial, self);
+        // Create state scope for spawn effects
+        const stateScopeRef: { current: Scope.CloseableScope } = {
+          current: yield* Scope.make(),
+        };
+
+        // Use $init event for initial lifecycle
+        const initEvent = { _tag: "$init" } as E;
+
+        // Run initial spawn effects
+        yield* runSpawnEffects(machine, initialState, initEvent, self, stateScopeRef.current);
 
         // Process internal events in background
         yield* Effect.forkScoped(
           Effect.forever(
             Effect.gen(function* () {
               const event = yield* Queue.take(internalQueue);
-              yield* processEvent(machine, stateRef, event, self);
+              yield* processEvent(machine, stateRef, event, self, stateScopeRef);
             }),
           ),
         );
@@ -202,7 +205,7 @@ export const EntityMachine = {
           Send: (envelope: { payload: { event: E } }) =>
             Effect.gen(function* () {
               const event = envelope.payload.event;
-              yield* processEvent(machine, stateRef, event, self);
+              yield* processEvent(machine, stateRef, event, self, stateScopeRef);
               return yield* Ref.get(stateRef);
             }),
 

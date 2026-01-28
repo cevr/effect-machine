@@ -35,33 +35,34 @@ What are you doing?
 ## Quick Example
 
 ```typescript
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { Machine, State, Event, simulate } from "effect-machine";
 
-type MyState = State<{
-  Idle: {};
-  Loading: {};
-  Done: { result: string };
-}>;
-const MyState = State<MyState>();
+const MyState = State({
+  Idle: {},
+  Loading: {},
+  Done: { result: Schema.String },
+});
+type MyState = typeof MyState.Type;
 
-type MyEvent = Event<{
-  Start: {};
-  Complete: { result: string };
-}>;
-const MyEvent = Event<MyEvent>();
+const MyEvent = Event({
+  Start: {},
+  Complete: { result: Schema.String },
+});
+type MyEvent = typeof MyEvent.Type;
 
-const machine = Machine.make<MyState, MyEvent>(MyState.Idle()).pipe(
-  Machine.on(MyState.Idle, MyEvent.Start, () => MyState.Loading()),
-  Machine.on(MyState.Loading, MyEvent.Complete, ({ event }) =>
-    MyState.Done({ result: event.result }),
-  ),
-  Machine.final(MyState.Done),
-);
+const machine = Machine.make({
+  state: MyState,
+  event: MyEvent,
+  initial: MyState.Idle,
+})
+  .on(MyState.Idle, MyEvent.Start, () => MyState.Loading)
+  .on(MyState.Loading, MyEvent.Complete, ({ event }) => MyState.Done({ result: event.result }))
+  .final(MyState.Done);
 
 // Test it
 const result = await Effect.runPromise(
-  simulate(machine, [MyEvent.Start(), MyEvent.Complete({ result: "ok" })]),
+  simulate(machine, [MyEvent.Start, MyEvent.Complete({ result: "ok" })]),
 );
 console.log(result.finalState._tag); // "Done"
 ```
@@ -74,7 +75,7 @@ console.log(result.finalState._tag); // "Done"
 | **Event**      | Branded type representing inputs                    |
 | **Transition** | State + Event → New State                           |
 | **Guard**      | Boolean predicate that enables/disables transitions |
-| **Effect**     | Side effect run on transition or state entry/exit   |
+| **Spawn**      | State-scoped effect (cancelled on exit)             |
 | **Final**      | Terminal state - no transitions out                 |
 
 ## API Quick Reference
@@ -89,26 +90,22 @@ console.log(result.finalState._tag); // "Done"
 
 ### Combinators
 
-| Function                                 | Purpose                            |
-| ---------------------------------------- | ---------------------------------- |
-| `Machine.always(state, branches)`        | Eventless transitions              |
-| `Machine.choose(state, event, branches)` | Guard cascade                      |
-| `Machine.delay(state, duration, event)`  | Auto-send event after delay        |
-| `Machine.assign(updater)`                | Partial state update helper        |
-| `Machine.update(state, event, updater)`  | Shorthand for on + assign          |
-| `Machine.invoke(state, name)`            | Register invoke slot (named)       |
-| `Machine.onEnter(state, name)`           | Register entry effect slot (named) |
-| `Machine.onExit(state, name)`            | Register exit effect slot (named)  |
-| `Machine.provide(machine, handlers)`     | Wire handlers to effect slots      |
+| Function                                 | Purpose                     |
+| ---------------------------------------- | --------------------------- |
+| `Machine.choose(state, event, branches)` | Guard cascade               |
+| `Machine.delay(state, duration, event)`  | Auto-send event after delay |
+| `Machine.spawn(state, handler)`          | State-scoped effect         |
+| `Machine.background(name, handler)`      | Machine-lifetime effect     |
+| `Machine.provide(machine, handlers)`     | Wire handlers to slots      |
 
 ### Guards
 
-| Function          | Purpose               |
-| ----------------- | --------------------- |
-| `Guard.make(fn)`  | Create reusable guard |
-| `Guard.and(a, b)` | Both must pass        |
-| `Guard.or(a, b)`  | Either can pass       |
-| `Guard.not(g)`    | Negate guard          |
+| Function          | Purpose            |
+| ----------------- | ------------------ |
+| `Slot.Guards`     | Define guard slots |
+| `Guard.and(a, b)` | Both must pass     |
+| `Guard.or(a, b)`  | Either can pass    |
+| `Guard.not(g)`    | Negate guard       |
 
 ### Testing
 
@@ -117,7 +114,6 @@ console.log(result.finalState._tag); // "Done"
 | `simulate(machine, events)`             | Run events, get all states |
 | `createTestHarness(machine)`            | Step-by-step testing       |
 | `assertReaches(machine, events, state)` | Assert final state         |
-| `yieldFibers`                           | Yield to background fibers |
 
 ### Actors
 

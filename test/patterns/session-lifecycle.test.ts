@@ -13,14 +13,13 @@ import { describe, expect, it, yieldFibers } from "../utils/effect-test.js";
 
 /**
  * Session lifecycle pattern tests based on bite session.machine.ts
- * Tests: initial state calculation via always, maintenance interrupt, session timeout
+ * Tests: initial state calculation, maintenance interrupt, session timeout
  */
 describe("Session Lifecycle Pattern", () => {
   const UserRole = Schema.Literal("guest", "user", "admin");
   type UserRole = typeof UserRole.Type;
 
   const SessionState = State({
-    Initializing: { token: Schema.NullOr(Schema.String) },
     Guest: {},
     Active: { userId: Schema.String, role: UserRole, lastActivity: Schema.Number },
     Maintenance: { message: Schema.String, previousState: Schema.Literal("Guest", "Active") },
@@ -30,8 +29,7 @@ describe("Session Lifecycle Pattern", () => {
   type SessionState = typeof SessionState.Type;
 
   const SessionEvent = Event({
-    TokenValidated: { userId: Schema.String, role: UserRole },
-    TokenInvalid: {},
+    Login: { userId: Schema.String, role: UserRole },
     Activity: {},
     MaintenanceStarted: { message: Schema.String },
     MaintenanceEnded: {},
@@ -39,75 +37,70 @@ describe("Session Lifecycle Pattern", () => {
     Logout: {},
   });
 
-  const sessionMachine = Machine.make({
-    state: SessionState,
-    event: SessionEvent,
-    initial: SessionState.Initializing({ token: null }),
-  })
-    .always(SessionState.Initializing, (state) => {
-      if (state.token === null) return SessionState.Guest;
-      return state;
-    })
-    .on(SessionState.Initializing, SessionEvent.TokenValidated, ({ event }) =>
-      SessionState.Active({ userId: event.userId, role: event.role, lastActivity: Date.now() }),
-    )
-    .on(SessionState.Active, SessionEvent.MaintenanceStarted, ({ event }) =>
-      SessionState.Maintenance({ message: event.message, previousState: "Active" }),
-    )
-    .on(SessionState.Guest, SessionEvent.MaintenanceStarted, ({ event }) =>
-      SessionState.Maintenance({ message: event.message, previousState: "Guest" }),
-    )
-    .on(SessionState.Active, SessionEvent.SessionTimeout, () => SessionState.SessionExpired)
-    .delay(SessionState.Active, "30 minutes", SessionEvent.SessionTimeout)
-    .on(SessionState.Maintenance, SessionEvent.MaintenanceEnded, ({ state }) =>
-      state.previousState === "Active"
-        ? SessionState.Active({ userId: "restored", role: "user", lastActivity: Date.now() })
-        : SessionState.Guest,
-    )
-    .on(SessionState.Active, SessionEvent.Logout, () => SessionState.LoggedOut)
-    .final(SessionState.SessionExpired)
-    .final(SessionState.LoggedOut);
+  // Helper to compute initial state based on token
+  const makeSessionMachine = (token: string | null) => {
+    // Initial state computed inline - no need for .always()
+    const initial =
+      token === null
+        ? SessionState.Guest
+        : SessionState.Active({ userId: "from-token", role: "user", lastActivity: Date.now() });
 
-  it.live("always transition calculates initial state from no token", () =>
+    return Machine.make({
+      state: SessionState,
+      event: SessionEvent,
+      initial,
+    })
+      .on(SessionState.Guest, SessionEvent.Login, ({ event }) =>
+        SessionState.Active({ userId: event.userId, role: event.role, lastActivity: Date.now() }),
+      )
+      .on(SessionState.Active, SessionEvent.MaintenanceStarted, ({ event }) =>
+        SessionState.Maintenance({ message: event.message, previousState: "Active" }),
+      )
+      .on(SessionState.Guest, SessionEvent.MaintenanceStarted, ({ event }) =>
+        SessionState.Maintenance({ message: event.message, previousState: "Guest" }),
+      )
+      .on(SessionState.Active, SessionEvent.SessionTimeout, () => SessionState.SessionExpired)
+      .delay(SessionState.Active, "30 minutes", SessionEvent.SessionTimeout)
+      .on(SessionState.Maintenance, SessionEvent.MaintenanceEnded, ({ state }) =>
+        state.previousState === "Active"
+          ? SessionState.Active({ userId: "restored", role: "user", lastActivity: Date.now() })
+          : SessionState.Guest,
+      )
+      .on(SessionState.Active, SessionEvent.Logout, () => SessionState.LoggedOut)
+      .final(SessionState.SessionExpired)
+      .final(SessionState.LoggedOut);
+  };
+
+  it.live("null token starts as Guest", () =>
     Effect.gen(function* () {
-      // Machine starts with Initializing({ token: null })
-      // Always transition should immediately move to Guest
-      const result = yield* assertPath(
-        sessionMachine,
-        [],
-        ["Guest"], // Initial state resolved to Guest
-      );
+      const machine = makeSessionMachine(null);
+      const result = yield* assertPath(machine, [], ["Guest"]);
       expect(result.finalState._tag).toBe("Guest");
     }),
   );
 
-  it.live("valid token leads to active session", () =>
+  it.live("valid token starts as Active", () =>
     Effect.gen(function* () {
-      // Create machine with token
-      const machineWithToken = Machine.make({
-        state: SessionState,
-        event: SessionEvent,
-        initial: SessionState.Initializing({ token: "valid-token" }),
-      })
-        .always(SessionState.Initializing, (state) => {
-          if (state.token === null) return SessionState.Guest;
-          return state;
-        })
-        .on(SessionState.Initializing, SessionEvent.TokenValidated, ({ event }) =>
-          SessionState.Active({ userId: event.userId, role: event.role, lastActivity: Date.now() }),
-        );
+      const machine = makeSessionMachine("valid-token");
+      const result = yield* assertPath(machine, [], ["Active"]);
+      expect(result.finalState._tag).toBe("Active");
+    }),
+  );
 
+  it.live("guest can login to active session", () =>
+    Effect.gen(function* () {
+      const machine = makeSessionMachine(null);
       const result = yield* assertPath(
-        machineWithToken,
-        [SessionEvent.TokenValidated({ userId: "user-123", role: "user" })],
-        ["Initializing", "Active"],
+        machine,
+        [SessionEvent.Login({ userId: "user-123", role: "user" })],
+        ["Guest", "Active"],
       );
       expect(result.finalState._tag).toBe("Active");
     }),
   );
 
   it.live("maintenance mode interrupts active session", () => {
-    const machineWithToken = Machine.make({
+    const machine = Machine.make({
       state: SessionState,
       event: SessionEvent,
       initial: SessionState.Active({ userId: "user-1", role: "user", lastActivity: Date.now() }),
@@ -122,7 +115,7 @@ describe("Session Lifecycle Pattern", () => {
       );
 
     return assertPath(
-      machineWithToken,
+      machine,
       [
         SessionEvent.MaintenanceStarted({ message: "System upgrade" }),
         SessionEvent.MaintenanceEnded,

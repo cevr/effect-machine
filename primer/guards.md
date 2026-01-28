@@ -7,7 +7,8 @@ Conditional transitions with parameterized guard slots.
 Guards are defined via `Slot.Guards` with optional schema parameters:
 
 ```typescript
-import { Slot, Schema } from "effect-machine";
+import { Slot } from "effect-machine";
+import { Schema } from "effect";
 
 const MyGuards = Slot.Guards({
   canRetry: { max: Schema.Number }, // parameterized guard
@@ -93,30 +94,12 @@ Combine guards with plain JavaScript logic:
 )
 ```
 
-## Guards in always Transitions
+## Guards in spawn
 
-Use guards in `always` handler:
-
-```typescript
-machine.always(MyState.Calculating, (state, guards) =>
-  Effect.gen(function* () {
-    if (yield* guards.isHigh()) {
-      return MyState.High({ value: state.value });
-    }
-    if (yield* guards.isMedium()) {
-      return MyState.Medium({ value: state.value });
-    }
-    return MyState.Low({ value: state.value });
-  }),
-);
-```
-
-## Guards in onEnter/onExit
-
-Guard checks in lifecycle effects:
+Guard checks in spawn effects:
 
 ```typescript
-machine.onEnter(MyState.Active, ({ state, guards }) =>
+machine.spawn(MyState.Active, ({ state, guards }) =>
   Effect.gen(function* () {
     if (yield* guards.shouldNotify()) {
       yield* NotificationService.send("User active");
