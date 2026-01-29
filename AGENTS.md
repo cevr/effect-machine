@@ -57,6 +57,23 @@ machine
   });
 ```
 
+## Running Machines
+
+**Simple (no registry):**
+
+```ts
+const actor = yield * Machine.spawn(machine);
+// or with custom ID:
+const actor = yield * Machine.spawn(machine, "my-id");
+```
+
+**With registry/persistence:**
+
+```ts
+const system = yield * ActorSystemService;
+const actor = yield * system.spawn("my-id", machine);
+```
+
 ## spawn vs on
 
 - `.on()` - transitions, guards/effects run inline

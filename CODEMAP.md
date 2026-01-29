@@ -57,10 +57,10 @@ test/
 
 | File                     | Purpose                                              |
 | ------------------------ | ---------------------------------------------------- |
-| `machine.ts`             | Machine class - fluent builder, all methods          |
+| `machine.ts`             | Machine class, fluent builder, `Machine.spawn`       |
 | `schema.ts`              | `State`/`Event` factories - schema-first definitions |
 | `slot.ts`                | `Slot.Guards`/`Slot.Effects` - parameterized slots   |
-| `actor.ts`               | ActorRef interface, ActorSystem service, event loop  |
+| `actor.ts`               | ActorRef, ActorSystem (registry), createActor        |
 | `internal/transition.ts` | Transition execution, O(1) lookup index              |
 
 ## Event Flow

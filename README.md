@@ -75,10 +75,9 @@ const orderMachine = Machine.make({
   .final(OrderState.Shipped)
   .final(OrderState.Cancelled);
 
-// Run as actor
+// Run as actor (simple)
 const program = Effect.gen(function* () {
-  const system = yield* ActorSystemService;
-  const actor = yield* system.spawn("order-1", orderMachine);
+  const actor = yield* Machine.spawn(orderMachine);
 
   yield* actor.send(OrderEvent.Process);
   yield* actor.send(OrderEvent.Ship({ trackingId: "TRACK-123" }));
@@ -87,7 +86,7 @@ const program = Effect.gen(function* () {
   console.log(state); // Shipped { trackingId: "TRACK-123" }
 });
 
-Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))));
+Effect.runPromise(Effect.scoped(program));
 ```
 
 ## Core Concepts
@@ -193,6 +192,14 @@ See the [primer](./primer/) for comprehensive documentation:
 | `.provide({ slot: impl })`                | Provide implementations      |
 | `.final(State.X)`                         | Mark final state             |
 | `.persist(config)`                        | Enable persistence           |
+
+### Running
+
+| Method                       | Purpose                                  |
+| ---------------------------- | ---------------------------------------- |
+| `Machine.spawn(machine)`     | Spawn actor (simple, no registry)        |
+| `Machine.spawn(machine, id)` | Spawn actor with custom ID               |
+| `system.spawn(id, machine)`  | Spawn via ActorSystem (registry/persist) |
 
 ### Testing
 

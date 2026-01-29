@@ -69,15 +69,26 @@ machine
 
 ## Running Actors
 
+**Simple (no registry):**
+
+```ts
+const program = Effect.gen(function* () {
+  const actor = yield* Machine.spawn(machine);
+  yield* actor.send(Event.Start({ url: "/api" }));
+  yield* Effect.yieldNow();
+  const state = yield* actor.snapshot;
+});
+
+Effect.runPromise(Effect.scoped(program));
+```
+
+**With registry/persistence:**
+
 ```ts
 const program = Effect.gen(function* () {
   const system = yield* ActorSystemService;
   const actor = yield* system.spawn("id", machine);
-
-  yield* actor.send(Event.Start({ url: "/api" }));
-  yield* Effect.yieldNow(); // Let effects run
-
-  const state = yield* actor.snapshot;
+  // ...
 });
 
 Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))));
