@@ -138,6 +138,104 @@ describe("ActorSystem", () => {
 });
 
 // ============================================================================
+// Machine.spawn Tests (simple API without ActorSystem)
+// ============================================================================
+
+describe("Machine.spawn", () => {
+  it.scopedLive("spawns actor without ActorSystem", () =>
+    Effect.gen(function* () {
+      const machine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle,
+      })
+        .on(TestState.Idle, TestEvent.Start, ({ event }) =>
+          TestState.Active({ value: event.value }),
+        )
+        .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
+        .final(TestState.Done);
+
+      // No ActorSystemService needed!
+      const actor = yield* Machine.spawn(machine);
+
+      yield* actor.send(TestEvent.Start({ value: 42 }));
+      yield* yieldFibers;
+
+      const state = yield* actor.snapshot;
+      expect(state._tag).toBe("Active");
+      if (state._tag === "Active") {
+        expect(state.value).toBe(42);
+      }
+    }),
+  );
+
+  it.scopedLive("spawns actor with custom ID", () =>
+    Effect.gen(function* () {
+      const machine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle,
+      }).on(TestState.Idle, TestEvent.Start, ({ event }) =>
+        TestState.Active({ value: event.value }),
+      );
+
+      const actor = yield* Machine.spawn(machine, "my-custom-id");
+
+      expect(actor.id).toBe("my-custom-id");
+    }),
+  );
+
+  it.scopedLive("auto-generates ID when not provided", () =>
+    Effect.gen(function* () {
+      const machine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle,
+      });
+
+      const actor = yield* Machine.spawn(machine);
+
+      expect(actor.id).toMatch(/^actor-/);
+    }),
+  );
+
+  it.scopedLive("cleans up on scope close", () =>
+    Effect.gen(function* () {
+      const cleanedUp: string[] = [];
+
+      const TestEffects = Slot.Effects({ track: {} });
+
+      const machine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        effects: TestEffects,
+        initial: TestState.Idle,
+      })
+        .on(TestState.Idle, TestEvent.Start, ({ event }) =>
+          TestState.Active({ value: event.value }),
+        )
+        .spawn(TestState.Active, ({ effects }) => effects.track())
+        .provide({
+          track: () => Effect.addFinalizer(() => Effect.sync(() => cleanedUp.push("cleaned"))),
+        });
+
+      // Run in inner scope
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* Machine.spawn(machine);
+          yield* actor.send(TestEvent.Start({ value: 1 }));
+          yield* yieldFibers;
+          expect(cleanedUp).toEqual([]);
+        }),
+      );
+
+      // After scope closes, finalizer should have run
+      expect(cleanedUp).toEqual(["cleaned"]);
+    }),
+  );
+});
+
+// ============================================================================
 // ActorRef Tests
 // ============================================================================
 

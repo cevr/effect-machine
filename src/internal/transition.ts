@@ -3,15 +3,16 @@
  *
  * Combines:
  * - Transition execution logic (for event processing, simulation, test harness)
+ * - Event processing core (shared between actor and cluster entity)
  * - O(1) indexed lookup by state/event tag
  *
  * @internal
  */
-import { Effect } from "effect";
+import { Effect, Exit, Scope } from "effect";
 
 import type { Machine, MachineRef, Transition, SpawnEffect, HandlerContext } from "../machine.js";
 import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
-import { isEffect } from "./utils.js";
+import { isEffect, INTERNAL_ENTER_EVENT } from "./utils.js";
 
 // ============================================================================
 // Transition Execution
@@ -92,6 +93,148 @@ export const executeTransition = <
       transitioned: true,
       reenter: transition.reenter === true,
     };
+  });
+
+// ============================================================================
+// Event Processing Core (shared by actor and entity-machine)
+// ============================================================================
+
+/**
+ * Optional hooks for event processing inspection/tracing.
+ */
+export interface ProcessEventHooks<S, E> {
+  /** Called before running spawn effects */
+  readonly onSpawnEffect?: (state: S) => Effect.Effect<void>;
+  /** Called after transition completes */
+  readonly onTransition?: (from: S, to: S, event: E) => Effect.Effect<void>;
+}
+
+/**
+ * Result of processing an event through the machine.
+ */
+export interface ProcessEventResult<S> {
+  /** New state after processing */
+  readonly newState: S;
+  /** Previous state before processing */
+  readonly previousState: S;
+  /** Whether a transition occurred */
+  readonly transitioned: boolean;
+  /** Whether lifecycle effects ran (state change or reenter) */
+  readonly lifecycleRan: boolean;
+  /** Whether new state is final */
+  readonly isFinal: boolean;
+}
+
+/**
+ * Process a single event through the machine.
+ *
+ * Handles:
+ * - Transition execution
+ * - State scope lifecycle (close old, create new)
+ * - Running spawn effects
+ *
+ * Optional hooks allow inspection/tracing without coupling to specific impl.
+ *
+ * @internal
+ */
+export const processEventCore = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+  GD extends GuardsDef,
+  EFD extends EffectsDef,
+>(
+  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
+  currentState: S,
+  event: E,
+  self: MachineRef<E>,
+  stateScopeRef: { current: Scope.CloseableScope },
+  hooks?: ProcessEventHooks<S, E>,
+): Effect.Effect<ProcessEventResult<S>, never, R> =>
+  Effect.gen(function* () {
+    // Execute transition
+    const result = yield* executeTransition(machine, currentState, event, self);
+
+    if (!result.transitioned) {
+      return {
+        newState: currentState,
+        previousState: currentState,
+        transitioned: false,
+        lifecycleRan: false,
+        isFinal: false,
+      };
+    }
+
+    const newState = result.newState;
+    const stateTagChanged = newState._tag !== currentState._tag;
+    const runLifecycle = stateTagChanged || result.reenter;
+
+    if (runLifecycle) {
+      // Close old state scope (interrupts spawn fibers)
+      yield* Scope.close(stateScopeRef.current, Exit.void);
+
+      // Create new state scope
+      stateScopeRef.current = yield* Scope.make();
+
+      // Hook: transition complete (before spawn effects)
+      if (hooks?.onTransition !== undefined) {
+        yield* hooks.onTransition(currentState, newState, event);
+      }
+
+      // Hook: about to run spawn effects
+      if (hooks?.onSpawnEffect !== undefined) {
+        yield* hooks.onSpawnEffect(newState);
+      }
+
+      // Run spawn effects for new state
+      const enterEvent = { _tag: INTERNAL_ENTER_EVENT } as E;
+      yield* runSpawnEffects(machine, newState, enterEvent, self, stateScopeRef.current);
+    }
+
+    return {
+      newState,
+      previousState: currentState,
+      transitioned: true,
+      lifecycleRan: runLifecycle,
+      isFinal: machine.finalStates.has(newState._tag),
+    };
+  });
+
+/**
+ * Run spawn effects for a state (forked into state scope, auto-cancelled on state exit).
+ *
+ * @internal
+ */
+export const runSpawnEffects = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+  GD extends GuardsDef,
+  EFD extends EffectsDef,
+>(
+  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
+  state: S,
+  event: E,
+  self: MachineRef<E>,
+  stateScope: Scope.CloseableScope,
+): Effect.Effect<void, never, R> =>
+  Effect.gen(function* () {
+    const spawnEffects = findSpawnEffects(machine, state._tag);
+    const ctx: MachineContext<S, E, MachineRef<E>> = { state, event, self };
+    const { effects: effectSlots } = machine._createSlotAccessors(ctx);
+
+    for (const spawnEffect of spawnEffects) {
+      // Fork the spawn effect into the state scope - interrupted when scope closes
+      yield* Effect.forkScoped(
+        (
+          spawnEffect.handler({ state, event, self, effects: effectSlots }) as Effect.Effect<
+            void,
+            never,
+            R
+          >
+        ).pipe(Effect.provideService(machine.Context, ctx)),
+      ).pipe(Effect.provideService(Scope.Scope, stateScope));
+    }
   });
 
 /**

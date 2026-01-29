@@ -612,6 +612,75 @@ export class Machine<
 
 export const make = Machine.make;
 
+// ============================================================================
+// spawn function - simple actor creation without ActorSystem
+// ============================================================================
+
+import type { ActorRef } from "./actor.js";
+import { createActor } from "./actor.js";
+
+/**
+ * Spawn an actor directly without ActorSystem ceremony.
+ *
+ * Use this for simple single-actor cases. For registry, persistence, or
+ * multi-actor coordination, use ActorSystemService instead.
+ *
+ * @example
+ * ```ts
+ * const program = Effect.gen(function* () {
+ *   const actor = yield* Machine.spawn(machine);
+ *   yield* actor.send(Event.Start);
+ *   yield* Effect.yieldNow();
+ *   return yield* actor.snapshot;
+ * });
+ *
+ * Effect.runPromise(Effect.scoped(program));
+ * ```
+ */
+export const spawn: {
+  <
+    S extends { readonly _tag: string },
+    E extends { readonly _tag: string },
+    R,
+    GD extends GuardsDef,
+    EFD extends EffectsDef,
+  >(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
+    machine: Machine<S, E, R, any, any, GD, EFD>,
+  ): Effect.Effect<ActorRef<S, E>, never, R | Scope.Scope>;
+
+  <
+    S extends { readonly _tag: string },
+    E extends { readonly _tag: string },
+    R,
+    GD extends GuardsDef,
+    EFD extends EffectsDef,
+  >(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
+    machine: Machine<S, E, R, any, any, GD, EFD>,
+    id: string,
+  ): Effect.Effect<ActorRef<S, E>, never, R | Scope.Scope>;
+} = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+  GD extends GuardsDef,
+  EFD extends EffectsDef,
+>(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
+  machine: Machine<S, E, R, any, any, GD, EFD>,
+  id?: string,
+): Effect.Effect<ActorRef<S, E>, never, R | Scope.Scope> =>
+  Effect.gen(function* () {
+    const actorId = id ?? `actor-${Math.random().toString(36).slice(2)}`;
+    const actor = yield* createActor(actorId, machine);
+
+    // Register cleanup on scope finalization
+    yield* Effect.addFinalizer(() => actor.stop);
+
+    return actor;
+  });
+
 // Transition lookup (introspection)
 export { findTransitions } from "./internal/transition.js";
 

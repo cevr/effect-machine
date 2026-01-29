@@ -24,13 +24,15 @@ import type { Stream } from "effect";
 import type { Machine, MachineRef } from "./machine.js";
 import type { InspectionEvent, Inspector } from "./inspection.js";
 import { Inspector as InspectorTag } from "./inspection.js";
-import { findSpawnEffects, executeTransition, resolveTransition } from "./internal/transition.js";
+import { processEventCore, runSpawnEffects, resolveTransition } from "./internal/transition.js";
+import type { ProcessEventHooks } from "./internal/transition.js";
 
 // Re-export for external use (cluster, persistence)
-export { resolveTransition, findSpawnEffects } from "./internal/transition.js";
-import type { GuardsDef, EffectsDef, MachineContext } from "./slot.js";
+export { resolveTransition, runSpawnEffects, processEventCore } from "./internal/transition.js";
+export type { ProcessEventHooks, ProcessEventResult } from "./internal/transition.js";
+import type { GuardsDef, EffectsDef } from "./slot.js";
 import { DuplicateActorError } from "./errors.js";
-import { INTERNAL_INIT_EVENT, INTERNAL_ENTER_EVENT } from "./internal/utils.js";
+import { INTERNAL_INIT_EVENT } from "./internal/utils.js";
 import type {
   ActorMetadata,
   PersistenceError,
@@ -281,17 +283,6 @@ export const ActorSystem = Context.GenericTag<ActorSystem>("@effect/machine/Acto
 /** Listener set for sync subscriptions */
 export type Listeners<S> = Set<(state: S) => void>;
 
-/** Create machine context for slot accessors */
-const createMachineContext = <S, E>(
-  state: S,
-  event: E,
-  self: MachineRef<E>,
-): MachineContext<S, E, MachineRef<E>> => ({
-  state,
-  event,
-  self,
-});
-
 /**
  * Notify all listeners of state change.
  */
@@ -430,7 +421,7 @@ export const createActor = <
       };
 
       // Run initial spawn effects
-      yield* runSpawnEffects(
+      yield* runSpawnEffectsWithInspection(
         machine,
         machine.initial,
         initEvent,
@@ -559,7 +550,8 @@ const eventLoop = <
   });
 
 /**
- * Process a single event, returning true if the actor should stop
+ * Process a single event, returning true if the actor should stop.
+ * Wraps processEventCore with actor-specific concerns (inspection, listeners, state ref).
  */
 const processEvent = <
   S extends { readonly _tag: string },
@@ -588,89 +580,78 @@ const processEvent = <
       timestamp,
     }));
 
-    // Execute transition using shared helper
-    const result = yield* executeTransition(machine, currentState, event, self);
+    // Build inspection hooks for processEventCore
+    const hooks: ProcessEventHooks<S, E> | undefined =
+      inspector === undefined
+        ? undefined
+        : {
+            onSpawnEffect: (state) =>
+              emitWithTimestamp(inspector, (timestamp) => ({
+                type: "@machine.effect",
+                actorId,
+                effectType: "spawn",
+                state,
+                timestamp,
+              })),
+            onTransition: (from, to, ev) =>
+              emitWithTimestamp(inspector, (timestamp) => ({
+                type: "@machine.transition",
+                actorId,
+                fromState: from,
+                toState: to,
+                event: ev,
+                timestamp,
+              })),
+          };
+
+    // Process event using shared core
+    const result = yield* processEventCore(
+      machine,
+      currentState,
+      event,
+      self,
+      stateScopeRef,
+      hooks,
+    );
 
     if (!result.transitioned) {
-      // No transition for this state/event pair - ignore
       yield* Effect.annotateCurrentSpan("effect_machine.transition.matched", false);
       return false;
     }
 
     yield* Effect.annotateCurrentSpan("effect_machine.transition.matched", true);
 
-    const newState = result.newState;
+    // Update state ref and notify listeners
+    yield* SubscriptionRef.set(stateRef, result.newState);
+    notifyListeners(listeners, result.newState);
 
-    // Determine if we should run lifecycle effects
-    const stateTagChanged = newState._tag !== currentState._tag;
-    // Run lifecycle if:
-    // - State tag changed (always run entry/spawn)
-    // - reenter=true (force lifecycle even for same tag)
-    const runLifecycle = stateTagChanged || result.reenter;
+    if (result.lifecycleRan) {
+      yield* Effect.annotateCurrentSpan("effect_machine.state.from", result.previousState._tag);
+      yield* Effect.annotateCurrentSpan("effect_machine.state.to", result.newState._tag);
 
-    if (runLifecycle) {
-      // Close old state scope (interrupts spawn fibers via forkScoped)
-      yield* Scope.close(stateScopeRef.current, Exit.void);
-
-      yield* Effect.annotateCurrentSpan("effect_machine.state.from", currentState._tag);
-      yield* Effect.annotateCurrentSpan("effect_machine.state.to", newState._tag);
-      yield* Effect.annotateCurrentSpan("effect_machine.transition.reenter", result.reenter);
-
-      // Emit transition event
-      yield* emitWithTimestamp(inspector, (timestamp) => ({
-        type: "@machine.transition",
-        actorId,
-        fromState: currentState,
-        toState: newState,
-        event,
-        timestamp,
-      }));
-
-      // Update state
-      yield* SubscriptionRef.set(stateRef, newState);
-      notifyListeners(listeners, newState);
-
-      // Create new state scope for entry/spawn effects
-      stateScopeRef.current = yield* Scope.make();
-
-      // Use $enter event for lifecycle effects
-      const enterEvent = { _tag: INTERNAL_ENTER_EVENT } as E;
-
-      // Run spawn effects for new state (forked into state scope)
-      yield* runSpawnEffects(
-        machine,
-        newState,
-        enterEvent,
-        self,
-        stateScopeRef.current,
-        actorId,
-        inspector,
-      );
+      // Transition inspection event emitted via hooks in processEventCore
 
       // Check if new state is final
-      if (machine.finalStates.has(newState._tag)) {
+      if (result.isFinal) {
         yield* emitWithTimestamp(inspector, (timestamp) => ({
           type: "@machine.stop",
           actorId,
-          finalState: newState,
+          finalState: result.newState,
           timestamp,
         }));
-        return true; // Stop the loop
+        return true;
       }
-    } else {
-      // Same state tag without reenter - just update state
-      yield* SubscriptionRef.set(stateRef, newState);
-      notifyListeners(listeners, newState);
     }
 
     return false;
   });
 
 /**
- * Run spawn effects for a state (forked into state scope, auto-cancelled on state exit)
+ * Run spawn effects with actor-specific inspection and tracing.
+ * Wraps the core runSpawnEffects with inspection events and spans.
  * @internal
  */
-export const runSpawnEffects = <
+const runSpawnEffectsWithInspection = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
@@ -682,39 +663,21 @@ export const runSpawnEffects = <
   event: E,
   self: MachineRef<E>,
   stateScope: Scope.CloseableScope,
-  actorId?: string,
+  actorId: string,
   inspector?: Inspector<S, E>,
 ): Effect.Effect<void, never, R> =>
   Effect.gen(function* () {
-    const spawnEffects = findSpawnEffects(machine, state._tag);
-    const ctx = createMachineContext(state, event, self);
-    const { effects: effectSlots } = machine._createSlotAccessors(ctx);
+    // Emit inspection event before running effects
+    yield* emitWithTimestamp(inspector, (timestamp) => ({
+      type: "@machine.effect",
+      actorId,
+      effectType: "spawn",
+      state,
+      timestamp,
+    }));
 
-    for (const spawnEffect of spawnEffects) {
-      if (actorId !== undefined) {
-        yield* emitWithTimestamp(inspector, (timestamp) => ({
-          type: "@machine.effect",
-          actorId,
-          effectType: "spawn",
-          state,
-          timestamp,
-        }));
-      }
-      // Fork the spawn effect into the state scope - it will be interrupted when scope closes
-      yield* Effect.forkScoped(
-        Effect.withSpan("effect-machine.effect.spawn", {
-          attributes: { "effect_machine.state": state._tag },
-        })(
-          (
-            spawnEffect.handler({ state, event, self, effects: effectSlots }) as Effect.Effect<
-              void,
-              never,
-              R
-            >
-          ).pipe(Effect.provideService(machine.Context, ctx)),
-        ),
-      ).pipe(Effect.provideService(Scope.Scope, stateScope));
-    }
+    // Use shared core
+    yield* runSpawnEffects(machine, state, event, self, stateScope);
   });
 
 // ============================================================================

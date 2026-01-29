@@ -5,17 +5,17 @@
  */
 import { Entity } from "@effect/cluster";
 import type { Rpc } from "@effect/rpc";
-import { Effect, Exit, type Layer, Queue, Ref, Scope } from "effect";
+import { Effect, type Layer, Queue, Ref, Scope } from "effect";
 
-import type { Machine, MachineRef, HandlerContext } from "../machine.js";
-import { resolveTransition, runSpawnEffects } from "../actor.js";
-import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
-import { isEffect, INTERNAL_ENTER_EVENT } from "../internal/utils.js";
+import type { Machine, MachineRef } from "../machine.js";
+import { runSpawnEffects, processEventCore } from "../actor.js";
+import type { ProcessEventHooks } from "../actor.js";
+import type { GuardsDef, EffectsDef } from "../slot.js";
 
 /**
  * Options for EntityMachine.layer
  */
-export interface EntityMachineOptions<S> {
+export interface EntityMachineOptions<S, E> {
   /**
    * Initialize state from entity ID.
    * Called once when entity is first activated.
@@ -28,10 +28,29 @@ export interface EntityMachineOptions<S> {
    * ```
    */
   readonly initializeState?: (entityId: string) => S;
+
+  /**
+   * Optional hooks for inspection/tracing.
+   * Called at specific points during event processing.
+   *
+   * @example
+   * ```ts
+   * EntityMachine.layer(OrderEntity, orderMachine, {
+   *   hooks: {
+   *     onTransition: (from, to, event) =>
+   *       Effect.log(`Transition: ${from._tag} -> ${to._tag}`),
+   *     onSpawnEffect: (state) =>
+   *       Effect.log(`Running spawn effects for ${state._tag}`),
+   *   },
+   * })
+   * ```
+   */
+  readonly hooks?: ProcessEventHooks<S, E>;
 }
 
 /**
- * Process a single event through the machine
+ * Process a single event through the machine using shared core.
+ * Returns the new state after processing.
  */
 const processEvent = <
   S extends { readonly _tag: string },
@@ -45,64 +64,27 @@ const processEvent = <
   event: E,
   self: MachineRef<E>,
   stateScopeRef: { current: Scope.CloseableScope },
-): Effect.Effect<void, never, R> =>
+  hooks?: ProcessEventHooks<S, E>,
+): Effect.Effect<S, never, R> =>
   Effect.gen(function* () {
     const currentState = yield* Ref.get(stateRef);
 
-    // Find matching transition
-    const transition = resolveTransition(machine, currentState, event);
-
-    if (transition === undefined) {
-      // No valid transition - ignore event
-      return;
-    }
-
-    // Create context for handler
-    const ctx: MachineContext<S, E, MachineRef<E>> = {
-      state: currentState,
+    // Process event using shared core
+    const result = yield* processEventCore(
+      machine,
+      currentState,
       event,
       self,
-    };
-    const { guards, effects } = machine._createSlotAccessors(ctx);
+      stateScopeRef,
+      hooks,
+    );
 
-    const handlerCtx: HandlerContext<S, E, GD, EFD> = {
-      state: currentState,
-      event,
-      guards,
-      effects,
-    };
-
-    // Compute new state
-    const newStateResult = transition.handler(handlerCtx as HandlerContext<S, E, GD, EFD>);
-    let newState = isEffect(newStateResult)
-      ? yield* (newStateResult as Effect.Effect<S, never, R>).pipe(
-          Effect.provideService(machine.Context, ctx),
-        )
-      : newStateResult;
-
-    // Determine if we should run lifecycle effects
-    const stateTagChanged = newState._tag !== currentState._tag;
-    const runLifecycle = stateTagChanged || transition.reenter === true;
-
-    if (runLifecycle) {
-      // Close old state scope (interrupts spawn fibers)
-      yield* Scope.close(stateScopeRef.current, Exit.void);
-
-      // Update state
-      yield* Ref.set(stateRef, newState);
-
-      // Create new state scope
-      stateScopeRef.current = yield* Scope.make();
-
-      // Use $enter event for lifecycle effects
-      const enterEvent = { _tag: INTERNAL_ENTER_EVENT } as E;
-
-      // Run spawn effects for new state
-      yield* runSpawnEffects(machine, newState, enterEvent, self, stateScopeRef.current);
-    } else {
-      // Same state tag without reenter - just update state
-      yield* Ref.set(stateRef, newState);
+    // Update state ref if transition occurred
+    if (result.transitioned) {
+      yield* Ref.set(stateRef, result.newState);
     }
+
+    return result.newState;
   });
 
 /**
@@ -140,7 +122,7 @@ export const EntityMachine = {
    *
    * @param entity - Entity created via toEntity()
    * @param machine - Machine with all effects provided
-   * @param options - Optional configuration
+   * @param options - Optional configuration (state initializer, inspection hooks)
    */
   layer: <
     S extends { readonly _tag: string },
@@ -153,7 +135,7 @@ export const EntityMachine = {
   >(
     entity: Entity.Entity<EntityType, Rpcs>,
     machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
-    options?: EntityMachineOptions<S>,
+    options?: EntityMachineOptions<S, E>,
   ): Layer.Layer<never, never, R> => {
     return entity.toLayer(
       Effect.gen(function* () {
@@ -193,7 +175,7 @@ export const EntityMachine = {
           Effect.forever(
             Effect.gen(function* () {
               const event = yield* Queue.take(internalQueue);
-              yield* processEvent(machine, stateRef, event, self, stateScopeRef);
+              yield* processEvent(machine, stateRef, event, self, stateScopeRef, options?.hooks);
             }),
           ),
         );
@@ -202,11 +184,14 @@ export const EntityMachine = {
         // The actual types are inferred from the entity definition
         return entity.of({
           Send: (envelope: { payload: { event: E } }) =>
-            Effect.gen(function* () {
-              const event = envelope.payload.event;
-              yield* processEvent(machine, stateRef, event, self, stateScopeRef);
-              return yield* Ref.get(stateRef);
-            }),
+            processEvent(
+              machine,
+              stateRef,
+              envelope.payload.event,
+              self,
+              stateScopeRef,
+              options?.hooks,
+            ),
 
           GetState: () => Ref.get(stateRef),
           // Entity.of expects handlers matching Rpcs type param - dynamic construction requires cast
