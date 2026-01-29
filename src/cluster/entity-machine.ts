@@ -52,7 +52,7 @@ export interface EntityMachineOptions<S, E> {
  * Process a single event through the machine using shared core.
  * Returns the new state after processing.
  */
-const processEvent = <
+const processEvent = Effect.fn("effect-machine.cluster.processEvent")(function* <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
@@ -65,27 +65,19 @@ const processEvent = <
   self: MachineRef<E>,
   stateScopeRef: { current: Scope.CloseableScope },
   hooks?: ProcessEventHooks<S, E>,
-): Effect.Effect<S, never, R> =>
-  Effect.gen(function* () {
-    const currentState = yield* Ref.get(stateRef);
+) {
+  const currentState = yield* Ref.get(stateRef);
 
-    // Process event using shared core
-    const result = yield* processEventCore(
-      machine,
-      currentState,
-      event,
-      self,
-      stateScopeRef,
-      hooks,
-    );
+  // Process event using shared core
+  const result = yield* processEventCore(machine, currentState, event, self, stateScopeRef, hooks);
 
-    // Update state ref if transition occurred
-    if (result.transitioned) {
-      yield* Ref.set(stateRef, result.newState);
-    }
+  // Update state ref if transition occurred
+  if (result.transitioned) {
+    yield* Ref.set(stateRef, result.newState);
+  }
 
-    return result.newState;
-  });
+  return result.newState;
+});
 
 /**
  * Create an Entity layer that wires a machine to handle RPC calls.
@@ -137,66 +129,64 @@ export const EntityMachine = {
     machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
     options?: EntityMachineOptions<S, E>,
   ): Layer.Layer<never, never, R> => {
-    return entity.toLayer(
-      Effect.gen(function* () {
-        // Get entity ID from context if available
-        const entityId = yield* Effect.serviceOption(Entity.CurrentAddress).pipe(
-          Effect.map((opt) => (opt._tag === "Some" ? opt.value.entityId : "")),
-        );
+    const layer = Effect.fn("effect-machine.cluster.layer")(function* () {
+      // Get entity ID from context if available
+      const entityId = yield* Effect.serviceOption(Entity.CurrentAddress).pipe(
+        Effect.map((opt) => (opt._tag === "Some" ? opt.value.entityId : "")),
+      );
 
-        // Initialize state - use provided initializer or machine's initial state
-        const initialState =
-          options?.initializeState !== undefined
-            ? options.initializeState(entityId)
-            : machine.initial;
+      // Initialize state - use provided initializer or machine's initial state
+      const initialState =
+        options?.initializeState !== undefined
+          ? options.initializeState(entityId)
+          : machine.initial;
 
-        // Create self reference for sending events back to machine
-        const internalQueue = yield* Queue.unbounded<E>();
-        const self: MachineRef<E> = {
-          send: (event) => Queue.offer(internalQueue, event),
-        };
+      // Create self reference for sending events back to machine
+      const internalQueue = yield* Queue.unbounded<E>();
+      const self: MachineRef<E> = {
+        send: Effect.fn("effect-machine.cluster.self.send")(function* (event: E) {
+          yield* Queue.offer(internalQueue, event);
+        }),
+      };
 
-        // Create state ref
-        const stateRef = yield* Ref.make<S>(initialState);
+      // Create state ref
+      const stateRef = yield* Ref.make<S>(initialState);
 
-        // Create state scope for spawn effects
-        const stateScopeRef: { current: Scope.CloseableScope } = {
-          current: yield* Scope.make(),
-        };
+      // Create state scope for spawn effects
+      const stateScopeRef: { current: Scope.CloseableScope } = {
+        current: yield* Scope.make(),
+      };
 
-        // Use $init event for initial lifecycle
-        const initEvent = { _tag: "$init" } as E;
+      // Use $init event for initial lifecycle
+      const initEvent = { _tag: "$init" } as E;
 
-        // Run initial spawn effects
-        yield* runSpawnEffects(machine, initialState, initEvent, self, stateScopeRef.current);
+      // Run initial spawn effects
+      yield* runSpawnEffects(machine, initialState, initEvent, self, stateScopeRef.current);
 
-        // Process internal events in background
-        yield* Effect.forkScoped(
-          Effect.forever(
-            Effect.gen(function* () {
-              const event = yield* Queue.take(internalQueue);
-              yield* processEvent(machine, stateRef, event, self, stateScopeRef, options?.hooks);
-            }),
+      // Process internal events in background
+      const runInternalEvent = Effect.fn("effect-machine.cluster.internalEvent")(function* () {
+        const event = yield* Queue.take(internalQueue);
+        yield* processEvent(machine, stateRef, event, self, stateScopeRef, options?.hooks);
+      });
+      yield* Effect.forkScoped(Effect.forever(runInternalEvent()));
+
+      // Return handlers matching the Entity's RPC protocol
+      // The actual types are inferred from the entity definition
+      return entity.of({
+        Send: (envelope: { payload: { event: E } }) =>
+          processEvent(
+            machine,
+            stateRef,
+            envelope.payload.event,
+            self,
+            stateScopeRef,
+            options?.hooks,
           ),
-        );
 
-        // Return handlers matching the Entity's RPC protocol
-        // The actual types are inferred from the entity definition
-        return entity.of({
-          Send: (envelope: { payload: { event: E } }) =>
-            processEvent(
-              machine,
-              stateRef,
-              envelope.payload.event,
-              self,
-              stateScopeRef,
-              options?.hooks,
-            ),
-
-          GetState: () => Ref.get(stateRef),
-          // Entity.of expects handlers matching Rpcs type param - dynamic construction requires cast
-        } as unknown as Parameters<typeof entity.of>[0]);
-      }),
-    ) as unknown as Layer.Layer<never, never, R>;
+        GetState: () => Ref.get(stateRef),
+        // Entity.of expects handlers matching Rpcs type param - dynamic construction requires cast
+      } as unknown as Parameters<typeof entity.of>[0]);
+    });
+    return entity.toLayer(layer()) as unknown as Layer.Layer<never, never, R>;
   },
 };

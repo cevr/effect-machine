@@ -33,7 +33,7 @@ export interface SimulationResult<S> {
  * expect(result.states).toHaveLength(3) // Idle -> Loading -> Success
  * ```
  */
-export const simulate = <
+export const simulate = Effect.fn("effect-machine.simulate")(function* <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
@@ -43,34 +43,33 @@ export const simulate = <
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
   machine: Machine<S, E, R, any, any, GD, EFD>,
   events: ReadonlyArray<E>,
-): Effect.Effect<SimulationResult<S>, never, R> =>
-  Effect.gen(function* () {
-    // Create a dummy self for slot accessors
-    const dummySelf: MachineRef<E> = {
-      send: () => Effect.void,
-    };
+) {
+  // Create a dummy self for slot accessors
+  const dummySelf: MachineRef<E> = {
+    send: Effect.fn("effect-machine.testing.simulate.send")((_event: E) => Effect.void),
+  };
 
-    let currentState = machine.initial;
-    const states: S[] = [currentState];
+  let currentState = machine.initial;
+  const states: S[] = [currentState];
 
-    for (const event of events) {
-      const result = yield* executeTransition(machine, currentState, event, dummySelf);
+  for (const event of events) {
+    const result = yield* executeTransition(machine, currentState, event, dummySelf);
 
-      if (!result.transitioned) {
-        continue;
-      }
-
-      currentState = result.newState;
-      states.push(currentState);
-
-      // Stop if final state
-      if (machine.finalStates.has(currentState._tag)) {
-        break;
-      }
+    if (!result.transitioned) {
+      continue;
     }
 
-    return { states, finalState: currentState };
-  });
+    currentState = result.newState;
+    states.push(currentState);
+
+    // Stop if final state
+    if (machine.finalStates.has(currentState._tag)) {
+      break;
+    }
+  }
+
+  return { states, finalState: currentState };
+});
 
 // AssertionError is exported from errors.ts
 export { AssertionError } from "./errors.js";
@@ -78,7 +77,7 @@ export { AssertionError } from "./errors.js";
 /**
  * Assert that a machine can reach a specific state given a sequence of events
  */
-export const assertReaches = <
+export const assertReaches = Effect.fn("effect-machine.assertReaches")(function* <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
@@ -89,18 +88,17 @@ export const assertReaches = <
   machine: Machine<S, E, R, any, any, GD, EFD>,
   events: ReadonlyArray<E>,
   expectedTag: string,
-): Effect.Effect<S, AssertionError, R> =>
-  Effect.gen(function* () {
-    const result = yield* simulate(machine, events);
-    if (result.finalState._tag !== expectedTag) {
-      return yield* new AssertionError({
-        message:
-          `Expected final state "${expectedTag}" but got "${result.finalState._tag}". ` +
-          `States visited: ${result.states.map((s) => s._tag).join(" -> ")}`,
-      });
-    }
-    return result.finalState;
-  });
+) {
+  const result = yield* simulate(machine, events);
+  if (result.finalState._tag !== expectedTag) {
+    return yield* new AssertionError({
+      message:
+        `Expected final state "${expectedTag}" but got "${result.finalState._tag}". ` +
+        `States visited: ${result.states.map((s) => s._tag).join(" -> ")}`,
+    });
+  }
+  return result.finalState;
+});
 
 /**
  * Assert that a machine follows a specific path of state tags
@@ -114,7 +112,7 @@ export const assertReaches = <
  * )
  * ```
  */
-export const assertPath = <
+export const assertPath = Effect.fn("effect-machine.assertPath")(function* <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
@@ -125,33 +123,32 @@ export const assertPath = <
   machine: Machine<S, E, R, any, any, GD, EFD>,
   events: ReadonlyArray<E>,
   expectedPath: ReadonlyArray<string>,
-): Effect.Effect<SimulationResult<S>, AssertionError, R> =>
-  Effect.gen(function* () {
-    const result = yield* simulate(machine, events);
-    const actualPath = result.states.map((s) => s._tag);
+) {
+  const result = yield* simulate(machine, events);
+  const actualPath = result.states.map((s) => s._tag);
 
-    if (actualPath.length !== expectedPath.length) {
+  if (actualPath.length !== expectedPath.length) {
+    return yield* new AssertionError({
+      message:
+        `Path length mismatch. Expected ${expectedPath.length} states but got ${actualPath.length}.\n` +
+        `Expected: ${expectedPath.join(" -> ")}\n` +
+        `Actual:   ${actualPath.join(" -> ")}`,
+    });
+  }
+
+  for (let i = 0; i < expectedPath.length; i++) {
+    if (actualPath[i] !== expectedPath[i]) {
       return yield* new AssertionError({
         message:
-          `Path length mismatch. Expected ${expectedPath.length} states but got ${actualPath.length}.\n` +
+          `Path mismatch at position ${i}. Expected "${expectedPath[i]}" but got "${actualPath[i]}".\n` +
           `Expected: ${expectedPath.join(" -> ")}\n` +
           `Actual:   ${actualPath.join(" -> ")}`,
       });
     }
+  }
 
-    for (let i = 0; i < expectedPath.length; i++) {
-      if (actualPath[i] !== expectedPath[i]) {
-        return yield* new AssertionError({
-          message:
-            `Path mismatch at position ${i}. Expected "${expectedPath[i]}" but got "${actualPath[i]}".\n` +
-            `Expected: ${expectedPath.join(" -> ")}\n` +
-            `Actual:   ${actualPath.join(" -> ")}`,
-        });
-      }
-    }
-
-    return result;
-  });
+  return result;
+});
 
 /**
  * Assert that a machine never reaches a specific state given a sequence of events
@@ -166,7 +163,7 @@ export const assertPath = <
  * )
  * ```
  */
-export const assertNeverReaches = <
+export const assertNeverReaches = Effect.fn("effect-machine.assertNeverReaches")(function* <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
@@ -177,21 +174,20 @@ export const assertNeverReaches = <
   machine: Machine<S, E, R, any, any, GD, EFD>,
   events: ReadonlyArray<E>,
   forbiddenTag: string,
-): Effect.Effect<SimulationResult<S>, AssertionError, R> =>
-  Effect.gen(function* () {
-    const result = yield* simulate(machine, events);
+) {
+  const result = yield* simulate(machine, events);
 
-    const visitedIndex = result.states.findIndex((s) => s._tag === forbiddenTag);
-    if (visitedIndex !== -1) {
-      return yield* new AssertionError({
-        message:
-          `Machine reached forbidden state "${forbiddenTag}" at position ${visitedIndex}.\n` +
-          `States visited: ${result.states.map((s) => s._tag).join(" -> ")}`,
-      });
-    }
+  const visitedIndex = result.states.findIndex((s) => s._tag === forbiddenTag);
+  if (visitedIndex !== -1) {
+    return yield* new AssertionError({
+      message:
+        `Machine reached forbidden state "${forbiddenTag}" at position ${visitedIndex}.\n` +
+        `States visited: ${result.states.map((s) => s._tag).join(" -> ")}`,
+    });
+  }
 
-    return result;
-  });
+  return result;
+});
 
 /**
  * Create a controllable test harness for a machine
@@ -234,7 +230,7 @@ export interface TestHarnessOptions<S, E> {
  * })
  * ```
  */
-export const createTestHarness = <
+export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(function* <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
@@ -244,39 +240,37 @@ export const createTestHarness = <
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
   machine: Machine<S, E, R, any, any, GD, EFD>,
   options?: TestHarnessOptions<S, E>,
-): Effect.Effect<TestHarness<S, E, R>, never, R> =>
-  Effect.gen(function* () {
-    // Create a dummy self for slot accessors
-    const dummySelf: MachineRef<E> = {
-      send: () => Effect.void,
-    };
+) {
+  // Create a dummy self for slot accessors
+  const dummySelf: MachineRef<E> = {
+    send: Effect.fn("effect-machine.testing.harness.send")((_event: E) => Effect.void),
+  };
 
-    const stateRef = yield* SubscriptionRef.make(machine.initial);
+  const stateRef = yield* SubscriptionRef.make(machine.initial);
 
-    const send = (event: E): Effect.Effect<S, never, R> =>
-      Effect.gen(function* () {
-        const currentState = yield* SubscriptionRef.get(stateRef);
+  const send = Effect.fn("effect-machine.testHarness.send")(function* (event: E) {
+    const currentState = yield* SubscriptionRef.get(stateRef);
 
-        const result = yield* executeTransition(machine, currentState, event, dummySelf);
+    const result = yield* executeTransition(machine, currentState, event, dummySelf);
 
-        if (!result.transitioned) {
-          return currentState;
-        }
+    if (!result.transitioned) {
+      return currentState;
+    }
 
-        const newState = result.newState;
-        yield* SubscriptionRef.set(stateRef, newState);
+    const newState = result.newState;
+    yield* SubscriptionRef.set(stateRef, newState);
 
-        // Call transition observer
-        if (options?.onTransition !== undefined) {
-          options.onTransition(currentState, event, newState);
-        }
+    // Call transition observer
+    if (options?.onTransition !== undefined) {
+      options.onTransition(currentState, event, newState);
+    }
 
-        return newState;
-      });
-
-    return {
-      state: stateRef,
-      send,
-      getState: SubscriptionRef.get(stateRef),
-    };
+    return newState;
   });
+
+  return {
+    state: stateRef,
+    send,
+    getState: SubscriptionRef.get(stateRef),
+  };
+});

@@ -23,26 +23,29 @@ const make = Effect.gen(function* () {
   const storage = yield* Ref.make(new Map<string, ActorStorage>());
   const registry = yield* Ref.make(new Map<string, ActorMetadata>());
 
-  const getOrCreateStorage = (id: string): Effect.Effect<ActorStorage> =>
-    Ref.modify(storage, (map) => {
-      const existing = map.get(id);
-      if (existing !== undefined) {
-        return [existing, map];
-      }
-      const newStorage: ActorStorage = {
-        snapshot: Option.none(),
-        events: [],
-      };
-      const newMap = new Map(map);
-      newMap.set(id, newStorage);
-      return [newStorage, newMap];
-    });
+  const getOrCreateStorage = Effect.fn("effect-machine.persistence.inMemory.getOrCreateStorage")(
+    function* (id: string) {
+      return yield* Ref.modify(storage, (map) => {
+        const existing = map.get(id);
+        if (existing !== undefined) {
+          return [existing, map];
+        }
+        const newStorage: ActorStorage = {
+          snapshot: Option.none(),
+          events: [],
+        };
+        const newMap = new Map(map);
+        newMap.set(id, newStorage);
+        return [newStorage, newMap];
+      });
+    },
+  );
 
-  const updateStorage = (
+  const updateStorage = Effect.fn("effect-machine.persistence.inMemory.updateStorage")(function* (
     id: string,
     update: (storage: ActorStorage) => ActorStorage,
-  ): Effect.Effect<void> =>
-    Ref.update(storage, (map) => {
+  ) {
+    yield* Ref.update(storage, (map) => {
       const existing = map.get(id);
       if (existing === undefined) {
         return map;
@@ -51,197 +54,213 @@ const make = Effect.gen(function* () {
       newMap.set(id, update(existing));
       return newMap;
     });
+  });
+
+  const saveSnapshot = Effect.fn("effect-machine.persistence.inMemory.saveSnapshot")(function* <
+    S,
+    SI,
+  >(id: string, snapshot: Snapshot<S>, schema: Schema.Schema<S, SI, never>) {
+    const actorStorage = yield* getOrCreateStorage(id);
+
+    // Optimistic locking: check version
+    // Reject only if trying to save an older version (strict <)
+    // Same-version saves are idempotent (allow retries/multiple callers)
+    if (Option.isSome(actorStorage.snapshot)) {
+      const existingVersion = actorStorage.snapshot.value.version;
+      if (snapshot.version < existingVersion) {
+        return yield* new VersionConflictError({
+          actorId: id,
+          expectedVersion: existingVersion,
+          actualVersion: snapshot.version,
+        });
+      }
+    }
+
+    // Encode state using schema
+    const encoded = yield* Schema.encode(schema)(snapshot.state).pipe(
+      Effect.mapError(
+        (cause) =>
+          new PersistenceError({
+            operation: "saveSnapshot",
+            actorId: id,
+            cause,
+            message: "Failed to encode state",
+          }),
+      ),
+    );
+
+    yield* updateStorage(id, (s) => ({
+      ...s,
+      snapshot: Option.some({
+        data: encoded,
+        version: snapshot.version,
+        timestamp: snapshot.timestamp,
+      }),
+    }));
+  });
+
+  const loadSnapshot = Effect.fn("effect-machine.persistence.inMemory.loadSnapshot")(function* <
+    S,
+    SI,
+  >(id: string, schema: Schema.Schema<S, SI, never>) {
+    const actorStorage = yield* getOrCreateStorage(id);
+
+    if (Option.isNone(actorStorage.snapshot)) {
+      return Option.none();
+    }
+
+    const stored = actorStorage.snapshot.value;
+
+    // Decode state using schema
+    const decoded = yield* Schema.decode(schema)(stored.data as SI).pipe(
+      Effect.mapError(
+        (cause) =>
+          new PersistenceError({
+            operation: "loadSnapshot",
+            actorId: id,
+            cause,
+            message: "Failed to decode state",
+          }),
+      ),
+    );
+
+    return Option.some({
+      state: decoded,
+      version: stored.version,
+      timestamp: stored.timestamp,
+    });
+  });
+
+  const appendEvent = Effect.fn("effect-machine.persistence.inMemory.appendEvent")(function* <
+    E,
+    EI,
+  >(id: string, event: PersistedEvent<E>, schema: Schema.Schema<E, EI, never>) {
+    yield* getOrCreateStorage(id);
+
+    // Encode event using schema
+    const encoded = yield* Schema.encode(schema)(event.event).pipe(
+      Effect.mapError(
+        (cause) =>
+          new PersistenceError({
+            operation: "appendEvent",
+            actorId: id,
+            cause,
+            message: "Failed to encode event",
+          }),
+      ),
+    );
+
+    yield* updateStorage(id, (s) => ({
+      ...s,
+      events: [
+        ...s.events,
+        {
+          data: encoded,
+          version: event.version,
+          timestamp: event.timestamp,
+        },
+      ],
+    }));
+  });
+
+  const loadEvents = Effect.fn("effect-machine.persistence.inMemory.loadEvents")(function* <E, EI>(
+    id: string,
+    schema: Schema.Schema<E, EI, never>,
+    afterVersion?: number,
+  ) {
+    const actorStorage = yield* getOrCreateStorage(id);
+
+    // Single pass - skip filtered events inline instead of creating intermediate array
+    const decoded: PersistedEvent<E>[] = [];
+    for (const stored of actorStorage.events) {
+      if (afterVersion !== undefined && stored.version <= afterVersion) continue;
+
+      const event = yield* Schema.decode(schema)(stored.data as EI).pipe(
+        Effect.mapError(
+          (cause) =>
+            new PersistenceError({
+              operation: "loadEvents",
+              actorId: id,
+              cause,
+              message: "Failed to decode event",
+            }),
+        ),
+      );
+      decoded.push({
+        event,
+        version: stored.version,
+        timestamp: stored.timestamp,
+      });
+    }
+
+    return decoded;
+  });
+
+  const deleteActor = Effect.fn("effect-machine.persistence.inMemory.deleteActor")(function* (
+    id: string,
+  ) {
+    yield* Ref.update(storage, (map) => {
+      const newMap = new Map(map);
+      newMap.delete(id);
+      return newMap;
+    });
+    // Also delete metadata
+    yield* Ref.update(registry, (map) => {
+      const newMap = new Map(map);
+      newMap.delete(id);
+      return newMap;
+    });
+  });
+
+  const listActors = Effect.fn("effect-machine.persistence.inMemory.listActors")(function* () {
+    const map = yield* Ref.get(registry);
+    return Array.from(map.values());
+  });
+
+  const saveMetadata = Effect.fn("effect-machine.persistence.inMemory.saveMetadata")(function* (
+    metadata: ActorMetadata,
+  ) {
+    yield* Ref.update(registry, (map) => {
+      const newMap = new Map(map);
+      newMap.set(metadata.id, metadata);
+      return newMap;
+    });
+  });
+
+  const deleteMetadata = Effect.fn("effect-machine.persistence.inMemory.deleteMetadata")(function* (
+    id: string,
+  ) {
+    yield* Ref.update(registry, (map) => {
+      const newMap = new Map(map);
+      newMap.delete(id);
+      return newMap;
+    });
+  });
+
+  const loadMetadata = Effect.fn("effect-machine.persistence.inMemory.loadMetadata")(function* (
+    id: string,
+  ) {
+    const map = yield* Ref.get(registry);
+    const meta = map.get(id);
+    return meta !== undefined ? Option.some(meta) : Option.none();
+  });
 
   const adapter: PersistenceAdapter = {
-    saveSnapshot: <S, SI>(
-      id: string,
-      snapshot: Snapshot<S>,
-      schema: Schema.Schema<S, SI, never>,
-    ): Effect.Effect<void, PersistenceError | VersionConflictError> =>
-      Effect.gen(function* () {
-        const actorStorage = yield* getOrCreateStorage(id);
-
-        // Optimistic locking: check version
-        // Reject only if trying to save an older version (strict <)
-        // Same-version saves are idempotent (allow retries/multiple callers)
-        if (Option.isSome(actorStorage.snapshot)) {
-          const existingVersion = actorStorage.snapshot.value.version;
-          if (snapshot.version < existingVersion) {
-            return yield* new VersionConflictError({
-              actorId: id,
-              expectedVersion: existingVersion,
-              actualVersion: snapshot.version,
-            });
-          }
-        }
-
-        // Encode state using schema
-        const encoded = yield* Schema.encode(schema)(snapshot.state).pipe(
-          Effect.mapError(
-            (cause) =>
-              new PersistenceError({
-                operation: "saveSnapshot",
-                actorId: id,
-                cause,
-                message: "Failed to encode state",
-              }),
-          ),
-        );
-
-        yield* updateStorage(id, (s) => ({
-          ...s,
-          snapshot: Option.some({
-            data: encoded,
-            version: snapshot.version,
-            timestamp: snapshot.timestamp,
-          }),
-        }));
-      }),
-
-    loadSnapshot: <S, SI>(
-      id: string,
-      schema: Schema.Schema<S, SI, never>,
-    ): Effect.Effect<Option.Option<Snapshot<S>>, PersistenceError> =>
-      Effect.gen(function* () {
-        const actorStorage = yield* getOrCreateStorage(id);
-
-        if (Option.isNone(actorStorage.snapshot)) {
-          return Option.none();
-        }
-
-        const stored = actorStorage.snapshot.value;
-
-        // Decode state using schema
-        const decoded = yield* Schema.decode(schema)(stored.data as SI).pipe(
-          Effect.mapError(
-            (cause) =>
-              new PersistenceError({
-                operation: "loadSnapshot",
-                actorId: id,
-                cause,
-                message: "Failed to decode state",
-              }),
-          ),
-        );
-
-        return Option.some({
-          state: decoded,
-          version: stored.version,
-          timestamp: stored.timestamp,
-        });
-      }),
-
-    appendEvent: <E, EI>(
-      id: string,
-      event: PersistedEvent<E>,
-      schema: Schema.Schema<E, EI, never>,
-    ): Effect.Effect<void, PersistenceError> =>
-      Effect.gen(function* () {
-        yield* getOrCreateStorage(id);
-
-        // Encode event using schema
-        const encoded = yield* Schema.encode(schema)(event.event).pipe(
-          Effect.mapError(
-            (cause) =>
-              new PersistenceError({
-                operation: "appendEvent",
-                actorId: id,
-                cause,
-                message: "Failed to encode event",
-              }),
-          ),
-        );
-
-        yield* updateStorage(id, (s) => ({
-          ...s,
-          events: [
-            ...s.events,
-            {
-              data: encoded,
-              version: event.version,
-              timestamp: event.timestamp,
-            },
-          ],
-        }));
-      }),
-
-    loadEvents: <E, EI>(
-      id: string,
-      schema: Schema.Schema<E, EI, never>,
-      afterVersion?: number,
-    ): Effect.Effect<ReadonlyArray<PersistedEvent<E>>, PersistenceError> =>
-      Effect.gen(function* () {
-        const actorStorage = yield* getOrCreateStorage(id);
-
-        // Single pass - skip filtered events inline instead of creating intermediate array
-        const decoded: PersistedEvent<E>[] = [];
-        for (const stored of actorStorage.events) {
-          if (afterVersion !== undefined && stored.version <= afterVersion) continue;
-
-          const event = yield* Schema.decode(schema)(stored.data as EI).pipe(
-            Effect.mapError(
-              (cause) =>
-                new PersistenceError({
-                  operation: "loadEvents",
-                  actorId: id,
-                  cause,
-                  message: "Failed to decode event",
-                }),
-            ),
-          );
-          decoded.push({
-            event,
-            version: stored.version,
-            timestamp: stored.timestamp,
-          });
-        }
-
-        return decoded;
-      }),
-
-    deleteActor: (id: string): Effect.Effect<void, PersistenceError> =>
-      Effect.gen(function* () {
-        yield* Ref.update(storage, (map) => {
-          const newMap = new Map(map);
-          newMap.delete(id);
-          return newMap;
-        });
-        // Also delete metadata
-        yield* Ref.update(registry, (map) => {
-          const newMap = new Map(map);
-          newMap.delete(id);
-          return newMap;
-        });
-      }),
+    saveSnapshot,
+    loadSnapshot,
+    appendEvent,
+    loadEvents,
+    deleteActor,
 
     // Registry methods for actor discovery
-
-    listActors: (): Effect.Effect<ReadonlyArray<ActorMetadata>, PersistenceError> =>
-      Effect.map(Ref.get(registry), (map) => Array.from(map.values())),
-
-    saveMetadata: (metadata: ActorMetadata): Effect.Effect<void, PersistenceError> =>
-      Ref.update(registry, (map) => {
-        const newMap = new Map(map);
-        newMap.set(metadata.id, metadata);
-        return newMap;
-      }),
-
-    deleteMetadata: (id: string): Effect.Effect<void, PersistenceError> =>
-      Ref.update(registry, (map) => {
-        const newMap = new Map(map);
-        newMap.delete(id);
-        return newMap;
-      }),
-
-    loadMetadata: (id: string): Effect.Effect<Option.Option<ActorMetadata>, PersistenceError> =>
-      Effect.map(Ref.get(registry), (map) => {
-        const meta = map.get(id);
-        return meta !== undefined ? Option.some(meta) : Option.none();
-      }),
+    listActors,
+    saveMetadata,
+    deleteMetadata,
+    loadMetadata,
   };
 
   return adapter;
-});
+}).pipe(Effect.withSpan("effect-machine.persistence.inMemory.make"));
 
 /**
  * Create an in-memory persistence adapter effect.

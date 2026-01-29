@@ -26,6 +26,9 @@ const persistentMachine = machine.persist({
 | `journalEvents`    | `boolean`  | Store events for replay      |
 | `machineType`      | `string`   | Type identifier for registry |
 
+`snapshotSchedule` drives a background scheduler. When the schedule ends (e.g. `Schedule.recurs`),
+no further automatic snapshots are taken. Use `actor.persist` to force a snapshot at any time.
+
 ## Persistence Adapter
 
 Provide an adapter to enable persistence:
@@ -64,6 +67,9 @@ const version = yield * actor.version;
 yield * actor.replayTo(5);
 ```
 
+`PersistentActorRef` carries the machine environment type: `PersistentActorRef<State, Event, R>`.
+`replayTo()` runs in the same `R`.
+
 ## Restoring Actors
 
 Restore from persisted state:
@@ -79,6 +85,9 @@ if (Option.isSome(maybeActor)) {
 
 // Restore returns None if no persisted state exists
 ```
+
+Restore loads the latest snapshot if present, otherwise replays the event journal from the machine
+initial state. Spawn and background effects run after restore just like a fresh spawn.
 
 ## Bulk Restore
 

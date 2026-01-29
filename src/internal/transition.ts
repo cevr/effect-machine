@@ -40,7 +40,7 @@ export interface TransitionExecutionResult<S> {
  *
  * @internal
  */
-export const runTransitionHandler = <
+export const runTransitionHandler = Effect.fn("effect-machine.runTransitionHandler")(function* <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
@@ -52,20 +52,19 @@ export const runTransitionHandler = <
   state: S,
   event: E,
   self: MachineRef<E>,
-): Effect.Effect<S, never, R> =>
-  Effect.gen(function* () {
-    const ctx: MachineContext<S, E, MachineRef<E>> = { state, event, self };
-    const { guards, effects } = machine._createSlotAccessors(ctx);
+) {
+  const ctx: MachineContext<S, E, MachineRef<E>> = { state, event, self };
+  const { guards, effects } = machine._slots;
 
-    const handlerCtx: HandlerContext<S, E, GD, EFD> = { state, event, guards, effects };
-    const result = transition.handler(handlerCtx);
+  const handlerCtx: HandlerContext<S, E, GD, EFD> = { state, event, guards, effects };
+  const result = transition.handler(handlerCtx);
 
-    return isEffect(result)
-      ? yield* (result as Effect.Effect<S, never, R>).pipe(
-          Effect.provideService(machine.Context, ctx),
-        )
-      : result;
-  });
+  return isEffect(result)
+    ? yield* (result as Effect.Effect<S, never, R>).pipe(
+        Effect.provideService(machine.Context, ctx),
+      )
+    : result;
+});
 
 /**
  * Execute a transition for a given state and event.
@@ -78,7 +77,7 @@ export const runTransitionHandler = <
  *
  * @internal
  */
-export const executeTransition = <
+export const executeTransition = Effect.fn("effect-machine.executeTransition")(function* <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
@@ -89,26 +88,25 @@ export const executeTransition = <
   currentState: S,
   event: E,
   self: MachineRef<E>,
-): Effect.Effect<TransitionExecutionResult<S>, never, R> =>
-  Effect.gen(function* () {
-    const transition = resolveTransition(machine, currentState, event);
+) {
+  const transition = resolveTransition(machine, currentState, event);
 
-    if (transition === undefined) {
-      return {
-        newState: currentState,
-        transitioned: false,
-        reenter: false,
-      };
-    }
-
-    const newState = yield* runTransitionHandler(machine, transition, currentState, event, self);
-
+  if (transition === undefined) {
     return {
-      newState,
-      transitioned: true,
-      reenter: transition.reenter === true,
+      newState: currentState,
+      transitioned: false,
+      reenter: false,
     };
-  });
+  }
+
+  const newState = yield* runTransitionHandler(machine, transition, currentState, event, self);
+
+  return {
+    newState,
+    transitioned: true,
+    reenter: transition.reenter === true,
+  };
+});
 
 // ============================================================================
 // Event Processing Core (shared by actor and entity-machine)
@@ -152,7 +150,7 @@ export interface ProcessEventResult<S> {
  *
  * @internal
  */
-export const processEventCore = <
+export const processEventCore = Effect.fn("effect-machine.processEventCore")(function* <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
@@ -165,62 +163,61 @@ export const processEventCore = <
   self: MachineRef<E>,
   stateScopeRef: { current: Scope.CloseableScope },
   hooks?: ProcessEventHooks<S, E>,
-): Effect.Effect<ProcessEventResult<S>, never, R> =>
-  Effect.gen(function* () {
-    // Execute transition
-    const result = yield* executeTransition(machine, currentState, event, self);
+) {
+  // Execute transition
+  const result = yield* executeTransition(machine, currentState, event, self);
 
-    if (!result.transitioned) {
-      return {
-        newState: currentState,
-        previousState: currentState,
-        transitioned: false,
-        lifecycleRan: false,
-        isFinal: false,
-      };
-    }
-
-    const newState = result.newState;
-    const stateTagChanged = newState._tag !== currentState._tag;
-    const runLifecycle = stateTagChanged || result.reenter;
-
-    if (runLifecycle) {
-      // Close old state scope (interrupts spawn fibers)
-      yield* Scope.close(stateScopeRef.current, Exit.void);
-
-      // Create new state scope
-      stateScopeRef.current = yield* Scope.make();
-
-      // Hook: transition complete (before spawn effects)
-      if (hooks?.onTransition !== undefined) {
-        yield* hooks.onTransition(currentState, newState, event);
-      }
-
-      // Hook: about to run spawn effects
-      if (hooks?.onSpawnEffect !== undefined) {
-        yield* hooks.onSpawnEffect(newState);
-      }
-
-      // Run spawn effects for new state
-      const enterEvent = { _tag: INTERNAL_ENTER_EVENT } as E;
-      yield* runSpawnEffects(machine, newState, enterEvent, self, stateScopeRef.current);
-    }
-
+  if (!result.transitioned) {
     return {
-      newState,
+      newState: currentState,
       previousState: currentState,
-      transitioned: true,
-      lifecycleRan: runLifecycle,
-      isFinal: machine.finalStates.has(newState._tag),
+      transitioned: false,
+      lifecycleRan: false,
+      isFinal: false,
     };
-  });
+  }
+
+  const newState = result.newState;
+  const stateTagChanged = newState._tag !== currentState._tag;
+  const runLifecycle = stateTagChanged || result.reenter;
+
+  if (runLifecycle) {
+    // Close old state scope (interrupts spawn fibers)
+    yield* Scope.close(stateScopeRef.current, Exit.void);
+
+    // Create new state scope
+    stateScopeRef.current = yield* Scope.make();
+
+    // Hook: transition complete (before spawn effects)
+    if (hooks?.onTransition !== undefined) {
+      yield* hooks.onTransition(currentState, newState, event);
+    }
+
+    // Hook: about to run spawn effects
+    if (hooks?.onSpawnEffect !== undefined) {
+      yield* hooks.onSpawnEffect(newState);
+    }
+
+    // Run spawn effects for new state
+    const enterEvent = { _tag: INTERNAL_ENTER_EVENT } as E;
+    yield* runSpawnEffects(machine, newState, enterEvent, self, stateScopeRef.current);
+  }
+
+  return {
+    newState,
+    previousState: currentState,
+    transitioned: true,
+    lifecycleRan: runLifecycle,
+    isFinal: machine.finalStates.has(newState._tag),
+  };
+});
 
 /**
  * Run spawn effects for a state (forked into state scope, auto-cancelled on state exit).
  *
  * @internal
  */
-export const runSpawnEffects = <
+export const runSpawnEffects = Effect.fn("effect-machine.runSpawnEffects")(function* <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
@@ -232,25 +229,24 @@ export const runSpawnEffects = <
   event: E,
   self: MachineRef<E>,
   stateScope: Scope.CloseableScope,
-): Effect.Effect<void, never, R> =>
-  Effect.gen(function* () {
-    const spawnEffects = findSpawnEffects(machine, state._tag);
-    const ctx: MachineContext<S, E, MachineRef<E>> = { state, event, self };
-    const { effects: effectSlots } = machine._createSlotAccessors(ctx);
+) {
+  const spawnEffects = findSpawnEffects(machine, state._tag);
+  const ctx: MachineContext<S, E, MachineRef<E>> = { state, event, self };
+  const { effects: effectSlots } = machine._slots;
 
-    for (const spawnEffect of spawnEffects) {
-      // Fork the spawn effect into the state scope - interrupted when scope closes
-      yield* Effect.forkScoped(
-        (
-          spawnEffect.handler({ state, event, self, effects: effectSlots }) as Effect.Effect<
-            void,
-            never,
-            R
-          >
-        ).pipe(Effect.provideService(machine.Context, ctx)),
-      ).pipe(Effect.provideService(Scope.Scope, stateScope));
-    }
-  });
+  for (const spawnEffect of spawnEffects) {
+    // Fork the spawn effect into the state scope - interrupted when scope closes
+    yield* Effect.forkScoped(
+      (
+        spawnEffect.handler({ state, event, self, effects: effectSlots }) as Effect.Effect<
+          void,
+          never,
+          R
+        >
+      ).pipe(Effect.provideService(machine.Context, ctx)),
+    ).pipe(Effect.provideService(Scope.Scope, stateScope));
+  }
+});
 
 /**
  * Resolve which transition should fire for a given state and event.
@@ -299,6 +295,13 @@ interface MachineIndex<S, E, GD extends GuardsDef, EFD extends EffectsDef, R> {
 // Module-level cache - WeakMap allows GC of unreferenced machines
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const indexCache = new WeakMap<object, MachineIndex<any, any, any, any, any>>();
+
+/**
+ * Invalidate cached index for a machine (call after mutation).
+ */
+export const invalidateIndex = (machine: object): void => {
+  indexCache.delete(machine);
+};
 
 /**
  * Build transition index from machine definition.

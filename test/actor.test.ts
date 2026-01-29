@@ -1,5 +1,5 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Effect, Schema, Stream } from "effect";
+import { Effect, Ref, Schema, Stream } from "effect";
 
 import {
   ActorSystemDefault,
@@ -133,6 +133,93 @@ describe("ActorSystem", () => {
       // Verify actor is no longer in system
       const actorAfterStop = yield* system.get("test-actor");
       expect(actorAfterStop._tag).toBe("None");
+    }).pipe(Effect.provide(ActorSystemDefault)),
+  );
+
+  it.scopedLive("duplicate spawn does not run effects", () =>
+    Effect.gen(function* () {
+      const SimpleState = State({ Idle: {} });
+      const SimpleEvent = Event({ Ping: {} });
+      const TestEffects = Slot.Effects({ mark: {} });
+
+      const counter = yield* Ref.make(0);
+
+      const machine = Machine.make({
+        state: SimpleState,
+        event: SimpleEvent,
+        effects: TestEffects,
+        initial: SimpleState.Idle,
+      })
+        .background(({ effects }) => effects.mark())
+        .provide({
+          mark: () => Ref.update(counter, (n) => n + 1),
+        });
+
+      const system = yield* ActorSystemService;
+      yield* system.spawn("dup-actor", machine);
+      yield* yieldFibers;
+
+      const result = yield* Effect.either(system.spawn("dup-actor", machine));
+      expect(result._tag).toBe("Left");
+      if (result._tag === "Left") {
+        expect(result.left._tag).toBe("DuplicateActorError");
+      }
+
+      yield* yieldFibers;
+      const count = yield* Ref.get(counter);
+      expect(count).toBe(1);
+    }).pipe(Effect.provide(ActorSystemDefault)),
+  );
+
+  it.scopedLive("fails spawn when slots are unprovided", () =>
+    Effect.gen(function* () {
+      const SimpleState = State({ Idle: {} });
+      const SimpleEvent = Event({ Ping: {} });
+      const TestEffects = Slot.Effects({ mark: {} });
+
+      const machine = Machine.make({
+        state: SimpleState,
+        event: SimpleEvent,
+        effects: TestEffects,
+        initial: SimpleState.Idle,
+      });
+
+      const system = yield* ActorSystemService;
+      const result = yield* Effect.either(system.spawn("missing-slots", machine));
+      expect(result._tag).toBe("Left");
+      if (result._tag === "Left") {
+        expect(result.left._tag).toBe("UnprovidedSlotsError");
+      }
+    }).pipe(Effect.provide(ActorSystemDefault)),
+  );
+
+  it.scopedLive("listener errors do not break event loop", () =>
+    Effect.gen(function* () {
+      const machine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle,
+      })
+        .on(TestState.Idle, TestEvent.Start, ({ event }) =>
+          TestState.Active({ value: event.value }),
+        )
+        .on(TestState.Active, TestEvent.Stop, () => TestState.Done);
+
+      const system = yield* ActorSystemService;
+      const actor = yield* system.spawn("listener-actor", machine);
+
+      actor.subscribe(() => {
+        throw new Error("boom");
+      });
+
+      yield* actor.send(TestEvent.Start({ value: 1 }));
+      yield* yieldFibers;
+
+      yield* actor.send(TestEvent.Stop);
+      yield* yieldFibers;
+
+      const state = yield* actor.snapshot;
+      expect(state._tag).toBe("Done");
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
 });

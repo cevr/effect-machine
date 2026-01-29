@@ -1,5 +1,5 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Effect, Layer, Option, Schedule, Schema } from "effect";
+import { Effect, Layer, Option, Ref, Schedule, Schema } from "effect";
 
 import {
   type ActorMetadata,
@@ -13,6 +13,7 @@ import {
   type PersistentActorRef,
   type PersistentMachine,
   State,
+  Slot,
 } from "../src/index.js";
 import { describe, expect, it, yieldFibers } from "effect-bun-test";
 
@@ -360,6 +361,137 @@ describe("Persistence", () => {
         }).pipe(Effect.provide(sharedLayer)),
       );
     }),
+  );
+
+  it.live("snapshotSchedule stop does not auto snapshot", () =>
+    Effect.gen(function* () {
+      const sharedAdapter = yield* makeInMemoryPersistenceAdapter;
+      const sharedLayer = Layer.merge(
+        ActorSystemDefault,
+        Layer.succeed(PersistenceAdapterTag, sharedAdapter),
+      );
+
+      const noAutoSnapshotMachine = Machine.make({
+        state: OrderState,
+        event: OrderEvent,
+        initial: OrderState.Idle,
+      })
+        .on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
+          OrderState.Pending({ orderId: event.orderId }),
+        )
+        .persist({
+          snapshotSchedule: Schedule.stop,
+          journalEvents: false,
+        });
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const system = yield* ActorSystemService;
+          const actor = yield* system.spawn(
+            "order-no-snap",
+            noAutoSnapshotMachine,
+          ) as Effect.Effect<PersistentActorRef<OrderState, OrderEvent>>;
+
+          yield* actor.send(OrderEvent.Submit({ orderId: "ORD-NO-SNAP" }));
+          yield* yieldFibers;
+        }).pipe(Effect.provide(sharedLayer)),
+      );
+
+      const snapshot = yield* sharedAdapter.loadSnapshot("order-no-snap", OrderState);
+      expect(Option.isNone(snapshot)).toBe(true);
+    }),
+  );
+
+  it.live("restore from events without snapshot", () =>
+    Effect.gen(function* () {
+      const sharedAdapter = yield* makeInMemoryPersistenceAdapter;
+      const sharedLayer = Layer.merge(
+        ActorSystemDefault,
+        Layer.succeed(PersistenceAdapterTag, sharedAdapter),
+      );
+
+      const eventOnlyMachine = Machine.make({
+        state: OrderState,
+        event: OrderEvent,
+        initial: OrderState.Idle,
+      })
+        .on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
+          OrderState.Pending({ orderId: event.orderId }),
+        )
+        .on(OrderState.Pending, OrderEvent.Pay, ({ state, event }) =>
+          OrderState.Paid({ orderId: state.orderId, amount: event.amount }),
+        )
+        .persist({
+          snapshotSchedule: Schedule.stop,
+          journalEvents: true,
+        });
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const system = yield* ActorSystemService;
+          const actor = yield* system.spawn("order-events-only", eventOnlyMachine) as Effect.Effect<
+            PersistentActorRef<OrderState, OrderEvent>
+          >;
+
+          yield* actor.send(OrderEvent.Submit({ orderId: "ORD-EVENTS" }));
+          yield* yieldFibers;
+          yield* actor.send(OrderEvent.Pay({ amount: 123 }));
+          yield* yieldFibers;
+
+          yield* system.stop("order-events-only");
+        }).pipe(Effect.provide(sharedLayer)),
+      );
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const system = yield* ActorSystemService;
+          const maybeActor = yield* system.restore("order-events-only", eventOnlyMachine);
+          expect(Option.isSome(maybeActor)).toBe(true);
+
+          if (Option.isSome(maybeActor)) {
+            const state = yield* maybeActor.value.snapshot;
+            expect(state._tag).toBe("Paid");
+            if (state._tag === "Paid") {
+              expect(state.orderId).toBe("ORD-EVENTS");
+              expect(state.amount).toBe(123);
+            }
+          }
+        }).pipe(Effect.provide(sharedLayer)),
+      );
+    }),
+  );
+
+  it.scopedLive("persistent actors run spawn and background effects", () =>
+    Effect.gen(function* () {
+      const EffectState = State({ Idle: {} });
+      const EffectEvent = Event({ Ping: {} });
+      const TestEffects = Slot.Effects({ mark: {} });
+
+      const counter = yield* Ref.make(0);
+
+      const machine = Machine.make({
+        state: EffectState,
+        event: EffectEvent,
+        effects: TestEffects,
+        initial: EffectState.Idle,
+      })
+        .spawn(EffectState.Idle, ({ effects }) => effects.mark())
+        .background(({ effects }) => effects.mark())
+        .provide({
+          mark: () => Ref.update(counter, (n) => n + 1),
+        })
+        .persist({
+          snapshotSchedule: Schedule.stop,
+          journalEvents: false,
+        });
+
+      const system = yield* ActorSystemService;
+      yield* system.spawn("effects-actor", machine);
+      yield* yieldFibers;
+
+      const count = yield* Ref.get(counter);
+      expect(count).toBe(2);
+    }).pipe(Effect.provide(TestLayer)),
   );
 
   it.scopedLive("PersistentActorRef has all ActorRef methods", () =>

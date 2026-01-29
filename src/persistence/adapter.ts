@@ -2,7 +2,7 @@ import { Context, Schema } from "effect";
 import type { Effect, Option } from "effect";
 
 import type { PersistentActorRef } from "./persistent-actor.js";
-import type { DuplicateActorError } from "../errors.js";
+import type { DuplicateActorError, UnprovidedSlotsError } from "../errors.js";
 
 /**
  * Metadata for a persisted actor.
@@ -26,8 +26,9 @@ export interface ActorMetadata {
 export interface RestoreResult<
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
+  R = never,
 > {
-  readonly restored: ReadonlyArray<PersistentActorRef<S, E>>;
+  readonly restored: ReadonlyArray<PersistentActorRef<S, E, R>>;
   readonly failed: ReadonlyArray<RestoreFailure>;
 }
 
@@ -36,7 +37,7 @@ export interface RestoreResult<
  */
 export interface RestoreFailure {
   readonly id: string;
-  readonly error: PersistenceError | DuplicateActorError;
+  readonly error: PersistenceError | DuplicateActorError | UnprovidedSlotsError;
 }
 
 /**
