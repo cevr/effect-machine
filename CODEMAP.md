@@ -39,6 +39,7 @@ test/
 ├── delay.test.ts         # Timeout patterns
 ├── dynamic-delay.test.ts # Dynamic timeout patterns
 ├── force.test.ts         # Reenter transition tests
+├── type-constraints.test.ts # Compile-time type constraint verification
 ├── utils/
 │   └── effect-test.ts    # Test helpers
 ├── internal/

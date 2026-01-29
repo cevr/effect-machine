@@ -187,6 +187,33 @@ if (value === undefined) { ... }
 if (value === true) { ... }
 ```
 
+## Handler Service Requirements
+
+Handlers cannot require arbitrary services - use slots:
+
+```ts
+// Wrong - won't compile
+.on(State.X, Event.Y, () =>
+  Effect.gen(function* () {
+    yield* MyService;  // ✗ R=never, can't require services
+  })
+)
+
+// Right - use effect slots
+.on(State.X, Event.Y, ({ effects }) => effects.doWork())
+.provide({
+  doWork: () => MyService.pipe(Effect.flatMap(...))  // ✓ provide() can use services
+})
+```
+
+**Exception**: `.spawn()` and `.background()` allow `Scope` for finalizers:
+
+```ts
+.spawn(State.Loading, () =>
+  Effect.addFinalizer(() => Effect.log("cleanup"))  // ✓ Scope allowed
+)
+```
+
 ## Handler Must Return State
 
 Handlers must return state or Effect<State>:

@@ -42,7 +42,7 @@
  *
  * @module
  */
-import type { Schema, Schedule } from "effect";
+import type { Schema, Schedule, Scope } from "effect";
 import { Context, Effect } from "effect";
 import type { Pipeable } from "effect/Pipeable";
 import { pipeArguments } from "effect/Pipeable";
@@ -314,12 +314,11 @@ export class Machine<
     NS extends VariantsUnion<_SD> & BrandedState,
     NE extends VariantsUnion<_ED> & BrandedEvent,
     RS extends VariantsUnion<_SD> & BrandedState,
-    R2 = never,
   >(
     state: TaggedOrConstructor<NS>,
     event: TaggedOrConstructor<NE>,
-    handler: TransitionHandler<NS, NE, RS, GD, EFD, R2>,
-  ): Machine<State, Event, R | R2, _SD, _ED, GD, EFD> {
+    handler: TransitionHandler<NS, NE, RS, GD, EFD, never>,
+  ): Machine<State, Event, R, _SD, _ED, GD, EFD> {
     return this.addTransition(state, event, handler, false);
   }
 
@@ -333,36 +332,35 @@ export class Machine<
     NS extends VariantsUnion<_SD> & BrandedState,
     NE extends VariantsUnion<_ED> & BrandedEvent,
     RS extends VariantsUnion<_SD> & BrandedState,
-    R2 = never,
   >(
     state: TaggedOrConstructor<NS>,
     event: TaggedOrConstructor<NE>,
-    handler: TransitionHandler<NS, NE, RS, GD, EFD, R2>,
-  ): Machine<State, Event, R | R2, _SD, _ED, GD, EFD> {
+    handler: TransitionHandler<NS, NE, RS, GD, EFD, never>,
+  ): Machine<State, Event, R, _SD, _ED, GD, EFD> {
     return this.addTransition(state, event, handler, true);
   }
 
   /** @internal */
-  private addTransition<NS extends BrandedState, NE extends BrandedEvent, R2>(
+  private addTransition<NS extends BrandedState, NE extends BrandedEvent>(
     state: TaggedOrConstructor<NS>,
     event: TaggedOrConstructor<NE>,
-    handler: TransitionHandler<NS, NE, BrandedState, GD, EFD, R2>,
+    handler: TransitionHandler<NS, NE, BrandedState, GD, EFD, never>,
     reenter: boolean,
-  ): Machine<State, Event, R | R2, _SD, _ED, GD, EFD> {
+  ): Machine<State, Event, R, _SD, _ED, GD, EFD> {
     const stateTag = getTag(state);
     const eventTag = getTag(event);
 
-    const transition: Transition<State, Event, GD, EFD, R | R2> = {
+    const transition: Transition<State, Event, GD, EFD, R> = {
       stateTag,
       eventTag,
-      handler: handler as unknown as Transition<State, Event, GD, EFD, R | R2>["handler"],
+      handler: handler as unknown as Transition<State, Event, GD, EFD, R>["handler"],
       reenter,
     };
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (this._transitions as any[]).push(transition);
 
-    return this as unknown as Machine<State, Event, R | R2, _SD, _ED, GD, EFD>;
+    return this;
   }
 
   // ---- spawn ----
@@ -389,17 +387,17 @@ export class Machine<
    *   });
    * ```
    */
-  spawn<NS extends VariantsUnion<_SD> & BrandedState, R2 = never>(
+  spawn<NS extends VariantsUnion<_SD> & BrandedState>(
     state: TaggedOrConstructor<NS>,
-    handler: StateEffectHandler<NS, VariantsUnion<_ED> & BrandedEvent, EFD, R2>,
-  ): Machine<State, Event, R | R2, _SD, _ED, GD, EFD> {
+    handler: StateEffectHandler<NS, VariantsUnion<_ED> & BrandedEvent, EFD, Scope.Scope>,
+  ): Machine<State, Event, R, _SD, _ED, GD, EFD> {
     const stateTag = getTag(state);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (this._spawnEffects as any[]).push({
       stateTag,
-      handler: handler as unknown as SpawnEffect<State, Event, EFD, R | R2>["handler"],
+      handler: handler as unknown as SpawnEffect<State, Event, EFD, R>["handler"],
     });
-    return this as unknown as Machine<State, Event, R | R2, _SD, _ED, GD, EFD>;
+    return this;
   }
 
   // ---- background ----
@@ -424,14 +422,14 @@ export class Machine<
    *   });
    * ```
    */
-  background<R2 = never>(
-    handler: StateEffectHandler<State, Event, EFD, R2>,
-  ): Machine<State, Event, R | R2, _SD, _ED, GD, EFD> {
+  background(
+    handler: StateEffectHandler<State, Event, EFD, Scope.Scope>,
+  ): Machine<State, Event, R, _SD, _ED, GD, EFD> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (this._backgroundEffects as any[]).push({
-      handler: handler as unknown as BackgroundEffect<State, Event, EFD, R | R2>["handler"],
+      handler: handler as unknown as BackgroundEffect<State, Event, EFD, R>["handler"],
     });
-    return this as unknown as Machine<State, Event, R | R2, _SD, _ED, GD, EFD>;
+    return this;
   }
 
   // ---- final ----

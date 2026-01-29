@@ -63,6 +63,20 @@ machine
 - `.spawn()` - state-scoped effects, forked, auto-cancelled on exit
 - `.background()` - machine-lifetime effects
 
+## Handler Type Constraints
+
+Handlers are strictly typed - `.provide()` is the only way to add requirements:
+
+| Method                       | Allowed R | Why                                        |
+| ---------------------------- | --------- | ------------------------------------------ |
+| `.on()` / `.reenter()`       | `never`   | Pure transitions, no services              |
+| `.spawn()` / `.background()` | `Scope`   | Finalizers allowed (`Effect.addFinalizer`) |
+| `.provide()`                 | Any R     | Slot implementations can use services      |
+
+- Handlers cannot require arbitrary services - use slots + `provide()`
+- Handlers cannot produce errors - error channel fixed to `never`
+- Handlers must return machine's state schema - wrong states rejected at compile time
+
 ## Gotchas
 
 - Never `throw` in Effect.gen - use `yield* Effect.fail()`

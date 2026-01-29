@@ -16,6 +16,34 @@ Handlers receive a context object:
 })
 ```
 
+## Handler Type Constraints
+
+Handlers are strictly typed at compile time:
+
+| Constraint             | Enforced | Notes                                |
+| ---------------------- | -------- | ------------------------------------ |
+| Requirements = `never` | ✓        | No arbitrary services in handlers    |
+| Errors = `never`       | ✓        | Handlers cannot fail                 |
+| Return state ∈ schema  | ✓        | Must return machine's state variants |
+
+**Services must go through slots** - define with `Slot.Effects`, implement with `.provide()`:
+
+```ts
+// ✗ BAD - won't compile (MyService not in R=never)
+.on(State.X, Event.Y, () =>
+  Effect.gen(function* () {
+    yield* MyService;  // Error: Type 'MyService' not assignable to 'never'
+    return State.Z;
+  })
+)
+
+// ✓ GOOD - use effect slots
+.on(State.X, Event.Y, ({ effects }) => effects.doSomething())
+.provide({
+  doSomething: (_, { self }) => MyService.pipe(Effect.flatMap(...))
+})
+```
+
 ## Sync vs Async Handlers
 
 **Sync** - return state directly:
