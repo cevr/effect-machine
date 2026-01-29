@@ -14,7 +14,7 @@ import {
   type PersistentMachine,
   State,
 } from "../src/index.js";
-import { describe, expect, it, yieldFibers } from "./utils/effect-test.js";
+import { describe, expect, it, yieldFibers } from "effect-bun-test";
 
 // Test state and event types using MachineSchema pattern
 const OrderState = State({

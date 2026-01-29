@@ -11,7 +11,7 @@ import {
   State,
   Event,
 } from "../src/index.js";
-import { describe, expect, it, yieldFibers } from "./utils/effect-test.js";
+import { describe, expect, it, yieldFibers } from "effect-bun-test";
 
 const TestState = State({
   Idle: {},

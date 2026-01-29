@@ -9,7 +9,7 @@ import {
   Slot,
   State,
 } from "../src/index.js";
-import { describe, expect, it, yieldFibers } from "./utils/effect-test.js";
+import { describe, expect, it, yieldFibers } from "effect-bun-test";
 
 describe("Dynamic Timeout Duration via Spawn", () => {
   const WaitState = State({

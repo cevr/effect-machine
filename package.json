@@ -42,6 +42,7 @@
     "@effect/rpc": "^0.73.0",
     "@types/bun": "latest",
     "concurrently": "^9.2.1",
+    "effect-bun-test": "^0.1.0",
     "lefthook": "^2.0.15",
     "oxfmt": "^0.26.0",
     "oxlint": "^1.41.0",

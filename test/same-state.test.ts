@@ -2,7 +2,7 @@
 import { Effect, Schema } from "effect";
 
 import { ActorSystemDefault, ActorSystemService, Event, Machine, State } from "../src/index.js";
-import { describe, expect, it, yieldFibers } from "./utils/effect-test.js";
+import { describe, expect, it, yieldFibers } from "effect-bun-test";
 
 describe("Same-state Transitions", () => {
   const FormState = State({
