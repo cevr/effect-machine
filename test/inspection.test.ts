@@ -6,6 +6,7 @@ import {
   ActorSystemService,
   collectingInspector,
   type InspectionEvent,
+  makeInspector,
   InspectorService,
   Machine,
   State,
@@ -209,6 +210,33 @@ describe("Inspection", () => {
       const state = yield* actor.snapshot;
       expect(state._tag).toBe("Loading");
     }).pipe(Effect.provide(ActorSystemDefault)),
+  );
+
+  it.scopedLive("inspector errors do not break event loop", () =>
+    Effect.gen(function* () {
+      const machine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle,
+      }).on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }));
+
+      const system = yield* ActorSystemService;
+      const actor = yield* system.spawn("test", machine);
+
+      yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
+      yield* yieldFibers;
+
+      const state = yield* actor.snapshot;
+      expect(state._tag).toBe("Loading");
+    }).pipe(
+      Effect.provide(ActorSystemDefault),
+      Effect.provideService(
+        InspectorService,
+        makeInspector(() => {
+          throw new Error("boom");
+        }),
+      ),
+    ),
   );
 
   it.scopedLive("event order is correct", () => {

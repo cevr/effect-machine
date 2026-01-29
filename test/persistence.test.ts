@@ -1,5 +1,5 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Effect, Layer, Option, Ref, Schedule, Schema } from "effect";
+import { Deferred, Effect, Layer, Option, Ref, Schedule, Schema } from "effect";
 
 import {
   type ActorMetadata,
@@ -10,6 +10,7 @@ import {
   Machine,
   makeInMemoryPersistenceAdapter,
   PersistenceAdapterTag,
+  type PersistenceAdapter,
   type PersistentActorRef,
   type PersistentMachine,
   State,
@@ -113,6 +114,104 @@ describe("Persistence", () => {
       const v2 = yield* actor.version;
       expect(v2).toBe(2);
     }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.scopedLive("send after stop is a no-op (persistent)", () =>
+    Effect.gen(function* () {
+      const system = yield* ActorSystemService;
+      const persistentMachine = createPersistentMachine();
+
+      const actor = yield* system.spawn("order-stop", persistentMachine);
+
+      yield* actor.send(OrderEvent.Submit({ orderId: "ORD-STOP" }));
+      yield* yieldFibers;
+
+      const beforeStop = yield* actor.snapshot;
+      expect(beforeStop._tag).toBe("Pending");
+
+      yield* actor.stop;
+      yield* actor.send(OrderEvent.Pay({ amount: 25 }));
+      yield* yieldFibers;
+
+      const afterStop = yield* actor.snapshot;
+      expect(afterStop._tag).toBe("Pending");
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.scopedLive("snapshot schedule completion does not stop event loop", () =>
+    Effect.gen(function* () {
+      const StepState = State({
+        One: {},
+        Two: {},
+        Three: {},
+        Four: {},
+      });
+      const StepEvent = Event({ Next: {} });
+
+      const machine = Machine.make({
+        state: StepState,
+        event: StepEvent,
+        initial: StepState.One,
+      })
+        .on(StepState.One, StepEvent.Next, () => StepState.Two)
+        .on(StepState.Two, StepEvent.Next, () => StepState.Three)
+        .on(StepState.Three, StepEvent.Next, () => StepState.Four)
+        .persist({
+          snapshotSchedule: Schedule.recurs(0),
+          journalEvents: false,
+        });
+
+      const system = yield* ActorSystemService;
+      const actor = yield* system.spawn("order-snap", machine);
+
+      yield* actor.send(StepEvent.Next);
+      yield* yieldFibers;
+      yield* actor.send(StepEvent.Next);
+      yield* yieldFibers;
+      yield* actor.send(StepEvent.Next);
+      yield* yieldFibers;
+
+      const state = yield* actor.snapshot;
+      expect(state._tag).toBe("Four");
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.scopedLive("persistence worker does not block event loop", () =>
+    Effect.gen(function* () {
+      const gate = yield* Deferred.make<void>();
+      const adapter: PersistenceAdapter = {
+        saveSnapshot: () => Effect.void,
+        loadSnapshot: () => Effect.succeed(Option.none()),
+        appendEvent: () => Deferred.await(gate),
+        loadEvents: () => Effect.succeed([]),
+        deleteActor: () => Effect.void,
+      };
+      const machine = Machine.make({
+        state: OrderState,
+        event: OrderEvent,
+        initial: OrderState.Idle,
+      })
+        .on(OrderState.Idle, OrderEvent.Submit, ({ event }) =>
+          OrderState.Pending({ orderId: event.orderId }),
+        )
+        .persist({ snapshotSchedule: Schedule.forever, journalEvents: true });
+
+      yield* Effect.gen(function* () {
+        const system = yield* ActorSystemService;
+        const actor = yield* system.spawn("order-slow", machine);
+
+        yield* actor.send(OrderEvent.Submit({ orderId: "ORD-SLOW" }));
+        yield* yieldFibers;
+
+        const state = yield* actor.snapshot;
+        expect(state._tag).toBe("Pending");
+
+        yield* Deferred.succeed(gate, void 0);
+      }).pipe(
+        Effect.provide(ActorSystemDefault),
+        Effect.provideService(PersistenceAdapterTag, adapter),
+      );
+    }),
   );
 
   it.live("restore actor from persistence", () =>
@@ -806,6 +905,7 @@ describe("Persistence Registry", () => {
           const persistentMachine = createPersistentMachine("orders");
 
           const actor = yield* system.spawn("order-track", persistentMachine);
+          yield* yieldFibers;
 
           // Initial state
           let actors = yield* system.listPersisted();

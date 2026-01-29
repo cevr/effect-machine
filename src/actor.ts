@@ -15,6 +15,7 @@ import {
   MutableHashMap,
   Option,
   Queue,
+  Ref,
   Scope,
   SubscriptionRef,
 } from "effect";
@@ -311,10 +312,15 @@ export const buildActorRefCore = <
   machine: Machine<S, E, R, any, any, GD, EFD>,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
   eventQueue: Queue.Queue<E>,
+  stoppedRef: Ref.Ref<boolean>,
   listeners: Listeners<S>,
   stop: Effect.Effect<void>,
 ): ActorRef<S, E> => {
   const send = Effect.fn("effect-machine.actor.send")(function* (event: E) {
+    const stopped = yield* Ref.get(stoppedRef);
+    if (stopped) {
+      return;
+    }
     yield* Queue.offer(eventQueue, event);
   });
 
@@ -384,8 +390,13 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
 
   // Create self reference for sending events
   const eventQueue = yield* Queue.unbounded<E>();
+  const stoppedRef = yield* Ref.make(false);
   const self: MachineRef<E> = {
     send: Effect.fn("effect-machine.actor.self.send")(function* (event: E) {
+      const stopped = yield* Ref.get(stoppedRef);
+      if (stopped) {
+        return;
+      }
       yield* Queue.offer(eventQueue, event);
     }),
   };
@@ -447,11 +458,12 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       finalState: machine.initial,
       timestamp,
     }));
-    const stop = Queue.shutdown(eventQueue).pipe(
+    yield* Ref.set(stoppedRef, true);
+    const stop = Ref.set(stoppedRef, true).pipe(
       Effect.withSpan("effect-machine.actor.stop"),
       Effect.asVoid,
     );
-    return buildActorRefCore(id, machine, stateRef, eventQueue, listeners, stop);
+    return buildActorRefCore(id, machine, stateRef, eventQueue, stoppedRef, listeners, stop);
   }
 
   // Start the event loop
@@ -460,6 +472,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       machine,
       stateRef,
       eventQueue,
+      stoppedRef,
       self,
       listeners,
       backgroundFibers,
@@ -477,7 +490,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       finalState,
       timestamp,
     }));
-    yield* Queue.shutdown(eventQueue);
+    yield* Ref.set(stoppedRef, true);
     yield* Fiber.interrupt(loopFiber);
     // Close state scope (interrupts spawn fibers)
     yield* Scope.close(stateScopeRef.current, Exit.void);
@@ -485,7 +498,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
   }).pipe(Effect.withSpan("effect-machine.actor.stop"), Effect.asVoid);
 
-  return buildActorRefCore(id, machine, stateRef, eventQueue, listeners, stop);
+  return buildActorRefCore(id, machine, stateRef, eventQueue, stoppedRef, listeners, stop);
 });
 
 /**
@@ -501,6 +514,7 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
   machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
   eventQueue: Queue.Queue<E>,
+  stoppedRef: Ref.Ref<boolean>,
   self: MachineRef<E>,
   listeners: Listeners<S>,
   backgroundFibers: Fiber.Fiber<void, never>[],
@@ -537,6 +551,7 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
 
     if (shouldStop) {
       // Close state scope and interrupt background effects when reaching final state
+      yield* Ref.set(stoppedRef, true);
       yield* Scope.close(stateScopeRef.current, Exit.void);
       yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
       return;
@@ -673,9 +688,11 @@ const runSpawnEffectsWithInspection = Effect.fn("effect-machine.actor.spawnEffec
 /**
  * Internal implementation
  */
-const make = Effect.sync(() => {
+const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
   // MutableHashMap for O(1) spawn/stop/get operations
   const actors = MutableHashMap.empty<string, ActorRef<AnyState, unknown>>();
+  const spawnGate = yield* Effect.makeSemaphore(1);
+  const withSpawnGate = spawnGate.withPermits(1);
 
   /** Check for duplicate ID, register actor, add cleanup finalizer */
   const registerActor = Effect.fn("effect-machine.actorSystem.register")(function* <
@@ -805,7 +822,7 @@ const make = Effect.sync(() => {
         PersistenceError | VersionConflictError | DuplicateActorError | UnprovidedSlotsError,
         R | Scope.Scope | PersistenceAdapterTag
       > {
-    return spawnImpl(id, machine) as
+    return withSpawnGate(spawnImpl(id, machine)) as
       | Effect.Effect<ActorRef<S, E>, DuplicateActorError | UnprovidedSlotsError, R | Scope.Scope>
       | Effect.Effect<
           PersistentActorRef<S, E, R>,
@@ -814,7 +831,7 @@ const make = Effect.sync(() => {
         >;
   }
 
-  const restore = Effect.fn("effect-machine.actorSystem.restore")(function* <
+  const restoreImpl = Effect.fn("effect-machine.actorSystem.restore")(function* <
     S extends { readonly _tag: string },
     E extends { readonly _tag: string },
     R,
@@ -828,6 +845,10 @@ const make = Effect.sync(() => {
 
     return maybeActor;
   });
+  const restore = <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
+    id: string,
+    persistentMachine: PersistentMachine<S, E, R>,
+  ) => withSpawnGate(restoreImpl(id, persistentMachine));
 
   const get = Effect.fn("effect-machine.actorSystem.get")(function* (id: string) {
     return yield* Effect.sync(() => MutableHashMap.get(actors, id));
@@ -926,9 +947,9 @@ const make = Effect.sync(() => {
   });
 
   return ActorSystem.of({ spawn, restore, get, stop, listPersisted, restoreMany, restoreAll });
-}).pipe(Effect.withSpan("effect-machine.actorSystem.make"));
+});
 
 /**
  * Default ActorSystem layer
  */
-export const Default = Layer.effect(ActorSystem, make);
+export const Default = Layer.effect(ActorSystem, make());

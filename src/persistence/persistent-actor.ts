@@ -118,6 +118,7 @@ const buildPersistentActorRef = <
   stateRef: SubscriptionRef.SubscriptionRef<S>,
   versionRef: Ref.Ref<number>,
   eventQueue: Queue.Queue<E>,
+  stoppedRef: Ref.Ref<boolean>,
   listeners: Listeners<S>,
   stop: Effect.Effect<void>,
   adapter: PersistenceAdapter,
@@ -202,7 +203,15 @@ const buildPersistentActorRef = <
     }
   });
 
-  const core = buildActorRefCore(id, typedMachine, stateRef, eventQueue, listeners, stop);
+  const core = buildActorRefCore(
+    id,
+    typedMachine,
+    stateRef,
+    eventQueue,
+    stoppedRef,
+    listeners,
+    stop,
+  );
 
   return {
     ...core,
@@ -253,8 +262,13 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
 
   // Create self reference for sending events
   const eventQueue = yield* Queue.unbounded<E>();
+  const stoppedRef = yield* Ref.make(false);
   const self: MachineRef<E> = {
     send: Effect.fn("effect-machine.persistentActor.self.send")(function* (event: E) {
+      const stopped = yield* Ref.get(stoppedRef);
+      if (stopped) {
+        return;
+      }
       yield* Queue.offer(eventQueue, event);
     }),
   };
@@ -314,12 +328,21 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
     timestamp,
   }));
 
+  const snapshotEnabledRef = yield* Ref.make(true);
+  const persistenceQueue = yield* Queue.unbounded<Effect.Effect<void, never>>();
+  const persistenceFiber = yield* Effect.fork(persistenceWorker(persistenceQueue));
+
   // Save initial metadata
-  yield* saveMetadata(id, resolvedInitial, initialVersion, createdAt, persistence, adapter);
+  yield* Queue.offer(
+    persistenceQueue,
+    saveMetadata(id, resolvedInitial, initialVersion, createdAt, persistence, adapter),
+  );
 
   // Snapshot scheduler
   const snapshotQueue = yield* Queue.unbounded<{ state: S; version: number }>();
-  const snapshotFiber = yield* Effect.fork(snapshotWorker(id, persistence, adapter, snapshotQueue));
+  const snapshotFiber = yield* Effect.fork(
+    snapshotWorker(id, persistence, adapter, snapshotQueue, snapshotEnabledRef),
+  );
 
   // Fork background effects (run for entire machine lifetime)
   const backgroundFibers: Fiber.Fiber<void, never>[] = [];
@@ -356,15 +379,16 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
   if (typedMachine.finalStates.has(resolvedInitial._tag)) {
     yield* Scope.close(stateScopeRef.current, Exit.void);
     yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
-    yield* Queue.shutdown(snapshotQueue).pipe(Effect.asVoid);
     yield* Fiber.interrupt(snapshotFiber);
+    yield* Fiber.interrupt(persistenceFiber);
+    yield* Ref.set(stoppedRef, true);
     yield* emitWithTimestamp(inspector, (timestamp) => ({
       type: "@machine.stop",
       actorId: id,
       finalState: resolvedInitial,
       timestamp,
     }));
-    const stop = Queue.shutdown(eventQueue).pipe(
+    const stop = Ref.set(stoppedRef, true).pipe(
       Effect.withSpan("effect-machine.persistentActor.stop"),
       Effect.asVoid,
     );
@@ -374,6 +398,7 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
       stateRef,
       versionRef,
       eventQueue,
+      stoppedRef,
       listeners,
       stop,
       adapter,
@@ -388,6 +413,7 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
       stateRef,
       versionRef,
       eventQueue,
+      stoppedRef,
       self,
       listeners,
       adapter,
@@ -395,7 +421,10 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
       stateScopeRef,
       backgroundFibers,
       snapshotQueue,
+      snapshotEnabledRef,
+      persistenceQueue,
       snapshotFiber,
+      persistenceFiber,
       inspector,
     ),
   );
@@ -408,12 +437,12 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
       finalState,
       timestamp,
     }));
-    yield* Queue.shutdown(eventQueue);
+    yield* Ref.set(stoppedRef, true);
     yield* Fiber.interrupt(loopFiber);
     yield* Scope.close(stateScopeRef.current, Exit.void);
     yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
-    yield* Queue.shutdown(snapshotQueue).pipe(Effect.asVoid);
     yield* Fiber.interrupt(snapshotFiber);
+    yield* Fiber.interrupt(persistenceFiber);
   }).pipe(Effect.withSpan("effect-machine.persistentActor.stop"), Effect.asVoid);
 
   return buildPersistentActorRef(
@@ -422,6 +451,7 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
     stateRef,
     versionRef,
     eventQueue,
+    stoppedRef,
     listeners,
     stop,
     adapter,
@@ -443,6 +473,7 @@ const persistentEventLoop = Effect.fn("effect-machine.persistentActor.eventLoop"
   stateRef: SubscriptionRef.SubscriptionRef<S>,
   versionRef: Ref.Ref<number>,
   eventQueue: Queue.Queue<E>,
+  stoppedRef: Ref.Ref<boolean>,
   self: MachineRef<E>,
   listeners: Listeners<S>,
   adapter: PersistenceAdapter,
@@ -450,7 +481,10 @@ const persistentEventLoop = Effect.fn("effect-machine.persistentActor.eventLoop"
   stateScopeRef: { current: Scope.CloseableScope },
   backgroundFibers: ReadonlyArray<Fiber.Fiber<void, never>>,
   snapshotQueue: Queue.Queue<{ state: S; version: number }>,
+  snapshotEnabledRef: Ref.Ref<boolean>,
+  persistenceQueue: Queue.Queue<Effect.Effect<void, never>>,
   snapshotFiber: Fiber.Fiber<void, never>,
+  persistenceFiber: Fiber.Fiber<void, never>,
   inspector?: Inspector<S, E>,
 ) {
   const { machine, persistence } = persistentMachine;
@@ -518,7 +552,11 @@ const persistentEventLoop = Effect.fn("effect-machine.persistentActor.eventLoop"
     const newVersion = currentVersion + 1;
     yield* Ref.set(versionRef, newVersion);
 
-    // Journal event if enabled
+    // Update state and notify listeners
+    yield* SubscriptionRef.set(stateRef, result.newState);
+    notifyListeners(listeners, result.newState);
+
+    // Journal event if enabled (async)
     if (persistence.journalEvents) {
       const timestamp = yield* now;
       const persistedEvent: PersistedEvent<E> = {
@@ -526,22 +564,23 @@ const persistentEventLoop = Effect.fn("effect-machine.persistentActor.eventLoop"
         version: newVersion,
         timestamp,
       };
-      yield* adapter
-        .appendEvent(id, persistedEvent, persistence.eventSchema)
-        .pipe(
-          Effect.catchAll((e) => Effect.logWarning(`Failed to journal event for actor ${id}`, e)),
-        );
+      const journalTask = adapter.appendEvent(id, persistedEvent, persistence.eventSchema).pipe(
+        Effect.catchAll((e) => Effect.logWarning(`Failed to journal event for actor ${id}`, e)),
+        Effect.asVoid,
+      );
+      yield* Queue.offer(persistenceQueue, journalTask);
     }
 
-    // Update state and notify listeners
-    yield* SubscriptionRef.set(stateRef, result.newState);
-    notifyListeners(listeners, result.newState);
-
-    // Save metadata
-    yield* saveMetadata(id, result.newState, newVersion, createdAt, persistence, adapter);
+    // Save metadata (async)
+    yield* Queue.offer(
+      persistenceQueue,
+      saveMetadata(id, result.newState, newVersion, createdAt, persistence, adapter),
+    );
 
     // Schedule snapshot (non-blocking)
-    yield* Queue.offer(snapshotQueue, { state: result.newState, version: newVersion });
+    if (yield* Ref.get(snapshotEnabledRef)) {
+      yield* Queue.offer(snapshotQueue, { state: result.newState, version: newVersion });
+    }
 
     // Check if final state reached
     if (result.lifecycleRan && result.isFinal) {
@@ -551,10 +590,11 @@ const persistentEventLoop = Effect.fn("effect-machine.persistentActor.eventLoop"
         finalState: result.newState,
         timestamp,
       }));
+      yield* Ref.set(stoppedRef, true);
       yield* Scope.close(stateScopeRef.current, Exit.void);
       yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
-      yield* Queue.shutdown(snapshotQueue).pipe(Effect.asVoid);
       yield* Fiber.interrupt(snapshotFiber);
+      yield* Fiber.interrupt(persistenceFiber);
       return;
     }
   }
@@ -593,6 +633,18 @@ const runSpawnEffectsWithInspection = Effect.fn("effect-machine.persistentActor.
 );
 
 /**
+ * Persistence worker (journaling + metadata).
+ */
+const persistenceWorker = Effect.fn("effect-machine.persistentActor.persistenceWorker")(function* (
+  queue: Queue.Queue<Effect.Effect<void, never>>,
+) {
+  while (true) {
+    const task = yield* Queue.take(queue);
+    yield* task;
+  }
+});
+
+/**
  * Snapshot scheduler worker (runs in background).
  */
 const snapshotWorker = Effect.fn("effect-machine.persistentActor.snapshotWorker")(function* <
@@ -603,11 +655,15 @@ const snapshotWorker = Effect.fn("effect-machine.persistentActor.snapshotWorker"
   persistence: PersistentMachine<S, E, never>["persistence"],
   adapter: PersistenceAdapter,
   queue: Queue.Queue<{ state: S; version: number }>,
+  enabledRef: Ref.Ref<boolean>,
 ) {
   const driver = yield* Schedule.driver(persistence.snapshotSchedule);
 
   while (true) {
     const { state, version } = yield* Queue.take(queue);
+    if (!(yield* Ref.get(enabledRef))) {
+      continue;
+    }
     const shouldSnapshot = yield* driver.next(state).pipe(
       Effect.match({
         onFailure: () => false,
@@ -615,8 +671,8 @@ const snapshotWorker = Effect.fn("effect-machine.persistentActor.snapshotWorker"
       }),
     );
     if (!shouldSnapshot) {
-      yield* Queue.shutdown(queue).pipe(Effect.asVoid);
-      return;
+      yield* Ref.set(enabledRef, false);
+      continue;
     }
 
     yield* saveSnapshot(id, state, version, persistence, adapter);

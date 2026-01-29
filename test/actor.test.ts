@@ -171,6 +171,46 @@ describe("ActorSystem", () => {
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
 
+  it.scopedLive("concurrent spawn only runs effects once", () =>
+    Effect.gen(function* () {
+      const SimpleState = State({ Idle: {} });
+      const SimpleEvent = Event({ Ping: {} });
+      const TestEffects = Slot.Effects({ mark: {} });
+
+      const counter = yield* Ref.make(0);
+
+      const machine = Machine.make({
+        state: SimpleState,
+        event: SimpleEvent,
+        effects: TestEffects,
+        initial: SimpleState.Idle,
+      })
+        .background(({ effects }) => effects.mark())
+        .provide({
+          mark: () => Ref.update(counter, (n) => n + 1),
+        });
+
+      const system = yield* ActorSystemService;
+      const [resultA, resultB] = yield* Effect.all(
+        [
+          Effect.either(system.spawn("concurrent-actor", machine)),
+          Effect.either(system.spawn("concurrent-actor", machine)),
+        ],
+        { concurrency: "unbounded" },
+      );
+
+      const failures = [resultA, resultB].filter((result) => result._tag === "Left");
+      expect(failures.length).toBe(1);
+      if (failures[0]?._tag === "Left") {
+        expect(failures[0].left._tag).toBe("DuplicateActorError");
+      }
+
+      yield* yieldFibers;
+      const count = yield* Ref.get(counter);
+      expect(count).toBe(1);
+    }).pipe(Effect.provide(ActorSystemDefault)),
+  );
+
   it.scopedLive("fails spawn when slots are unprovided", () =>
     Effect.gen(function* () {
       const SimpleState = State({ Idle: {} });
@@ -220,6 +260,36 @@ describe("ActorSystem", () => {
 
       const state = yield* actor.snapshot;
       expect(state._tag).toBe("Done");
+    }).pipe(Effect.provide(ActorSystemDefault)),
+  );
+
+  it.scopedLive("send after stop is a no-op", () =>
+    Effect.gen(function* () {
+      const machine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle,
+      })
+        .on(TestState.Idle, TestEvent.Start, ({ event }) =>
+          TestState.Active({ value: event.value }),
+        )
+        .on(TestState.Active, TestEvent.Stop, () => TestState.Done);
+
+      const system = yield* ActorSystemService;
+      const actor = yield* system.spawn("stopped-actor", machine);
+
+      yield* actor.send(TestEvent.Start({ value: 10 }));
+      yield* yieldFibers;
+
+      const beforeStop = yield* actor.snapshot;
+      expect(beforeStop._tag).toBe("Active");
+
+      yield* actor.stop;
+      yield* actor.send(TestEvent.Stop);
+      yield* yieldFibers;
+
+      const afterStop = yield* actor.snapshot;
+      expect(afterStop._tag).toBe("Active");
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
 });

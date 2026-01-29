@@ -58,6 +58,8 @@ yield * Effect.yieldNow();
 const state = yield * actor.snapshot;
 ```
 
+Sending after `stop` is a no-op (no error, no state change).
+
 ## Observing State
 
 **Effect-based**:

@@ -29,6 +29,9 @@ const persistentMachine = machine.persist({
 `snapshotSchedule` drives a background scheduler. When the schedule ends (e.g. `Schedule.recurs`),
 no further automatic snapshots are taken. Use `actor.persist` to force a snapshot at any time.
 
+Event journaling and metadata updates run in a background worker for throughput; state updates do
+not wait on persistence. Use `actor.persist` when you need an immediate durable snapshot.
+
 ## Persistence Adapter
 
 Provide an adapter to enable persistence:
