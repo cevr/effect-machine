@@ -5,49 +5,45 @@
 ```
 src/
 ├── index.ts              # Public exports
-├── machine.ts            # Machine class + namespace (fluent builder API)
-├── schema.ts             # Schema-first State/Event (MachineStateSchema, MachineEventSchema)
-├── slot.ts               # Slot.Guards/Slot.Effects factories for parameterized slots
-├── actor-ref.ts          # Actor reference interface
-├── actor-system.ts       # Actor system service + layer
-├── testing.ts            # Test utilities (simulate, harness, assertions)
-├── inspection.ts         # Inspector service for debugging
+├── machine.ts            # Machine class + namespace (fluent builder)
+├── schema.ts             # Schema-first State/Event factories
+├── slot.ts               # Slot.Guards/Slot.Effects factories
+├── actor.ts              # ActorRef + ActorSystem + event loop
+├── testing.ts            # simulate, harness, assertions
+├── inspection.ts         # Inspector service
 ├── errors.ts             # TaggedError classes
 ├── persistence/
-│   ├── adapter.ts        # PersistenceAdapter interface + tags
-│   ├── persistent-machine.ts  # Machine.persist combinator
-│   ├── persistent-actor.ts    # PersistentActorRef implementation
-│   └── in-memory.ts      # InMemoryPersistenceAdapter
+│   ├── adapter.ts        # PersistenceAdapter interface
+│   ├── persistent-machine.ts  # Machine.persist
+│   ├── persistent-actor.ts    # PersistentActorRef
+│   └── adapters/
+│       └── in-memory.ts  # InMemoryPersistenceAdapter
 ├── cluster/
-│   ├── index.ts          # Cluster exports
-│   └── entity-machine.ts # toEntity - generates Entity from machine
+│   ├── to-entity.ts      # toEntity - Entity from machine
+│   └── entity-machine.ts # EntityMachine.layer
 └── internal/
-    ├── loop.ts              # Event loop, transition resolver, lifecycle effects
-    ├── execute-transition.ts # Shared transition execution (loop, simulate, harness)
-    ├── transition-index.ts  # O(1) lookup for transitions
-    ├── actor-core.ts        # Shared actor building (buildActorRefCore, notifyListeners)
-    ├── brands.ts            # StateBrand/EventBrand + BrandedState/BrandedEvent
-    └── utils.ts             # Type helpers, constants, isEffect, getTag
+    ├── transition.ts     # Transition execution + O(1) index
+    ├── brands.ts         # StateBrand/EventBrand types
+    └── utils.ts          # isEffect, getTag, constants
 
 test/
-├── machine.test.ts       # Core machine tests
-├── actor-system.test.ts  # Actor spawning/lifecycle
-├── actor-ref.test.ts     # ActorRef ergonomics
-├── persistence.test.ts   # Persistence tests
-├── testing.test.ts       # Test utilities
-├── schema.test.ts        # Schema-first State/Event tests
+├── actor.test.ts         # ActorRef + ActorSystem tests
+├── machine.test.ts       # Machine builder tests
+├── schema.test.ts        # State/Event schema tests
+├── slot.test.ts          # Guard/Effect slot tests
+├── testing.test.ts       # Test utility tests
 ├── inspection.test.ts    # Inspector tests
-├── guards.test.ts        # Parameterized guard tests
-├── choose.test.ts        # Conditional transition tests
-├── delay.test.ts         # Timeout via spawn patterns
-├── dynamic-delay.test.ts # Dynamic timeout via spawn
+├── persistence.test.ts   # Persistence tests
 ├── same-state.test.ts    # Same-state transition tests
-├── force.test.ts         # reenter transition tests
+├── choose.test.ts        # Conditional transition tests
+├── delay.test.ts         # Timeout patterns
+├── dynamic-delay.test.ts # Dynamic timeout patterns
+├── force.test.ts         # Reenter transition tests
 ├── utils/
-│   └── effect-test.ts    # Test helpers (yieldFibers, etc.)
+│   └── effect-test.ts    # Test helpers
 ├── internal/
-│   └── transition-index.test.ts # O(1) transition lookup tests
-├── patterns/             # Real-world pattern tests
+│   └── transition.test.ts # Transition index tests
+├── patterns/             # Real-world patterns
 │   ├── payment-flow.test.ts
 │   ├── session-lifecycle.test.ts
 │   ├── keyboard-input.test.ts
@@ -58,177 +54,55 @@ test/
 
 ## Key Files
 
-| File                                | Purpose                                                       |
-| ----------------------------------- | ------------------------------------------------------------- |
-| `machine.ts`                        | Machine class + namespace - fluent builder, all combinators   |
-| `schema.ts`                         | Schema-first `State`/`Event` - single source of truth         |
-| `slot.ts`                           | `Slot.Guards`/`Slot.Effects` - parameterized slot factories   |
-| `internal/loop.ts`                  | Event processing, `resolveTransition`, spawn effect forking   |
-| `internal/transition-index.ts`      | O(1) lookup for transitions                                   |
-| `internal/brands.ts`                | Branded types: `StateBrand`, `BrandedState`, etc.             |
-| `internal/utils.ts`                 | Shared utilities: types, constants, `isEffect`, `getTag`      |
-| `internal/actor-core.ts`            | Shared actor building: `buildActorRefCore`, `notifyListeners` |
-| `persistence/persistent-machine.ts` | `Machine.persist` - schemas from machine                      |
-| `cluster/entity-machine.ts`         | `toEntity` - schemas from machine                             |
-
-## Machine Class Architecture
-
-Machine uses mutable builder pattern with immutable public views:
-
-```ts
-// Internal mutable arrays
-readonly _transitions: Array<Transition<...>>;
-readonly _guardHandlers: Map<string, GuardHandler>;
-readonly _effectHandlers: Map<string, EffectHandler>;
-
-// Public readonly getters
-get transitions(): ReadonlyArray<Transition<...>> { return this._transitions; }
-```
-
-- Builder methods mutate `this` and return `this` for chaining
-- Exception: `provide()` creates new Machine (supports reusing base with different handlers)
-- Phantom types `_SD`/`_ED` constrain state/event to schema variants at compile time
-- `GD`/`EFD` type params track guard/effect definitions
+| File                     | Purpose                                              |
+| ------------------------ | ---------------------------------------------------- |
+| `machine.ts`             | Machine class - fluent builder, all methods          |
+| `schema.ts`              | `State`/`Event` factories - schema-first definitions |
+| `slot.ts`                | `Slot.Guards`/`Slot.Effects` - parameterized slots   |
+| `actor.ts`               | ActorRef interface, ActorSystem service, event loop  |
+| `internal/transition.ts` | Transition execution, O(1) lookup index              |
 
 ## Event Flow
 
 ```
-Event → resolveTransition → handler (w/ guards/effects) → update state → spawn effects
+Event → resolveTransition → handler (guards/effects) → update state → spawn effects
 ```
 
-- Handler receives `{ state, event, guards, effects }` context
-- Guards checked inside handler via `yield* guards.xxx(params)`
-- Same-state transitions skip spawn/finalizer by default
-- `.reenter()`: force spawn/finalizer even for same state tag
-- Final states stop the actor
+- Handler receives `{ state, event, guards, effects }`
+- Guards checked inside handler: `yield* guards.xxx(params)`
+- Same-state transitions skip spawn/finalizers by default
+- `.reenter()` forces lifecycle even for same state tag
 
-## Schema-First Pattern
+## Machine Architecture
 
-State and Event ARE schemas. `Machine.make` requires them:
+Mutable builder with immutable public views:
 
 ```ts
-const MyState = State({
-  Idle: {},
-  Loading: { url: Schema.String },
-});
-type MyState = typeof MyState.Type;
+// Internal mutable
+readonly _transitions: Array<Transition>;
 
-const machine = Machine.make({
-  state: MyState, // required - becomes machine.stateSchema
-  event: MyEvent, // required - becomes machine.eventSchema
-  guards: MyGuards, // optional - Slot.Guards definition
-  effects: MyEffects, // optional - Slot.Effects definition
-  initial: MyState.Idle, // empty struct: no parens needed
-});
+// Public readonly
+get transitions(): ReadonlyArray<Transition>
 ```
 
-- Types inferred from schemas - no manual type params
-- Empty structs: `State.Idle` (value, not callable)
-- Non-empty: `State.Loading({ url })` - args required
-- `persist()` and `toEntity()` read schemas from machine - no drift possible
-- `$match` and `$is` helpers for pattern matching
-
-## Parameterized Slots Pattern
-
-Guards and effects defined via `Slot.Guards`/`Slot.Effects`:
-
-```ts
-const MyGuards = Slot.Guards({
-  canRetry: { max: Schema.Number },  // with params
-  isValid: {},                        // no params
-});
-
-const MyEffects = Slot.Effects({
-  fetchData: { url: Schema.String },
-});
-
-// Use in handlers
-.on(State.Idle, Event.Start, ({ state, guards, effects }) =>
-  Effect.gen(function* () {
-    if (yield* guards.canRetry({ max: 3 })) {
-      yield* effects.fetchData({ url: state.url });
-      return State.Loading({ url: state.url });
-    }
-    return state;
-  })
-)
-
-// Provide implementations - (params, ctx) signature
-.provide({
-  canRetry: ({ max }, { state }) => state.attempts < max,
-  fetchData: ({ url }, { self }) =>
-    Effect.gen(function* () {
-      const data = yield* Http.get(url);
-      yield* self.send(Event.Resolve({ data }));
-    }),
-})
-```
-
-- Guards return `boolean | Effect<boolean>`
-- Effects return `Effect<void>`
-- Context (`ctx`) has `{ state, event, self }`
-- `provide()` creates new machine - original reusable with different handlers
+- Builder methods mutate `this`, return `this` for chaining
+- Exception: `provide()` creates new instance (reusable base)
+- Phantom types constrain state/event to schema variants
 
 ## Transition Index
 
-`internal/transition-index.ts` provides O(1) lookup via lazy-built WeakMap cache:
+`internal/transition.ts` - O(1) lookup via WeakMap cache:
 
-- `findTransitions(machine, stateTag, eventTag)` - event transitions
+- `findTransitions(machine, stateTag, eventTag)`
+- `findSpawnEffects(machine, stateTag)`
+- Index built on first access, cached per machine
 
-Index built on first access, cached per machine instance.
+## Testing Matrix
 
-## spawn Pattern
+| Function            | Runs Slots | Runs Spawn | Use For         |
+| ------------------- | ---------- | ---------- | --------------- |
+| `simulate`          | Yes        | No         | Path assertions |
+| `createTestHarness` | Yes        | No         | Step-by-step    |
+| Actor + yieldNow    | Yes        | Yes        | Integration     |
 
-Spawn and background use effect slots - same pattern as guards/effects in handlers:
-
-```ts
-const MyEffects = Slot.Effects({
-  fetchData: { url: Schema.String },
-  heartbeat: {},
-});
-
-machine
-  // Spawn calls effect slot
-  .spawn(State.Loading, ({ effects, state }) => effects.fetchData({ url: state.url }))
-  // Background calls effect slot (no name parameter)
-  .background(({ effects }) => effects.heartbeat())
-  .provide({
-    fetchData: ({ url }, { self }) =>
-      Effect.gen(function* () {
-        yield* Effect.addFinalizer(() => Effect.log("Leaving"));
-        const data = yield* fetchData(url);
-        yield* self.send(Event.Resolve({ data }));
-      }),
-    heartbeat: (_, { self }) =>
-      Effect.forever(Effect.sleep("30 seconds").pipe(Effect.andThen(self.send(Event.Ping)))),
-  });
-```
-
-- `spawn` forks into state scope - cancelled on state exit
-- `background` forks into machine scope - cancelled on stop/final
-- Effect implementations live in `provide()` - consistent with guards
-- Use `Effect.addFinalizer` for cleanup logic
-- `simulate()` ignores spawn/background effects - works without real actor
-
-## Testing
-
-| Function            | Guard/Effect Slots | Spawn Effects | Observer |
-| ------------------- | ------------------ | ------------- | -------- |
-| `simulate`          | Yes                | No            | No       |
-| `createTestHarness` | Yes                | No            | Yes      |
-| Actor + yieldNow    | Yes                | Yes           | No       |
-
-Use `Layer.merge(ActorSystemDefault, TestContext.TestContext)` for TestClock.
-
-## ActorRef API
-
-| Method         | Effect | Sync | Purpose                         |
-| -------------- | ------ | ---- | ------------------------------- |
-| `snapshot`     | Yes    | -    | Get current state               |
-| `snapshotSync` | -      | Yes  | Get current state (sync)        |
-| `matches`      | Yes    | -    | Check state tag                 |
-| `matchesSync`  | -      | Yes  | Check state tag (sync)          |
-| `can`          | Yes    | -    | Check if event handled          |
-| `canSync`      | -      | Yes  | Check if event handled (sync)   |
-| `changes`      | Stream | -    | Stream of state updates         |
-| `subscribe`    | -      | Yes  | Sync callback, returns unsub fn |
+Use `TestContext.TestContext` for TestClock in spawn tests.

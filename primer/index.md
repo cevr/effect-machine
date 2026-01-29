@@ -1,131 +1,167 @@
 # effect-machine
 
-Type-safe state machines for Effect. XState-inspired, Effect-native.
+Type-safe state machines for Effect. Schema-first API with full Effect integration.
 
-## When to Use
+## Why effect-machine?
 
-- Complex UI flows (checkout, wizards, forms)
-- Async workflows with retry/timeout logic
-- Protocol implementations
-- Game state management
-- Anywhere state + events + effects intersect
+State machines eliminate entire categories of bugs:
+
+- **No invalid states** - compile-time enforcement of valid transitions
+- **Explicit side effects** - effects scoped to states, auto-cancelled on exit
+- **Testable** - simulate transitions without actors, assert paths deterministically
+- **Serializable** - schemas power persistence and cluster distribution
 
 ## Navigation
 
 ```
 What are you doing?
 ├─ Learning the basics        → basics.md
-├─ Adding transitions         → combinators.md
-├─ Composing guards           → guards.md
-├─ Writing tests              → testing.md
-├─ Using actors               → actors.md
-└─ Understanding internals    → ../CODEMAP.md
+├─ Writing transitions        → handlers.md
+├─ Adding side effects        → effects.md
+├─ Testing a machine          → testing.md
+├─ Running actors             → actors.md
+├─ Adding persistence         → persistence.md
+└─ Debugging issues           → gotchas.md
 ```
 
 ## Topic Index
 
-| Topic             | File             | When to Read          |
-| ----------------- | ---------------- | --------------------- |
-| Core concepts     | `basics.md`      | New to effect-machine |
-| All combinators   | `combinators.md` | Building machines     |
-| Guard composition | `guards.md`      | Complex conditions    |
-| Testing patterns  | `testing.md`     | Writing tests         |
-| Actor system      | `actors.md`      | Running machines      |
+| Topic       | File             | When to Read                     |
+| ----------- | ---------------- | -------------------------------- |
+| Core        | `basics.md`      | First time, understanding API    |
+| Handlers    | `handlers.md`    | Writing transitions, guards      |
+| Effects     | `effects.md`     | spawn, background, timeouts      |
+| Testing     | `testing.md`     | simulate, harness, assertions    |
+| Actors      | `actors.md`      | ActorSystem, ActorRef, lifecycle |
+| Persistence | `persistence.md` | Snapshots, event sourcing        |
+| Gotchas     | `gotchas.md`     | Common mistakes, debugging       |
 
 ## Quick Example
 
-```typescript
+```ts
 import { Effect, Schema } from "effect";
-import { Machine, State, Event, simulate } from "effect-machine";
+import {
+  Machine,
+  State,
+  Event,
+  Slot,
+  ActorSystemService,
+  ActorSystemDefault,
+} from "effect-machine";
 
-const MyState = State({
-  Idle: {},
-  Loading: {},
-  Done: { result: Schema.String },
+// 1. Define state schema
+const OrderState = State({
+  Pending: { orderId: Schema.String },
+  Processing: { orderId: Schema.String },
+  Shipped: { trackingId: Schema.String },
+  Cancelled: {},
 });
-type MyState = typeof MyState.Type;
 
-const MyEvent = Event({
-  Start: {},
-  Complete: { result: Schema.String },
+// 2. Define event schema
+const OrderEvent = Event({
+  Process: {},
+  Ship: { trackingId: Schema.String },
+  Cancel: {},
 });
-type MyEvent = typeof MyEvent.Type;
 
-const machine = Machine.make({
-  state: MyState,
-  event: MyEvent,
-  initial: MyState.Idle,
+// 3. Define effect slots
+const OrderEffects = Slot.Effects({
+  notifyWarehouse: { orderId: Schema.String },
+});
+
+// 4. Build machine
+const orderMachine = Machine.make({
+  state: OrderState,
+  event: OrderEvent,
+  effects: OrderEffects,
+  initial: OrderState.Pending({ orderId: "order-1" }),
 })
-  .on(MyState.Idle, MyEvent.Start, () => MyState.Loading)
-  .on(MyState.Loading, MyEvent.Complete, ({ event }) => MyState.Done({ result: event.result }))
-  .final(MyState.Done);
+  .on(OrderState.Pending, OrderEvent.Process, ({ state }) =>
+    OrderState.Processing({ orderId: state.orderId }),
+  )
+  .on(OrderState.Processing, OrderEvent.Ship, ({ event }) =>
+    OrderState.Shipped({ trackingId: event.trackingId }),
+  )
+  .on(OrderState.Pending, OrderEvent.Cancel, () => OrderState.Cancelled)
+  .on(OrderState.Processing, OrderEvent.Cancel, () => OrderState.Cancelled)
+  // Spawn effect when entering Processing - auto-cancelled on exit
+  .spawn(OrderState.Processing, ({ effects, state }) =>
+    effects.notifyWarehouse({ orderId: state.orderId }),
+  )
+  .provide({
+    notifyWarehouse: ({ orderId }, { self }) =>
+      Effect.gen(function* () {
+        yield* Effect.log(`Notifying warehouse for ${orderId}`);
+        // Effect continues until state exits
+      }),
+  })
+  .final(OrderState.Shipped)
+  .final(OrderState.Cancelled);
 
-// Test it
-const result = await Effect.runPromise(
-  simulate(machine, [MyEvent.Start, MyEvent.Complete({ result: "ok" })]),
-);
-console.log(result.finalState._tag); // "Done"
+// 5. Run as actor
+const program = Effect.gen(function* () {
+  const system = yield* ActorSystemService;
+  const actor = yield* system.spawn("order-1", orderMachine);
+
+  yield* actor.send(OrderEvent.Process);
+  yield* actor.send(OrderEvent.Ship({ trackingId: "TRACK-123" }));
+
+  const state = yield* actor.snapshot;
+  console.log(state); // Shipped { trackingId: "TRACK-123" }
+});
+
+Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))));
 ```
 
-## Key Concepts
+## Core Concepts
 
-| Concept        | Description                                         |
-| -------------- | --------------------------------------------------- |
-| **State**      | Branded type representing machine state             |
-| **Event**      | Branded type representing inputs                    |
-| **Transition** | State + Event → New State                           |
-| **Guard**      | Boolean predicate that enables/disables transitions |
-| **Spawn**      | State-scoped effect slot (cancelled on exit)        |
-| **Background** | Machine-lifetime effect slot                        |
-| **Final**      | Terminal state - no transitions out                 |
+| Concept     | Description                                                                                                 |
+| ----------- | ----------------------------------------------------------------------------------------------------------- |
+| **State**   | Schema-first tagged union. Empty = value (`State.Idle`), non-empty = constructor (`State.Loading({ url })`) |
+| **Event**   | Schema-first tagged union. Same pattern as State.                                                           |
+| **Machine** | Fluent builder. `.on()` for transitions, `.spawn()` for state-scoped effects.                               |
+| **Slots**   | Parameterized guards/effects. Define with `Slot.Guards`/`Slot.Effects`, provide with `.provide()`.          |
+| **Actor**   | Running machine instance with send/stop/state. Spawned via `ActorSystem.spawn()`.                           |
 
 ## API Quick Reference
 
 ### Building
 
-| Function                | Purpose                          |
-| ----------------------- | -------------------------------- |
-| `Machine.make(initial)` | Start machine with initial state |
-| `Machine.on(...)`       | Add transition                   |
-| `Machine.final(state)`  | Mark state as final              |
-
-### Combinators
-
-| Function                                 | Purpose                                     |
-| ---------------------------------------- | ------------------------------------------- |
-| `Machine.choose(state, event, branches)` | Guard cascade                               |
-| `Machine.spawn(state, handler)`          | State-scoped effect (calls effect slot)     |
-| `Machine.background(handler)`            | Machine-lifetime effect (calls effect slot) |
-| `Machine.provide(machine, handlers)`     | Wire handlers to slots                      |
-
-### Guards
-
-| Function          | Purpose            |
-| ----------------- | ------------------ |
-| `Slot.Guards`     | Define guard slots |
-| `Guard.and(a, b)` | Both must pass     |
-| `Guard.or(a, b)`  | Either can pass    |
-| `Guard.not(g)`    | Negate guard       |
+| Method                                    | Purpose                         |
+| ----------------------------------------- | ------------------------------- |
+| `Machine.make({ state, event, initial })` | Create machine                  |
+| `.on(State.X, Event.Y, handler)`          | Add transition                  |
+| `.reenter(State.X, Event.Y, handler)`     | Transition with forced re-entry |
+| `.spawn(State.X, handler)`                | State-scoped effect             |
+| `.background(handler)`                    | Machine-lifetime effect         |
+| `.provide({ slot: impl })`                | Provide slot implementations    |
+| `.final(State.X)`                         | Mark state as final             |
+| `.persist(config)`                        | Enable persistence              |
 
 ### Testing
 
-| Function                                | Purpose                    |
-| --------------------------------------- | -------------------------- |
-| `simulate(machine, events)`             | Run events, get all states |
-| `createTestHarness(machine)`            | Step-by-step testing       |
-| `assertReaches(machine, events, state)` | Assert final state         |
+| Function                     | Runs Slots | Runs Spawn | Use For         |
+| ---------------------------- | ---------- | ---------- | --------------- |
+| `simulate(machine, events)`  | Yes        | No         | Path assertions |
+| `createTestHarness(machine)` | Yes        | No         | Step-by-step    |
+| Actor + `yieldFibers`        | Yes        | Yes        | Integration     |
 
-### Actors
+### Actor
 
-| Export               | Purpose                      |
-| -------------------- | ---------------------------- |
-| `ActorSystemService` | Service tag for actor system |
-| `ActorSystemDefault` | Default layer                |
+| Method                   | Sync   | Description       |
+| ------------------------ | ------ | ----------------- |
+| `actor.send(event)`      | No     | Send event        |
+| `actor.snapshot`         | No     | Get state         |
+| `actor.snapshotSync()`   | Yes    | Get state         |
+| `actor.matches(tag)`     | No     | Check state tag   |
+| `actor.matchesSync(tag)` | Yes    | Check state tag   |
+| `actor.can(event)`       | No     | Can handle event? |
+| `actor.canSync(event)`   | Yes    | Can handle event? |
+| `actor.changes`          | Stream | State changes     |
+| `actor.subscribe(fn)`    | Yes    | Sync callback     |
 
 ## See Also
 
-- `basics.md` - core concepts in depth
-- `combinators.md` - all combinators explained
-- `guards.md` - guard composition patterns
-- `testing.md` - testing strategies
-- `actors.md` - actor system usage
+- `basics.md` - Core concepts in depth
+- `handlers.md` - Transition handlers and guards
+- `effects.md` - spawn, background, timeouts

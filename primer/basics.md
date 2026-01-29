@@ -2,209 +2,199 @@
 
 Core concepts for building state machines with effect-machine.
 
-## States and Events
+## State Schema
 
-States and events are schema-first definitions:
+States are defined with `State()`. Each variant is a schema:
 
-```typescript
+```ts
 import { Schema } from "effect";
-import { State, Event } from "effect-machine";
+import { State } from "effect-machine";
 
-// States - what the machine can be (schema-first)
 const MyState = State({
-  Idle: {},
-  Loading: { url: Schema.String },
-  Success: { data: Schema.String },
-  Error: { message: Schema.String },
+  Idle: {}, // Empty - plain value
+  Loading: { url: Schema.String }, // Non-empty - constructor
+  Success: { data: Schema.Unknown },
+  Error: { message: Schema.String, code: Schema.Number },
 });
-type MyState = typeof MyState.Type;
 
-// Events - what can happen (schema-first)
-const MyEvent = Event({
-  Fetch: { url: Schema.String },
-  Resolve: { data: Schema.String },
-  Reject: { message: Schema.String },
-});
-type MyEvent = typeof MyEvent.Type;
+type MyState = typeof MyState.Type; // Extract type
+
+// Usage
+MyState.Idle; // Value (no parens)
+MyState.Loading({ url: "/api" }); // Constructor (args required)
+MyState.Error({ message: "fail", code: 500 });
 ```
 
-**Why schema-first?**
+**Key insight**: States ARE schemas. This enables automatic serialization for persistence and clustering.
 
-- Single source of truth for types AND serialization
-- Exhaustive pattern matching
-- Type narrowing in handlers
-- Structural equality for testing
-- Compile-time prevention of state/event mixups
-- Automatic persistence support (schemas attached to machine)
+## Event Schema
 
-## Building Machines
+Events follow the same pattern:
 
-Use `Machine.make({ state, event, initial })` to compose a machine definition:
-
-```typescript
-import { Effect, Schema } from "effect";
-import { Machine, State, Event } from "effect-machine";
-
-// Define state and event schemas
-const MyState = State({
-  Idle: {},
-  Loading: { url: Schema.String },
-  Success: { data: Schema.String },
-  Error: { message: Schema.String },
-});
-type MyState = typeof MyState.Type;
-
+```ts
 const MyEvent = Event({
+  Start: {},
   Fetch: { url: Schema.String },
-  Resolve: { data: Schema.String },
-  Reject: { message: Schema.String },
+  Resolve: { data: Schema.Unknown },
+  Reject: { error: Schema.String },
 });
+
 type MyEvent = typeof MyEvent.Type;
 
-// Machine.make infers types from schemas - no manual type params needed!
-const machine = Machine.make({
-  state: MyState,
-  event: MyEvent,
-  initial: MyState.Idle,
-})
-  // Transitions: from state + event → new state
-  .on(MyState.Idle, MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url }))
-  .on(MyState.Loading, MyEvent.Resolve, ({ event }) => MyState.Success({ data: event.data }))
-  .on(MyState.Loading, MyEvent.Reject, ({ event }) => MyState.Error({ message: event.message }))
-
-  // Final states (no transitions out)
-  .final(MyState.Success)
-  .final(MyState.Error);
+// Usage
+MyEvent.Start; // Value
+MyEvent.Fetch({ url: "/api" }); // Constructor
 ```
 
-## Transition Handlers
+## Machine Builder
 
-Handlers receive a context object with `state` and `event`:
+Create machines with `Machine.make()`:
 
-```typescript
-machine.on(MyState.Loading, MyEvent.Resolve, ({ state, event }) => {
-  // state is narrowed to Loading
-  // event is narrowed to Resolve
-  return MyState.Success({ data: event.data });
-});
-```
-
-### Returning Effects
-
-Handlers can return an Effect for async transitions:
-
-```typescript
-machine.on(MyState.Idle, MyEvent.Fetch, ({ event }) =>
-  Effect.gen(function* () {
-    const data = yield* fetchData(event.url);
-    return MyState.Success({ data });
-  }),
-);
-```
-
-## Guards
-
-Conditionally enable transitions using guard slots:
-
-```typescript
-const MyGuards = Slot.Guards({
-  isValid: {},
-});
-
-Machine.make({
-  state: MyState,
-  event: MyEvent,
-  guards: MyGuards,
-  initial: MyState.Form({ isValid: false }),
-})
-  .on(MyState.Form, MyEvent.Submit, ({ state, guards }) =>
-    Effect.gen(function* () {
-      if (yield* guards.isValid()) {
-        return MyState.Submitting;
-      }
-      return state;
-    }),
-  )
-  .provide({
-    isValid: (_params, { state }) => state.email.includes("@"),
-  });
-```
-
-If guard returns `false`, stay in current state.
-
-## State Effects with spawn
-
-Run effects when entering a state. Spawn handlers call effect slots defined via `Slot.Effects`:
-
-```typescript
-import { Machine, State, Event, Slot } from "effect-machine";
-
-const MyEffects = Slot.Effects({
-  fetchData: { url: Schema.String },
-});
+```ts
+import { Machine } from "effect-machine";
 
 const machine = Machine.make({
-  state: MyState,
-  event: MyEvent,
-  effects: MyEffects,
-  initial: MyState.Idle,
-})
+  state: MyState, // Required
+  event: MyEvent, // Required
+  initial: MyState.Idle, // Required
+  guards: MyGuards, // Optional - Slot.Guards
+  effects: MyEffects, // Optional - Slot.Effects
+});
+```
+
+Types are inferred from schemas - no manual type parameters needed.
+
+## Transitions with `.on()`
+
+Define transitions with `.on(state, event, handler)`:
+
+```ts
+machine
+  .on(MyState.Idle, MyEvent.Start, () => MyState.Loading({ url: "/default" }))
   .on(MyState.Idle, MyEvent.Fetch, ({ event }) => MyState.Loading({ url: event.url }))
   .on(MyState.Loading, MyEvent.Resolve, ({ event }) => MyState.Success({ data: event.data }))
-  // Spawn calls effect slot - logic lives in provide()
-  .spawn(MyState.Loading, ({ effects, state }) => effects.fetchData({ url: state.url }))
-  .provide({
-    fetchData: ({ url }, { self }) =>
-      Effect.gen(function* () {
-        yield* Effect.addFinalizer(() => Effect.log("Leaving Loading"));
-        const data = yield* fetchData(url);
-        yield* self.send(MyEvent.Resolve({ data }));
-      }),
-  });
+  .on(MyState.Loading, MyEvent.Reject, ({ event }) =>
+    MyState.Error({ message: event.error, code: 500 }),
+  );
 ```
 
-`self.send` lets you send events back to the machine from effects.
-
-## Delayed Events
-
-Schedule events after a duration using spawn. Timer is automatically cancelled when state exits.
-
-```typescript
-const MyEffects = Slot.Effects({
-  scheduleAutoDismiss: {},
-});
-
-Machine.make({
-  state: MyState,
-  event: MyEvent,
-  effects: MyEffects,
-  initial: MyState.Success({ message: "Done" }),
-})
-  .on(MyState.Success, MyEvent.Dismiss, () => MyState.Dismissed)
-  .spawn(MyState.Success, ({ effects }) => effects.scheduleAutoDismiss())
-  .provide({
-    scheduleAutoDismiss: (_, { self }) =>
-      Effect.sleep("3 seconds").pipe(Effect.andThen(self.send(MyEvent.Dismiss))),
-  });
-```
-
-Use `reenter` to reset the timer on activity (timer restarts when spawn effects re-run).
+Handler receives `{ state, event, guards, effects }` and returns new state or `Effect<State>`.
 
 ## Final States
 
-Mark states as terminal:
+Mark states as final with `.final()`:
 
-```typescript
+```ts
 machine.final(MyState.Success).final(MyState.Error);
 ```
 
-Once in a final state:
+Actor stops when reaching a final state.
 
-- No transitions are processed
-- Actor stops automatically
+## Pattern Matching
+
+States and events have `$is()` and `$match()` helpers:
+
+```ts
+// Type guard
+if (MyState.$is("Loading")(state)) {
+  console.log(state.url); // TypeScript knows this is Loading
+}
+
+// Pattern matching
+const message = MyState.$match(state, {
+  Idle: () => "Waiting...",
+  Loading: ({ url }) => `Fetching ${url}`,
+  Success: ({ data }) => `Got: ${data}`,
+  Error: ({ message }) => `Error: ${message}`,
+});
+```
+
+## Slots: Guards and Effects
+
+Guards and effects are defined as parameterized slots:
+
+```ts
+import { Slot } from "effect-machine";
+
+// Guard slots - return boolean
+const MyGuards = Slot.Guards({
+  canRetry: { max: Schema.Number }, // With params
+  isValid: {}, // No params
+});
+
+// Effect slots - return Effect<void>
+const MyEffects = Slot.Effects({
+  fetchData: { url: Schema.String },
+  notify: {},
+});
+```
+
+Use in machine:
+
+```ts
+const machine = Machine.make({
+  state: MyState,
+  event: MyEvent,
+  guards: MyGuards,
+  effects: MyEffects,
+  initial: MyState.Idle,
+})
+  .on(MyState.Idle, MyEvent.Start, ({ guards, effects }) =>
+    Effect.gen(function* () {
+      if (yield* guards.canRetry({ max: 3 })) {
+        yield* effects.notify();
+        return MyState.Loading({ url: "/api" });
+      }
+      return MyState.Error({ message: "Max retries", code: 429 });
+    }),
+  )
+  .provide({
+    canRetry: ({ max }, { state }) => {
+      // state.attempts < max
+      return true;
+    },
+    notify: (_, { self }) => Effect.log("Starting..."),
+  });
+```
+
+**Key pattern**: Guards/effects called inside handler with `yield*`. Implementations in `.provide()`.
+
+## Provide Signature
+
+`.provide()` maps slot names to implementations:
+
+```ts
+.provide({
+  slotName: (params, ctx) => result,
+})
+```
+
+| Argument | Type                     | Description                                |
+| -------- | ------------------------ | ------------------------------------------ |
+| `params` | Schema type              | Parameters defined in slot                 |
+| `ctx`    | `{ state, event, self }` | Current state, triggering event, actor ref |
+
+**Guards** return `boolean | Effect<boolean>`.
+**Effects** return `Effect<void>`.
+
+## Reusable Machines
+
+`.provide()` creates a new machine instance:
+
+```ts
+const baseMachine = Machine.make({...})
+  .on(...)
+  .spawn(...);
+
+// Different implementations for different contexts
+const devMachine = baseMachine.provide({ fetch: mockFetch });
+const prodMachine = baseMachine.provide({ fetch: realFetch });
+```
+
+Original machine unchanged - safe to reuse.
 
 ## See Also
 
-- `combinators.md` - all combinators in detail
-- `guards.md` - guard composition
-- `testing.md` - testing your machines
+- `handlers.md` - Advanced handler patterns
+- `effects.md` - spawn and background effects
+- `testing.md` - Testing machines

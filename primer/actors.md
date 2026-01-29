@@ -2,310 +2,191 @@
 
 Running machines as actors with lifecycle management.
 
-## Overview
+## ActorSystem
 
-Actors are running instances of machines with:
+Spawn and manage actors via `ActorSystem`:
 
-- Unique ID
-- Event queue
-- Observable state
-- Automatic lifecycle (start/stop)
-
-## Actor System
-
-The `ActorSystem` service manages actor lifecycles.
-
-### Setup
-
-```typescript
+```ts
 import { Effect } from "effect";
-import { ActorSystemDefault, ActorSystemService, Machine, State, Event } from "effect-machine";
+import { ActorSystemService, ActorSystemDefault } from "effect-machine";
 
 const program = Effect.gen(function* () {
   const system = yield* ActorSystemService;
 
-  // Spawn an actor
-  const actor = yield* system.spawn("my-actor", machine);
+  // Spawn actor
+  const actor = yield* system.spawn("order-1", orderMachine);
 
-  // Use the actor...
-}).pipe(Effect.scoped, Effect.provide(ActorSystemDefault));
+  // Use actor...
+  yield* actor.send(Event.Process);
 
-Effect.runPromise(program);
+  // Actor auto-cleaned up when scope closes
+});
+
+Effect.runPromise(Effect.scoped(program).pipe(Effect.provide(ActorSystemDefault)));
 ```
 
-**Key:** Always use `Effect.scoped` - actors are scoped resources.
+**Important**: Actors require a scope. Use `Effect.scoped()` or provide a scope.
 
-## Spawning Actors
+## ActorRef Methods
 
-```typescript
-const actor = yield * system.spawn(id, machine);
+| Method             | Type              | Description                        |
+| ------------------ | ----------------- | ---------------------------------- |
+| `send(event)`      | `Effect<void>`    | Queue event for processing         |
+| `snapshot`         | `Effect<State>`   | Get current state                  |
+| `snapshotSync()`   | `State`           | Get current state (sync)           |
+| `matches(tag)`     | `Effect<boolean>` | Check if in state                  |
+| `matchesSync(tag)` | `boolean`         | Check if in state (sync)           |
+| `can(event)`       | `Effect<boolean>` | Can handle event in current state? |
+| `canSync(event)`   | `boolean`         | Can handle event? (sync)           |
+| `changes`          | `Stream<State>`   | Stream of state changes            |
+| `subscribe(fn)`    | `() => void`      | Sync callback, returns unsubscribe |
+| `stop`             | `Effect<void>`    | Stop actor gracefully              |
+
+## Sending Events
+
+Events are queued, not processed immediately:
+
+```ts
+yield * actor.send(Event.Start);
+yield * actor.send(Event.Process);
+yield * actor.send(Event.Complete);
+
+// Events processed in order, but async
+// Need to yield to let processing happen
+yield * Effect.yieldNow();
+
+const state = yield * actor.snapshot;
 ```
 
-- `id` - Unique identifier (throws if duplicate)
-- `machine` - Machine definition with effects provided
-- Returns `ActorRef<State, Event>`
+## Observing State
 
-## ActorRef API
+**Effect-based**:
 
-```typescript
-interface ActorRef<State, Event> {
-  // Unique ID
-  id: string;
-
-  // Send event to actor
-  send: (event: Event) => Effect<void>;
-
-  // Observable state (SubscriptionRef)
-  state: SubscriptionRef<State>;
-
-  // Stop the actor
-  stop: Effect<void>;
-}
+```ts
+const state = yield * actor.snapshot;
+const isLoading = yield * actor.matches("Loading");
+const canProcess = yield * actor.can(Event.Process);
 ```
 
-### Sending Events
+**Sync (for UI integration)**:
 
-```typescript
-yield * actor.send(MyEvent.Start);
+```ts
+const state = actor.snapshotSync();
+const isLoading = actor.matchesSync("Loading");
+const canProcess = actor.canSync(Event.Process);
 ```
 
-Events are queued and processed sequentially.
+**Stream**:
 
-### Reading State
-
-```typescript
-// Current state
-const current = yield * actor.state.get;
-
-// Subscribe to changes
+```ts
 yield *
-  actor.state.changes.pipe(
+  actor.changes.pipe(
     Stream.tap((state) => Effect.log(`State: ${state._tag}`)),
+    Stream.takeUntil((state) => state._tag === "Done"),
     Stream.runDrain,
   );
 ```
 
-### Stopping
+**Sync callback**:
 
-```typescript
-// Explicit stop
-yield * actor.stop;
+```ts
+const unsubscribe = actor.subscribe((state) => {
+  console.log("State changed:", state._tag);
+});
 
-// Or via system
-yield * system.stop("my-actor");
-```
-
-Actors also stop automatically when:
-
-- Reaching a final state
-- Scope is closed
-
-## Multiple Actors
-
-```typescript
-const system = yield * ActorSystemService;
-
-// Spawn multiple actors
-const actor1 = yield * system.spawn("player-1", playerMachine);
-const actor2 = yield * system.spawn("player-2", playerMachine);
-
-// Communicate between actors
-yield * actor1.send(MyEvent.Attack({ target: actor2.id }));
-```
-
-## Looking Up Actors
-
-```typescript
-const maybeActor = yield * system.get("player-1");
-
-if (Option.isSome(maybeActor)) {
-  yield * maybeActor.value.send(MyEvent.Heal);
-}
+// Later...
+unsubscribe();
 ```
 
 ## Actor Lifecycle
 
-```
-spawn() called
-    │
-    ▼
-┌─────────────────┐
-│ Initial State   │ ← spawn effects forked
-└────────┬────────┘
-         │
-    Events processed
-         │
-         ▼
-┌─────────────────┐
-│ Running         │ ← transitions + effects
-└────────┬────────┘
-         │
-    Final state OR stop()
-         │
-         ▼
-┌─────────────────┐
-│ Stopped         │ ← finalizers run, fibers interrupted
-└─────────────────┘
-```
+1. **Spawn** - `system.spawn(id, machine)`
+2. **Initial state** - Background effects start, initial spawn effects run
+3. **Event processing** - Events processed in order
+4. **State transitions** - Spawn effects cancelled on exit, new ones start on enter
+5. **Final state** - Actor stops, all effects interrupted
+6. **Scope close** - Cleanup finalizers run
 
-## State Effects with spawn
+## Multiple Actors
 
-Effects are forked on state entry and cancelled on exit. Spawn handlers call effect slots defined via `Slot.Effects`:
+Each actor has independent state:
 
-```typescript
-import { Machine, State, Event, Slot, Schema } from "effect-machine";
+```ts
+const actor1 = yield * system.spawn("order-1", orderMachine);
+const actor2 = yield * system.spawn("order-2", orderMachine);
 
-const MyState = State({
-  Idle: {},
-  Loading: { url: Schema.String },
-  Success: { data: Schema.String },
-});
-type MyState = typeof MyState.Type;
+yield * actor1.send(Event.Process);
+// actor2 unaffected
 
-const MyEvent = Event({
-  Start: { url: Schema.String },
-  Done: { data: Schema.String },
-});
-type MyEvent = typeof MyEvent.Type;
-
-const MyEffects = Slot.Effects({
-  fetchData: { url: Schema.String },
-});
-
-const machine = Machine.make({
-  state: MyState,
-  event: MyEvent,
-  effects: MyEffects,
-  initial: MyState.Idle,
-})
-  .on(MyState.Idle, MyEvent.Start, ({ event }) => MyState.Loading({ url: event.url }))
-  .on(MyState.Loading, MyEvent.Done, ({ event }) => MyState.Success({ data: event.data }))
-  // Spawn calls effect slot - logic lives in provide()
-  .spawn(MyState.Loading, ({ effects, state }) => effects.fetchData({ url: state.url }))
-  .provide({
-    fetchData: ({ url }, { self }) =>
-      Effect.gen(function* () {
-        yield* Effect.addFinalizer(() => Effect.log("Leaving Loading"));
-        const data = yield* fetchFromApi(url);
-        yield* self.send(MyEvent.Done({ data }));
-      }),
-  })
-  .final(MyState.Success);
+const state1 = yield * actor1.snapshot; // Processing
+const state2 = yield * actor2.snapshot; // Idle
 ```
 
-## spawn for Auto-Cancel
+## Actor Registry
 
-`spawn` runs an effect on entry and cancels it on exit:
+Query existing actors:
 
-```typescript
-const MyState = State({
-  Idle: {},
-  Polling: { id: Schema.String },
-});
-type MyState = typeof MyState.Type;
+```ts
+// Get actor by ID
+const maybeActor = yield * system.get("order-1");
+if (Option.isSome(maybeActor)) {
+  const actor = maybeActor.value;
+  // ...
+}
 
-const MyEvent = Event({
-  StartPolling: { id: Schema.String },
-  StatusUpdate: { status: Schema.String },
-  Stop: {},
-});
-type MyEvent = typeof MyEvent.Type;
-
-const MyEffects = Slot.Effects({
-  pollStatus: { id: Schema.String },
-});
-
-const machine = Machine.make({
-  state: MyState,
-  event: MyEvent,
-  effects: MyEffects,
-  initial: MyState.Idle,
-})
-  .on(MyState.Idle, MyEvent.StartPolling, ({ event }) => MyState.Polling({ id: event.id }))
-  .on(MyState.Polling, MyEvent.Stop, () => MyState.Idle)
-  .spawn(MyState.Polling, ({ effects, state }) => effects.pollStatus({ id: state.id }))
-  .provide({
-    pollStatus: ({ id }, { self }) =>
-      Effect.gen(function* () {
-        while (true) {
-          yield* Effect.sleep("5 seconds");
-          const status = yield* checkStatus(id);
-          yield* self.send(MyEvent.StatusUpdate({ status }));
-        }
-      }),
-  });
+// Stop actor by ID
+const stopped = yield * system.stop("order-1");
+// true if actor existed and was stopped
 ```
 
-When transitioning out of `Polling`, the polling fiber is automatically interrupted.
+## Duplicate Actor Prevention
 
-## Testing with Actors
+Same ID cannot be spawned twice:
 
-```typescript
-test("actor processes events", async () => {
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("test", machine);
-      yield* Effect.yieldNow(); // Let spawn effect run
-
-      yield* actor.send(MyEvent.Start({ url: "/api" }));
-      yield* Effect.yieldNow(); // Let async effects run
-
-      const state = yield* actor.state.get;
-      expect(state._tag).toBe("Loading");
-    }).pipe(Effect.scoped, Effect.provide(ActorSystemDefault)),
-  );
-});
+```ts
+yield * system.spawn("order-1", machine);
+yield * system.spawn("order-1", machine);
+// DuplicateActorError!
 ```
 
-## Delays with TestClock
+Check first if unsure:
 
-```typescript
-import { Layer, TestClock, TestContext } from "effect";
-
-test("delayed transition", async () => {
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("test", machineWithDelay);
-
-      yield* TestClock.adjust("3 seconds");
-      yield* Effect.yieldNow();
-
-      const state = yield* actor.state.get;
-      expect(state._tag).toBe("TimedOut");
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(Layer.merge(ActorSystemDefault, TestContext.TestContext)),
-    ),
-  );
-});
+```ts
+const existing = yield * system.get("order-1");
+if (Option.isNone(existing)) {
+  yield * system.spawn("order-1", machine);
+}
 ```
 
-## Error Handling
+## Persistent Actors
 
-Unhandled errors in effects will cause the fiber to fail. Use Effect error handling inside the slot implementation:
+For persistence, use `PersistentActorRef`:
 
-```typescript
-const MyEffects = Slot.Effects({
-  fetchData: { url: Schema.String },
+```ts
+const persistentMachine = machine.persist({
+  snapshotSchedule: Schedule.forever,
+  journalEvents: true,
 });
 
-machine
-  .spawn(MyState.Loading, ({ effects, state }) => effects.fetchData({ url: state.url }))
-  .provide({
-    fetchData: ({ url }, { self }) =>
-      Effect.gen(function* () {
-        const result = yield* fetchFromApi(url).pipe(
-          Effect.catchAll((error) => self.send(MyEvent.Error({ message: String(error) }))),
-        );
-        yield* self.send(MyEvent.Done({ data: result }));
-      }),
-  });
+const actor = yield * system.spawn("order-1", persistentMachine);
+
+// Additional methods
+yield * actor.persist; // Force snapshot save
+const version = yield * actor.version; // Get persistence version
+yield * actor.replayTo(5); // Replay to specific version
+```
+
+Restore from persistence:
+
+```ts
+const maybeActor = yield * system.restore("order-1", persistentMachine);
+if (Option.isSome(maybeActor)) {
+  // Actor restored with persisted state
+}
 ```
 
 ## See Also
 
-- `testing.md` - testing patterns
-- `combinators.md` - all combinators
-- `basics.md` - core concepts
+- `effects.md` - spawn and background effects
+- `persistence.md` - Persistence details
+- `testing.md` - Testing actors

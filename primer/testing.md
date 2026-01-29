@@ -1,262 +1,221 @@
 # Testing
 
-Testing patterns for effect-machine.
+Testing state machines with simulate, harness, and actors.
 
 ## Testing Approaches
 
-| Approach            | Use When                                    |
-| ------------------- | ------------------------------------------- |
-| `simulate`          | Testing state transitions (no side effects) |
-| `createTestHarness` | Step-by-step state inspection               |
-| `assertReaches`     | Quick assertions on final state             |
-| Actor testing       | Testing with real effects, delays           |
+| Approach              | Runs Guards/Effects | Runs Spawn | Best For                            |
+| --------------------- | ------------------- | ---------- | ----------------------------------- |
+| `simulate()`          | Yes                 | No         | Path assertions, quick validation   |
+| `createTestHarness()` | Yes                 | No         | Step-by-step, transition inspection |
+| Real Actor            | Yes                 | Yes        | Integration, timing-dependent tests |
 
-## simulate
+## simulate()
 
-Run a sequence of events and get all intermediate states.
+Run events and get all visited states:
 
-```typescript
-import { Effect } from "effect";
-import { simulate, Machine, State, Event } from "effect-machine";
+```ts
+import { simulate, assertPath, assertReaches, assertNeverReaches } from "effect-machine";
 
-test("transitions through states", async () => {
-  await Effect.runPromise(
+it.live("happy path", () =>
+  Effect.gen(function* () {
+    const result = yield* simulate(machine, [Event.Start, Event.Process, Event.Complete]);
+
+    expect(result.finalState._tag).toBe("Done");
+    expect(result.states.map((s) => s._tag)).toEqual(["Idle", "Processing", "Done"]);
+  }),
+);
+```
+
+## Path Assertions
+
+**assertPath** - exact path match:
+
+```ts
+it.live("follows expected path", () =>
+  assertPath(machine, [Event.Start, Event.Complete], ["Idle", "Processing", "Done"]),
+);
+```
+
+**assertReaches** - ends at specific state:
+
+```ts
+it.live("reaches success", () =>
+  Effect.gen(function* () {
+    const state = yield* assertReaches(machine, [Event.Start, Event.Succeed], "Success");
+    expect(state.data).toBe("expected");
+  }),
+);
+```
+
+**assertNeverReaches** - never visits state:
+
+```ts
+it.live("never crashes", () =>
+  assertNeverReaches(machine, [Event.Start, Event.Error, Event.Retry], "Crashed"),
+);
+```
+
+## createTestHarness()
+
+Step-by-step testing with transition observation:
+
+```ts
+it.live("step by step", () =>
+  Effect.gen(function* () {
+    const transitions: string[] = [];
+
+    const harness = yield* createTestHarness(machine, {
+      onTransition: (from, event, to) => {
+        transitions.push(`${from._tag} -[${event._tag}]-> ${to._tag}`);
+      },
+    });
+
+    expect((yield* harness.getState)._tag).toBe("Idle");
+
+    yield* harness.send(Event.Start);
+    expect((yield* harness.getState)._tag).toBe("Processing");
+
+    yield* harness.send(Event.Complete);
+    expect((yield* harness.getState)._tag).toBe("Done");
+
+    expect(transitions).toEqual(["Idle -[Start]-> Processing", "Processing -[Complete]-> Done"]);
+  }),
+);
+```
+
+## Testing with Guards
+
+Guards run in simulate/harness - provide implementations first:
+
+```ts
+const machineWithGuards = Machine.make({...})
+  .on(State.Error, Event.Retry, ({ guards }) =>
     Effect.gen(function* () {
-      const result = yield* simulate(machine, [
-        MyEvent.Fetch({ url: "/api" }),
-        MyEvent.Resolve({ data: "hello" }),
-      ]);
-
-      // All states visited
-      expect(result.states.map((s) => s._tag)).toEqual(["Idle", "Loading", "Success"]);
-
-      // Final state
-      expect(result.finalState._tag).toBe("Success");
-      if (result.finalState._tag === "Success") {
-        expect(result.finalState.data).toBe("hello");
+      if (yield* guards.canRetry({ max: 3 })) {
+        return State.Retrying;
       }
-    }),
-  );
-});
-```
-
-**Characteristics:**
-
-- Pure - no side effects executed
-- No actor system needed
-- Stops at final states
-
-## createTestHarness
-
-Step-by-step testing with state inspection between events.
-
-```typescript
-import { createTestHarness } from "effect-machine";
-
-test("step-by-step testing", async () => {
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      const harness = yield* createTestHarness(machine);
-
-      // Check initial state
-      let state = yield* harness.getState;
-      expect(state._tag).toBe("Idle");
-
-      // Send event
-      yield* harness.send(MyEvent.Fetch({ url: "/api" }));
-
-      // Check intermediate state
-      state = yield* harness.getState;
-      expect(state._tag).toBe("Loading");
-
-      // Continue...
-      yield* harness.send(MyEvent.Resolve({ data: "ok" }));
-      state = yield* harness.getState;
-      expect(state._tag).toBe("Success");
-    }),
-  );
-});
-```
-
-**Characteristics:**
-
-- Pure - no side effects
-- Inspect state between events
-- Good for complex flows
-
-## assertReaches
-
-Quick assertion that events lead to expected state.
-
-```typescript
-import { assertReaches } from "effect-machine";
-
-test("fetch succeeds", async () => {
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      yield* assertReaches(
-        machine,
-        [MyEvent.Fetch({ url: "/api" }), MyEvent.Resolve({ data: "ok" })],
-        "Success",
-      );
-    }),
-  );
-});
-
-test("fetch fails", async () => {
-  const result = await Effect.runPromise(
-    assertReaches(
-      machine,
-      [MyEvent.Fetch({ url: "/api" })],
-      "Success", // Won't reach
-    ).pipe(Effect.either),
-  );
-
-  expect(result._tag).toBe("Left"); // Assertion failed
-});
-```
-
-## Actor Testing
-
-For testing with real effects (spawn, delays).
-
-```typescript
-import { Effect, Layer, TestClock, TestContext } from "effect";
-import { ActorSystemDefault, ActorSystemService } from "effect-machine";
-
-test("actor with effects", async () => {
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("test", machine);
-      yield* Effect.yieldNow(); // Let spawn effect run
-
-      // Send event
-      yield* actor.send(MyEvent.Start);
-      yield* Effect.yieldNow(); // Let async effects run
-
-      // Check state
-      const state = yield* actor.state.get;
-      expect(state._tag).toBe("Running");
-    }).pipe(Effect.scoped, Effect.provide(ActorSystemDefault)),
-  );
-});
-```
-
-### Testing Delays with TestClock
-
-```typescript
-test("auto-dismiss after delay", async () => {
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("notification", machine);
-
-      // Initial state
-      let state = yield* actor.state.get;
-      expect(state._tag).toBe("Showing");
-
-      // Advance time
-      yield* TestClock.adjust("3 seconds");
-      yield* Effect.yieldNow();
-
-      // Should have auto-dismissed
-      state = yield* actor.state.get;
-      expect(state._tag).toBe("Dismissed");
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(Layer.merge(ActorSystemDefault, TestContext.TestContext)),
-    ),
-  );
-});
-```
-
-**Key:** Use `Layer.merge` to provide both ActorSystem and TestContext.
-
-## Yielding to Effects
-
-Use `Effect.yieldNow()` to let background fibers execute:
-
-```typescript
-// After sending event that triggers async effect
-yield * actor.send(MyEvent.Start);
-yield * Effect.yieldNow(); // Effects run here
-const state = yield * actor.state.get;
-```
-
-## Testing Guards
-
-Test guards via machine transitions:
-
-```typescript
-test("guard blocks transition", async () => {
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      const machine = Machine.make({
-        state: MyState,
-        event: MyEvent,
-        guards: MyGuards,
-        initial: MyState.Form({ retries: 5 }),
-      })
-        .on(MyState.Form, MyEvent.Submit, ({ state, guards }) =>
-          Effect.gen(function* () {
-            if (yield* guards.canRetry({ max: 3 })) {
-              return MyState.Submitting;
-            }
-            return state;
-          }),
-        )
-        .provide({
-          canRetry: ({ max }, { state }) => state.retries < max,
-        });
-
-      const result = yield* simulate(machine, [MyEvent.Submit]);
-      expect(result.finalState._tag).toBe("Form"); // Blocked - retries >= max
-    }),
-  );
-});
-```
-
-## Testing choose
-
-```typescript
-test("choose cascade - first match wins", async () => {
-  const MyState = State({
-    Input: { value: Schema.Number },
-    High: {},
-    Medium: {},
-    Low: {},
+      return State.Failed;
+    })
+  )
+  .provide({
+    canRetry: ({ max }, { state }) => state.attempts < max,
   });
-  type MyState = typeof MyState.Type;
 
-  const MyEvent = Event({ Classify: {} });
-  type MyEvent = typeof MyEvent.Type;
+it.live("retry blocked after max", () =>
+  assertPath(
+    machineWithGuards,
+    [
+      Event.Start,
+      Event.Fail({ attempts: 3 }),  // Set attempts = 3
+      Event.Retry,                   // Guard blocks: 3 < 3 = false
+    ],
+    ["Idle", "Processing", "Error", "Failed"]  // Goes to Failed, not Retrying
+  )
+);
+```
 
-  const machine = Machine.make({
-    state: MyState,
-    event: MyEvent,
-    initial: MyState.Input({ value: 50 }),
-  })
-    .choose(MyState.Input, MyEvent.Classify, [
-      { guard: ({ state }) => state.value >= 70, to: () => MyState.High },
-      { guard: ({ state }) => state.value >= 40, to: () => MyState.Medium },
-      { to: () => MyState.Low }, // Fallback
-    ])
-    .final(MyState.High)
-    .final(MyState.Medium)
-    .final(MyState.Low);
+## Testing Spawn Effects
 
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      const result = yield* simulate(machine, [MyEvent.Classify]);
-      expect(result.finalState._tag).toBe("Medium"); // 50 >= 40
-    }),
-  );
-});
+Spawn effects require real actors. Use `TestClock` for time control:
+
+```ts
+import { TestClock } from "effect";
+import { ActorSystemService, ActorSystemDefault } from "effect-machine";
+
+// Helper to let fibers run
+const yieldFibers = Effect.yieldNow();
+
+it.scoped("timeout fires", () =>
+  Effect.gen(function* () {
+    const system = yield* ActorSystemService;
+    const actor = yield* system.spawn("test", machine);
+
+    yield* actor.send(Event.Start);
+    yield* yieldFibers;
+
+    // State should be Waiting (timeout not fired yet)
+    expect(actor.matchesSync("Waiting")).toBe(true);
+
+    // Advance time past timeout
+    yield* TestClock.adjust("30 seconds");
+    yield* yieldFibers;
+
+    // Now should be TimedOut
+    expect(actor.matchesSync("TimedOut")).toBe(true);
+  }).pipe(Effect.provide(ActorSystemDefault)),
+);
+```
+
+**Key pattern**: Always `yield* yieldFibers` after `send()` to let effects run.
+
+## Test Helpers
+
+Create a test utilities file:
+
+```ts
+// test/utils/effect-test.ts
+import { Effect, TestContext, Layer } from "effect";
+import { describe as bunDescribe, it as bunIt, expect as bunExpect } from "bun:test";
+import { ActorSystemDefault } from "effect-machine";
+
+export const expect = bunExpect;
+export const describe = bunDescribe;
+
+// Yield to let forked fibers run
+export const yieldFibers = Effect.yieldNow();
+
+export const it = {
+  // Live clock (no TestClock)
+  live: (name: string, test: () => Effect.Effect<void>) =>
+    bunIt(name, () => Effect.runPromise(test())),
+
+  // Scoped + live
+  scopedLive: (name: string, test: () => Effect.Effect<void>) =>
+    bunIt(name, () => Effect.runPromise(Effect.scoped(test()))),
+
+  // With TestClock
+  scoped: (name: string, test: () => Effect.Effect<void>) =>
+    bunIt(name, () =>
+      Effect.runPromise(Effect.scoped(test()).pipe(Effect.provide(TestContext.TestContext))),
+    ),
+};
+```
+
+## Testing Persistent Actors
+
+Use `InMemoryPersistenceAdapter`:
+
+```ts
+import { InMemoryPersistenceAdapter } from "effect-machine";
+
+it.scoped("persists and restores", () =>
+  Effect.gen(function* () {
+    const system = yield* ActorSystemService;
+
+    // Spawn and transition
+    const actor1 = yield* system.spawn("order-1", persistentMachine);
+    yield* actor1.send(Event.Process);
+    yield* yieldFibers;
+
+    // Force persist
+    yield* actor1.persist;
+
+    // Stop actor
+    yield* actor1.stop;
+
+    // Restore from persistence
+    const actor2 = yield* system.restore("order-1", persistentMachine);
+    expect(Option.isSome(actor2)).toBe(true);
+
+    const state = yield* actor2.value.snapshot;
+    expect(state._tag).toBe("Processing");
+  }).pipe(Effect.provide(ActorSystemDefault), Effect.provide(InMemoryPersistenceAdapter)),
+);
 ```
 
 ## See Also
 
-- `actors.md` - actor system details
-- `combinators.md` - all combinators
-- `guards.md` - guard composition
+- `handlers.md` - Guard implementation
+- `effects.md` - Spawn effects
+- `actors.md` - Actor lifecycle
