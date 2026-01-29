@@ -113,7 +113,7 @@ export interface MachineContext<State, Event, Self> {
  * Single module-level tag instead of per-machine allocation.
  * @internal
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- generic context tag
 export const MachineContextTag =
   Context.GenericTag<MachineContext<any, any, any>>("@effect-machine/Context");
 

@@ -21,14 +21,7 @@ bun add effect-machine effect
 
 ```ts
 import { Effect, Schema } from "effect";
-import {
-  Machine,
-  State,
-  Event,
-  Slot,
-  ActorSystemService,
-  ActorSystemDefault,
-} from "effect-machine";
+import { Machine, State, Event, Slot } from "effect-machine";
 
 // Define state schema - states ARE schemas
 const OrderState = State({
