@@ -112,15 +112,16 @@ const MyEffects = Slot.Effects({
 });
 
 machine
-  .on(MyState.Error, MyEvent.Retry, ({ state, guards, effects }) =>
+  .on(MyState.Error, MyEvent.Retry, ({ state, guards }) =>
     Effect.gen(function* () {
       if (yield* guards.canRetry({ max: 3 })) {
-        yield* effects.fetchData({ url: state.url });
-        return MyState.Loading({ url: state.url });
+        return MyState.Loading({ url: state.url }); // Transition first
       }
       return MyState.Failed;
     }),
   )
+  // Fetch runs when entering Loading, auto-cancelled if state changes
+  .spawn(MyState.Loading, ({ effects, state }) => effects.fetchData({ url: state.url }))
   .provide({
     canRetry: ({ max }, { state }) => state.attempts < max,
     fetchData: ({ url }, { self }) =>
@@ -138,7 +139,7 @@ machine
 ```ts
 machine
   .spawn(MyState.Loading, ({ effects, state }) => effects.fetchData({ url: state.url }))
-  .spawn(MyState.Waiting, ({ effects }) => effects.scheduleTimeout({ duration: "30 seconds" }));
+  .spawn(MyState.Polling, ({ effects }) => effects.poll({ interval: "5 seconds" }));
 ```
 
 ### Testing
