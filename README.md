@@ -15,6 +15,10 @@ State machines eliminate entire categories of bugs:
 
 ```bash
 bun add effect-machine effect
+# or
+pnpm add effect-machine effect
+# or
+npm install effect-machine effect
 ```
 
 ## Quick Example
