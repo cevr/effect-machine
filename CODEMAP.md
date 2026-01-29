@@ -96,7 +96,16 @@ get transitions(): ReadonlyArray<Transition>
 
 - `findTransitions(machine, stateTag, eventTag)`
 - `findSpawnEffects(machine, stateTag)`
+- `runTransitionHandler` - shared handler execution (used by actor, testing, persistence)
 - Index built on first access, cached per machine
+
+## Actor Registry
+
+`actor.ts` uses `MutableHashMap` for O(1) spawn/stop/get operations.
+
+## Shared Context
+
+All machines share single `MachineContextTag` from `slot.ts` - no per-machine allocation.
 
 ## Testing Matrix
 

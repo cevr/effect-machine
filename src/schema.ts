@@ -250,6 +250,15 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
 };
 
 /**
+ * Internal helper to create a machine schema (shared by State and Event).
+ * Builds the schema object with variants, constructors, $is, and $match.
+ */
+const createMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(definition: D) => {
+  const { schema, variants, constructors, $is, $match } = buildMachineSchema(definition);
+  return Object.assign(Object.create(schema), { variants, $is, $match, ...constructors });
+};
+
+/**
  * Create a schema-first State definition.
  *
  * The schema's definition type D creates a unique brand, preventing
@@ -280,19 +289,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
  */
 export const State = <const D extends Record<string, Schema.Struct.Fields>>(
   definition: D,
-): MachineStateSchema<D> => {
-  const { schema, variants, constructors, $is, $match } = buildMachineSchema(definition);
-
-  // Build result object that extends the schema
-  const result = Object.assign(Object.create(schema), {
-    variants,
-    $is,
-    $match,
-    ...constructors,
-  });
-
-  return result as MachineStateSchema<D>;
-};
+): MachineStateSchema<D> => createMachineSchema(definition) as MachineStateSchema<D>;
 
 /**
  * Create a schema-first Event definition.
@@ -316,15 +313,4 @@ export const State = <const D extends Record<string, Schema.Struct.Fields>>(
  */
 export const Event = <const D extends Record<string, Schema.Struct.Fields>>(
   definition: D,
-): MachineEventSchema<D> => {
-  const { schema, variants, constructors, $is, $match } = buildMachineSchema(definition);
-
-  const result = Object.assign(Object.create(schema), {
-    variants,
-    $is,
-    $match,
-    ...constructors,
-  });
-
-  return result as MachineEventSchema<D>;
-};
+): MachineEventSchema<D> => createMachineSchema(definition) as MachineEventSchema<D>;

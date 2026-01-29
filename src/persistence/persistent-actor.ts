@@ -5,12 +5,11 @@ import { Clock, Effect, Fiber, Option, Queue, Ref, SubscriptionRef } from "effec
 
 import type { ActorRef, Listeners } from "../actor.js";
 import { buildActorRefCore, notifyListeners } from "../actor.js";
-import type { MachineRef, HandlerContext, Machine } from "../machine.js";
+import type { MachineRef, Machine } from "../machine.js";
 import type { Inspector } from "../inspection.js";
 import { Inspector as InspectorTag } from "../inspection.js";
-import { resolveTransition } from "../internal/transition.js";
-import { isEffect } from "../internal/utils.js";
-import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
+import { resolveTransition, runTransitionHandler } from "../internal/transition.js";
+import type { GuardsDef, EffectsDef } from "../slot.js";
 
 import type {
   ActorMetadata,
@@ -49,6 +48,84 @@ export interface PersistentActorRef<
 
 /** Get current time in milliseconds using Effect Clock */
 const now = Clock.currentTimeMillis;
+
+/**
+ * Replay persisted events to compute state.
+ * Supports async handlers - used for initial restore.
+ * @internal
+ */
+const replayEvents = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+  GD extends GuardsDef = Record<string, never>,
+  EFD extends EffectsDef = Record<string, never>,
+>(
+  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
+  startState: S,
+  events: ReadonlyArray<PersistedEvent<E>>,
+  self: MachineRef<E>,
+  stopVersion?: number,
+): Effect.Effect<{ state: S; version: number }, never, R> =>
+  Effect.gen(function* () {
+    let state = startState;
+    let version = 0;
+
+    for (const persistedEvent of events) {
+      if (stopVersion !== undefined && persistedEvent.version > stopVersion) break;
+
+      const transition = resolveTransition(machine, state, persistedEvent.event);
+      if (transition !== undefined) {
+        state = yield* runTransitionHandler(machine, transition, state, persistedEvent.event, self);
+      }
+      version = persistedEvent.version;
+    }
+
+    return { state, version };
+  });
+
+/**
+ * Replay events synchronously - for replayTo which doesn't have R in scope.
+ * Only supports synchronous handlers; async handlers are skipped.
+ * @internal
+ */
+const replayEventsSync = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+  GD extends GuardsDef = Record<string, never>,
+  EFD extends EffectsDef = Record<string, never>,
+>(
+  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
+  startState: S,
+  events: ReadonlyArray<PersistedEvent<E>>,
+  self: MachineRef<E>,
+  stopVersion?: number,
+): { state: S; version: number } => {
+  let state = startState;
+  let version = 0;
+
+  for (const persistedEvent of events) {
+    if (stopVersion !== undefined && persistedEvent.version > stopVersion) break;
+
+    const transition = resolveTransition(machine, state, persistedEvent.event);
+    if (transition !== undefined) {
+      // Create handler context
+      const ctx = { state, event: persistedEvent.event, self };
+      const { guards, effects } = machine._createSlotAccessors(ctx);
+      const handlerCtx = { state, event: persistedEvent.event, guards, effects };
+      const result = transition.handler(handlerCtx);
+
+      // Only apply sync results - skip async handlers
+      if (typeof result === "object" && result !== null && "_tag" in result) {
+        state = result as S;
+      }
+    }
+    version = persistedEvent.version;
+  }
+
+  return { state, version };
+};
 
 /**
  * Build PersistentActorRef with all methods
@@ -94,58 +171,30 @@ const buildPersistentActorRef = <
     },
   );
 
-  // Replay only computes state synchronously - doesn't run transition effects
+  // Replay only computes state - doesn't run spawn effects
+  // Uses sync replay since we don't have R context here
   const replayTo = (targetVersion: number): Effect.Effect<void, PersistenceError> =>
     Effect.gen(function* () {
       const currentVersion = yield* Ref.get(versionRef);
       if (targetVersion <= currentVersion) {
-        // Load snapshot at or before target, then replay events
         const maybeSnapshot = yield* adapter.loadSnapshot(id, persistence.stateSchema);
         if (Option.isSome(maybeSnapshot)) {
           const snapshot = maybeSnapshot.value;
           if (snapshot.version <= targetVersion) {
-            // Apply events from snapshot version to target version
             const events = yield* adapter.loadEvents(id, persistence.eventSchema, snapshot.version);
-            let state = snapshot.state;
-            let version = snapshot.version;
+            const dummySelf: MachineRef<E> = { send: () => Effect.void };
 
-            // Dummy self for slot accessors
-            const dummySelf: MachineRef<E> = {
-              send: () => Effect.void,
-            };
+            const result = replayEventsSync(
+              typedMachine,
+              snapshot.state,
+              events,
+              dummySelf,
+              targetVersion,
+            );
 
-            for (const persistedEvent of events) {
-              if (persistedEvent.version > targetVersion) break;
-
-              const transition = resolveTransition(typedMachine, state, persistedEvent.event);
-              if (transition !== undefined) {
-                // Create context for handler
-                const ctx: MachineContext<S, E, MachineRef<E>> = {
-                  state,
-                  event: persistedEvent.event,
-                  self: dummySelf,
-                };
-                const { guards, effects } = typedMachine._createSlotAccessors(ctx);
-
-                const handlerCtx: HandlerContext<S, E, GD, EFD> = {
-                  state,
-                  event: persistedEvent.event,
-                  guards,
-                  effects,
-                };
-
-                const newStateResult = transition.handler(handlerCtx);
-                // Only support synchronous handlers in replay
-                if (!isEffect(newStateResult)) {
-                  state = newStateResult;
-                }
-              }
-              version = persistedEvent.version;
-            }
-
-            yield* SubscriptionRef.set(stateRef, state);
-            yield* Ref.set(versionRef, version);
-            notifyListeners(listeners, state);
+            yield* SubscriptionRef.set(stateRef, result.state);
+            yield* Ref.set(versionRef, result.version);
+            notifyListeners(listeners, result.state);
           }
         }
       }
@@ -209,40 +258,15 @@ export const createPersistentActor = <
       let initialVersion: number;
 
       if (Option.isSome(initialSnapshot)) {
-        // Restore from snapshot
-        resolvedInitial = initialSnapshot.value.state;
-        initialVersion = initialSnapshot.value.version;
-
-        // Replay events after snapshot (synchronous state computation only)
-        for (const persistedEvent of initialEvents) {
-          const transition = resolveTransition(typedMachine, resolvedInitial, persistedEvent.event);
-          if (transition !== undefined) {
-            // Create context for handler
-            const ctx: MachineContext<S, E, MachineRef<E>> = {
-              state: resolvedInitial,
-              event: persistedEvent.event,
-              self,
-            };
-            const { guards, effects } = typedMachine._createSlotAccessors(ctx);
-
-            const handlerCtx: HandlerContext<S, E, GD, EFD> = {
-              state: resolvedInitial,
-              event: persistedEvent.event,
-              guards,
-              effects,
-            };
-
-            const newStateResult = transition.handler(handlerCtx);
-            // Support both sync and async handlers during initial restore
-            const newState = isEffect(newStateResult)
-              ? yield* (newStateResult as Effect.Effect<S, never, R>).pipe(
-                  Effect.provideService(typedMachine.Context, ctx),
-                )
-              : newStateResult;
-            resolvedInitial = newState;
-            initialVersion = persistedEvent.version;
-          }
-        }
+        // Restore from snapshot + replay events
+        const result = yield* replayEvents(
+          typedMachine,
+          initialSnapshot.value.state,
+          initialEvents,
+          self,
+        );
+        resolvedInitial = result.state;
+        initialVersion = initialEvents.length > 0 ? result.version : initialSnapshot.value.version;
       } else {
         // Fresh start
         resolvedInitial = typedMachine.initial;
@@ -430,86 +454,51 @@ const persistentEventLoop = <
           );
       }
 
-      // Create context for handler
-      const ctx: MachineContext<S, E, MachineRef<E>> = {
-        state: currentState,
+      // Compute new state using shared handler utility
+      const newState = yield* runTransitionHandler(
+        typedMachine,
+        transition,
+        currentState,
         event,
         self,
-      };
-      const { guards, effects } = typedMachine._createSlotAccessors(ctx);
+      );
 
-      const handlerCtx: HandlerContext<S, E, GD, EFD> = {
-        state: currentState,
-        event,
-        guards,
-        effects,
-      };
-
-      // Compute new state
-      const newStateResult = transition.handler(handlerCtx);
-      let newState = isEffect(newStateResult)
-        ? yield* (newStateResult as Effect.Effect<S, never, R>).pipe(
-            Effect.provideService(typedMachine.Context, ctx),
-          )
-        : newStateResult;
-
-      // Determine if we should run exit/enter effects
+      // Determine if we should run lifecycle (state change or reenter)
       const stateTagChanged = newState._tag !== currentState._tag;
       const runLifecycle = stateTagChanged || transition.reenter === true;
 
-      if (runLifecycle) {
-        // Note: Spawn effects cancelled automatically when we exit state
-        // (persistent actors don't use spawn effects for now)
+      if (runLifecycle && inspector !== undefined) {
+        const timestamp = yield* now;
+        inspector.onInspect({
+          type: "@machine.transition",
+          actorId: id,
+          fromState: currentState,
+          toState: newState,
+          event,
+          timestamp,
+        });
+      }
 
-        // Emit transition event
+      // Update state and notify listeners
+      yield* SubscriptionRef.set(stateRef, newState);
+      notifyListeners(listeners, newState);
+
+      // Save snapshot and metadata (consolidated - same for both branches)
+      yield* saveSnapshot(id, newState, newVersion, persistence, adapter);
+      yield* saveMetadata(id, newState, newVersion, createdAt, persistence, adapter);
+
+      // Check if final state reached
+      if (runLifecycle && typedMachine.finalStates.has(newState._tag)) {
         if (inspector !== undefined) {
           const timestamp = yield* now;
           inspector.onInspect({
-            type: "@machine.transition",
+            type: "@machine.stop",
             actorId: id,
-            fromState: currentState,
-            toState: newState,
-            event,
+            finalState: newState,
             timestamp,
           });
         }
-
-        // Update state
-        yield* SubscriptionRef.set(stateRef, newState);
-        notifyListeners(listeners, newState);
-
-        // Save snapshot (after state and version are both updated)
-        yield* saveSnapshot(id, newState, newVersion, persistence, adapter);
-
-        // Update metadata
-        yield* saveMetadata(id, newState, newVersion, createdAt, persistence, adapter);
-
-        // Note: Spawn effects not implemented for persistent actors yet
-        // (would need to re-fork on replay)
-
-        // Check if final
-        if (typedMachine.finalStates.has(newState._tag)) {
-          if (inspector !== undefined) {
-            const timestamp = yield* now;
-            inspector.onInspect({
-              type: "@machine.stop",
-              actorId: id,
-              finalState: newState,
-              timestamp,
-            });
-          }
-          notifyListeners(listeners, newState);
-          return;
-        }
-      } else {
-        yield* SubscriptionRef.set(stateRef, newState);
-        notifyListeners(listeners, newState);
-
-        // Save snapshot (after state and version are both updated)
-        yield* saveSnapshot(id, newState, newVersion, persistence, adapter);
-
-        // Update metadata
-        yield* saveMetadata(id, newState, newVersion, createdAt, persistence, adapter);
+        return;
       }
     }
   });

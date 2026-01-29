@@ -31,6 +31,43 @@ export interface TransitionExecutionResult<S> {
 }
 
 /**
+ * Run a transition handler and return the new state.
+ * Shared logic for executing handlers with proper context.
+ *
+ * Used by:
+ * - executeTransition (actor event loop, testing)
+ * - persistent-actor replay (restore, replayTo)
+ *
+ * @internal
+ */
+export const runTransitionHandler = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+  GD extends GuardsDef,
+  EFD extends EffectsDef,
+>(
+  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
+  transition: Transition<S, E, GD, EFD, R>,
+  state: S,
+  event: E,
+  self: MachineRef<E>,
+): Effect.Effect<S, never, R> =>
+  Effect.gen(function* () {
+    const ctx: MachineContext<S, E, MachineRef<E>> = { state, event, self };
+    const { guards, effects } = machine._createSlotAccessors(ctx);
+
+    const handlerCtx: HandlerContext<S, E, GD, EFD> = { state, event, guards, effects };
+    const result = transition.handler(handlerCtx);
+
+    return isEffect(result)
+      ? yield* (result as Effect.Effect<S, never, R>).pipe(
+          Effect.provideService(machine.Context, ctx),
+        )
+      : result;
+  });
+
+/**
  * Execute a transition for a given state and event.
  * Handles transition resolution, handler invocation, and guard/effect slot creation.
  *
@@ -54,7 +91,6 @@ export const executeTransition = <
   self: MachineRef<E>,
 ): Effect.Effect<TransitionExecutionResult<S>, never, R> =>
   Effect.gen(function* () {
-    // Find matching transition
     const transition = resolveTransition(machine, currentState, event);
 
     if (transition === undefined) {
@@ -65,28 +101,7 @@ export const executeTransition = <
       };
     }
 
-    // Create context for handler
-    const ctx: MachineContext<S, E, MachineRef<E>> = {
-      state: currentState,
-      event,
-      self,
-    };
-    const { guards, effects } = machine._createSlotAccessors(ctx);
-
-    const handlerCtx: HandlerContext<S, E, GD, EFD> = {
-      state: currentState,
-      event,
-      guards,
-      effects,
-    };
-
-    // Compute new state - provide machine context for slot handlers
-    const newStateResult = transition.handler(handlerCtx);
-    const newState = isEffect(newStateResult)
-      ? yield* (newStateResult as Effect.Effect<S, never, R>).pipe(
-          Effect.provideService(machine.Context, ctx),
-        )
-      : newStateResult;
+    const newState = yield* runTransitionHandler(machine, transition, currentState, event, self);
 
     return {
       newState,

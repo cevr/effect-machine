@@ -13,11 +13,11 @@ import {
   Exit,
   Fiber,
   Layer,
+  MutableHashMap,
   Option,
   Queue,
   Scope,
   SubscriptionRef,
-  SynchronizedRef,
 } from "effect";
 import type { Stream } from "effect";
 
@@ -687,8 +687,9 @@ const runSpawnEffectsWithInspection = <
 /**
  * Internal implementation
  */
-const make = Effect.gen(function* () {
-  const actors = yield* SynchronizedRef.make(new Map<string, ActorRef<AnyState, unknown>>());
+const make = Effect.sync(() => {
+  // MutableHashMap for O(1) spawn/stop/get operations
+  const actors = MutableHashMap.empty<string, ActorRef<AnyState, unknown>>();
 
   /** Check for duplicate ID, register actor, add cleanup finalizer */
   const registerActor = <T extends { stop: Effect.Effect<void> }>(
@@ -697,27 +698,18 @@ const make = Effect.gen(function* () {
   ): Effect.Effect<T, DuplicateActorError, Scope.Scope> =>
     Effect.gen(function* () {
       // Check if actor already exists
-      const existing = yield* SynchronizedRef.get(actors);
-      if (existing.has(id)) {
+      if (MutableHashMap.has(actors, id)) {
         return yield* new DuplicateActorError({ actorId: id });
       }
 
-      // Register it
-      yield* SynchronizedRef.update(actors, (map) => {
-        const newMap = new Map(map);
-        newMap.set(id, actor as unknown as ActorRef<AnyState, unknown>);
-        return newMap;
-      });
+      // Register it - O(1)
+      MutableHashMap.set(actors, id, actor as unknown as ActorRef<AnyState, unknown>);
 
       // Register cleanup on scope finalization
       yield* Effect.addFinalizer(() =>
         Effect.gen(function* () {
           yield* actor.stop;
-          yield* SynchronizedRef.update(actors, (map) => {
-            const newMap = new Map(map);
-            newMap.delete(id);
-            return newMap;
-          });
+          MutableHashMap.remove(actors, id);
         }),
       );
 
@@ -843,26 +835,17 @@ const make = Effect.gen(function* () {
     });
 
   const get = (id: string): Effect.Effect<Option.Option<ActorRef<AnyState, unknown>>> =>
-    Effect.gen(function* () {
-      const map = yield* SynchronizedRef.get(actors);
-      const actor = map.get(id);
-      return actor !== undefined ? Option.some(actor) : Option.none();
-    });
+    Effect.sync(() => MutableHashMap.get(actors, id));
 
   const stop = (id: string): Effect.Effect<boolean> =>
     Effect.gen(function* () {
-      const map = yield* SynchronizedRef.get(actors);
-      const actor = map.get(id);
-      if (actor === undefined) {
+      const maybeActor = MutableHashMap.get(actors, id);
+      if (Option.isNone(maybeActor)) {
         return false;
       }
 
-      yield* actor.stop;
-      yield* SynchronizedRef.update(actors, (m) => {
-        const newMap = new Map(m);
-        newMap.delete(id);
-        return newMap;
-      });
+      yield* maybeActor.value.stop;
+      MutableHashMap.remove(actors, id);
       return true;
     });
 
@@ -889,8 +872,7 @@ const make = Effect.gen(function* () {
 
       for (const id of ids) {
         // Skip if already running
-        const existing = yield* SynchronizedRef.get(actors);
-        if (existing.has(id)) {
+        if (MutableHashMap.has(actors, id)) {
           continue;
         }
 

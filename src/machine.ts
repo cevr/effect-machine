@@ -42,8 +42,8 @@
  *
  * @module
  */
-import type { Schema, Schedule, Scope } from "effect";
-import { Context, Effect } from "effect";
+import type { Schema, Schedule, Scope, Context } from "effect";
+import { Effect } from "effect";
 import type { Pipeable } from "effect/Pipeable";
 import { pipeArguments } from "effect/Pipeable";
 
@@ -65,6 +65,7 @@ import type {
   EffectHandlers as SlotEffectHandlers,
   MachineContext,
 } from "./slot.js";
+import { MachineContextTag } from "./slot.js";
 
 // ============================================================================
 // Core types
@@ -252,9 +253,12 @@ export class Machine<
 
   /**
    * Context tag for accessing machine state/event/self in slot handlers.
-   * Each machine instance gets its own typed Context.Tag.
+   * Uses shared module-level tag for all machines.
    */
   readonly Context: Context.Tag<
+    MachineContext<State, Event, MachineRef<Event>>,
+    MachineContext<State, Event, MachineRef<Event>>
+  > = MachineContextTag as Context.Tag<
     MachineContext<State, Event, MachineRef<Event>>,
     MachineContext<State, Event, MachineRef<Event>>
   >;
@@ -298,9 +302,6 @@ export class Machine<
     this._effectHandlers = new Map();
     this.stateSchema = stateSchema;
     this.eventSchema = eventSchema;
-    this.Context = Context.GenericTag<MachineContext<State, Event, MachineRef<Event>>>(
-      `effect-machine/Context/${Math.random().toString(36).slice(2)}`,
-    );
   }
 
   pipe() {
@@ -493,10 +494,6 @@ export class Machine<
       this._guardsSchema,
       this._effectsSchema,
     );
-
-    // Copy context tag
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (result as any).Context = this.Context;
 
     // Share immutable arrays (never mutated after provide)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

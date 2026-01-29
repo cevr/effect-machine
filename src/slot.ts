@@ -33,6 +33,7 @@
  *
  * @module
  */
+import { Context } from "effect";
 import type { Effect, Schema } from "effect";
 
 // ============================================================================
@@ -99,13 +100,22 @@ export type EffectSlots<D extends EffectsDef> = {
 
 /**
  * Type for machine context - state, event, and self reference.
- * Each machine gets a typed Context.Tag for this.
+ * Shared across all machines via MachineContextTag.
  */
 export interface MachineContext<State, Event, Self> {
   readonly state: State;
   readonly event: Event;
   readonly self: Self;
 }
+
+/**
+ * Shared Context tag for all machines.
+ * Single module-level tag instead of per-machine allocation.
+ * @internal
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const MachineContextTag =
+  Context.GenericTag<MachineContext<any, any, any>>("@effect-machine/Context");
 
 // ============================================================================
 // Handler Types (for provide)
@@ -187,12 +197,10 @@ export interface EffectsSchema<D extends EffectsDef> {
  */
 const createSlotSchema = <
   Tag extends "GuardsSchema" | "EffectsSchema",
-  SlotTag extends "GuardSlot" | "EffectSlot",
   D extends Record<string, Fields>,
-  ReturnType,
 >(
   tag: Tag,
-  slotTag: SlotTag,
+  slotTag: "GuardSlot" | "EffectSlot",
   definitions: D,
 ): {
   readonly _tag: Tag;
@@ -201,33 +209,22 @@ const createSlotSchema = <
     resolve: <N extends keyof D & string>(
       name: N,
       params: FieldsToParams<D[N]>,
-    ) => Effect.Effect<ReturnType>,
+    ) => Effect.Effect<unknown>,
   ) => Record<string, unknown>;
-} => {
-  const createSlots = (
-    resolve: <N extends keyof D & string>(
-      name: N,
-      params: FieldsToParams<D[N]>,
-    ) => Effect.Effect<ReturnType>,
-  ): Record<string, unknown> => {
+} => ({
+  _tag: tag,
+  definitions,
+  _createSlots: (resolve) => {
     const slots: Record<string, unknown> = {};
-
     for (const name of Object.keys(definitions)) {
       const slot = (params: unknown) => resolve(name, params as FieldsToParams<D[typeof name]>);
       Object.defineProperty(slot, "_tag", { value: slotTag, enumerable: true });
       Object.defineProperty(slot, "name", { value: name, enumerable: true });
       slots[name] = slot;
     }
-
     return slots;
-  };
-
-  return {
-    _tag: tag,
-    definitions,
-    _createSlots: createSlots,
-  };
-};
+  },
+});
 
 /**
  * Create a guards schema with parameterized guard definitions.
