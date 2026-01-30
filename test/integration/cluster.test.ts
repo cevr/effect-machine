@@ -12,7 +12,15 @@ import { Rpc } from "@effect/rpc";
 import { Effect, Ref, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import { Machine, simulate, State, Event, Slot } from "../../src/index.js";
+import {
+  ActorSystemDefault,
+  ActorSystemService,
+  Machine,
+  simulate,
+  State,
+  Event,
+  Slot,
+} from "../../src/index.js";
 import { toEntity } from "../../src/cluster/index.js";
 
 // =============================================================================
@@ -109,6 +117,45 @@ describe("Cluster Integration with MachineSchema", () => {
         expect((result.finalState as { trackingId: string }).trackingId).toBe("TRACK-456");
         expect(result.states.map((s) => s._tag)).toEqual(["Pending", "Processing", "Shipped"]);
       }),
+    );
+  });
+
+  test("Machine.task works with schema-first machine at runtime", async () => {
+    const TaskState = State({
+      Idle: {},
+      Working: {},
+      Done: {},
+    });
+    type TaskState = typeof TaskState.Type;
+
+    const TaskEvent = Event({
+      Start: {},
+      Done: {},
+    });
+    type TaskEvent = typeof TaskEvent.Type;
+
+    const taskMachine = Machine.make({
+      state: TaskState,
+      event: TaskEvent,
+      initial: TaskState.Idle,
+    })
+      .on(TaskState.Idle, TaskEvent.Start, () => TaskState.Working)
+      .on(TaskState.Working, TaskEvent.Done, () => TaskState.Done)
+      .task(TaskState.Working, () => Effect.succeed("ok"), {
+        onSuccess: () => TaskEvent.Done,
+      })
+      .final(TaskState.Done);
+
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const system = yield* ActorSystemService;
+          const actor = yield* system.spawn("task", taskMachine);
+          yield* actor.send(TaskEvent.Start);
+          const finalState = yield* actor.awaitFinal;
+          expect(finalState._tag).toBe("Done");
+        }),
+      ).pipe(Effect.provide(ActorSystemDefault)),
     );
   });
 

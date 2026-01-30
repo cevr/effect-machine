@@ -124,20 +124,22 @@ describe("Payment Flow Pattern", () => {
       }
       return state; // Stay in error state
     })
-    // Timeout spawns
-    .spawn(PaymentState.AwaitingBridgeConfirm, ({ effects }) => effects.scheduleBridgeTimeout())
+    // Timeout tasks
+    .task(PaymentState.AwaitingBridgeConfirm, ({ effects }) => effects.scheduleBridgeTimeout(), {
+      onSuccess: () => PaymentEvent.BridgeTimeout,
+    })
     // Delay timer only fires for non-retryable errors
     // This works because the timer still fires, but the transition handler can check state
-    .spawn(PaymentState.PaymentError, ({ effects }) => effects.scheduleAutoDismiss())
+    .task(PaymentState.PaymentError, ({ effects }) => effects.scheduleAutoDismiss(), {
+      onSuccess: () => PaymentEvent.AutoDismissError,
+    })
     .provide({
       canRetry: (_params, { state }) => {
         const s = state as { canRetry: boolean; attempts: number };
         return s.canRetry && s.attempts < 3;
       },
-      scheduleBridgeTimeout: (_, { self }) =>
-        Effect.sleep("30 seconds").pipe(Effect.andThen(self.send(PaymentEvent.BridgeTimeout))),
-      scheduleAutoDismiss: (_, { self }) =>
-        Effect.sleep("5 seconds").pipe(Effect.andThen(self.send(PaymentEvent.AutoDismissError))),
+      scheduleBridgeTimeout: () => Effect.sleep("30 seconds"),
+      scheduleAutoDismiss: () => Effect.sleep("5 seconds"),
     })
     // Cancel from multiple states
     .on(PaymentState.SelectingMethod, PaymentEvent.Cancel, () => PaymentState.PaymentCancelled)

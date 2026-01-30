@@ -66,10 +66,11 @@ describe("Session Lifecycle Pattern", () => {
         SessionState.Maintenance({ message: event.message, previousState: "Guest" }),
       )
       .on(SessionState.Active, SessionEvent.SessionTimeout, () => SessionState.SessionExpired)
-      .spawn(SessionState.Active, ({ effects }) => effects.scheduleTimeout())
+      .task(SessionState.Active, ({ effects }) => effects.scheduleTimeout(), {
+        onSuccess: () => SessionEvent.SessionTimeout,
+      })
       .provide({
-        scheduleTimeout: (_, { self }) =>
-          Effect.sleep("30 minutes").pipe(Effect.andThen(self.send(SessionEvent.SessionTimeout))),
+        scheduleTimeout: () => Effect.sleep("30 minutes"),
       })
       .on(SessionState.Maintenance, SessionEvent.MaintenanceEnded, ({ state }) =>
         state.previousState === "Active"
@@ -147,10 +148,11 @@ describe("Session Lifecycle Pattern", () => {
         }),
       })
         .on(SessionState.Active, SessionEvent.SessionTimeout, () => SessionState.SessionExpired)
-        .spawn(SessionState.Active, ({ effects }) => effects.scheduleTimeout())
+        .task(SessionState.Active, ({ effects }) => effects.scheduleTimeout(), {
+          onSuccess: () => SessionEvent.SessionTimeout,
+        })
         .provide({
-          scheduleTimeout: (_, { self }) =>
-            Effect.sleep("30 minutes").pipe(Effect.andThen(self.send(SessionEvent.SessionTimeout))),
+          scheduleTimeout: () => Effect.sleep("30 minutes"),
         })
         .final(SessionState.SessionExpired);
 
@@ -190,13 +192,14 @@ describe("Session Lifecycle Pattern", () => {
           lastActivity: Date.now(),
         }),
       })
-        .spawn(SessionState.Active, ({ effects }) => effects.scheduleTimeout())
+        .task(SessionState.Active, ({ effects }) => effects.scheduleTimeout(), {
+          onSuccess: () => SessionEvent.SessionTimeout,
+        })
         .provide({
-          scheduleTimeout: (_, { self }) =>
-            Effect.sleep("30 minutes").pipe(Effect.andThen(self.send(SessionEvent.SessionTimeout))),
+          scheduleTimeout: () => Effect.sleep("30 minutes"),
         })
         .on(SessionState.Active, SessionEvent.SessionTimeout, () => SessionState.SessionExpired)
-        // Use reenter to reenter the state, resetting the spawn timer
+        // Use reenter to reenter the state, resetting the task timer
         .reenter(SessionState.Active, SessionEvent.Activity, ({ state }) =>
           SessionState.Active({ ...state, lastActivity: Date.now() }),
         )

@@ -11,7 +11,96 @@ import {
 } from "../src/index.js";
 import { describe, expect, it, yieldFibers } from "effect-bun-test";
 
-describe("Dynamic Timeout Duration via Spawn", () => {
+describe("Timeout Transitions via Task", () => {
+  const NotifState = State({
+    Showing: { message: Schema.String },
+    Dismissed: {},
+  });
+  type NotifState = typeof NotifState.Type;
+
+  const NotifEvent = Event({
+    Dismiss: {},
+  });
+  type NotifEvent = typeof NotifEvent.Type;
+
+  const NotifEffects = Slot.Effects({
+    scheduleAutoDismiss: {},
+  });
+
+  it.scoped("schedules event after duration with TestClock", () =>
+    Effect.gen(function* () {
+      const machine = Machine.make({
+        state: NotifState,
+        event: NotifEvent,
+        effects: NotifEffects,
+        initial: NotifState.Showing({ message: "Hello" }),
+      })
+        .on(NotifState.Showing, NotifEvent.Dismiss, () => NotifState.Dismissed)
+        .task(NotifState.Showing, ({ effects }) => effects.scheduleAutoDismiss(), {
+          onSuccess: () => NotifEvent.Dismiss,
+        })
+        .provide({
+          scheduleAutoDismiss: () => Effect.sleep("3 seconds"),
+        })
+        .final(NotifState.Dismissed);
+
+      const system = yield* ActorSystemService;
+      const actor = yield* system.spawn("notification", machine);
+
+      // Initial state
+      let current = yield* actor.state.get;
+      expect(current._tag).toBe("Showing");
+
+      // Advance time by 3 seconds
+      yield* TestClock.adjust("3 seconds");
+
+      // Allow fibers to run
+      yield* yieldFibers;
+
+      // Should have transitioned
+      current = yield* actor.state.get;
+      expect(current._tag).toBe("Dismissed");
+    }).pipe(Effect.provide(ActorSystemDefault)),
+  );
+
+  it.scoped("cancels timer on state exit before timeout", () =>
+    Effect.gen(function* () {
+      const machine = Machine.make({
+        state: NotifState,
+        event: NotifEvent,
+        effects: NotifEffects,
+        initial: NotifState.Showing({ message: "Hello" }),
+      })
+        .on(NotifState.Showing, NotifEvent.Dismiss, () => NotifState.Dismissed)
+        .task(NotifState.Showing, ({ effects }) => effects.scheduleAutoDismiss(), {
+          onSuccess: () => NotifEvent.Dismiss,
+        })
+        .provide({
+          scheduleAutoDismiss: () => Effect.sleep("3 seconds"),
+        })
+        .final(NotifState.Dismissed);
+
+      const system = yield* ActorSystemService;
+      const actor = yield* system.spawn("notification", machine);
+
+      // Manual dismiss before timer
+      yield* actor.send(NotifEvent.Dismiss);
+      yield* yieldFibers;
+
+      let current = yield* actor.state.get;
+      expect(current._tag).toBe("Dismissed");
+
+      // Advance time - should not cause issues since timer was cancelled
+      yield* TestClock.adjust("5 seconds");
+      yield* yieldFibers;
+
+      current = yield* actor.state.get;
+      expect(current._tag).toBe("Dismissed");
+    }).pipe(Effect.provide(ActorSystemDefault)),
+  );
+});
+
+describe("Dynamic Timeout Duration via Task", () => {
   const WaitState = State({
     Waiting: { timeout: Schema.Number },
     TimedOut: {},
@@ -35,13 +124,13 @@ describe("Dynamic Timeout Duration via Spawn", () => {
         initial: WaitState.Waiting({ timeout: 5 }),
       })
         .on(WaitState.Waiting, WaitEvent.Timeout, () => WaitState.TimedOut)
-        .spawn(WaitState.Waiting, ({ effects }) => effects.scheduleTimeout())
+        .task(WaitState.Waiting, ({ effects }) => effects.scheduleTimeout(), {
+          onSuccess: () => WaitEvent.Timeout,
+        })
         .provide({
-          scheduleTimeout: (_, { self, state }) => {
+          scheduleTimeout: (_, { state }) => {
             const s = state as WaitState & { _tag: "Waiting" };
-            return Effect.sleep(Duration.seconds(s.timeout)).pipe(
-              Effect.andThen(self.send(WaitEvent.Timeout)),
-            );
+            return Effect.sleep(Duration.seconds(s.timeout));
           },
         })
         .final(WaitState.TimedOut);
@@ -98,13 +187,13 @@ describe("Dynamic Timeout Duration via Spawn", () => {
         )
         .on(RetryState.Retrying, RetryEvent.GiveUp, () => RetryState.Failed)
         // Exponential backoff based on state
-        .spawn(RetryState.Retrying, ({ effects }) => effects.scheduleGiveUp())
+        .task(RetryState.Retrying, ({ effects }) => effects.scheduleGiveUp(), {
+          onSuccess: () => RetryEvent.GiveUp,
+        })
         .provide({
-          scheduleGiveUp: (_, { self, state }) => {
+          scheduleGiveUp: (_, { state }) => {
             const s = state as RetryState & { _tag: "Retrying" };
-            return Effect.sleep(Duration.seconds(s.backoff)).pipe(
-              Effect.andThen(self.send(RetryEvent.GiveUp)),
-            );
+            return Effect.sleep(Duration.seconds(s.backoff));
           },
         })
         .final(RetryState.Failed);
@@ -150,10 +239,11 @@ describe("Dynamic Timeout Duration via Spawn", () => {
       })
         .on(WaitState.Waiting, WaitEvent.Timeout, () => WaitState.TimedOut)
         // Static "3 seconds" ignores state.timeout
-        .spawn(WaitState.Waiting, ({ effects }) => effects.scheduleTimeout())
+        .task(WaitState.Waiting, ({ effects }) => effects.scheduleTimeout(), {
+          onSuccess: () => WaitEvent.Timeout,
+        })
         .provide({
-          scheduleTimeout: (_, { self }) =>
-            Effect.sleep("3 seconds").pipe(Effect.andThen(self.send(WaitEvent.Timeout))),
+          scheduleTimeout: () => Effect.sleep("3 seconds"),
         })
         .final(WaitState.TimedOut);
 
