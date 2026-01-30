@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.2.1
+
+### Patch Changes
+
+- [`639ee87`](https://github.com/cevr/effect-machine/commit/639ee8731f91a23b2c6be4a68a2f7b0a7cee8bee) Thanks [@cevr](https://github.com/cevr)! - Fix PersistenceAdapterTag key for deterministic key diagnostics and align language-service config.
+
 ## 0.2.0
 
 ### Minor Changes
