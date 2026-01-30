@@ -146,6 +146,15 @@ machine
   .spawn(MyState.Polling, ({ effects }) => effects.poll({ interval: "5 seconds" }));
 ```
 
+`.task()` runs on entry and sends success/failure events:
+
+```ts
+machine.task(State.Loading, ({ effects, state }) => effects.fetchData({ url: state.url }), {
+  onSuccess: (data) => MyEvent.Resolve({ data }),
+  onFailure: () => MyEvent.Reject,
+});
+```
+
 ### Testing
 
 Test transitions without actors:
@@ -186,6 +195,7 @@ See the [primer](./primer/) for comprehensive documentation:
 | `.on(State.X, Event.Y, handler)`          | Add transition               |
 | `.reenter(State.X, Event.Y, handler)`     | Force re-entry on same state |
 | `.spawn(State.X, handler)`                | State-scoped effect          |
+| `.task(State.X, run, { onSuccess })`      | State-scoped task            |
 | `.background(handler)`                    | Machine-lifetime effect      |
 | `.provide({ slot: impl })`                | Provide implementations      |
 | `.final(State.X)`                         | Mark final state             |
@@ -218,6 +228,9 @@ See the [primer](./primer/) for comprehensive documentation:
 | `actor.matches(tag)`  | Check state tag   |
 | `actor.can(event)`    | Can handle event? |
 | `actor.changes`       | Stream of changes |
+| `actor.waitFor(fn)`   | Wait for match    |
+| `actor.awaitFinal`    | Wait final state  |
+| `actor.sendAndWait`   | Send + wait       |
 | `actor.subscribe(fn)` | Sync callback     |
 
 ## License

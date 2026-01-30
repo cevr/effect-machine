@@ -30,6 +30,25 @@ machine
 - Automatically interrupted when state exits
 - Use `Effect.addFinalizer()` for cleanup
 
+## task: Invoke-Style Work
+
+`.task()` runs an effect on state entry and sends success/failure events:
+
+```ts
+machine
+  .on(State.Idle, Event.Fetch, ({ event }) => State.Loading({ url: event.url }))
+  .task(State.Loading, ({ effects, state }) => effects.fetchData({ url: state.url }), {
+    onSuccess: (data) => Event.Resolve({ data }),
+    onFailure: () => Event.Reject({ message: "fetch failed" }),
+  });
+```
+
+**Notes**:
+
+- Runs concurrently (state-scoped, like `spawn`)
+- Interrupts do **not** emit failure events
+- If `onFailure` is omitted, defects are rethrown
+
 ## Cleanup with Finalizers
 
 Add cleanup logic that runs on state exit:

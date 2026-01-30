@@ -46,6 +46,12 @@ yield * Effect.yieldNow(); // Let event process
 const state = yield * actor.snapshot; // Now reflects Start
 ```
 
+**Alternative**: use `sendAndWait` / `waitFor`:
+
+```ts
+const state = yield * actor.sendAndWait(Event.Start);
+```
+
 ## simulate() Doesn't Run Spawn
 
 `simulate()` and `createTestHarness()` run guards/effects in handlers but NOT spawn effects:
@@ -82,6 +88,19 @@ By default, transitioning to same state tag skips spawn/finalizers:
 .reenter(State.Active, Event.Reset, ({ state }) =>
   State.Active({ count: 0 })  // Forces spawn to restart
 )
+```
+
+## Long-Running Work in .on
+
+`.on()` handlers run inline and block the event loop.
+
+**Use** `.task()` or `.spawn()` for long-running effects:
+
+```ts
+.on(State.Idle, Event.Start, () => State.Working)
+.task(State.Working, () => Effect.sleep("1 minute"), {
+  onSuccess: () => Event.Done,
+})
 ```
 
 ## Unprovided Slots

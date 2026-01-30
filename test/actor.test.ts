@@ -622,4 +622,143 @@ describe("ActorRef", () => {
       }).pipe(Effect.provide(ActorSystemDefault)),
     );
   });
+
+  describe("waitFor / awaitFinal / sendAndWait", () => {
+    it.scopedLive("waitFor includes current snapshot", () =>
+      Effect.gen(function* () {
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Idle,
+        })
+          .on(TestState.Idle, TestEvent.Start, () => TestState.Done)
+          .final(TestState.Done);
+
+        const system = yield* ActorSystemService;
+        const actor = yield* system.spawn("wait-for", machine);
+
+        yield* actor.send(TestEvent.Start({ value: 1 }));
+        yield* yieldFibers;
+
+        const state = yield* actor.waitFor((s) => s._tag === "Done");
+        expect(state._tag).toBe("Done");
+      }).pipe(Effect.provide(ActorSystemDefault)),
+    );
+
+    it.scopedLive("sendAndWait uses predicate", () =>
+      Effect.gen(function* () {
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Idle,
+        }).on(TestState.Idle, TestEvent.Start, ({ event }) =>
+          TestState.Active({ value: event.value }),
+        );
+
+        const system = yield* ActorSystemService;
+        const actor = yield* system.spawn("send-and-wait", machine);
+
+        const state = yield* actor.sendAndWait(
+          TestEvent.Start({ value: 5 }),
+          (s) => s._tag === "Active",
+        );
+        expect(state._tag).toBe("Active");
+        if (state._tag === "Active") {
+          expect(state.value).toBe(5);
+        }
+      }).pipe(Effect.provide(ActorSystemDefault)),
+    );
+
+    it.scopedLive("awaitFinal resolves after final state", () =>
+      Effect.gen(function* () {
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Idle,
+        })
+          .on(TestState.Idle, TestEvent.Start, () => TestState.Done)
+          .final(TestState.Done);
+
+        const system = yield* ActorSystemService;
+        const actor = yield* system.spawn("await-final", machine);
+
+        yield* actor.send(TestEvent.Start({ value: 1 }));
+        yield* yieldFibers;
+
+        const state = yield* actor.awaitFinal;
+        expect(state._tag).toBe("Done");
+      }).pipe(Effect.provide(ActorSystemDefault)),
+    );
+  });
+
+  describe("task", () => {
+    const TaskState = State({
+      Idle: {},
+      Running: {},
+      Done: {},
+      Failed: { message: Schema.String },
+    });
+    type TaskState = typeof TaskState.Type;
+
+    const TaskEvent = Event({
+      Start: {},
+      Success: {},
+      Fail: { message: Schema.String },
+    });
+    type TaskEvent = typeof TaskEvent.Type;
+
+    it.scopedLive("task sends success event", () =>
+      Effect.gen(function* () {
+        const machine = Machine.make({
+          state: TaskState,
+          event: TaskEvent,
+          initial: TaskState.Idle,
+        })
+          .on(TaskState.Idle, TaskEvent.Start, () => TaskState.Running)
+          .on(TaskState.Running, TaskEvent.Success, () => TaskState.Done)
+          .task(TaskState.Running, () => Effect.succeed("ok"), {
+            onSuccess: () => TaskEvent.Success,
+          })
+          .final(TaskState.Done);
+
+        const system = yield* ActorSystemService;
+        const actor = yield* system.spawn("task-success", machine);
+
+        yield* actor.send(TaskEvent.Start);
+        const finalState = yield* actor.awaitFinal;
+
+        expect(finalState._tag).toBe("Done");
+      }).pipe(Effect.provide(ActorSystemDefault)),
+    );
+
+    it.scopedLive("task sends failure event", () =>
+      Effect.gen(function* () {
+        const machine = Machine.make({
+          state: TaskState,
+          event: TaskEvent,
+          initial: TaskState.Idle,
+        })
+          .on(TaskState.Idle, TaskEvent.Start, () => TaskState.Running)
+          .on(TaskState.Running, TaskEvent.Fail, ({ event }) =>
+            TaskState.Failed({ message: event.message }),
+          )
+          .task(TaskState.Running, () => Effect.fail("boom"), {
+            onSuccess: () => TaskEvent.Success,
+            onFailure: () => TaskEvent.Fail({ message: "boom" }),
+          })
+          .final(TaskState.Failed);
+
+        const system = yield* ActorSystemService;
+        const actor = yield* system.spawn("task-failure", machine);
+
+        yield* actor.send(TaskEvent.Start);
+        const finalState = yield* actor.awaitFinal;
+
+        expect(finalState._tag).toBe("Failed");
+        if (finalState._tag === "Failed") {
+          expect(finalState.message).toBe("boom");
+        }
+      }).pipe(Effect.provide(ActorSystemDefault)),
+    );
+  });
 });

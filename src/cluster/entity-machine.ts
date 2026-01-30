@@ -41,6 +41,8 @@ export interface EntityMachineOptions<S, E> {
    *       Effect.log(`Transition: ${from._tag} -> ${to._tag}`),
    *     onSpawnEffect: (state) =>
    *       Effect.log(`Running spawn effects for ${state._tag}`),
+   *     onError: ({ phase, state }) =>
+   *       Effect.log(`Defect in ${phase} at ${state._tag}`),
    *   },
    * })
    * ```
@@ -161,7 +163,14 @@ export const EntityMachine = {
       const initEvent = { _tag: "$init" } as E;
 
       // Run initial spawn effects
-      yield* runSpawnEffects(machine, initialState, initEvent, self, stateScopeRef.current);
+      yield* runSpawnEffects(
+        machine,
+        initialState,
+        initEvent,
+        self,
+        stateScopeRef.current,
+        options?.hooks?.onError,
+      );
 
       // Process internal events in background
       const runInternalEvent = Effect.fn("effect-machine.cluster.internalEvent")(function* () {

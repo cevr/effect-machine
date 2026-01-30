@@ -3,6 +3,7 @@
 
 import {
   Clock,
+  Cause,
   Effect,
   Exit,
   Fiber,
@@ -25,6 +26,7 @@ import {
   runSpawnEffects,
   runTransitionHandler,
 } from "../internal/transition.js";
+import type { ProcessEventError } from "../internal/transition.js";
 import type { GuardsDef, EffectsDef } from "../slot.js";
 import { UnprovidedSlotsError } from "../errors.js";
 import { INTERNAL_INIT_EVENT } from "../internal/utils.js";
@@ -519,6 +521,16 @@ const persistentEventLoop = Effect.fn("effect-machine.persistentActor.eventLoop"
               event: ev,
               timestamp,
             })),
+          onError: (info: ProcessEventError<S, E>) =>
+            emitWithTimestamp(inspector, (timestamp) => ({
+              type: "@machine.error",
+              actorId: id,
+              phase: info.phase,
+              state: info.state,
+              event: info.event,
+              error: Cause.pretty(info.cause),
+              timestamp,
+            })),
         };
 
   while (true) {
@@ -628,7 +640,21 @@ const runSpawnEffectsWithInspection = Effect.fn("effect-machine.persistentActor.
       timestamp,
     }));
 
-    yield* runSpawnEffects(machine, state, event, self, stateScope);
+    const onError =
+      inspector === undefined
+        ? undefined
+        : (info: ProcessEventError<S, E>) =>
+            emitWithTimestamp(inspector, (timestamp) => ({
+              type: "@machine.error",
+              actorId,
+              phase: info.phase,
+              state: info.state,
+              event: info.event,
+              error: Cause.pretty(info.cause),
+              timestamp,
+            }));
+
+    yield* runSpawnEffects(machine, state, event, self, stateScope, onError);
   },
 );
 

@@ -8,7 +8,7 @@
  *
  * @internal
  */
-import { Effect, Exit, Scope } from "effect";
+import { Cause, Effect, Exit, Scope } from "effect";
 
 import type { Machine, MachineRef, Transition, SpawnEffect, HandlerContext } from "../machine.js";
 import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
@@ -120,6 +120,18 @@ export interface ProcessEventHooks<S, E> {
   readonly onSpawnEffect?: (state: S) => Effect.Effect<void>;
   /** Called after transition completes */
   readonly onTransition?: (from: S, to: S, event: E) => Effect.Effect<void>;
+  /** Called when a transition handler or spawn effect fails with a defect */
+  readonly onError?: (info: ProcessEventError<S, E>) => Effect.Effect<void>;
+}
+
+/**
+ * Error info for inspection hooks.
+ */
+export interface ProcessEventError<S, E> {
+  readonly phase: "transition" | "spawn";
+  readonly state: S;
+  readonly event: E;
+  readonly cause: Cause.Cause<unknown>;
 }
 
 /**
@@ -164,8 +176,24 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
   stateScopeRef: { current: Scope.CloseableScope },
   hooks?: ProcessEventHooks<S, E>,
 ) {
-  // Execute transition
-  const result = yield* executeTransition(machine, currentState, event, self);
+  // Execute transition (defect-aware)
+  const result = yield* executeTransition(machine, currentState, event, self).pipe(
+    Effect.catchAllCause((cause) => {
+      if (Cause.isInterruptedOnly(cause)) {
+        return Effect.interrupt;
+      }
+      const onError = hooks?.onError;
+      if (onError === undefined) {
+        return Effect.failCause(cause).pipe(Effect.orDie);
+      }
+      return onError({
+        phase: "transition",
+        state: currentState,
+        event,
+        cause,
+      }).pipe(Effect.zipRight(Effect.failCause(cause).pipe(Effect.orDie)));
+    }),
+  );
 
   if (!result.transitioned) {
     return {
@@ -200,7 +228,14 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
 
     // Run spawn effects for new state
     const enterEvent = { _tag: INTERNAL_ENTER_EVENT } as E;
-    yield* runSpawnEffects(machine, newState, enterEvent, self, stateScopeRef.current);
+    yield* runSpawnEffects(
+      machine,
+      newState,
+      enterEvent,
+      self,
+      stateScopeRef.current,
+      hooks?.onError,
+    );
   }
 
   return {
@@ -229,22 +264,40 @@ export const runSpawnEffects = Effect.fn("effect-machine.runSpawnEffects")(funct
   event: E,
   self: MachineRef<E>,
   stateScope: Scope.CloseableScope,
+  onError?: (info: ProcessEventError<S, E>) => Effect.Effect<void>,
 ) {
   const spawnEffects = findSpawnEffects(machine, state._tag);
   const ctx: MachineContext<S, E, MachineRef<E>> = { state, event, self };
   const { effects: effectSlots } = machine._slots;
+  const reportError = onError;
 
   for (const spawnEffect of spawnEffects) {
     // Fork the spawn effect into the state scope - interrupted when scope closes
-    yield* Effect.forkScoped(
-      (
-        spawnEffect.handler({ state, event, self, effects: effectSlots }) as Effect.Effect<
-          void,
-          never,
-          R
-        >
-      ).pipe(Effect.provideService(machine.Context, ctx)),
-    ).pipe(Effect.provideService(Scope.Scope, stateScope));
+    const effect = (
+      spawnEffect.handler({ state, event, self, effects: effectSlots }) as Effect.Effect<
+        void,
+        never,
+        R
+      >
+    ).pipe(
+      Effect.provideService(machine.Context, ctx),
+      Effect.catchAllCause((cause) => {
+        if (Cause.isInterruptedOnly(cause)) {
+          return Effect.interrupt;
+        }
+        if (reportError === undefined) {
+          return Effect.failCause(cause).pipe(Effect.orDie);
+        }
+        return reportError({
+          phase: "spawn",
+          state,
+          event,
+          cause,
+        }).pipe(Effect.zipRight(Effect.failCause(cause).pipe(Effect.orDie)));
+      }),
+    );
+
+    yield* Effect.forkScoped(effect).pipe(Effect.provideService(Scope.Scope, stateScope));
   }
 });
 

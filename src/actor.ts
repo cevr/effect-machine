@@ -7,6 +7,7 @@
  * - Actor creation and event loop
  */
 import {
+  Cause,
   Context,
   Effect,
   Exit,
@@ -17,20 +18,24 @@ import {
   Queue,
   Ref,
   Scope,
+  Stream,
   SubscriptionRef,
 } from "effect";
-import type { Stream } from "effect";
 
 import type { Machine, MachineRef } from "./machine.js";
 import type { Inspector } from "./inspection.js";
 import { Inspector as InspectorTag } from "./inspection.js";
 import { processEventCore, runSpawnEffects, resolveTransition } from "./internal/transition.js";
-import type { ProcessEventHooks } from "./internal/transition.js";
+import type { ProcessEventError, ProcessEventHooks } from "./internal/transition.js";
 import { emitWithTimestamp } from "./internal/inspection.js";
 
 // Re-export for external use (cluster, persistence)
 export { resolveTransition, runSpawnEffects, processEventCore } from "./internal/transition.js";
-export type { ProcessEventHooks, ProcessEventResult } from "./internal/transition.js";
+export type {
+  ProcessEventError,
+  ProcessEventHooks,
+  ProcessEventResult,
+} from "./internal/transition.js";
 import type { GuardsDef, EffectsDef } from "./slot.js";
 import { DuplicateActorError, UnprovidedSlotsError } from "./errors.js";
 import { INTERNAL_INIT_EVENT } from "./internal/utils.js";
@@ -111,6 +116,24 @@ export interface ActorRef<State extends { readonly _tag: string }, Event> {
    * Stream of state changes
    */
   readonly changes: Stream.Stream<State>;
+
+  /**
+   * Wait for a state that matches predicate (includes current snapshot)
+   */
+  readonly waitFor: (predicate: (state: State) => boolean) => Effect.Effect<State>;
+
+  /**
+   * Wait for a final state (includes current snapshot)
+   */
+  readonly awaitFinal: Effect.Effect<State>;
+
+  /**
+   * Send event and wait for predicate or final state
+   */
+  readonly sendAndWait: (
+    event: Event,
+    predicate?: (state: State) => boolean,
+  ) => Effect.Effect<State>;
 
   /**
    * Subscribe to state changes (sync callback)
@@ -338,6 +361,32 @@ export const buildActorRefCore = <
     return resolveTransition(machine, state, event) !== undefined;
   });
 
+  const waitFor = Effect.fn("effect-machine.actor.waitFor")(function* (
+    predicate: (state: S) => boolean,
+  ) {
+    const current = yield* SubscriptionRef.get(stateRef);
+    if (predicate(current)) {
+      return current;
+    }
+    const next = yield* stateRef.changes.pipe(Stream.filter(predicate), Stream.runHead);
+    return Option.getOrElse(next, () => current);
+  });
+
+  const awaitFinal = waitFor((state) => machine.finalStates.has(state._tag)).pipe(
+    Effect.withSpan("effect-machine.actor.awaitFinal"),
+  );
+
+  const sendAndWait = Effect.fn("effect-machine.actor.sendAndWait")(function* (
+    event: E,
+    predicate?: (state: S) => boolean,
+  ) {
+    yield* send(event);
+    if (predicate !== undefined) {
+      return yield* waitFor(predicate);
+    }
+    return yield* awaitFinal;
+  });
+
   return {
     id,
     send,
@@ -353,6 +402,9 @@ export const buildActorRefCore = <
       return resolveTransition(machine, state, event) !== undefined;
     },
     changes: stateRef.changes,
+    waitFor,
+    awaitFinal,
+    sendAndWait,
     subscribe: (fn) => {
       listeners.add(fn);
       return () => {
@@ -611,6 +663,16 @@ const processEvent = Effect.fn("effect-machine.actor.processEvent")(function* <
               event: ev,
               timestamp,
             })),
+          onError: (info) =>
+            emitWithTimestamp(inspector, (timestamp) => ({
+              type: "@machine.error",
+              actorId,
+              phase: info.phase,
+              state: info.state,
+              event: info.event,
+              error: Cause.pretty(info.cause),
+              timestamp,
+            })),
         };
 
   // Process event using shared core
@@ -678,7 +740,21 @@ const runSpawnEffectsWithInspection = Effect.fn("effect-machine.actor.spawnEffec
   }));
 
   // Use shared core
-  yield* runSpawnEffects(machine, state, event, self, stateScope);
+  const onError =
+    inspector === undefined
+      ? undefined
+      : (info: ProcessEventError<S, E>) =>
+          emitWithTimestamp(inspector, (timestamp) => ({
+            type: "@machine.error",
+            actorId,
+            phase: info.phase,
+            state: info.state,
+            event: info.event,
+            error: Cause.pretty(info.cause),
+            timestamp,
+          }));
+
+  yield* runSpawnEffects(machine, state, event, self, stateScope, onError);
 });
 
 // ============================================================================

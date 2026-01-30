@@ -49,6 +49,19 @@ export interface EffectEvent<S> {
 }
 
 /**
+ * Event emitted when a transition handler or spawn effect fails with a defect
+ */
+export interface ErrorEvent<S, E> {
+  readonly type: "@machine.error";
+  readonly actorId: string;
+  readonly phase: "transition" | "spawn";
+  readonly state: S;
+  readonly event: E;
+  readonly error: string;
+  readonly timestamp: number;
+}
+
+/**
  * Event emitted when an actor stops
  */
 export interface StopEvent<S> {
@@ -66,6 +79,7 @@ export type InspectionEvent<S, E> =
   | EventReceivedEvent<S, E>
   | TransitionEvent<S, E>
   | EffectEvent<S>
+  | ErrorEvent<S, E>
   | StopEvent<S>;
 
 // ============================================================================
@@ -118,6 +132,9 @@ export const consoleInspector = <
         break;
       case "@machine.effect":
         console.log(prefix, event.effectType, "effect in", event.state._tag);
+        break;
+      case "@machine.error":
+        console.log(prefix, "error in", event.phase, event.state._tag, "-", event.error);
         break;
       case "@machine.stop":
         console.log(prefix, "stopped in", event.finalState._tag);

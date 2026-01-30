@@ -43,7 +43,7 @@
  * @module
  */
 import type { Schema, Schedule, Scope, Context } from "effect";
-import { Effect } from "effect";
+import { Cause, Effect, Exit } from "effect";
 import type { Pipeable } from "effect/Pipeable";
 import { pipeArguments } from "effect/Pipeable";
 
@@ -437,6 +437,59 @@ export class Machine<
     });
     invalidateIndex(this);
     return this;
+  }
+
+  // ---- task ----
+
+  /**
+   * State-scoped task that runs on entry and sends success/failure events.
+   * Interrupts do not emit failure events.
+   */
+  task<
+    NS extends VariantsUnion<_SD> & BrandedState,
+    A,
+    E1,
+    ES extends VariantsUnion<_ED> & BrandedEvent,
+    EF extends VariantsUnion<_ED> & BrandedEvent,
+  >(
+    state: TaggedOrConstructor<NS>,
+    run: (
+      ctx: StateHandlerContext<NS, VariantsUnion<_ED> & BrandedEvent, EFD>,
+    ) => Effect.Effect<A, E1, Scope.Scope>,
+    options: {
+      readonly onSuccess: (
+        value: A,
+        ctx: StateHandlerContext<NS, VariantsUnion<_ED> & BrandedEvent, EFD>,
+      ) => ES;
+      readonly onFailure?: (
+        cause: Cause.Cause<E1>,
+        ctx: StateHandlerContext<NS, VariantsUnion<_ED> & BrandedEvent, EFD>,
+      ) => EF;
+    },
+  ): Machine<State, Event, R, _SD, _ED, GD, EFD> {
+    const handler = Effect.fn("effect-machine.task")(function* (
+      ctx: StateHandlerContext<NS, VariantsUnion<_ED> & BrandedEvent, EFD>,
+    ) {
+      const exit = yield* Effect.exit(run(ctx));
+      if (Exit.isSuccess(exit)) {
+        yield* ctx.self.send(options.onSuccess(exit.value, ctx));
+        yield* Effect.yieldNow();
+        return;
+      }
+
+      const cause = exit.cause;
+      if (Cause.isInterruptedOnly(cause)) {
+        return;
+      }
+      if (options.onFailure !== undefined) {
+        yield* ctx.self.send(options.onFailure(cause, ctx));
+        yield* Effect.yieldNow();
+        return;
+      }
+      return yield* Effect.failCause(cause).pipe(Effect.orDie);
+    });
+
+    return this.spawn(state, handler);
   }
 
   // ---- background ----

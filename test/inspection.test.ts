@@ -137,6 +137,32 @@ describe("Inspection", () => {
     );
   });
 
+  it.scopedLive("emits error event on spawn defect", () => {
+    const events: InspectionEvent<TestState, TestEvent>[] = [];
+
+    return Effect.gen(function* () {
+      const machine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle,
+      }).spawn(TestState.Idle, () => Effect.dieMessage("boom"));
+
+      const system = yield* ActorSystemService;
+      yield* system.spawn("test", machine);
+      yield* yieldFibers;
+
+      const errorEvent = events.find((e) => e.type === "@machine.error");
+      expect(errorEvent).toBeDefined();
+      if (errorEvent?.type === "@machine.error") {
+        expect(errorEvent.phase).toBe("spawn");
+        expect(errorEvent.error).toContain("boom");
+      }
+    }).pipe(
+      Effect.provide(ActorSystemDefault),
+      Effect.provideService(InspectorService, collectingInspector(events)),
+    );
+  });
+
   it.scopedLive("emits stop event on final state", () => {
     const events: InspectionEvent<TestState, TestEvent>[] = [];
 

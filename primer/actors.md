@@ -39,6 +39,9 @@ Effect.runPromise(Effect.scoped(program).pipe(Effect.provide(ActorSystemDefault)
 | `can(event)`       | `Effect<boolean>` | Can handle event in current state? |
 | `canSync(event)`   | `boolean`         | Can handle event? (sync)           |
 | `changes`          | `Stream<State>`   | Stream of state changes            |
+| `waitFor(fn)`      | `Effect<State>`   | Wait for matching state            |
+| `awaitFinal`       | `Effect<State>`   | Wait for final state               |
+| `sendAndWait`      | `Effect<State>`   | Send event + wait                  |
 | `subscribe(fn)`    | `() => void`      | Sync callback, returns unsubscribe |
 | `stop`             | `Effect<void>`    | Stop actor gracefully              |
 
@@ -59,6 +62,21 @@ const state = yield * actor.snapshot;
 ```
 
 Sending after `stop` is a no-op (no error, no state change).
+
+## Waiting for State
+
+Prefer `waitFor`/`awaitFinal` over manual `changes` streams to avoid races:
+
+```ts
+yield * actor.send(Event.Start);
+const state = yield * actor.waitFor((s) => s._tag === "Done");
+```
+
+Send and await in one step:
+
+```ts
+const state = yield * actor.sendAndWait(Event.Start);
+```
 
 ## Observing State
 
