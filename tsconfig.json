@@ -18,7 +18,6 @@
         "diagnostics": true,
         "diagnosticsName": true,
         "diagnosticSeverity": {
-          // Enable rules that are off by default
           "anyUnknownInErrorContext": "error",
           "deterministicKeys": "warning",
           "importFromBarrel": "warning",
@@ -28,8 +27,6 @@
           "schemaUnionOfLiterals": "warning",
           "strictBooleanExpressions": "warning",
           "strictEffectProvide": "warning",
-
-          // Upgrade suggestions to warnings for stricter enforcement
           "catchAllToMapError": "warning",
           "catchUnfailableEffect": "warning",
           "effectFnOpportunity": "warning",
@@ -52,12 +49,12 @@
           {
             "target": "service",
             "pattern": "default",
-            "skipLeadingPath": ["src/"]
+            "skipLeadingPath": ["packages/"]
           },
           {
             "target": "error",
             "pattern": "default",
-            "skipLeadingPath": ["src/"]
+            "skipLeadingPath": ["packages/"]
           }
         ]
       }

@@ -166,5 +166,5 @@ export class VersionConflictError extends Schema.TaggedError<VersionConflictErro
  * PersistenceAdapter service tag
  */
 export class PersistenceAdapterTag extends Context.Tag(
-  "effect-machine/persistence/adapter/PersistenceAdapterTag",
+  "effect-machine/src/persistence/adapter/PersistenceAdapterTag",
 )<PersistenceAdapterTag, PersistenceAdapter>() {}
