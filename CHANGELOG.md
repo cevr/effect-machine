@@ -1,5 +1,13 @@
 # effect-machine
 
+## 0.2.2
+
+### Patch Changes
+
+- [`2bcb0bb`](https://github.com/cevr/effect-machine/commit/2bcb0bbbb070c8f35cc9253aee3206140b8b35ae) Thanks [@cevr](https://github.com/cevr)! - Add `AnyInspectionEvent` type alias and default generic params on `makeInspector`/`consoleInspector`/`collectingInspector` so untyped inspectors work without explicit casts.
+
+- [`c50c3ce`](https://github.com/cevr/effect-machine/commit/c50c3ce64207e8dea38d8d40a31de56e3a5549a7) Thanks [@cevr](https://github.com/cevr)! - Fix `waitFor` race condition where a fast state transition between `get` and `changes` subscription could cause `waitFor` to hang forever. Now uses `stateRef.changes` directly which emits the current value atomically as its first element.
+
 ## 0.2.1
 
 ### Patch Changes
