@@ -520,8 +520,10 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     return buildActorRefCore(id, machine, stateRef, eventQueue, stoppedRef, listeners, stop);
   }
 
-  // Start the event loop
-  const loopFiber = yield* Effect.fork(
+  // Start the event loop — use forkScoped so the event loop fiber's lifetime
+  // is tied to the provided Scope, not the calling fiber. This prevents the
+  // event loop from being interrupted when a transient caller completes.
+  const loopFiber = yield* Effect.forkScoped(
     eventLoop(
       machine,
       stateRef,
