@@ -1,5 +1,13 @@
 # effect-machine
 
+## 0.2.4
+
+### Patch Changes
+
+- [`d29f2ff`](https://github.com/cevr/effect-machine/commit/d29f2ff77af15f021884227042032cf5b46e9219) Thanks [@cevr](https://github.com/cevr)! - feat: makeInspector accepts Schema constructors as type params
+
+  `makeInspector<typeof MyState, typeof MyEvent>(cb)` now auto-extracts `.Type` from schema constructors via `ResolveType`. No need for `typeof MyState.Type` anymore.
+
 ## 0.2.3
 
 ### Patch Changes
