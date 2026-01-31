@@ -364,12 +364,14 @@ export const buildActorRefCore = <
   const waitFor = Effect.fn("effect-machine.actor.waitFor")(function* (
     predicate: (state: S) => boolean,
   ) {
-    const current = yield* SubscriptionRef.get(stateRef);
-    if (predicate(current)) {
-      return current;
-    }
-    const next = yield* stateRef.changes.pipe(Stream.filter(predicate), Stream.runHead);
-    return Option.getOrElse(next, () => current);
+    // Use stateRef.changes directly — it emits the current value as its first
+    // element inside the SubscriptionRef semaphore, so this is atomic and
+    // race-free (no gap between "check current" and "subscribe").
+    const result = yield* stateRef.changes.pipe(Stream.filter(predicate), Stream.runHead);
+    if (Option.isSome(result)) return result.value;
+    // Unreachable: changes always emits at least the current value.
+    // Fallback to snapshot for type completeness.
+    return yield* SubscriptionRef.get(stateRef);
   });
 
   const awaitFinal = waitFor((state) => machine.finalStates.has(state._tag)).pipe(

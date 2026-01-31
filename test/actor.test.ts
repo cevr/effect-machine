@@ -1,6 +1,7 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Effect, Ref, Schema, Stream } from "effect";
+import { Context, Deferred, Effect, Exit, Fiber, Layer, Ref, Schema, Scope, Stream } from "effect";
 
+import type { ActorRef } from "../src/index.js";
 import {
   ActorSystemDefault,
   ActorSystemService,
@@ -759,6 +760,205 @@ describe("ActorRef", () => {
           expect(finalState.message).toBe("boom");
         }
       }).pipe(Effect.provide(ActorSystemDefault)),
+    );
+  });
+
+  describe("waitFor race (fast-failing task)", () => {
+    it.live("waitFor does not hang when task fails immediately", () =>
+      Effect.gen(function* () {
+        const TS = State({
+          Idle: {},
+          Running: {},
+          Done: {},
+        });
+        const TE = Event({
+          Start: {},
+          Completed: {},
+          Failed: {},
+        });
+
+        const machine = Machine.make({ state: TS, event: TE, initial: TS.Idle })
+          .on(TS.Idle, TE.Start, () => TS.Running)
+          .on(TS.Running, TE.Completed, () => TS.Done)
+          .on(TS.Running, TE.Failed, () => TS.Idle)
+          .task(TS.Running, () => Effect.fail("instant-failure"), {
+            onSuccess: () => TE.Completed,
+            onFailure: () => TE.Failed,
+          })
+          .final(TS.Done);
+
+        // Mirrors the gent AgentLoop pattern: send → yieldNow → waitFor(Running)
+        // The task fails immediately so Running→Idle can happen before
+        // waitFor subscribes. With the old get-then-subscribe waitFor, this hangs.
+        interface LoopService {
+          readonly run: () => Effect.Effect<string>;
+        }
+        const LoopTag = Context.GenericTag<LoopService>("test/FastFailLoop");
+
+        const LoopLive = Layer.scoped(
+          LoopTag,
+          Effect.gen(function* () {
+            const loopScope = yield* Scope.make();
+            yield* Effect.addFinalizer(() => Scope.close(loopScope, Exit.void));
+
+            const actorRef = yield* Ref.make<ActorRef<typeof TS.Type, typeof TE.Type> | undefined>(
+              undefined,
+            );
+
+            const getActor = Effect.gen(function* () {
+              const existing = yield* Ref.get(actorRef);
+              if (existing !== undefined) return existing;
+              const actor = yield* Machine.spawn(machine).pipe(
+                Effect.provideService(Scope.Scope, loopScope),
+                Effect.orDie,
+              );
+              yield* Ref.set(actorRef, actor);
+              return actor;
+            });
+
+            return LoopTag.of({
+              run: () =>
+                Effect.gen(function* () {
+                  const actor = yield* getActor;
+                  yield* actor.send(TE.Start);
+                  yield* Effect.yieldNow();
+                  yield* actor.waitFor((s) => s._tag === "Running");
+                  yield* actor.waitFor((s) => s._tag !== "Running");
+                  const final = yield* actor.snapshot;
+                  return final._tag;
+                }),
+            });
+          }),
+        );
+
+        const done = yield* Deferred.make<string>();
+
+        const program = Effect.gen(function* () {
+          const svc = yield* LoopTag;
+
+          const fiber = yield* Effect.forkDaemon(
+            svc.run().pipe(
+              Effect.tap((result) => Deferred.succeed(done, result)),
+              Effect.catchAllCause(() => Deferred.succeed(done, "error")),
+            ),
+          );
+
+          const result = yield* Deferred.await(done).pipe(
+            Effect.timeout("2 seconds"),
+            Effect.catchAll(() => Effect.succeed("timeout" as const)),
+          );
+
+          if (result === "timeout") {
+            yield* Fiber.interrupt(fiber);
+          }
+
+          // Must not hang — should resolve to Idle (task failed → Running→Idle)
+          expect(result).not.toBe("timeout");
+          expect(result).toBe("Idle");
+        });
+
+        yield* program.pipe(Effect.provide(LoopLive));
+      }),
+    );
+  });
+
+  describe("spawn with external scope", () => {
+    // Pattern: Layer.scoped service owns an external scope for machine lifetime,
+    // machine lazily spawned on first call, caller uses forkDaemon + send + waitFor.
+    it.live("Layer.scoped + external scope + task + forkDaemon send/waitFor", () =>
+      Effect.gen(function* () {
+        const TS = State({
+          Idle: {},
+          Running: { value: Schema.Number },
+          Done: { result: Schema.String },
+        });
+        const TE = Event({
+          Start: { value: Schema.Number },
+          Completed: { result: Schema.String },
+        });
+
+        const machine = Machine.make({ state: TS, event: TE, initial: TS.Idle })
+          .on(TS.Idle, TE.Start, ({ event }) => TS.Running({ value: event.value }))
+          .on(TS.Running, TE.Completed, ({ event }) => TS.Done({ result: event.result }))
+          .task(
+            TS.Running,
+            ({ state }) =>
+              Effect.gen(function* () {
+                yield* Effect.sleep("10 millis");
+                return `processed-${state.value}`;
+              }),
+            {
+              onSuccess: (result) => TE.Completed({ result }),
+              onFailure: () => TE.Completed({ result: "failed" }),
+            },
+          )
+          .final(TS.Done);
+
+        type Actor = ActorRef<typeof TS.Type, typeof TE.Type>;
+
+        interface LoopService {
+          readonly run: (value: number) => Effect.Effect<void>;
+        }
+        const LoopTag = Context.GenericTag<LoopService>("test/LoopService");
+
+        const LoopLive = Layer.scoped(
+          LoopTag,
+          Effect.gen(function* () {
+            const loopScope = yield* Scope.make();
+            yield* Effect.addFinalizer(() => Scope.close(loopScope, Exit.void));
+
+            const actorRef = yield* Ref.make<Actor | undefined>(undefined);
+
+            const getActor = Effect.gen(function* () {
+              const existing = yield* Ref.get(actorRef);
+              if (existing !== undefined) return existing;
+              const actor = yield* Machine.spawn(machine).pipe(
+                Effect.provideService(Scope.Scope, loopScope),
+                Effect.orDie,
+              );
+              yield* Ref.set(actorRef, actor);
+              return actor;
+            });
+
+            return LoopTag.of({
+              run: (value) =>
+                Effect.gen(function* () {
+                  const actor = yield* getActor;
+                  yield* actor.send(TE.Start({ value }));
+                  yield* Effect.yieldNow();
+                  yield* actor.waitFor((s) => s._tag === "Running");
+                  yield* actor.waitFor((s) => s._tag === "Done");
+                }),
+            });
+          }),
+        );
+
+        const done = yield* Deferred.make<void>();
+
+        const program = Effect.gen(function* () {
+          const svc = yield* LoopTag;
+
+          const fiber = yield* Effect.forkDaemon(
+            svc.run(42).pipe(
+              Effect.tap(() => Deferred.succeed(done, void 0)),
+              Effect.catchAllCause(() => Effect.void),
+            ),
+          );
+
+          const result = yield* Deferred.await(done).pipe(
+            Effect.timeout("2 seconds"),
+            Effect.catchAll(() => Effect.succeed("timeout" as const)),
+          );
+
+          if (result === "timeout") {
+            yield* Fiber.interrupt(fiber);
+          }
+
+          expect(result).not.toBe("timeout");
+        });
+
+        yield* program.pipe(Effect.provide(LoopLive));
+      }),
     );
   });
 });
