@@ -1,4 +1,13 @@
-import { Context } from "effect";
+import { Context, type Schema } from "effect";
+
+// ============================================================================
+// Type-level helpers
+// ============================================================================
+
+/**
+ * Resolve a type param: if it's a Schema, extract `.Type`; otherwise use as-is.
+ */
+type ResolveType<T> = T extends Schema.Schema<infer A, infer _I, infer _R> ? A : T;
 
 // ============================================================================
 // Inspection Events
@@ -113,15 +122,15 @@ export const Inspector = Context.GenericTag<Inspector<any, any>>("@effect/machin
 
 /**
  * Create an inspector from a callback function.
- * Defaults to `AnyInspectionEvent` when type params are not provided,
- * giving access to `_tag` on state/event fields without casts.
+ *
+ * Type params accept either raw tagged types or Schema constructors:
+ * - `makeInspector(cb)` — defaults to `AnyInspectionEvent`
+ * - `makeInspector<MyState, MyEvent>(cb)` — explicit tagged types
+ * - `makeInspector<typeof MyState, typeof MyEvent>(cb)` — schema constructors (auto-extracts `.Type`)
  */
-export const makeInspector = <
-  S extends { readonly _tag: string } = { readonly _tag: string },
-  E extends { readonly _tag: string } = { readonly _tag: string },
->(
-  onInspect: (event: InspectionEvent<S, E>) => void,
-): Inspector<S, E> => ({ onInspect });
+export const makeInspector = <S = { readonly _tag: string }, E = { readonly _tag: string }>(
+  onInspect: (event: InspectionEvent<ResolveType<S>, ResolveType<E>>) => void,
+): Inspector<ResolveType<S>, ResolveType<E>> => ({ onInspect });
 
 // ============================================================================
 // Built-in Inspectors
@@ -130,11 +139,11 @@ export const makeInspector = <
 /**
  * Console inspector that logs events in a readable format
  */
-export const consoleInspector = <
-  S extends { readonly _tag: string } = { readonly _tag: string },
-  E extends { readonly _tag: string } = { readonly _tag: string },
->(): Inspector<S, E> =>
-  makeInspector<S, E>((event) => {
+export const consoleInspector = (): Inspector<
+  { readonly _tag: string },
+  { readonly _tag: string }
+> =>
+  makeInspector((event) => {
     const prefix = `[${event.actorId}]`;
     switch (event.type) {
       case "@machine.spawn":
@@ -166,4 +175,4 @@ export const collectingInspector = <
   E extends { readonly _tag: string },
 >(
   events: InspectionEvent<S, E>[],
-): Inspector<S, E> => makeInspector<S, E>((event) => events.push(event));
+): Inspector<S, E> => ({ onInspect: (event) => events.push(event) });
