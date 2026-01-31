@@ -63,6 +63,7 @@ export type { SimulationResult, TestHarness, TestHarnessOptions } from "./testin
 
 // Inspection
 export type {
+  AnyInspectionEvent,
   EffectEvent,
   ErrorEvent,
   EventReceivedEvent,

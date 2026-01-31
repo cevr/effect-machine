@@ -82,6 +82,17 @@ export type InspectionEvent<S, E> =
   | ErrorEvent<S, E>
   | StopEvent<S>;
 
+/**
+ * Convenience alias for untyped inspection events.
+ * Useful for general-purpose inspectors that don't need specific state/event types.
+ * State and event fields are typed as `{ readonly _tag: string }` so discriminated
+ * access to `_tag` works without casting.
+ */
+export type AnyInspectionEvent = InspectionEvent<
+  { readonly _tag: string },
+  { readonly _tag: string }
+>;
+
 // ============================================================================
 // Inspector Service
 // ============================================================================
@@ -101,9 +112,14 @@ export interface Inspector<S, E> {
 export const Inspector = Context.GenericTag<Inspector<any, any>>("@effect/machine/Inspector");
 
 /**
- * Create an inspector from a callback function
+ * Create an inspector from a callback function.
+ * Defaults to `AnyInspectionEvent` when type params are not provided,
+ * giving access to `_tag` on state/event fields without casts.
  */
-export const makeInspector = <S, E>(
+export const makeInspector = <
+  S extends { readonly _tag: string } = { readonly _tag: string },
+  E extends { readonly _tag: string } = { readonly _tag: string },
+>(
   onInspect: (event: InspectionEvent<S, E>) => void,
 ): Inspector<S, E> => ({ onInspect });
 
@@ -115,10 +131,10 @@ export const makeInspector = <S, E>(
  * Console inspector that logs events in a readable format
  */
 export const consoleInspector = <
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
+  S extends { readonly _tag: string } = { readonly _tag: string },
+  E extends { readonly _tag: string } = { readonly _tag: string },
 >(): Inspector<S, E> =>
-  makeInspector((event) => {
+  makeInspector<S, E>((event) => {
     const prefix = `[${event.actorId}]`;
     switch (event.type) {
       case "@machine.spawn":
@@ -145,5 +161,9 @@ export const consoleInspector = <
 /**
  * Collecting inspector that stores events in an array for testing
  */
-export const collectingInspector = <S, E>(events: InspectionEvent<S, E>[]): Inspector<S, E> =>
-  makeInspector((event) => events.push(event));
+export const collectingInspector = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+>(
+  events: InspectionEvent<S, E>[],
+): Inspector<S, E> => makeInspector<S, E>((event) => events.push(event));
