@@ -1,5 +1,24 @@
 # effect-machine
 
+## 0.3.0
+
+### Minor Changes
+
+- [`0154ac9`](https://github.com/cevr/effect-machine/commit/0154ac910aed5b8ac456ba7194b6be25f8d640d4) Thanks [@cevr](https://github.com/cevr)! - feat: DX overhaul — multi-state `.on()`, `State.derive()`, `.onAny()`, `waitFor` deadlock fix, `sendSync`, `waitFor(State.X)`, `.build()` / `BuiltMachine`
+  - **Multi-state `.on()`/`.reenter()`**: Accept arrays of states — `.on([State.A, State.B], Event.X, handler)`
+  - **`State.derive()`**: Construct new state from source — `State.B.derive(stateA, { extra: val })` picks overlapping fields + applies overrides
+  - **`.onAny()` wildcard transitions**: Handle event from any state — `.onAny(Event.Cancel, () => State.Cancelled)`. Specific `.on()` takes priority.
+  - **`waitFor` deadlock fix**: Rewrote to use sync listeners + `Deferred` instead of `SubscriptionRef.changes` stream, preventing semaphore deadlock on synchronous transitions
+  - **`sendSync`**: Fire-and-forget sync send for framework integration (React/Solid hooks)
+  - **`waitFor(State.X)`**: Accept state constructor/value instead of predicate — `actor.waitFor(State.Active)` and `actor.sendAndWait(event, State.Done)`
+  - **`.build()` / `BuiltMachine`**: Terminal builder method — `.provide()` renamed to `.build()`, returns `BuiltMachine`. `.validate()` removed. `Machine.spawn` and `ActorSystem.spawn` accept `BuiltMachine`. No-slot machines: `.build()` with no args.
+
+- [`365da12`](https://github.com/cevr/effect-machine/commit/365da129e6875ebd9dc2b68f8b0873aab90f42cf) Thanks [@cevr](https://github.com/cevr)! - feat: remove `Scope.Scope` from `Machine.spawn` and `system.spawn` signatures
+  - **Scope-optional spawn**: `Machine.spawn` and `ActorSystem.spawn` no longer require `Scope.Scope` in `R`. Both detect scope via `Effect.serviceOption` — if present, attach cleanup finalizer; if absent, skip.
+  - **Daemon forks**: Event loop, background effects, and persistence fibers use `Effect.forkDaemon` — detached from parent scope, cleaned up by `actor.stop`.
+  - **System-level cleanup**: `ActorSystem` layer teardown stops all registered actors automatically. `ActorSystemDefault` is now `Layer.scoped`.
+  - **Breaking**: Callers that relied on `Scope.Scope` appearing in the `R` type of spawn may need type adjustments. `Effect.scoped` wrappers around spawn are no longer required but still work (scope detection finds them).
+
 ## 0.2.4
 
 ### Patch Changes
