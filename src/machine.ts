@@ -415,12 +415,13 @@ export class Machine<
       never
     >,
   ): Machine<State, Event, R, _SD, _ED, GD, EFD>;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  /* eslint-disable @typescript-eslint/no-explicit-any */
   reenter(
     stateOrStates: any,
     event: any,
     handler: any,
   ): Machine<State, Event, R, _SD, _ED, GD, EFD> {
+    /* eslint-enable @typescript-eslint/no-explicit-any */
     const states = Array.isArray(stateOrStates) ? stateOrStates : [stateOrStates];
     for (const s of states) {
       this.addTransition(s, event, handler, true);
