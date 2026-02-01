@@ -47,13 +47,12 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
   GD extends GuardsDef = Record<string, never>,
   EFD extends EffectsDef = Record<string, never>,
 >(input: MachineInput<S, E, R, GD, EFD>, events: ReadonlyArray<E>) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const machine = (input instanceof BuiltMachine ? input._inner : input) as Machine<
     S,
     E,
     R,
-    any,
-    any,
+    Record<string, never>,
+    Record<string, never>,
     GD,
     EFD
   >;
@@ -240,13 +239,12 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
   GD extends GuardsDef = Record<string, never>,
   EFD extends EffectsDef = Record<string, never>,
 >(input: MachineInput<S, E, R, GD, EFD>, options?: TestHarnessOptions<S, E>) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const machine = (input instanceof BuiltMachine ? input._inner : input) as Machine<
     S,
     E,
     R,
-    any,
-    any,
+    Record<string, never>,
+    Record<string, never>,
     GD,
     EFD
   >;

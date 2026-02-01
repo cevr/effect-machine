@@ -25,7 +25,7 @@
     "fmt:check": "oxfmt --check",
     "test": "bun test",
     "test:watch": "bun test --watch",
-    "gate": "concurrently -n type,lint,fmt,test -c blue,yellow,magenta,green \"bun run typecheck\" \"bun run lint\" \"bun run fmt\" \"bun run test\"",
+    "gate": "concurrently -n type,lint,fmt,test -c blue,yellow,magenta,green \"bun run typecheck\" \"bun run lint:fix\" \"bun run fmt\" \"bun run test\"",
     "prepare": "lefthook install || true && effect-language-service patch",
     "version": "changeset version",
     "release": "changeset publish"
