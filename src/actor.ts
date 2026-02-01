@@ -85,6 +85,13 @@ export interface ActorRef<State extends { readonly _tag: string }, Event> {
   readonly stop: Effect.Effect<void>;
 
   /**
+   * Stop the actor (fire-and-forget).
+   * Signals graceful shutdown without waiting for completion.
+   * Use when stopping from sync contexts (e.g. framework cleanup hooks).
+   */
+  readonly stopSync: () => void;
+
+  /**
    * Get current state snapshot (Effect)
    */
   readonly snapshot: Effect.Effect<State>;
@@ -422,6 +429,7 @@ export const buildActorRefCore = <
     send,
     state: stateRef,
     stop,
+    stopSync: () => Effect.runFork(stop),
     snapshot,
     snapshotSync: () => Effect.runSync(SubscriptionRef.get(stateRef)),
     matches,
