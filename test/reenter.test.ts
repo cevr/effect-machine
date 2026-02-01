@@ -33,7 +33,7 @@ describe("Same-state Transitions", () => {
         initial: FormState.Form({ name: "", count: 0 }),
       })
         .on(FormState.Form, FormEvent.SetName, ({ state, event }) =>
-          FormState.Form({ name: event.name, count: state.count + 1 }),
+          FormState.Form.derive(state, { name: event.name, count: state.count + 1 }),
         )
         .on(FormState.Form, FormEvent.Submit, () => FormState.Submitted)
         .spawn(FormState.Form, () =>
@@ -83,7 +83,7 @@ describe("Same-state Transitions", () => {
         initial: FormState.Form({ name: "", count: 0 }),
       })
         .reenter(FormState.Form, FormEvent.SetName, ({ state, event }) =>
-          FormState.Form({ name: event.name, count: state.count + 1 }),
+          FormState.Form.derive(state, { name: event.name, count: state.count + 1 }),
         )
         .spawn(FormState.Form, () =>
           Effect.gen(function* () {
@@ -136,7 +136,7 @@ describe("Reenter Transitions", () => {
       })
         .on(PollState.Polling, PollEvent.Finish, () => PollState.Done)
         .reenter(PollState.Polling, PollEvent.Reset, ({ state }) =>
-          PollState.Polling({ attempts: state.attempts + 1 }),
+          PollState.Polling.derive(state, { attempts: state.attempts + 1 }),
         )
         .spawn(PollState.Polling, ({ state }) =>
           Effect.gen(function* () {
@@ -191,7 +191,7 @@ describe("Reenter Transitions", () => {
       })
         .on(PollState.Polling, PollEvent.Poll, () => PollState.Done)
         .reenter(PollState.Polling, PollEvent.Reset, ({ state }) =>
-          PollState.Polling({ attempts: state.attempts + 1 }),
+          PollState.Polling.derive(state, { attempts: state.attempts + 1 }),
         )
         .task(PollState.Polling, ({ effects }) => effects.runPollingEffect(), {
           onSuccess: () => PollEvent.Poll,

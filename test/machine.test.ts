@@ -2,6 +2,7 @@
 import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
+import type { UnprovidedSlotsError } from "../src/index.js";
 import { Machine, simulate, State, Event, Slot } from "../src/index.js";
 
 const CounterState = State({
@@ -142,5 +143,223 @@ describe("Machine", () => {
       .final(CounterState.Done);
     expect(machine.finalStates.has("Done")).toBe(true);
     expect(machine.finalStates.has("Idle")).toBe(false);
+  });
+});
+
+// ============================================================================
+// Multi-state .on() / .reenter() (F1)
+// ============================================================================
+
+describe("multi-state .on()", () => {
+  const WState = State({
+    Draft: {},
+    Review: {},
+    Approved: {},
+    Cancelled: {},
+  });
+  const WEvent = Event({
+    Submit: {},
+    Approve: {},
+    Cancel: {},
+  });
+
+  test("array of states registers transition for each", async () => {
+    const machine = Machine.make({
+      state: WState,
+      event: WEvent,
+      initial: WState.Draft,
+    })
+      .on([WState.Draft, WState.Review], WEvent.Cancel, () => WState.Cancelled)
+      .on(WState.Draft, WEvent.Submit, () => WState.Review)
+      .on(WState.Review, WEvent.Approve, () => WState.Approved)
+      .final(WState.Cancelled)
+      .final(WState.Approved);
+
+    // Cancel from Draft
+    const r1 = await Effect.runPromise(simulate(machine, [WEvent.Cancel]));
+    expect(r1.finalState._tag).toBe("Cancelled");
+
+    // Cancel from Review
+    const r2 = await Effect.runPromise(simulate(machine, [WEvent.Submit, WEvent.Cancel]));
+    expect(r2.finalState._tag).toBe("Cancelled");
+  });
+
+  test("single state still works (backward compat)", async () => {
+    const machine = Machine.make({
+      state: WState,
+      event: WEvent,
+      initial: WState.Draft,
+    })
+      .on(WState.Draft, WEvent.Submit, () => WState.Review)
+      .on(WState.Review, WEvent.Approve, () => WState.Approved)
+      .final(WState.Approved);
+
+    const r = await Effect.runPromise(simulate(machine, [WEvent.Submit, WEvent.Approve]));
+    expect(r.finalState._tag).toBe("Approved");
+  });
+
+  test("empty array is a no-op", () => {
+    const machine = Machine.make({
+      state: WState,
+      event: WEvent,
+      initial: WState.Draft,
+    }).on([] as (typeof WState.Draft)[], WEvent.Cancel, () => WState.Cancelled);
+
+    expect(machine.transitions.length).toBe(0);
+  });
+});
+
+describe("multi-state .reenter()", () => {
+  test("reenter with array registers for each state", () => {
+    const RState = State({
+      A: { value: Schema.Number },
+      B: { value: Schema.Number },
+    });
+    const REvent = Event({ Reset: {} });
+
+    const machine = Machine.make({
+      state: RState,
+      event: REvent,
+      initial: RState.A({ value: 0 }),
+    }).reenter([RState.A, RState.B], REvent.Reset, ({ state }) =>
+      RState.A({ value: state.value + 1 }),
+    );
+
+    expect(machine.transitions.length).toBe(2);
+    expect(machine.transitions[0]!.reenter).toBe(true);
+    expect(machine.transitions[1]!.reenter).toBe(true);
+  });
+});
+
+// ============================================================================
+// .onAny() wildcard transitions (F5)
+// ============================================================================
+
+describe(".onAny()", () => {
+  const AState = State({
+    Idle: {},
+    Loading: {},
+    Active: {},
+    Cancelled: {},
+  });
+  const AEvent = Event({
+    Start: {},
+    Load: {},
+    Cancel: {},
+  });
+
+  test("wildcard catches event from any state", async () => {
+    const machine = Machine.make({
+      state: AState,
+      event: AEvent,
+      initial: AState.Idle,
+    })
+      .on(AState.Idle, AEvent.Start, () => AState.Loading)
+      .on(AState.Loading, AEvent.Load, () => AState.Active)
+      .onAny(AEvent.Cancel, () => AState.Cancelled)
+      .final(AState.Cancelled);
+
+    // Cancel from Idle
+    const r1 = await Effect.runPromise(simulate(machine, [AEvent.Cancel]));
+    expect(r1.finalState._tag).toBe("Cancelled");
+
+    // Cancel from Loading
+    const r2 = await Effect.runPromise(simulate(machine, [AEvent.Start, AEvent.Cancel]));
+    expect(r2.finalState._tag).toBe("Cancelled");
+
+    // Cancel from Active
+    const r3 = await Effect.runPromise(
+      simulate(machine, [AEvent.Start, AEvent.Load, AEvent.Cancel]),
+    );
+    expect(r3.finalState._tag).toBe("Cancelled");
+  });
+
+  test("specific .on() takes priority over .onAny()", async () => {
+    const machine = Machine.make({
+      state: AState,
+      event: AEvent,
+      initial: AState.Idle,
+    })
+      .on(AState.Idle, AEvent.Cancel, () => AState.Active) // specific
+      .onAny(AEvent.Cancel, () => AState.Cancelled)
+      .final(AState.Active)
+      .final(AState.Cancelled);
+
+    // Idle + Cancel -> uses specific (Active), not wildcard (Cancelled)
+    const r = await Effect.runPromise(simulate(machine, [AEvent.Cancel]));
+    expect(r.finalState._tag).toBe("Active");
+  });
+
+  test("multiple .onAny() for different events", async () => {
+    const machine = Machine.make({
+      state: AState,
+      event: AEvent,
+      initial: AState.Idle,
+    })
+      .onAny(AEvent.Cancel, () => AState.Cancelled)
+      .onAny(AEvent.Start, () => AState.Loading)
+      .final(AState.Cancelled);
+
+    const r1 = await Effect.runPromise(simulate(machine, [AEvent.Cancel]));
+    expect(r1.finalState._tag).toBe("Cancelled");
+
+    const r2 = await Effect.runPromise(simulate(machine, [AEvent.Start]));
+    expect(r2.finalState._tag).toBe("Loading");
+  });
+});
+
+// ============================================================================
+// .validate() (F7)
+// ============================================================================
+
+describe(".validate()", () => {
+  test("throws UnprovidedSlotsError when guards/effects missing", () => {
+    const Guards = Slot.Guards({ check: {} });
+    const Effects = Slot.Effects({ notify: {} });
+
+    const machine = Machine.make({
+      state: CounterState,
+      event: CounterEvent,
+      guards: Guards,
+      effects: Effects,
+      initial: CounterState.Idle({ count: 0 }),
+    });
+
+    expect(() => machine.validate()).toThrow();
+    try {
+      machine.validate();
+    } catch (e) {
+      expect((e as UnprovidedSlotsError)._tag).toBe("UnprovidedSlotsError");
+    }
+  });
+
+  test("passes silently when all provided", () => {
+    const Guards = Slot.Guards({ check: {} });
+
+    const machine = Machine.make({
+      state: CounterState,
+      event: CounterEvent,
+      guards: Guards,
+      initial: CounterState.Idle({ count: 0 }),
+    }).provide({
+      check: () => true,
+    });
+
+    expect(() => machine.validate()).not.toThrow();
+  });
+
+  test("chainable after .provide()", () => {
+    const Guards = Slot.Guards({ check: {} });
+
+    const machine = Machine.make({
+      state: CounterState,
+      event: CounterEvent,
+      guards: Guards,
+      initial: CounterState.Idle({ count: 0 }),
+    })
+      .provide({ check: () => true })
+      .validate();
+
+    expect(machine.transitions).toBeDefined();
   });
 });

@@ -74,11 +74,30 @@ type IsEmptyFields<Fields extends Schema.Struct.Fields> = keyof Fields extends n
  * Constructor functions for each variant.
  * Empty structs: plain values with `_tag`: `State.Idle`
  * Non-empty structs require args: `State.Loading({ url })`
+ *
+ * Each variant also has a `derive` method for constructing from a source object.
+ */
+/**
+ * Constructor functions for each variant.
+ * Empty structs: plain values with `_tag`: `State.Idle`
+ * Non-empty structs require args: `State.Loading({ url })`
+ *
+ * Each variant also has a `derive` method for constructing from a source object.
+ * The source type uses `object` to accept branded state types without index signature issues.
  */
 type VariantConstructors<D extends Record<string, Schema.Struct.Fields>, Brand> = {
   readonly [K in keyof D & string]: IsEmptyFields<D[K]> extends true
-    ? TaggedStructType<K, D[K]> & Brand
-    : (args: Schema.Struct.Constructor<D[K]>) => TaggedStructType<K, D[K]> & Brand;
+    ? TaggedStructType<K, D[K]> &
+        Brand & {
+          readonly derive: (source: object) => TaggedStructType<K, D[K]> & Brand;
+        }
+    : ((args: Schema.Struct.Constructor<D[K]>) => TaggedStructType<K, D[K]> & Brand) & {
+        readonly derive: (
+          source: object,
+          partial?: Partial<Schema.Struct.Constructor<D[K]>>,
+        ) => TaggedStructType<K, D[K]> & Brand;
+        readonly _tag: K;
+      };
 };
 
 /**
@@ -92,6 +111,11 @@ type MatchCases<D extends Record<string, Schema.Struct.Fields>, R> = {
  * Base schema interface with pattern matching helpers
  */
 interface MachineSchemaBase<D extends Record<string, Schema.Struct.Fields>, Brand> {
+  /**
+   * Raw definition record for introspection
+   */
+  readonly _definition: D;
+
   /**
    * Per-variant schemas for fine-grained operations
    */
@@ -164,6 +188,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
   schema: Schema.Schema<VariantsUnion<D>, VariantsUnion<D>, never>;
   variants: VariantSchemas<D>;
   constructors: Record<string, (args: Record<string, unknown>) => Record<string, unknown>>;
+  _definition: D;
   $is: <Tag extends string>(tag: Tag) => (u: unknown) => boolean;
   $match: (valueOrCases: unknown, maybeCases?: unknown) => unknown;
 } => {
@@ -184,16 +209,29 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
     // Create constructor that builds tagged struct directly
     // Like Data.taggedEnum, this doesn't validate at construction time
     // Use Schema.decode for validation when needed
-    const hasFields = Object.keys(fields).length > 0;
+    const fieldNames = new Set(Object.keys(fields));
+    const hasFields = fieldNames.size > 0;
 
     if (hasFields) {
       // Non-empty: constructor function requiring args
       const constructor = (args: Record<string, unknown>) => ({ ...args, _tag: tag });
       constructor._tag = tag;
+      constructor.derive = (source: Record<string, unknown>, partial?: Record<string, unknown>) => {
+        const result: Record<string, unknown> = { _tag: tag };
+        for (const key of fieldNames) {
+          if (key in source) result[key] = source[key];
+        }
+        if (partial !== undefined) {
+          for (const [key, value] of Object.entries(partial)) {
+            result[key] = value;
+          }
+        }
+        return result;
+      };
       constructors[tag] = constructor;
     } else {
       // Empty: plain value, not callable
-      constructors[tag] = { _tag: tag } as never;
+      constructors[tag] = { _tag: tag, derive: () => ({ _tag: tag }) } as never;
     }
   }
 
@@ -244,6 +282,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
     schema: unionSchema as unknown as Schema.Schema<VariantsUnion<D>, VariantsUnion<D>, never>,
     variants: variants as unknown as VariantSchemas<D>,
     constructors,
+    _definition: definition,
     $is,
     $match,
   };
@@ -254,8 +293,15 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
  * Builds the schema object with variants, constructors, $is, and $match.
  */
 const createMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(definition: D) => {
-  const { schema, variants, constructors, $is, $match } = buildMachineSchema(definition);
-  return Object.assign(Object.create(schema), { variants, $is, $match, ...constructors });
+  const { schema, variants, constructors, _definition, $is, $match } =
+    buildMachineSchema(definition);
+  return Object.assign(Object.create(schema), {
+    variants,
+    _definition,
+    $is,
+    $match,
+    ...constructors,
+  });
 };
 
 /**

@@ -33,8 +33,8 @@ const _test1 = Machine.make({
   state: MyState,
   event: MyEvent,
   initial: MyState.Idle,
-}).on(MyState.Idle, MyEvent.Start, () =>
   // @ts-expect-error - Handler cannot require arbitrary services (MyService not in R=never)
+}).on(MyState.Idle, MyEvent.Start, () =>
   Effect.gen(function* () {
     const svc = yield* MyService;
     return MyState.Loading({ url: svc.foo });
@@ -60,8 +60,8 @@ const _test3 = Machine.make({
   state: MyState,
   event: MyEvent,
   initial: MyState.Idle,
-}).on(MyState.Idle, MyEvent.Start, () =>
   // @ts-expect-error - Handler cannot produce errors (MyError not assignable to never)
+}).on(MyState.Idle, MyEvent.Start, () =>
   Effect.gen(function* () {
     return yield* new MyError();
   }),

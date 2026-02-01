@@ -458,7 +458,10 @@ export const findTransitions = <
   eventTag: string,
 ): ReadonlyArray<Transition<S, E, GD, EFD, R>> => {
   const index = getIndex(machine);
-  return index.transitions.get(stateTag)?.get(eventTag) ?? [];
+  const specific = index.transitions.get(stateTag)?.get(eventTag) ?? [];
+  if (specific.length > 0) return specific;
+  // Fallback to wildcard transitions
+  return index.transitions.get("*")?.get(eventTag) ?? [];
 };
 
 /**

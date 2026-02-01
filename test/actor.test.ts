@@ -625,7 +625,7 @@ describe("ActorRef", () => {
   });
 
   describe("waitFor / awaitFinal / sendAndWait", () => {
-    it.scopedLive("waitFor includes current snapshot", () =>
+    it.scopedLive("waitFor accepts state constructor", () =>
       Effect.gen(function* () {
         const machine = Machine.make({
           state: TestState,
@@ -641,12 +641,12 @@ describe("ActorRef", () => {
         yield* actor.send(TestEvent.Start({ value: 1 }));
         yield* yieldFibers;
 
-        const state = yield* actor.waitFor((s) => s._tag === "Done");
+        const state = yield* actor.waitFor(TestState.Done);
         expect(state._tag).toBe("Done");
       }).pipe(Effect.provide(ActorSystemDefault)),
     );
 
-    it.scopedLive("sendAndWait uses predicate", () =>
+    it.scopedLive("sendAndWait accepts state constructor", () =>
       Effect.gen(function* () {
         const machine = Machine.make({
           state: TestState,
@@ -659,10 +659,7 @@ describe("ActorRef", () => {
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("send-and-wait", machine);
 
-        const state = yield* actor.sendAndWait(
-          TestEvent.Start({ value: 5 }),
-          (s) => s._tag === "Active",
-        );
+        const state = yield* actor.sendAndWait(TestEvent.Start({ value: 5 }), TestState.Active);
         expect(state._tag).toBe("Active");
         if (state._tag === "Active") {
           expect(state.value).toBe(5);
@@ -822,7 +819,7 @@ describe("ActorRef", () => {
                   const actor = yield* getActor;
                   yield* actor.send(TE.Start);
                   yield* Effect.yieldNow();
-                  yield* actor.waitFor((s) => s._tag === "Running");
+                  yield* actor.waitFor(TS.Running);
                   yield* actor.waitFor((s) => s._tag !== "Running");
                   const final = yield* actor.snapshot;
                   return final._tag;
@@ -926,8 +923,8 @@ describe("ActorRef", () => {
                   const actor = yield* getActor;
                   yield* actor.send(TE.Start({ value }));
                   yield* Effect.yieldNow();
-                  yield* actor.waitFor((s) => s._tag === "Running");
-                  yield* actor.waitFor((s) => s._tag === "Done");
+                  yield* actor.waitFor(TS.Running);
+                  yield* actor.waitFor(TS.Done);
                 }),
             });
           }),
@@ -958,6 +955,179 @@ describe("ActorRef", () => {
         });
 
         yield* program.pipe(Effect.provide(LoopLive));
+      }),
+    );
+  });
+
+  // ============================================================================
+  // waitFor deadlock regression (F3)
+  // ============================================================================
+
+  describe("waitFor deadlock regression", () => {
+    it.scopedLive("sendAndWait does not deadlock on synchronous transition", () =>
+      Effect.gen(function* () {
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Idle,
+        })
+          .on(TestState.Idle, TestEvent.Start, ({ event }) =>
+            TestState.Loading({ value: event.value }),
+          )
+          .on(TestState.Loading, TestEvent.Complete, ({ state }) =>
+            TestState.Active({ value: state.value }),
+          )
+          .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
+          .final(TestState.Done);
+
+        const actor = yield* Machine.spawn(machine);
+
+        // Send Start and wait for Loading — must not deadlock
+        const result = yield* Effect.race(
+          actor.sendAndWait(TestEvent.Start({ value: 1 }), TestState.Loading),
+          Effect.sleep("2 seconds").pipe(Effect.as("DEADLOCK" as const)),
+        );
+
+        expect(result).not.toBe("DEADLOCK");
+        expect((result as TestState)._tag).toBe("Loading");
+      }),
+    );
+
+    it.scopedLive("concurrent sendAndWait + state change does not deadlock", () =>
+      Effect.gen(function* () {
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Idle,
+        })
+          .on(TestState.Idle, TestEvent.Start, ({ event }) =>
+            TestState.Active({ value: event.value }),
+          )
+          .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
+          .final(TestState.Done);
+
+        const actor = yield* Machine.spawn(machine);
+
+        // Fire-and-forget start, then waitFor Active
+        yield* actor.send(TestEvent.Start({ value: 42 }));
+        const result = yield* Effect.race(
+          actor.waitFor(TestState.Active),
+          Effect.sleep("2 seconds").pipe(Effect.as("DEADLOCK" as const)),
+        );
+
+        expect(result).not.toBe("DEADLOCK");
+        expect((result as TestState)._tag).toBe("Active");
+      }),
+    );
+  });
+
+  // ============================================================================
+  // sendSync (F4)
+  // ============================================================================
+
+  describe("sendSync", () => {
+    it.scopedLive("sendSync sends event synchronously", () =>
+      Effect.gen(function* () {
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Idle,
+        })
+          .on(TestState.Idle, TestEvent.Start, ({ event }) =>
+            TestState.Active({ value: event.value }),
+          )
+          .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
+          .final(TestState.Done);
+
+        const actor = yield* Machine.spawn(machine);
+        actor.sendSync(TestEvent.Start({ value: 7 }));
+        yield* yieldFibers;
+
+        const state = yield* actor.snapshot;
+        expect(state._tag).toBe("Active");
+        if (state._tag === "Active") {
+          expect(state.value).toBe(7);
+        }
+      }),
+    );
+
+    it.scopedLive("sendSync is no-op on stopped actor", () =>
+      Effect.gen(function* () {
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Idle,
+        }).on(TestState.Idle, TestEvent.Start, ({ event }) =>
+          TestState.Active({ value: event.value }),
+        );
+
+        const actor = yield* Machine.spawn(machine);
+        yield* actor.stop;
+
+        // Should not throw
+        actor.sendSync(TestEvent.Start({ value: 1 }));
+
+        const state = yield* actor.snapshot;
+        expect(state._tag).toBe("Idle");
+      }),
+    );
+  });
+
+  // ============================================================================
+  // waitFor / sendAndWait state constructor overload (F6)
+  // ============================================================================
+
+  describe("waitFor state constructor overload", () => {
+    it.scopedLive("waitFor accepts state constructor", () =>
+      Effect.gen(function* () {
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Idle,
+        })
+          .on(TestState.Idle, TestEvent.Start, ({ event }) =>
+            TestState.Active({ value: event.value }),
+          )
+          .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
+          .final(TestState.Done);
+
+        const actor = yield* Machine.spawn(machine);
+        yield* actor.send(TestEvent.Start({ value: 10 }));
+
+        const state = yield* actor.waitFor(TestState.Active);
+        expect(state._tag).toBe("Active");
+      }),
+    );
+
+    it.scopedLive("sendAndWait accepts state constructor", () =>
+      Effect.gen(function* () {
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Idle,
+        }).on(TestState.Idle, TestEvent.Start, ({ event }) =>
+          TestState.Active({ value: event.value }),
+        );
+
+        const actor = yield* Machine.spawn(machine);
+
+        const state = yield* actor.sendAndWait(TestEvent.Start({ value: 5 }), TestState.Active);
+        expect(state._tag).toBe("Active");
+      }),
+    );
+
+    it.scopedLive("waitFor resolves immediately if already in state", () =>
+      Effect.gen(function* () {
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Idle,
+        });
+
+        const actor = yield* Machine.spawn(machine);
+
+        const state = yield* actor.waitFor(TestState.Idle);
+        expect(state._tag).toBe("Idle");
       }),
     );
   });

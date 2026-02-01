@@ -6,9 +6,11 @@
  * - ActorSystem service (spawn/stop/get actors)
  * - Actor creation and event loop
  */
+import type { Stream } from "effect";
 import {
   Cause,
   Context,
+  Deferred,
   Effect,
   Exit,
   Fiber,
@@ -17,8 +19,8 @@ import {
   Option,
   Queue,
   Ref,
+  Runtime,
   Scope,
-  Stream,
   SubscriptionRef,
 } from "effect";
 
@@ -118,9 +120,13 @@ export interface ActorRef<State extends { readonly _tag: string }, Event> {
   readonly changes: Stream.Stream<State>;
 
   /**
-   * Wait for a state that matches predicate (includes current snapshot)
+   * Wait for a state that matches predicate or state variant (includes current snapshot).
+   * Accepts a predicate function or a state constructor/value (e.g. `State.Active`).
    */
-  readonly waitFor: (predicate: (state: State) => boolean) => Effect.Effect<State>;
+  readonly waitFor: {
+    (predicate: (state: State) => boolean): Effect.Effect<State>;
+    (state: { readonly _tag: State["_tag"] }): Effect.Effect<State>;
+  };
 
   /**
    * Wait for a final state (includes current snapshot)
@@ -128,12 +134,21 @@ export interface ActorRef<State extends { readonly _tag: string }, Event> {
   readonly awaitFinal: Effect.Effect<State>;
 
   /**
-   * Send event and wait for predicate or final state
+   * Send event and wait for predicate, state variant, or final state.
+   * Accepts a predicate function or a state constructor/value (e.g. `State.Active`).
    */
-  readonly sendAndWait: (
-    event: Event,
-    predicate?: (state: State) => boolean,
-  ) => Effect.Effect<State>;
+  readonly sendAndWait: {
+    (event: Event, predicate: (state: State) => boolean): Effect.Effect<State>;
+    (event: Event, state: { readonly _tag: State["_tag"] }): Effect.Effect<State>;
+    (event: Event): Effect.Effect<State>;
+  };
+
+  /**
+   * Send event synchronously (fire-and-forget).
+   * No-op on stopped actors. Use when you need to send from sync contexts
+   * (e.g. framework hooks, event handlers).
+   */
+  readonly sendSync: (event: Event) => void;
 
   /**
    * Subscribe to state changes (sync callback)
@@ -362,16 +377,41 @@ export const buildActorRefCore = <
   });
 
   const waitFor = Effect.fn("effect-machine.actor.waitFor")(function* (
-    predicate: (state: S) => boolean,
+    predicateOrState: ((state: S) => boolean) | { readonly _tag: S["_tag"] },
   ) {
-    // Use stateRef.changes directly — it emits the current value as its first
-    // element inside the SubscriptionRef semaphore, so this is atomic and
-    // race-free (no gap between "check current" and "subscribe").
-    const result = yield* stateRef.changes.pipe(Stream.filter(predicate), Stream.runHead);
-    if (Option.isSome(result)) return result.value;
-    // Unreachable: changes always emits at least the current value.
-    // Fallback to snapshot for type completeness.
-    return yield* SubscriptionRef.get(stateRef);
+    const predicate =
+      typeof predicateOrState === "function" && !("_tag" in predicateOrState)
+        ? predicateOrState
+        : (s: S) => s._tag === (predicateOrState as { readonly _tag: string })._tag;
+
+    // Check current state first — SubscriptionRef.get acquires/releases
+    // the semaphore quickly (read-only), no deadlock risk.
+    const current = yield* SubscriptionRef.get(stateRef);
+    if (predicate(current)) return current;
+
+    // Use sync listener + Deferred to avoid holding the SubscriptionRef
+    // semaphore for the duration of a stream (which causes deadlock when
+    // send triggers SubscriptionRef.set concurrently).
+    const done = yield* Deferred.make<S>();
+    const rt = yield* Effect.runtime<never>();
+    const runFork = Runtime.runFork(rt);
+    const listener = (state: S) => {
+      if (predicate(state)) {
+        runFork(Deferred.succeed(done, state));
+      }
+    };
+    listeners.add(listener);
+
+    // Re-check after subscribing to close the race window
+    const afterSubscribe = yield* SubscriptionRef.get(stateRef);
+    if (predicate(afterSubscribe)) {
+      listeners.delete(listener);
+      return afterSubscribe;
+    }
+
+    const result = yield* Deferred.await(done);
+    listeners.delete(listener);
+    return result;
   });
 
   const awaitFinal = waitFor((state) => machine.finalStates.has(state._tag)).pipe(
@@ -380,11 +420,11 @@ export const buildActorRefCore = <
 
   const sendAndWait = Effect.fn("effect-machine.actor.sendAndWait")(function* (
     event: E,
-    predicate?: (state: S) => boolean,
+    predicateOrState?: ((state: S) => boolean) | { readonly _tag: S["_tag"] },
   ) {
     yield* send(event);
-    if (predicate !== undefined) {
-      return yield* waitFor(predicate);
+    if (predicateOrState !== undefined) {
+      return yield* waitFor(predicateOrState);
     }
     return yield* awaitFinal;
   });
@@ -407,6 +447,12 @@ export const buildActorRefCore = <
     waitFor,
     awaitFinal,
     sendAndWait,
+    sendSync: (event) => {
+      const stopped = Effect.runSync(Ref.get(stoppedRef));
+      if (!stopped) {
+        Effect.runSync(Queue.offer(eventQueue, event));
+      }
+    },
     subscribe: (fn) => {
       listeners.add(fn);
       return () => {

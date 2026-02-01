@@ -169,6 +169,100 @@ describe("State (schema-first)", () => {
   });
 });
 
+describe("State.derive()", () => {
+  test("same-state: preserves other fields, overrides specified", () => {
+    const TS = State({
+      Editor: { text: Schema.String, cursor: Schema.Number },
+    });
+
+    const s = TS.Editor({ text: "hello", cursor: 0 });
+    const s2 = TS.Editor.derive(s, { cursor: 5 });
+
+    expect(s2._tag).toBe("Editor");
+    expect(s2.text).toBe("hello");
+    expect(s2.cursor).toBe(5);
+  });
+
+  test("same-state: no partial returns copy", () => {
+    const TS = State({
+      A: { x: Schema.Number, y: Schema.String },
+    });
+
+    const s = TS.A({ x: 10, y: "hi" });
+    const s2 = TS.A.derive(s);
+
+    expect(s2._tag).toBe("A");
+    expect(s2.x).toBe(10);
+    expect(s2.y).toBe("hi");
+  });
+
+  test("cross-state: picks only target fields from source", () => {
+    const TS = State({
+      A: { x: Schema.Number, y: Schema.String },
+      B: { x: Schema.Number },
+    });
+
+    const a = TS.A({ x: 42, y: "hello" });
+    const b = TS.B.derive(a);
+
+    expect(b._tag).toBe("B");
+    expect(b.x).toBe(42);
+    expect((b as unknown as Record<string, unknown>)["y"]).toBeUndefined();
+  });
+
+  test("cross-state: picks + overrides", () => {
+    const TS = State({
+      A: { x: Schema.Number, y: Schema.String },
+      B: { x: Schema.Number, z: Schema.Boolean },
+    });
+
+    const a = TS.A({ x: 1, y: "test" });
+    const b = TS.B.derive(a, { z: true });
+
+    expect(b._tag).toBe("B");
+    expect(b.x).toBe(1);
+    expect(b.z).toBe(true);
+  });
+
+  test("empty variant: derive returns tagged value", () => {
+    const TS = State({
+      Idle: {},
+      Active: { value: Schema.Number },
+    });
+
+    const active = TS.Active({ value: 5 });
+    const idle = TS.Idle.derive(active);
+
+    expect(idle._tag).toBe("Idle");
+    expect(Object.keys(idle)).toEqual(["_tag"]);
+  });
+
+  test("partial overrides win over source fields", () => {
+    const TS = State({
+      A: { x: Schema.Number, y: Schema.Number },
+    });
+
+    const s = TS.A({ x: 1, y: 2 });
+    const s2 = TS.A.derive(s, { x: 99 });
+
+    expect(s2.x).toBe(99);
+    expect(s2.y).toBe(2);
+  });
+
+  test("fields not in target are dropped", () => {
+    const TS = State({
+      A: { x: Schema.Number, extra: Schema.String },
+      B: { x: Schema.Number },
+    });
+
+    const a = TS.A({ x: 1, extra: "nope" });
+    const b = TS.B.derive(a);
+
+    expect(b.x).toBe(1);
+    expect((b as unknown as Record<string, unknown>)["extra"]).toBeUndefined();
+  });
+});
+
 describe("Event (schema-first)", () => {
   test("creates event constructors", () => {
     const OrderEvent = Event({
@@ -201,7 +295,7 @@ describe("Event (schema-first)", () => {
 });
 
 describe("State/Event with Machine", () => {
-  test("schema-first types work with Machine.make", async () => {
+  test("schema-first types work with Machine.make (using derive)", async () => {
     const OrderState = State({
       Pending: { orderId: Schema.String },
       Processing: { orderId: Schema.String },
@@ -215,17 +309,17 @@ describe("State/Event with Machine", () => {
     });
     type OrderEvent = typeof OrderEvent.Type;
 
-    // Machine uses schema-created values
+    // Machine uses derive to carry orderId across states
     const machine = Machine.make({
       state: OrderState,
       event: OrderEvent,
       initial: OrderState.Pending({ orderId: "test-order" }),
     })
       .on(OrderState.Pending, OrderEvent.Process, ({ state }) =>
-        OrderState.Processing({ orderId: state.orderId }),
+        OrderState.Processing.derive(state),
       )
       .on(OrderState.Processing, OrderEvent.Ship, ({ state, event }) =>
-        OrderState.Shipped({ orderId: state.orderId, trackingId: event.trackingId }),
+        OrderState.Shipped.derive(state, { trackingId: event.trackingId }),
       )
       .final(OrderState.Shipped);
 
@@ -235,6 +329,7 @@ describe("State/Event with Machine", () => {
 
     expect(result.finalState._tag).toBe("Shipped");
     expect((result.finalState as { trackingId: string }).trackingId).toBe("TRACK-123");
+    expect((result.finalState as { orderId: string }).orderId).toBe("test-order");
   });
 
   test("state constructors are compatible with Machine.on", () => {
@@ -302,7 +397,7 @@ describe("State/Event with Machine", () => {
     expect((result.finalState as { text: string }).text).toBe("hi");
   });
 
-  test("multiple state transitions with chained .on()", async () => {
+  test("multiple state transitions with multi-state .on()", async () => {
     const WorkflowState = State({
       Draft: {},
       Review: {},
@@ -323,8 +418,12 @@ describe("State/Event with Machine", () => {
     })
       .on(WorkflowState.Draft, WorkflowEvent.Submit, () => WorkflowState.Review)
       .on(WorkflowState.Review, WorkflowEvent.Approve, () => WorkflowState.Approved)
-      .on(WorkflowState.Draft, WorkflowEvent.Cancel, () => WorkflowState.Cancelled)
-      .on(WorkflowState.Review, WorkflowEvent.Cancel, () => WorkflowState.Cancelled)
+      // Cancel from Draft or Review → Cancelled (multi-state .on)
+      .on(
+        [WorkflowState.Draft, WorkflowState.Review],
+        WorkflowEvent.Cancel,
+        () => WorkflowState.Cancelled,
+      )
       .final(WorkflowState.Approved)
       .final(WorkflowState.Cancelled);
 

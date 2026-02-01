@@ -53,8 +53,7 @@ import type { TaggedOrConstructor, BrandedState, BrandedEvent } from "./internal
 import type { MachineStateSchema, MachineEventSchema, VariantsUnion } from "./schema.js";
 import type { PersistentMachine, WithPersistenceConfig } from "./persistence/persistent-machine.js";
 import { persist as persistImpl } from "./persistence/persistent-machine.js";
-import { SlotProvisionError, ProvisionValidationError } from "./errors.js";
-import type { UnprovidedSlotsError } from "./errors.js";
+import { SlotProvisionError, ProvisionValidationError, UnprovidedSlotsError } from "./errors.js";
 import { invalidateIndex } from "./internal/transition.js";
 import type {
   GuardsSchema,
@@ -347,6 +346,7 @@ export class Machine<
 
   // ---- on ----
 
+  /** Register transition for a single state */
   on<
     NS extends VariantsUnion<_SD> & BrandedState,
     NE extends VariantsUnion<_ED> & BrandedEvent,
@@ -355,8 +355,31 @@ export class Machine<
     state: TaggedOrConstructor<NS>,
     event: TaggedOrConstructor<NE>,
     handler: TransitionHandler<NS, NE, RS, GD, EFD, never>,
-  ): Machine<State, Event, R, _SD, _ED, GD, EFD> {
-    return this.addTransition(state, event, handler, false);
+  ): Machine<State, Event, R, _SD, _ED, GD, EFD>;
+  /** Register transition for multiple states (handler receives union of state types) */
+  on<
+    NS extends ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>,
+    NE extends VariantsUnion<_ED> & BrandedEvent,
+    RS extends VariantsUnion<_SD> & BrandedState,
+  >(
+    states: NS,
+    event: TaggedOrConstructor<NE>,
+    handler: TransitionHandler<
+      NS[number] extends TaggedOrConstructor<infer S> ? S : never,
+      NE,
+      RS,
+      GD,
+      EFD,
+      never
+    >,
+  ): Machine<State, Event, R, _SD, _ED, GD, EFD>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  on(stateOrStates: any, event: any, handler: any): Machine<State, Event, R, _SD, _ED, GD, EFD> {
+    const states = Array.isArray(stateOrStates) ? stateOrStates : [stateOrStates];
+    for (const s of states) {
+      this.addTransition(s, event, handler, false);
+    }
+    return this;
   }
 
   // ---- reenter ----
@@ -365,6 +388,7 @@ export class Machine<
    * Like `on()`, but forces onEnter/spawn to run even when transitioning to the same state tag.
    * Use this to restart timers, re-run spawned effects, or reset state-scoped effects.
    */
+  /** Single state */
   reenter<
     NS extends VariantsUnion<_SD> & BrandedState,
     NE extends VariantsUnion<_ED> & BrandedEvent,
@@ -373,8 +397,58 @@ export class Machine<
     state: TaggedOrConstructor<NS>,
     event: TaggedOrConstructor<NE>,
     handler: TransitionHandler<NS, NE, RS, GD, EFD, never>,
+  ): Machine<State, Event, R, _SD, _ED, GD, EFD>;
+  /** Multiple states */
+  reenter<
+    NS extends ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>,
+    NE extends VariantsUnion<_ED> & BrandedEvent,
+    RS extends VariantsUnion<_SD> & BrandedState,
+  >(
+    states: NS,
+    event: TaggedOrConstructor<NE>,
+    handler: TransitionHandler<
+      NS[number] extends TaggedOrConstructor<infer S> ? S : never,
+      NE,
+      RS,
+      GD,
+      EFD,
+      never
+    >,
+  ): Machine<State, Event, R, _SD, _ED, GD, EFD>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  reenter(
+    stateOrStates: any,
+    event: any,
+    handler: any,
   ): Machine<State, Event, R, _SD, _ED, GD, EFD> {
-    return this.addTransition(state, event, handler, true);
+    const states = Array.isArray(stateOrStates) ? stateOrStates : [stateOrStates];
+    for (const s of states) {
+      this.addTransition(s, event, handler, true);
+    }
+    return this;
+  }
+
+  // ---- onAny ----
+
+  /**
+   * Register a wildcard transition that fires from any state when no specific transition matches.
+   * Specific `.on()` transitions always take priority over `.onAny()`.
+   */
+  onAny<NE extends VariantsUnion<_ED> & BrandedEvent, RS extends VariantsUnion<_SD> & BrandedState>(
+    event: TaggedOrConstructor<NE>,
+    handler: TransitionHandler<VariantsUnion<_SD> & BrandedState, NE, RS, GD, EFD, never>,
+  ): Machine<State, Event, R, _SD, _ED, GD, EFD> {
+    const eventTag = getTag(event);
+    const transition: Transition<State, Event, GD, EFD, R> = {
+      stateTag: "*",
+      eventTag,
+      handler: handler as unknown as Transition<State, Event, GD, EFD, R>["handler"],
+      reenter: false,
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (this._transitions as any[]).push(transition);
+    invalidateIndex(this);
+    return this;
   }
 
   /** @internal */
@@ -625,6 +699,18 @@ export class Machine<
       Event & { readonly _tag: string },
       R
     >;
+  }
+
+  /**
+   * Validate all slots are provided. Throws if any missing.
+   * Use after `.provide()` for early feedback.
+   */
+  validate(): this {
+    const missing = this._missingSlots();
+    if (missing.length > 0) {
+      throw new UnprovidedSlotsError({ slots: missing });
+    }
+    return this;
   }
 
   /**

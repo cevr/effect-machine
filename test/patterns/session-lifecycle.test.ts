@@ -59,11 +59,14 @@ describe("Session Lifecycle Pattern", () => {
       .on(SessionState.Guest, SessionEvent.Login, ({ event }) =>
         SessionState.Active({ userId: event.userId, role: event.role, lastActivity: Date.now() }),
       )
-      .on(SessionState.Active, SessionEvent.MaintenanceStarted, ({ event }) =>
-        SessionState.Maintenance({ message: event.message, previousState: "Active" }),
-      )
-      .on(SessionState.Guest, SessionEvent.MaintenanceStarted, ({ event }) =>
-        SessionState.Maintenance({ message: event.message, previousState: "Guest" }),
+      .on(
+        [SessionState.Active, SessionState.Guest],
+        SessionEvent.MaintenanceStarted,
+        ({ state, event }) =>
+          SessionState.Maintenance({
+            message: event.message,
+            previousState: state._tag as "Active" | "Guest",
+          }),
       )
       .on(SessionState.Active, SessionEvent.SessionTimeout, () => SessionState.SessionExpired)
       .task(SessionState.Active, ({ effects }) => effects.scheduleTimeout(), {
@@ -201,7 +204,7 @@ describe("Session Lifecycle Pattern", () => {
         .on(SessionState.Active, SessionEvent.SessionTimeout, () => SessionState.SessionExpired)
         // Use reenter to reenter the state, resetting the task timer
         .reenter(SessionState.Active, SessionEvent.Activity, ({ state }) =>
-          SessionState.Active({ ...state, lastActivity: Date.now() }),
+          SessionState.Active.derive(state, { lastActivity: Date.now() }),
         )
         .final(SessionState.SessionExpired);
 
