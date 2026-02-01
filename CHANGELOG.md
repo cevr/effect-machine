@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.3.1
+
+### Patch Changes
+
+- Add `stopSync` to `ActorRef` — fire-and-forget stop for sync contexts (framework cleanup hooks, event handlers).
+
 ## 0.3.0
 
 ### Minor Changes
