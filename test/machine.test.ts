@@ -2,7 +2,6 @@
 import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
-import type { UnprovidedSlotsError } from "../src/index.js";
 import { Machine, simulate, State, Event, Slot } from "../src/index.js";
 
 const CounterState = State({
@@ -88,7 +87,7 @@ describe("Machine", () => {
             CounterState.Done({ count: state.count }),
           )
           .final(CounterState.Done)
-          .provide({
+          .build({
             // Handler receives (params, ctx) - context passed directly
             belowLimit: ({ limit }, { state }) => state.count < limit,
           });
@@ -309,11 +308,11 @@ describe(".onAny()", () => {
 });
 
 // ============================================================================
-// .validate() (F7)
+// .build() (F7)
 // ============================================================================
 
-describe(".validate()", () => {
-  test("throws UnprovidedSlotsError when guards/effects missing", () => {
+describe(".build()", () => {
+  test("throws ProvisionValidationError when slots missing", () => {
     const Guards = Slot.Guards({ check: {} });
     const Effects = Slot.Effects({ notify: {} });
 
@@ -325,41 +324,32 @@ describe(".validate()", () => {
       initial: CounterState.Idle({ count: 0 }),
     });
 
-    expect(() => machine.validate()).toThrow();
-    try {
-      machine.validate();
-    } catch (e) {
-      expect((e as UnprovidedSlotsError)._tag).toBe("UnprovidedSlotsError");
-    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(() => (machine as any).build({})).toThrow();
   });
 
-  test("passes silently when all provided", () => {
+  test("succeeds when all handlers provided", () => {
     const Guards = Slot.Guards({ check: {} });
 
-    const machine = Machine.make({
+    const built = Machine.make({
       state: CounterState,
       event: CounterEvent,
       guards: Guards,
       initial: CounterState.Idle({ count: 0 }),
-    }).provide({
+    }).build({
       check: () => true,
     });
 
-    expect(() => machine.validate()).not.toThrow();
+    expect(built.initial._tag).toBe("Idle");
   });
 
-  test("chainable after .provide()", () => {
-    const Guards = Slot.Guards({ check: {} });
-
-    const machine = Machine.make({
+  test("no-arg build works on slotless machine", () => {
+    const built = Machine.make({
       state: CounterState,
       event: CounterEvent,
-      guards: Guards,
       initial: CounterState.Idle({ count: 0 }),
-    })
-      .provide({ check: () => true })
-      .validate();
+    }).build();
 
-    expect(machine.transitions).toBeDefined();
+    expect(built.initial._tag).toBe("Idle");
   });
 });

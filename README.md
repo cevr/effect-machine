@@ -25,7 +25,7 @@ npm install effect-machine effect
 
 ```ts
 import { Effect, Schema } from "effect";
-import { Machine, State, Event, Slot } from "effect-machine";
+import { Machine, State, Event, Slot, type BuiltMachine } from "effect-machine";
 
 // Define state schema - states ARE schemas
 const OrderState = State({
@@ -64,13 +64,13 @@ const orderMachine = Machine.make({
   .spawn(OrderState.Processing, ({ effects, state }) =>
     effects.notifyWarehouse({ orderId: state.orderId }),
   )
-  .provide({
-    notifyWarehouse: ({ orderId }) => Effect.log(`Warehouse notified: ${orderId}`),
-  })
   .final(OrderState.Shipped)
-  .final(OrderState.Cancelled);
+  .final(OrderState.Cancelled)
+  .build({
+    notifyWarehouse: ({ orderId }) => Effect.log(`Warehouse notified: ${orderId}`),
+  });
 
-// Run as actor (simple)
+// Run as actor (simple — no scope required)
 const program = Effect.gen(function* () {
   const actor = yield* Machine.spawn(orderMachine);
 
@@ -79,9 +79,11 @@ const program = Effect.gen(function* () {
 
   const state = yield* actor.waitFor(OrderState.Shipped);
   console.log(state); // Shipped { orderId: "order-1", trackingId: "TRACK-123" }
+
+  yield* actor.stop;
 });
 
-Effect.runPromise(Effect.scoped(program));
+Effect.runPromise(program);
 ```
 
 ## Core Concepts
@@ -152,15 +154,14 @@ machine
   )
   // Fetch runs when entering Loading, auto-cancelled if state changes
   .spawn(MyState.Loading, ({ effects, state }) => effects.fetchData({ url: state.url }))
-  .provide({
+  .build({
     canRetry: ({ max }, { state }) => state.attempts < max,
     fetchData: ({ url }, { self }) =>
       Effect.gen(function* () {
         const data = yield* Http.get(url);
         yield* self.send(MyEvent.Resolve({ data }));
       }),
-  })
-  .validate(); // Early check that all slots are provided
+  });
 ```
 
 ### State-Scoped Effects
@@ -216,20 +217,20 @@ See the [primer](./primer/) for comprehensive documentation:
 
 ### Building
 
-| Method                                    | Purpose                                   |
-| ----------------------------------------- | ----------------------------------------- |
-| `Machine.make({ state, event, initial })` | Create machine                            |
-| `.on(State.X, Event.Y, handler)`          | Add transition                            |
-| `.on([State.X, State.Y], Event.Z, h)`     | Multi-state transition                    |
-| `.onAny(Event.X, handler)`                | Wildcard transition (any state)           |
-| `.reenter(State.X, Event.Y, handler)`     | Force re-entry on same state              |
-| `.spawn(State.X, handler)`                | State-scoped effect                       |
-| `.task(State.X, run, { onSuccess })`      | State-scoped task                         |
-| `.background(handler)`                    | Machine-lifetime effect                   |
-| `.provide({ slot: impl })`                | Provide implementations                   |
-| `.validate()`                             | Assert all slots provided (throws if not) |
-| `.final(State.X)`                         | Mark final state                          |
-| `.persist(config)`                        | Enable persistence                        |
+| Method                                    | Purpose                                                     |
+| ----------------------------------------- | ----------------------------------------------------------- |
+| `Machine.make({ state, event, initial })` | Create machine                                              |
+| `.on(State.X, Event.Y, handler)`          | Add transition                                              |
+| `.on([State.X, State.Y], Event.Z, h)`     | Multi-state transition                                      |
+| `.onAny(Event.X, handler)`                | Wildcard transition (any state)                             |
+| `.reenter(State.X, Event.Y, handler)`     | Force re-entry on same state                                |
+| `.spawn(State.X, handler)`                | State-scoped effect                                         |
+| `.task(State.X, run, { onSuccess })`      | State-scoped task                                           |
+| `.background(handler)`                    | Machine-lifetime effect                                     |
+| `.final(State.X)`                         | Mark final state                                            |
+| `.build({ slot: impl })`                  | Provide implementations, returns `BuiltMachine` (terminal)  |
+| `.build()`                                | Finalize no-slot machine, returns `BuiltMachine` (terminal) |
+| `.persist(config)`                        | Enable persistence                                          |
 
 ### State Constructors
 
@@ -242,21 +243,21 @@ See the [primer](./primer/) for comprehensive documentation:
 
 ### Running
 
-| Method                       | Purpose                                  |
-| ---------------------------- | ---------------------------------------- |
-| `Machine.spawn(machine)`     | Spawn actor (simple, no registry)        |
-| `Machine.spawn(machine, id)` | Spawn actor with custom ID               |
-| `system.spawn(id, machine)`  | Spawn via ActorSystem (registry/persist) |
+| Method                       | Purpose                                                                                                 |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `Machine.spawn(machine)`     | Single actor, no registry. Caller manages lifetime via `actor.stop`. Auto-cleans up if `Scope` present. |
+| `Machine.spawn(machine, id)` | Same as above with custom ID                                                                            |
+| `system.spawn(id, machine)`  | Registry, lookup by ID, bulk ops, persistence. Cleans up on system teardown.                            |
 
 ### Testing
 
-| Function                                   | Description                |
-| ------------------------------------------ | -------------------------- |
-| `simulate(machine, events)`                | Run events, get all states |
-| `createTestHarness(machine)`               | Step-by-step testing       |
-| `assertPath(machine, events, path)`        | Assert exact path          |
-| `assertReaches(machine, events, tag)`      | Assert final state         |
-| `assertNeverReaches(machine, events, tag)` | Assert state never visited |
+| Function                                   | Description                                                      |
+| ------------------------------------------ | ---------------------------------------------------------------- |
+| `simulate(machine, events)`                | Run events, get all states (accepts `Machine` or `BuiltMachine`) |
+| `createTestHarness(machine)`               | Step-by-step testing (accepts `Machine` or `BuiltMachine`)       |
+| `assertPath(machine, events, path)`        | Assert exact path                                                |
+| `assertReaches(machine, events, tag)`      | Assert final state                                               |
+| `assertNeverReaches(machine, events, tag)` | Assert state never visited                                       |
 
 ### Actor
 

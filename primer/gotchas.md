@@ -116,18 +116,17 @@ const machine = Machine.make({...})
       }
     })
   );
-// Missing .provide({ canRetry: ... })
+// Missing .build({ canRetry: ... })
 ```
 
-Always provide all slots before spawning. Use `.validate()` for early feedback:
+Always build the machine with all slots before spawning:
 
 ```ts
 const machine = Machine.make({...})
   .on(...)
-  .provide({
+  .build({
     canRetry: ({ max }, { state }) => state.attempts < max,
-  })
-  .validate(); // Throws immediately if any slots still missing
+  });
 ```
 
 ## TestClock Not Provided
@@ -221,8 +220,8 @@ Handlers cannot require arbitrary services - use slots:
 
 // Right - use effect slots
 .on(State.X, Event.Y, ({ effects }) => effects.doWork())
-.provide({
-  doWork: () => MyService.pipe(Effect.flatMap(...))  // ✓ provide() can use services
+.build({
+  doWork: () => MyService.pipe(Effect.flatMap(...))  // ✓ build() can use services
 })
 ```
 

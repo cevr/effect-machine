@@ -72,9 +72,6 @@ describe("Session Lifecycle Pattern", () => {
       .task(SessionState.Active, ({ effects }) => effects.scheduleTimeout(), {
         onSuccess: () => SessionEvent.SessionTimeout,
       })
-      .provide({
-        scheduleTimeout: () => Effect.sleep("30 minutes"),
-      })
       .on(SessionState.Maintenance, SessionEvent.MaintenanceEnded, ({ state }) =>
         state.previousState === "Active"
           ? SessionState.Active({ userId: "restored", role: "user", lastActivity: Date.now() })
@@ -82,7 +79,10 @@ describe("Session Lifecycle Pattern", () => {
       )
       .on(SessionState.Active, SessionEvent.Logout, () => SessionState.LoggedOut)
       .final(SessionState.SessionExpired)
-      .final(SessionState.LoggedOut);
+      .final(SessionState.LoggedOut)
+      .build({
+        scheduleTimeout: () => Effect.sleep("30 minutes"),
+      });
   };
 
   it.live("null token starts as Guest", () =>
@@ -154,10 +154,10 @@ describe("Session Lifecycle Pattern", () => {
         .task(SessionState.Active, ({ effects }) => effects.scheduleTimeout(), {
           onSuccess: () => SessionEvent.SessionTimeout,
         })
-        .provide({
+        .final(SessionState.SessionExpired)
+        .build({
           scheduleTimeout: () => Effect.sleep("30 minutes"),
-        })
-        .final(SessionState.SessionExpired);
+        });
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("session", activeMachine);
@@ -198,15 +198,15 @@ describe("Session Lifecycle Pattern", () => {
         .task(SessionState.Active, ({ effects }) => effects.scheduleTimeout(), {
           onSuccess: () => SessionEvent.SessionTimeout,
         })
-        .provide({
-          scheduleTimeout: () => Effect.sleep("30 minutes"),
-        })
         .on(SessionState.Active, SessionEvent.SessionTimeout, () => SessionState.SessionExpired)
         // Use reenter to reenter the state, resetting the task timer
         .reenter(SessionState.Active, SessionEvent.Activity, ({ state }) =>
           SessionState.Active.derive(state, { lastActivity: Date.now() }),
         )
-        .final(SessionState.SessionExpired);
+        .final(SessionState.SessionExpired)
+        .build({
+          scheduleTimeout: () => Effect.sleep("30 minutes"),
+        });
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("session", activeMachine);

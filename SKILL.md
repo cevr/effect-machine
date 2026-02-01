@@ -36,18 +36,18 @@ const machine = Machine.make({
 
 ## Key Methods
 
-| Method                            | Purpose                                 |
-| --------------------------------- | --------------------------------------- |
-| `.on(state, event, handler)`      | Add transition                          |
-| `.on([stateA, stateB], event, h)` | Multi-state transition                  |
-| `.onAny(event, handler)`          | Wildcard (any state, specific .on wins) |
-| `.reenter(state, event, handler)` | Force lifecycle on same-state           |
-| `.spawn(state, handler)`          | State-scoped effect (auto-cancelled)    |
-| `.background(handler)`            | Machine-lifetime effect                 |
-| `.provide({ slot: impl })`        | Wire slot implementations               |
-| `.validate()`                     | Assert all slots provided               |
-| `.final(state)`                   | Mark final state                        |
-| `.persist(config)`                | Enable persistence                      |
+| Method                            | Purpose                                                     |
+| --------------------------------- | ----------------------------------------------------------- |
+| `.on(state, event, handler)`      | Add transition                                              |
+| `.on([stateA, stateB], event, h)` | Multi-state transition                                      |
+| `.onAny(event, handler)`          | Wildcard (any state, specific .on wins)                     |
+| `.reenter(state, event, handler)` | Force lifecycle on same-state                               |
+| `.spawn(state, handler)`          | State-scoped effect (auto-cancelled)                        |
+| `.background(handler)`            | Machine-lifetime effect                                     |
+| `.final(state)`                   | Mark final state                                            |
+| `.build({ slot: impl })`          | Wire implementations, returns `BuiltMachine` (terminal)     |
+| `.build()`                        | Finalize no-slot machine, returns `BuiltMachine` (terminal) |
+| `.persist(config)`                | Enable persistence                                          |
 
 ## State.derive()
 
@@ -79,7 +79,7 @@ machine
       return State.Z;
     }),
   )
-  .provide({
+  .build({
     canRetry: ({ max }, { state }) => state.attempts < max,
     fetch: ({ url }, { self }) => Http.get(url),
   });
@@ -150,7 +150,7 @@ yield * TestClock.adjust("30 seconds"); // For timeouts
 4. **Same-state skips lifecycle**: Use `.reenter()` to force
 5. **Never throw in Effect.gen**: Use `yield* Effect.fail()`
 6. **`.onAny()` is fallback**: Specific `.on()` always takes priority
-7. **`.validate()` is optional**: Unprovided slots also caught at spawn time
+7. **`.build()` is terminal**: No chaining `.on()`, `.final()` after it
 
 ## Files
 

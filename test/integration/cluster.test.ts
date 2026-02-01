@@ -150,7 +150,7 @@ describe("Cluster Integration with MachineSchema", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const system = yield* ActorSystemService;
-          const actor = yield* system.spawn("task", taskMachine);
+          const actor = yield* system.spawn("task", taskMachine.build());
           yield* actor.send(TaskEvent.Start);
           const finalState = yield* actor.awaitFinal;
           expect(finalState._tag).toBe("Done");
@@ -257,7 +257,7 @@ describe("Entity.makeTestClient with machine handler", () => {
       CounterState.Done({ count: state.count }),
     )
     .final(CounterState.Done)
-    .provide({
+    .build({
       underLimit: (_params, { state }) => state._tag === "Counting" && state.count < 3,
     });
 

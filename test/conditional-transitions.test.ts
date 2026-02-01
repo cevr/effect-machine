@@ -44,7 +44,7 @@ describe("Conditional Transitions (replaces choose combinator)", () => {
           .final(TestState.High)
           .final(TestState.Medium)
           .final(TestState.Low)
-          .provide({
+          .build({
             isHigh: (_params, { state }) => state._tag === "Idle" && state.value >= 70,
             isMedium: (_params, { state }) => state._tag === "Idle" && state.value >= 40,
           });
@@ -89,7 +89,7 @@ describe("Conditional Transitions (replaces choose combinator)", () => {
           )
           .final(TestState.High)
           .final(TestState.Low)
-          .provide({
+          .build({
             isHigh: (_params, { state }) => state._tag === "Idle" && state.value >= 70,
           });
 
@@ -130,7 +130,7 @@ describe("Conditional Transitions (replaces choose combinator)", () => {
             }),
           )
           .final(TestState.Done)
-          .provide({
+          .build({
             logAction: ({ message }) =>
               Effect.sync(() => {
                 logs.push(message);

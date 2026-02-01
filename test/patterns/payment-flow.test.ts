@@ -133,14 +133,6 @@ describe("Payment Flow Pattern", () => {
     .task(PaymentState.PaymentError, ({ effects }) => effects.scheduleAutoDismiss(), {
       onSuccess: () => PaymentEvent.AutoDismissError,
     })
-    .provide({
-      canRetry: (_params, { state }) => {
-        const s = state as { canRetry: boolean; attempts: number };
-        return s.canRetry && s.attempts < 3;
-      },
-      scheduleBridgeTimeout: () => Effect.sleep("30 seconds"),
-      scheduleAutoDismiss: () => Effect.sleep("5 seconds"),
-    })
     // Cancel from multiple states
     .on(PaymentState.SelectingMethod, PaymentEvent.Cancel, () => PaymentState.PaymentCancelled)
     .on(PaymentState.ProcessingPayment, PaymentEvent.Cancel, () => PaymentState.PaymentCancelled)
@@ -151,7 +143,15 @@ describe("Payment Flow Pattern", () => {
     )
     .on(PaymentState.PaymentError, PaymentEvent.Cancel, () => PaymentState.PaymentCancelled)
     .final(PaymentState.PaymentSuccess)
-    .final(PaymentState.PaymentCancelled);
+    .final(PaymentState.PaymentCancelled)
+    .build({
+      canRetry: (_params, { state }) => {
+        const s = state as { canRetry: boolean; attempts: number };
+        return s.canRetry && s.attempts < 3;
+      },
+      scheduleBridgeTimeout: () => Effect.sleep("30 seconds"),
+      scheduleAutoDismiss: () => Effect.sleep("5 seconds"),
+    });
 
   it.live("card payment happy path", () =>
     assertPath(

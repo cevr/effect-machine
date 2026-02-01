@@ -86,7 +86,7 @@ describe("Transition Index", () => {
           return TestState.Loading({ id: event.id });
         }),
       )
-      .provide({
+      .build({
         isSpecial: (_params, { event }) => (event as { id: string }).id === "special",
         isNormal: (_params, { event }) => (event as { id: string }).id === "normal",
       });

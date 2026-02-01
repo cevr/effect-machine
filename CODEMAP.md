@@ -28,7 +28,7 @@ src/
 
 test/
 ├── actor.test.ts         # ActorRef, ActorSystem, waitFor, sendSync, deadlock regression
-├── machine.test.ts       # Machine builder, multi-state .on(), .onAny(), .validate()
+├── machine.test.ts       # Machine builder, multi-state .on(), .onAny(), .build()
 ├── schema.test.ts        # State/Event schema, derive, pattern matching
 ├── slot.test.ts          # Guard/Effect slot tests
 ├── reenter.test.ts       # Reenter transitions, derive usage
@@ -51,13 +51,13 @@ test/
 
 ## Key Files
 
-| File                     | Purpose                                                                          |
-| ------------------------ | -------------------------------------------------------------------------------- |
-| `machine.ts`             | Machine class, fluent builder, `Machine.spawn`, `.on()`/`.onAny()`/`.validate()` |
-| `schema.ts`              | `State`/`Event` factories, `derive()`, `$is`/`$match`                            |
-| `slot.ts`                | `Slot.Guards`/`Slot.Effects` - parameterized slots                               |
-| `actor.ts`               | ActorRef (`waitFor`, `sendSync`, `sendAndWait`), ActorSystem, createActor        |
-| `internal/transition.ts` | Transition execution, O(1) lookup index, wildcard `"*"` fallback                 |
+| File                     | Purpose                                                                                        |
+| ------------------------ | ---------------------------------------------------------------------------------------------- |
+| `machine.ts`             | Machine class, fluent builder, `Machine.spawn`, `.on()`/`.onAny()`/`.build()` → `BuiltMachine` |
+| `schema.ts`              | `State`/`Event` factories, `derive()`, `$is`/`$match`                                          |
+| `slot.ts`                | `Slot.Guards`/`Slot.Effects` - parameterized slots                                             |
+| `actor.ts`               | ActorRef (`waitFor`, `sendSync`, `sendAndWait`), ActorSystem, createActor                      |
+| `internal/transition.ts` | Transition execution, O(1) lookup index, wildcard `"*"` fallback                               |
 
 ## Event Flow
 
@@ -85,7 +85,8 @@ get transitions(): ReadonlyArray<Transition>
 ```
 
 - Builder methods mutate `this`, return `this` for chaining
-- Exception: `provide()` creates new instance (reusable base)
+- `.build()` is terminal — returns `BuiltMachine`, no further chaining
+- No-slot machines: `.build()` with no args
 - Phantom types constrain state/event to schema variants
 - `.on()` accepts single state or `ReadonlyArray` of states
 - `.onAny()` stores transition with `stateTag: "*"` sentinel

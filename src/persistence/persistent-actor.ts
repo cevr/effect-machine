@@ -28,7 +28,6 @@ import {
 } from "../internal/transition.js";
 import type { ProcessEventError } from "../internal/transition.js";
 import type { GuardsDef, EffectsDef } from "../slot.js";
-import { UnprovidedSlotsError } from "../errors.js";
 import { INTERNAL_INIT_EVENT } from "../internal/utils.js";
 import { emitWithTimestamp } from "../internal/inspection.js";
 
@@ -252,11 +251,6 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
     EFD
   >;
 
-  const missing = typedMachine._missingSlots();
-  if (missing.length > 0) {
-    return yield* new UnprovidedSlotsError({ slots: missing });
-  }
-
   // Get optional inspector from context
   const inspector = Option.getOrUndefined(yield* Effect.serviceOption(InspectorTag)) as
     | Inspector<S, E>
@@ -332,7 +326,7 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
 
   const snapshotEnabledRef = yield* Ref.make(true);
   const persistenceQueue = yield* Queue.unbounded<Effect.Effect<void, never>>();
-  const persistenceFiber = yield* Effect.fork(persistenceWorker(persistenceQueue));
+  const persistenceFiber = yield* Effect.forkDaemon(persistenceWorker(persistenceQueue));
 
   // Save initial metadata
   yield* Queue.offer(
@@ -342,7 +336,7 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
 
   // Snapshot scheduler
   const snapshotQueue = yield* Queue.unbounded<{ state: S; version: number }>();
-  const snapshotFiber = yield* Effect.fork(
+  const snapshotFiber = yield* Effect.forkDaemon(
     snapshotWorker(id, persistence, adapter, snapshotQueue, snapshotEnabledRef),
   );
 
@@ -353,7 +347,7 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
   const { effects: effectSlots } = typedMachine._slots;
 
   for (const bg of typedMachine.backgroundEffects) {
-    const fiber = yield* Effect.fork(
+    const fiber = yield* Effect.forkDaemon(
       bg
         .handler({ state: resolvedInitial, event: initEvent, self, effects: effectSlots })
         .pipe(Effect.provideService(typedMachine.Context, initCtx)),
@@ -408,7 +402,7 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
   }
 
   // Start the persistent event loop
-  const loopFiber = yield* Effect.fork(
+  const loopFiber = yield* Effect.forkDaemon(
     persistentEventLoop(
       id,
       persistentMachine,

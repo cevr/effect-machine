@@ -171,7 +171,7 @@ const machine = Machine.make({
       return MyState.Error({ message: "Max retries", code: 429 });
     }),
   )
-  .provide({
+  .build({
     canRetry: ({ max }, { state }) => {
       // state.attempts < max
       return true;
@@ -180,29 +180,20 @@ const machine = Machine.make({
   });
 ```
 
-**Key pattern**: Guards/effects called inside handler with `yield*`. Implementations in `.provide()`.
+**Key pattern**: Guards/effects called inside handler with `yield*`. Implementations wired via `.build()`.
 
-## Validating Slots
+## Build Signature
 
-`.validate()` throws `UnprovidedSlotsError` if any slots are missing. Chainable after `.provide()`:
-
-```ts
-const machine = Machine.make({...})
-  .on(...)
-  .provide({ canRetry: ..., fetch: ... })
-  .validate(); // Throws immediately if slots missing
-```
-
-Without `.validate()`, missing slots are caught at spawn time.
-
-## Provide Signature
-
-`.provide()` maps slot names to implementations:
+`.build()` finalizes the machine and wires slot implementations. Returns `BuiltMachine` — terminal, no further chaining.
 
 ```ts
-.provide({
+// With slots
+.build({
   slotName: (params, ctx) => result,
 })
+
+// No slots
+.build()
 ```
 
 | Argument | Type                     | Description                                |
@@ -215,7 +206,7 @@ Without `.validate()`, missing slots are caught at spawn time.
 
 ## Reusable Machines
 
-`.provide()` creates a new machine instance:
+`.build()` creates a new `BuiltMachine` instance:
 
 ```ts
 const baseMachine = Machine.make({...})
@@ -223,11 +214,11 @@ const baseMachine = Machine.make({...})
   .spawn(...);
 
 // Different implementations for different contexts
-const devMachine = baseMachine.provide({ fetch: mockFetch });
-const prodMachine = baseMachine.provide({ fetch: realFetch });
+const devMachine = baseMachine.build({ fetch: mockFetch });
+const prodMachine = baseMachine.build({ fetch: realFetch });
 ```
 
-Original machine unchanged - safe to reuse.
+Original `Machine` unchanged - safe to reuse. Each `.build()` returns an independent `BuiltMachine`.
 
 ## See Also
 

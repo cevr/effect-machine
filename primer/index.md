@@ -84,15 +84,14 @@ const orderMachine = Machine.make({
   .spawn(OrderState.Processing, ({ effects, state }) =>
     effects.notifyWarehouse({ orderId: state.orderId }),
   )
-  .provide({
+  .final(OrderState.Shipped)
+  .final(OrderState.Cancelled)
+  .build({
     notifyWarehouse: ({ orderId }, { self }) =>
       Effect.gen(function* () {
         yield* Effect.log(`Notifying warehouse for ${orderId}`);
       }),
-  })
-  .validate()
-  .final(OrderState.Shipped)
-  .final(OrderState.Cancelled);
+  });
 
 // 5. Run as actor
 const program = Effect.gen(function* () {
@@ -111,32 +110,33 @@ Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))
 
 ## Core Concepts
 
-| Concept     | Description                                                                                                 |
-| ----------- | ----------------------------------------------------------------------------------------------------------- |
-| **State**   | Schema-first tagged union. Empty = value (`State.Idle`), non-empty = constructor (`State.Loading({ url })`) |
-| **Event**   | Schema-first tagged union. Same pattern as State.                                                           |
-| **Machine** | Fluent builder. `.on()` for transitions, `.onAny()` for wildcards, `.spawn()` for state-scoped effects.     |
-| **Slots**   | Parameterized guards/effects. Define with `Slot.Guards`/`Slot.Effects`, provide with `.provide()`.          |
-| **Actor**   | Running machine instance with send/stop/state. Spawned via `Machine.spawn()` or `ActorSystem.spawn()`.      |
-| **derive**  | Construct state from source — `State.X.derive(source, overrides)` picks overlapping fields.                 |
+| Concept          | Description                                                                                                 |
+| ---------------- | ----------------------------------------------------------------------------------------------------------- |
+| **State**        | Schema-first tagged union. Empty = value (`State.Idle`), non-empty = constructor (`State.Loading({ url })`) |
+| **Event**        | Schema-first tagged union. Same pattern as State.                                                           |
+| **Machine**      | Fluent builder. `.on()` for transitions, `.onAny()` for wildcards, `.spawn()` for state-scoped effects.     |
+| **Slots**        | Parameterized guards/effects. Define with `Slot.Guards`/`Slot.Effects`, wire with `.build()`.               |
+| **BuiltMachine** | Result of `.build()` — ready to spawn. `Machine.spawn()` and `ActorSystem.spawn()` accept `BuiltMachine`.   |
+| **Actor**        | Running machine instance with send/stop/state. Spawned via `Machine.spawn()` or `ActorSystem.spawn()`.      |
+| **derive**       | Construct state from source — `State.X.derive(source, overrides)` picks overlapping fields.                 |
 
 ## API Quick Reference
 
 ### Building
 
-| Method                                    | Purpose                         |
-| ----------------------------------------- | ------------------------------- |
-| `Machine.make({ state, event, initial })` | Create machine                  |
-| `.on(State.X, Event.Y, handler)`          | Add transition                  |
-| `.on([State.X, State.Y], Event.Z, h)`     | Multi-state transition          |
-| `.onAny(Event.X, handler)`                | Wildcard (specific .on() wins)  |
-| `.reenter(State.X, Event.Y, handler)`     | Transition with forced re-entry |
-| `.spawn(State.X, handler)`                | State-scoped effect             |
-| `.background(handler)`                    | Machine-lifetime effect         |
-| `.provide({ slot: impl })`                | Provide slot implementations    |
-| `.validate()`                             | Assert all slots provided       |
-| `.final(State.X)`                         | Mark state as final             |
-| `.persist(config)`                        | Enable persistence              |
+| Method                                    | Purpose                                                     |
+| ----------------------------------------- | ----------------------------------------------------------- |
+| `Machine.make({ state, event, initial })` | Create machine                                              |
+| `.on(State.X, Event.Y, handler)`          | Add transition                                              |
+| `.on([State.X, State.Y], Event.Z, h)`     | Multi-state transition                                      |
+| `.onAny(Event.X, handler)`                | Wildcard (specific .on() wins)                              |
+| `.reenter(State.X, Event.Y, handler)`     | Transition with forced re-entry                             |
+| `.spawn(State.X, handler)`                | State-scoped effect                                         |
+| `.background(handler)`                    | Machine-lifetime effect                                     |
+| `.final(State.X)`                         | Mark state as final                                         |
+| `.build({ slot: impl })`                  | Wire implementations, returns `BuiltMachine` (terminal)     |
+| `.build()`                                | Finalize no-slot machine, returns `BuiltMachine` (terminal) |
+| `.persist(config)`                        | Enable persistence                                          |
 
 ### Testing
 

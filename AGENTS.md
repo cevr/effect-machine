@@ -29,13 +29,13 @@ const machine = Machine.make({ state, event, initial })
   .on([State.Draft, State.Review], Event.Cancel, () => State.Cancelled)  // multi-state
   .onAny(Event.Reset, () => State.Idle)  // wildcard (any state)
   .spawn(State.Running, ({ effects }) => effects.poll())
-  .provide({ poll: () => Effect.forever(...) })
-  .validate()  // assert all slots provided
-  .final(State.Done);
+  .final(State.Done)
+  .build({ poll: () => Effect.forever(...) });
 ```
 
 - Builder methods mutate `this`, return `this`
-- Exception: `provide()` creates new instance (base reusable)
+- `.build()` is terminal — returns `BuiltMachine`, no further chaining
+- No-slot machines: `.build()` with no args
 - `.onAny()` fires when no specific `.on()` matches for that event
 
 ## State.derive()
@@ -70,7 +70,7 @@ machine
       return State.Z;
     }),
   )
-  .provide({
+  .build({
     canRetry: ({ max }, { state }) => state.attempts < max,
     fetch: ({ url }, { self }) => Http.get(url).pipe(Effect.tap(() => self.send(Event.Done))),
   });
@@ -78,20 +78,30 @@ machine
 
 ## Running Machines
 
-**Simple (no registry):**
+**Simple (no registry):** caller manages lifetime via `actor.stop`. Auto-cleans up if `Scope` present.
 
 ```ts
 const actor = yield * Machine.spawn(machine);
-// or with custom ID:
-const actor = yield * Machine.spawn(machine, "my-id");
+yield * actor.stop; // caller responsible
+
+// or inside a scope — auto-cleanup on scope close:
+yield *
+  Effect.scoped(
+    Effect.gen(function* () {
+      const actor = yield* Machine.spawn(machine);
+      // actor.stop called automatically
+    }),
+  );
 ```
 
-**With registry/persistence:**
+**With registry/persistence:** actors clean up on system layer teardown.
 
 ```ts
 const system = yield * ActorSystemService;
 const actor = yield * system.spawn("my-id", machine);
 ```
+
+**Lifecycle:** `Machine.spawn` and `system.spawn` do NOT require `Scope.Scope` in `R`. Both detect scope via `Effect.serviceOption` — if present, attach finalizer; if absent, skip. Forgetting `actor.stop` without a scope = permanent fiber leak.
 
 ## ActorRef API
 
@@ -112,15 +122,15 @@ actor.subscribe(fn); // Sync callback, returns unsubscribe
 
 ## Handler Type Constraints
 
-Handlers are strictly typed - `.provide()` is the only way to add requirements:
+Handlers are strictly typed - `.build()` is the only way to add requirements:
 
 | Method                       | Allowed R | Why                                        |
 | ---------------------------- | --------- | ------------------------------------------ |
 | `.on()` / `.reenter()`       | `never`   | Pure transitions, no services              |
 | `.spawn()` / `.background()` | `Scope`   | Finalizers allowed (`Effect.addFinalizer`) |
-| `.provide()`                 | Any R     | Slot implementations can use services      |
+| `.build()`                   | Any R     | Slot implementations can use services      |
 
-- Handlers cannot require arbitrary services - use slots + `provide()`
+- Handlers cannot require arbitrary services - use slots + `build()`
 - Handlers cannot produce errors - error channel fixed to `never`
 - Handlers must return machine's state schema - wrong states rejected at compile time
 
@@ -133,6 +143,7 @@ Handlers are strictly typed - `.provide()` is the only way to add requirements:
 - TestClock needs `TestContext.TestContext` layer
 - Empty structs: `State.Idle` not `State.Idle()`
 - `.onAny()` only fires when no specific `.on()` matches
+- `.build()` is terminal — no `.on()`, `.final()` after it
 
 ## Documentation
 

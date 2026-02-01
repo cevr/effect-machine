@@ -24,7 +24,7 @@ import {
   SubscriptionRef,
 } from "effect";
 
-import type { Machine, MachineRef } from "./machine.js";
+import type { Machine, MachineRef, BuiltMachine } from "./machine.js";
 import type { Inspector } from "./inspection.js";
 import { Inspector as InspectorTag } from "./inspection.js";
 import { processEventCore, runSpawnEffects, resolveTransition } from "./internal/transition.js";
@@ -39,7 +39,7 @@ export type {
   ProcessEventResult,
 } from "./internal/transition.js";
 import type { GuardsDef, EffectsDef } from "./slot.js";
-import { DuplicateActorError, UnprovidedSlotsError } from "./errors.js";
+import { DuplicateActorError } from "./errors.js";
 import { INTERNAL_INIT_EVENT } from "./internal/utils.js";
 import type {
   ActorMetadata,
@@ -174,14 +174,13 @@ export interface ActorSystem {
    * For regular machines, returns ActorRef.
    * For persistent machines (created with Machine.persist), returns PersistentActorRef.
    *
-   * Note: All effect slots must be provided via `Machine.provide` before spawning.
-   * Attempting to spawn a machine with unprovided effect slots will fail.
+   * All effect slots must be provided via `.build()` before spawning.
    *
    * @example
    * ```ts
-   * // Regular machine (effects provided)
-   * const machine = Machine.provide(baseMachine, { fetchData: ... })
-   * const actor = yield* system.spawn("my-actor", machine);
+   * // Regular machine (built)
+   * const built = machine.build({ fetchData: ... })
+   * const actor = yield* system.spawn("my-actor", built);
    *
    * // Persistent machine (auto-detected)
    * const persistentActor = yield* system.spawn("my-actor", persistentMachine);
@@ -190,18 +189,11 @@ export interface ActorSystem {
    * ```
    */
   readonly spawn: {
-    // Regular machine overload
-    <
-      S extends { readonly _tag: string },
-      E extends { readonly _tag: string },
-      R,
-      GD extends GuardsDef = Record<string, never>,
-      EFD extends EffectsDef = Record<string, never>,
-    >(
+    // Regular machine overload (BuiltMachine)
+    <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
       id: string,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-      machine: Machine<S, E, R, any, any, GD, EFD>,
-    ): Effect.Effect<ActorRef<S, E>, DuplicateActorError | UnprovidedSlotsError, R | Scope.Scope>;
+      machine: BuiltMachine<S, E, R>,
+    ): Effect.Effect<ActorRef<S, E>, DuplicateActorError, R>;
 
     // Persistent machine overload
     <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
@@ -209,8 +201,8 @@ export interface ActorSystem {
       machine: PersistentMachine<S, E, R>,
     ): Effect.Effect<
       PersistentActorRef<S, E, R>,
-      PersistenceError | VersionConflictError | DuplicateActorError | UnprovidedSlotsError,
-      R | Scope.Scope | PersistenceAdapterTag
+      PersistenceError | VersionConflictError | DuplicateActorError,
+      R | PersistenceAdapterTag
     >;
   };
 
@@ -233,8 +225,8 @@ export interface ActorSystem {
     machine: PersistentMachine<S, E, R>,
   ) => Effect.Effect<
     Option.Option<PersistentActorRef<S, E, R>>,
-    PersistenceError | DuplicateActorError | UnprovidedSlotsError,
-    R | Scope.Scope | PersistenceAdapterTag
+    PersistenceError | DuplicateActorError,
+    R | PersistenceAdapterTag
   >;
 
   /**
@@ -282,7 +274,7 @@ export interface ActorSystem {
   >(
     ids: ReadonlyArray<string>,
     machine: PersistentMachine<S, E, R>,
-  ) => Effect.Effect<RestoreResult<S, E, R>, never, R | Scope.Scope | PersistenceAdapterTag>;
+  ) => Effect.Effect<RestoreResult<S, E, R>, never, R | PersistenceAdapterTag>;
 
   /**
    * Restore all persisted actors for a machine type.
@@ -303,11 +295,7 @@ export interface ActorSystem {
   >(
     machine: PersistentMachine<S, E, R>,
     options?: { filter?: (meta: ActorMetadata) => boolean },
-  ) => Effect.Effect<
-    RestoreResult<S, E, R>,
-    PersistenceError,
-    R | Scope.Scope | PersistenceAdapterTag
-  >;
+  ) => Effect.Effect<RestoreResult<S, E, R>, PersistenceError, R | PersistenceAdapterTag>;
 }
 
 /**
@@ -478,11 +466,6 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
 >(id: string, machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>) {
   yield* Effect.annotateCurrentSpan("effect_machine.actor.id", id);
 
-  const missing = machine._missingSlots();
-  if (missing.length > 0) {
-    return yield* new UnprovidedSlotsError({ slots: missing });
-  }
-
   // Get optional inspector from context
   const inspectorValue = Option.getOrUndefined(yield* Effect.serviceOption(InspectorTag)) as
     | Inspector<S, E>
@@ -523,7 +506,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   const { effects: effectSlots } = machine._slots;
 
   for (const bg of machine.backgroundEffects) {
-    const fiber = yield* Effect.fork(
+    const fiber = yield* Effect.forkDaemon(
       bg
         .handler({ state: machine.initial, event: initEvent, self, effects: effectSlots })
         .pipe(Effect.provideService(machine.Context, ctx)),
@@ -566,10 +549,9 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     return buildActorRefCore(id, machine, stateRef, eventQueue, stoppedRef, listeners, stop);
   }
 
-  // Start the event loop — use forkScoped so the event loop fiber's lifetime
-  // is tied to the provided Scope, not the calling fiber. This prevents the
-  // event loop from being interrupted when a transient caller completes.
-  const loopFiber = yield* Effect.forkScoped(
+  // Start the event loop — use forkDaemon so the event loop fiber's lifetime
+  // is detached from any parent scope/fiber. actor.stop handles cleanup.
+  const loopFiber = yield* Effect.forkDaemon(
     eventLoop(
       machine,
       stateRef,
@@ -820,7 +802,16 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
   const spawnGate = yield* Effect.makeSemaphore(1);
   const withSpawnGate = spawnGate.withPermits(1);
 
-  /** Check for duplicate ID, register actor, add cleanup finalizer */
+  // Stop all actors on system teardown
+  yield* Effect.addFinalizer(() => {
+    const stops: Effect.Effect<void>[] = [];
+    MutableHashMap.forEach(actors, (actor) => {
+      stops.push(actor.stop);
+    });
+    return Effect.all(stops, { concurrency: "unbounded" }).pipe(Effect.asVoid);
+  });
+
+  /** Check for duplicate ID, register actor, attach scope cleanup if available */
   const registerActor = Effect.fn("effect-machine.actorSystem.register")(function* <
     T extends { stop: Effect.Effect<void> },
   >(id: string, actor: T) {
@@ -834,13 +825,17 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     // Register it - O(1)
     MutableHashMap.set(actors, id, actor as unknown as ActorRef<AnyState, unknown>);
 
-    // Register cleanup on scope finalization
-    yield* Effect.addFinalizer(
-      Effect.fn("effect-machine.actorSystem.register.finalizer")(function* () {
-        yield* actor.stop;
-        MutableHashMap.remove(actors, id);
-      }),
-    );
+    // If scope available, attach per-actor cleanup
+    const maybeScope = yield* Effect.serviceOption(Scope.Scope);
+    if (Option.isSome(maybeScope)) {
+      yield* Scope.addFinalizer(
+        maybeScope.value,
+        Effect.gen(function* () {
+          yield* actor.stop;
+          MutableHashMap.remove(actors, id);
+        }),
+      );
+    }
 
     return actor;
   });
@@ -849,14 +844,12 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     S extends { readonly _tag: string },
     E extends { readonly _tag: string },
     R,
-    GD extends GuardsDef = Record<string, never>,
-    EFD extends EffectsDef = Record<string, never>,
-  >(id: string, machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>) {
+  >(id: string, built: BuiltMachine<S, E, R>) {
     if (MutableHashMap.has(actors, id)) {
       return yield* new DuplicateActorError({ actorId: id });
     }
     // Create and register the actor
-    const actor = yield* createActor(id, machine);
+    const actor = yield* createActor(id, built._inner);
     return yield* registerActor(id, actor);
   });
 
@@ -892,68 +885,44 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     S extends { readonly _tag: string },
     E extends { readonly _tag: string },
     R,
-    GD extends GuardsDef = Record<string, never>,
-    EFD extends EffectsDef = Record<string, never>,
-  >(
-    id: string,
-    machine:
-      | Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>
-      | PersistentMachine<S, E, R>,
-  ) {
+  >(id: string, machine: BuiltMachine<S, E, R> | PersistentMachine<S, E, R>) {
     if (isPersistentMachine(machine)) {
       // TypeScript can't narrow union with invariant generic params
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return yield* spawnPersistent(id, machine as PersistentMachine<S, E, R>);
     }
-    return yield* spawnRegular(
-      id,
-      machine as Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
-    );
+    return yield* spawnRegular(id, machine as BuiltMachine<S, E, R>);
   });
 
   // Type-safe overloaded spawn implementation
-  function spawn<
-    S extends { readonly _tag: string },
-    E extends { readonly _tag: string },
-    R,
-    GD extends GuardsDef = Record<string, never>,
-    EFD extends EffectsDef = Record<string, never>,
-  >(
+  function spawn<S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
     id: string,
-    machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
-  ): Effect.Effect<ActorRef<S, E>, DuplicateActorError | UnprovidedSlotsError, R | Scope.Scope>;
+    machine: BuiltMachine<S, E, R>,
+  ): Effect.Effect<ActorRef<S, E>, DuplicateActorError, R>;
   function spawn<S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
     id: string,
     machine: PersistentMachine<S, E, R>,
   ): Effect.Effect<
     PersistentActorRef<S, E, R>,
-    PersistenceError | VersionConflictError | DuplicateActorError | UnprovidedSlotsError,
-    R | Scope.Scope | PersistenceAdapterTag
+    PersistenceError | VersionConflictError | DuplicateActorError,
+    R | PersistenceAdapterTag
   >;
-  function spawn<
-    S extends { readonly _tag: string },
-    E extends { readonly _tag: string },
-    R,
-    GD extends GuardsDef = Record<string, never>,
-    EFD extends EffectsDef = Record<string, never>,
-  >(
+  function spawn<S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
     id: string,
-    machine:
-      | Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>
-      | PersistentMachine<S, E, R>,
+    machine: BuiltMachine<S, E, R> | PersistentMachine<S, E, R>,
   ):
-    | Effect.Effect<ActorRef<S, E>, DuplicateActorError | UnprovidedSlotsError, R | Scope.Scope>
+    | Effect.Effect<ActorRef<S, E>, DuplicateActorError, R>
     | Effect.Effect<
         PersistentActorRef<S, E, R>,
-        PersistenceError | VersionConflictError | DuplicateActorError | UnprovidedSlotsError,
-        R | Scope.Scope | PersistenceAdapterTag
+        PersistenceError | VersionConflictError | DuplicateActorError,
+        R | PersistenceAdapterTag
       > {
     return withSpawnGate(spawnImpl(id, machine)) as
-      | Effect.Effect<ActorRef<S, E>, DuplicateActorError | UnprovidedSlotsError, R | Scope.Scope>
+      | Effect.Effect<ActorRef<S, E>, DuplicateActorError, R>
       | Effect.Effect<
           PersistentActorRef<S, E, R>,
-          PersistenceError | VersionConflictError | DuplicateActorError | UnprovidedSlotsError,
-          R | Scope.Scope | PersistenceAdapterTag
+          PersistenceError | VersionConflictError | DuplicateActorError,
+          R | PersistenceAdapterTag
         >;
   }
 
@@ -1007,7 +976,7 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     const restored: PersistentActorRef<S, E, R>[] = [];
     const failed: {
       id: string;
-      error: PersistenceError | DuplicateActorError | UnprovidedSlotsError;
+      error: PersistenceError | DuplicateActorError;
     }[] = [];
 
     for (const id of ids) {
@@ -1078,4 +1047,4 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
 /**
  * Default ActorSystem layer
  */
-export const Default = Layer.effect(ActorSystem, make());
+export const Default = Layer.scoped(ActorSystem, make());

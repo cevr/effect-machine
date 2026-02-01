@@ -11,6 +11,7 @@
 import { Cause, Effect, Exit, Scope } from "effect";
 
 import type { Machine, MachineRef, Transition, SpawnEffect, HandlerContext } from "../machine.js";
+import { BuiltMachine } from "../machine.js";
 import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
 import { isEffect, INTERNAL_ENTER_EVENT } from "./utils.js";
 
@@ -443,6 +444,7 @@ const getIndex = <
  * Find all transitions matching a state/event pair.
  * Returns empty array if no matches.
  *
+ * Accepts both `Machine` and `BuiltMachine`.
  * O(1) lookup after first access (index is lazily built).
  */
 export const findTransitions = <
@@ -453,10 +455,11 @@ export const findTransitions = <
   EFD extends EffectsDef = Record<string, never>,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-  machine: Machine<S, E, R, any, any, GD, EFD>,
+  input: Machine<S, E, R, any, any, GD, EFD> | BuiltMachine<S, E, R>,
   stateTag: string,
   eventTag: string,
 ): ReadonlyArray<Transition<S, E, GD, EFD, R>> => {
+  const machine = input instanceof BuiltMachine ? input._inner : input;
   const index = getIndex(machine);
   const specific = index.transitions.get(stateTag)?.get(eventTag) ?? [];
   if (specific.length > 0) return specific;

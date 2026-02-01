@@ -26,7 +26,7 @@ Handlers are strictly typed at compile time:
 | Errors = `never`       | ✓        | Handlers cannot fail                 |
 | Return state ∈ schema  | ✓        | Must return machine's state variants |
 
-**Services must go through slots** - define with `Slot.Effects`, implement with `.provide()`:
+**Services must go through slots** - define with `Slot.Effects`, implement with `.build()`:
 
 ```ts
 // ✗ BAD - won't compile (MyService not in R=never)
@@ -39,7 +39,7 @@ Handlers are strictly typed at compile time:
 
 // ✓ GOOD - use effect slots
 .on(State.X, Event.Y, ({ effects }) => effects.doSomething())
-.provide({
+.build({
   doSomething: (_, { self }) => MyService.pipe(Effect.flatMap(...))
 })
 ```
@@ -85,7 +85,7 @@ const MyGuards = Slot.Guards({
     return State.Failed;
   })
 )
-.provide({
+.build({
   canRetry: ({ max }, { state }) => state.attempts < max,
   hasPermission: ({ role }, { state }) => state.userRole === role,
 })
@@ -119,7 +119,7 @@ Effects are side effects that run during transition:
     return State.Loading({ url: "/api" });
   })
 )
-.provide({
+.build({
   logTransition: ({ from, to }) =>
     Effect.log(`${from} -> ${to}`),
   trackAnalytics: ({ event }) =>

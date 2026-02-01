@@ -220,7 +220,7 @@ yield * actor.replayTo(5); // Replay to specific version
 `PersistentActorRef` carries the machine environment type: `PersistentActorRef<State, Event, R>`.
 `replayTo()` runs in the same `R`.
 
-Slots must be provided before spawn/restore; otherwise `UnprovidedSlotsError` is raised.
+Machine must be built (`.build()`) before spawn/restore — `Machine.spawn` and `system.spawn` accept `BuiltMachine`.
 
 Restore from persistence:
 

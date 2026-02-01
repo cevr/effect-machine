@@ -98,7 +98,7 @@ const machineWithGuards = Machine.make({...})
       return State.Failed;
     })
   )
-  .provide({
+  .build({
     canRetry: ({ max }, { state }) => state.attempts < max,
   });
 

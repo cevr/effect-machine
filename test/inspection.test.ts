@@ -40,7 +40,7 @@ describe("Inspection", () => {
       }).on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }));
 
       const system = yield* ActorSystemService;
-      yield* system.spawn("test", machine);
+      yield* system.spawn("test", machine.build());
 
       expect(events.length).toBeGreaterThanOrEqual(1);
       const spawnEvent = events.find((e) => e.type === "@machine.spawn");
@@ -64,7 +64,7 @@ describe("Inspection", () => {
       }).on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }));
 
       const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("test", machine);
+      const actor = yield* system.spawn("test", machine.build());
 
       yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
       yield* yieldFibers;
@@ -90,7 +90,7 @@ describe("Inspection", () => {
       }).on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }));
 
       const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("test", machine);
+      const actor = yield* system.spawn("test", machine.build());
 
       yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
       yield* yieldFibers;
@@ -119,7 +119,7 @@ describe("Inspection", () => {
         .spawn(TestState.Loading, () => Effect.void);
 
       const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("test", machine);
+      const actor = yield* system.spawn("test", machine.build());
 
       yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
       yield* yieldFibers;
@@ -148,7 +148,7 @@ describe("Inspection", () => {
       }).spawn(TestState.Idle, () => Effect.dieMessage("boom"));
 
       const system = yield* ActorSystemService;
-      yield* system.spawn("test", machine);
+      yield* system.spawn("test", machine.build());
       yield* yieldFibers;
 
       const errorEvent = events.find((e) => e.type === "@machine.error");
@@ -179,7 +179,7 @@ describe("Inspection", () => {
         .final(TestState.Done);
 
       const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("test", machine);
+      const actor = yield* system.spawn("test", machine.build());
 
       yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
       yield* yieldFibers;
@@ -206,7 +206,7 @@ describe("Inspection", () => {
       }).on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }));
 
       const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("test", machine);
+      const actor = yield* system.spawn("test", machine.build());
 
       yield* actor.stop;
 
@@ -228,7 +228,7 @@ describe("Inspection", () => {
       }).on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }));
 
       const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("test", machine);
+      const actor = yield* system.spawn("test", machine.build());
 
       yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
       yield* yieldFibers;
@@ -247,7 +247,7 @@ describe("Inspection", () => {
       }).on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }));
 
       const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("test", machine);
+      const actor = yield* system.spawn("test", machine.build());
 
       yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
       yield* yieldFibers;
@@ -279,7 +279,7 @@ describe("Inspection", () => {
         .spawn(TestState.Loading, () => Effect.void);
 
       const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("test", machine);
+      const actor = yield* system.spawn("test", machine.build());
 
       yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
       yield* yieldFibers;

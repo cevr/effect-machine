@@ -576,7 +576,7 @@ describe("Persistence", () => {
       })
         .spawn(EffectState.Idle, ({ effects }) => effects.mark())
         .background(({ effects }) => effects.mark())
-        .provide({
+        .build({
           mark: () => Ref.update(counter, (n) => n + 1),
         })
         .persist({

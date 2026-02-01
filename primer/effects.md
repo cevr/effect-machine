@@ -14,7 +14,7 @@ const MyEffects = Slot.Effects({
 
 machine
   .spawn(State.Loading, ({ effects, state }) => effects.fetchData({ url: state.url }))
-  .provide({
+  .build({
     fetchData: ({ url }, { self }) =>
       Effect.gen(function* () {
         // This runs when entering Loading
@@ -54,7 +54,7 @@ machine
 Add cleanup logic that runs on state exit:
 
 ```ts
-.provide({
+.build({
   fetchData: ({ url }, { self }) =>
     Effect.gen(function* () {
       yield* Effect.addFinalizer(() =>
@@ -81,11 +81,11 @@ const MyEffects = Slot.Effects({
 machine
   .on(State.Waiting, Event.Timeout, () => State.TimedOut)
   .spawn(State.Waiting, ({ effects }) => effects.scheduleTimeout({ duration: "30 seconds" }))
-  .provide({
+  .final(State.TimedOut)
+  .build({
     scheduleTimeout: ({ duration }, { self }) =>
       Effect.sleep(duration).pipe(Effect.andThen(self.send(Event.Timeout))),
-  })
-  .final(State.TimedOut);
+  });
 ```
 
 Timer auto-cancelled if state exits before timeout.
@@ -98,7 +98,7 @@ Continuous polling while in a state:
 .spawn(State.Monitoring, ({ effects }) =>
   effects.poll()
 )
-.provide({
+.build({
   poll: (_, { self }) =>
     Effect.forever(
       Effect.gen(function* () {
@@ -120,7 +120,7 @@ Polling stops automatically when leaving Monitoring state.
 
 ```ts
 .background(({ effects }) => effects.heartbeat())
-.provide({
+.build({
   heartbeat: (_, { self }) =>
     Effect.forever(
       Effect.sleep("30 seconds").pipe(
@@ -154,7 +154,7 @@ All run concurrently, all cancelled on state exit.
 Use `self.send()` to send events back to the machine:
 
 ```ts
-.provide({
+.build({
   fetchData: ({ url }, { self }) =>
     Effect.gen(function* () {
       const result = yield* Effect.either(Http.get(url));

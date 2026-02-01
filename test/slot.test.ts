@@ -37,7 +37,7 @@ describe("Parameterized Guards (via Slot.Guards)", () => {
               return state;
             }),
           )
-          .provide({
+          .build({
             // Handlers receive (params, ctx) - no circular reference
             canPrint: (_params, { state }) => (state._tag === "Ready" ? state.canPrint : false),
           });
@@ -65,7 +65,7 @@ describe("Parameterized Guards (via Slot.Guards)", () => {
               return state;
             }),
           )
-          .provide({
+          .build({
             canPrint: (_params, { state }) => (state._tag === "Ready" ? state.canPrint : false),
           });
 
@@ -114,7 +114,7 @@ describe("Parameterized Guards with Parameters", () => {
           )
           .final(AuthState.Allowed)
           .final(AuthState.Denied)
-          .provide({
+          .build({
             isAdmin: (_params, { state }) => state._tag === "Idle" && state.role === "admin",
             isAdult: ({ minAge }, { state }) => state._tag === "Idle" && state.age >= minAge,
             isModerator: (_params, { state }) =>
@@ -150,7 +150,7 @@ describe("Parameterized Guards with Parameters", () => {
           )
           .final(AuthState.Allowed)
           .final(AuthState.Denied)
-          .provide({
+          .build({
             isAdmin: (_params, { state }) => state._tag === "Idle" && state.role === "admin",
             isAdult: ({ minAge }, { state }) => state._tag === "Idle" && state.age >= minAge,
             isModerator: (_params, { state }) =>
@@ -188,7 +188,7 @@ describe("Parameterized Guards with Parameters", () => {
           )
           .final(AuthState.Allowed)
           .final(AuthState.Denied)
-          .provide({
+          .build({
             isGuest: (_params, { state }) => state._tag === "Idle" && state.role === "guest",
           });
 

@@ -36,6 +36,7 @@ export type { MachineStateSchema, MachineEventSchema } from "./schema.js";
 // Core machine types (for advanced use)
 export type {
   Machine as MachineType,
+  BuiltMachine,
   MachineRef,
   MakeConfig,
   Transition,

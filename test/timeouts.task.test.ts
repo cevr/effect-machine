@@ -39,10 +39,10 @@ describe("Timeout Transitions via Task", () => {
         .task(NotifState.Showing, ({ effects }) => effects.scheduleAutoDismiss(), {
           onSuccess: () => NotifEvent.Dismiss,
         })
-        .provide({
+        .final(NotifState.Dismissed)
+        .build({
           scheduleAutoDismiss: () => Effect.sleep("3 seconds"),
-        })
-        .final(NotifState.Dismissed);
+        });
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("notification", machine);
@@ -75,10 +75,10 @@ describe("Timeout Transitions via Task", () => {
         .task(NotifState.Showing, ({ effects }) => effects.scheduleAutoDismiss(), {
           onSuccess: () => NotifEvent.Dismiss,
         })
-        .provide({
+        .final(NotifState.Dismissed)
+        .build({
           scheduleAutoDismiss: () => Effect.sleep("3 seconds"),
-        })
-        .final(NotifState.Dismissed);
+        });
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("notification", machine);
@@ -127,13 +127,13 @@ describe("Dynamic Timeout Duration via Task", () => {
         .task(WaitState.Waiting, ({ effects }) => effects.scheduleTimeout(), {
           onSuccess: () => WaitEvent.Timeout,
         })
-        .provide({
+        .final(WaitState.TimedOut)
+        .build({
           scheduleTimeout: (_, { state }) => {
             const s = state as WaitState & { _tag: "Waiting" };
             return Effect.sleep(Duration.seconds(s.timeout));
           },
-        })
-        .final(WaitState.TimedOut);
+        });
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("waiter", machine);
@@ -190,13 +190,13 @@ describe("Dynamic Timeout Duration via Task", () => {
         .task(RetryState.Retrying, ({ effects }) => effects.scheduleGiveUp(), {
           onSuccess: () => RetryEvent.GiveUp,
         })
-        .provide({
+        .final(RetryState.Failed)
+        .build({
           scheduleGiveUp: (_, { state }) => {
             const s = state as RetryState & { _tag: "Retrying" };
             return Effect.sleep(Duration.seconds(s.backoff));
           },
-        })
-        .final(RetryState.Failed);
+        });
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("retry", machine);
@@ -242,10 +242,10 @@ describe("Dynamic Timeout Duration via Task", () => {
         .task(WaitState.Waiting, ({ effects }) => effects.scheduleTimeout(), {
           onSuccess: () => WaitEvent.Timeout,
         })
-        .provide({
+        .final(WaitState.TimedOut)
+        .build({
           scheduleTimeout: () => Effect.sleep("3 seconds"),
-        })
-        .final(WaitState.TimedOut);
+        });
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("waiter", machine);

@@ -131,7 +131,8 @@ describe("Menu Navigation Pattern", () => {
     )
     // Checkout handlers
     .on(MenuState.Checkout, MenuEvent.Close, () => MenuState.Closed)
-    .provide({
+    .final(MenuState.Closed)
+    .build({
       canNavigateToPage: (_params, { state, event }) => {
         const s = state as { pageId: string };
         const e = event as { pageId: string };
@@ -143,8 +144,7 @@ describe("Menu Navigation Pattern", () => {
         const page = pages.find((p) => p.id === s.pageId);
         return page !== undefined && e.sectionIndex >= 0 && e.sectionIndex < page.sections.length;
       },
-    })
-    .final(MenuState.Closed);
+    });
 
   test("page navigation with valid page", async () => {
     await Effect.runPromise(

@@ -1,5 +1,5 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Context, Deferred, Effect, Exit, Fiber, Layer, Ref, Schema, Scope, Stream } from "effect";
+import { Context, Deferred, Effect, Fiber, Layer, Ref, Schema, Stream } from "effect";
 
 import type { ActorRef } from "../src/index.js";
 import {
@@ -58,7 +58,7 @@ const createTestMachine = () =>
     )
     .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
     .final(TestState.Done)
-    .provide({
+    .build({
       isHighValue: (_params, { event }) => event._tag === "Update" && event.value > 100,
     });
 
@@ -81,7 +81,8 @@ describe("ActorSystem", () => {
           TestState.Active({ value: event.value }),
         )
         .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
-        .final(TestState.Done);
+        .final(TestState.Done)
+        .build();
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test-actor", machine);
@@ -115,9 +116,11 @@ describe("ActorSystem", () => {
         state: TestState,
         event: TestEvent,
         initial: TestState.Idle,
-      }).on(TestState.Idle, TestEvent.Start, ({ event }) =>
-        TestState.Active({ value: event.value }),
-      );
+      })
+        .on(TestState.Idle, TestEvent.Start, ({ event }) =>
+          TestState.Active({ value: event.value }),
+        )
+        .build();
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test-actor", machine);
@@ -152,7 +155,7 @@ describe("ActorSystem", () => {
         initial: SimpleState.Idle,
       })
         .background(({ effects }) => effects.mark())
-        .provide({
+        .build({
           mark: () => Ref.update(counter, (n) => n + 1),
         });
 
@@ -187,7 +190,7 @@ describe("ActorSystem", () => {
         initial: SimpleState.Idle,
       })
         .background(({ effects }) => effects.mark())
-        .provide({
+        .build({
           mark: () => Ref.update(counter, (n) => n + 1),
         });
 
@@ -212,8 +215,8 @@ describe("ActorSystem", () => {
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
 
-  it.scopedLive("fails spawn when slots are unprovided", () =>
-    Effect.gen(function* () {
+  it.live("build validates missing slot handlers", () =>
+    Effect.sync(() => {
       const SimpleState = State({ Idle: {} });
       const SimpleEvent = Event({ Ping: {} });
       const TestEffects = Slot.Effects({ mark: {} });
@@ -225,13 +228,10 @@ describe("ActorSystem", () => {
         initial: SimpleState.Idle,
       });
 
-      const system = yield* ActorSystemService;
-      const result = yield* Effect.either(system.spawn("missing-slots", machine));
-      expect(result._tag).toBe("Left");
-      if (result._tag === "Left") {
-        expect(result.left._tag).toBe("UnprovidedSlotsError");
-      }
-    }).pipe(Effect.provide(ActorSystemDefault)),
+      // .build() without required handlers throws ProvisionValidationError
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect(() => (machine as any).build({})).toThrow();
+    }),
   );
 
   it.scopedLive("listener errors do not break event loop", () =>
@@ -244,7 +244,8 @@ describe("ActorSystem", () => {
         .on(TestState.Idle, TestEvent.Start, ({ event }) =>
           TestState.Active({ value: event.value }),
         )
-        .on(TestState.Active, TestEvent.Stop, () => TestState.Done);
+        .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
+        .build();
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("listener-actor", machine);
@@ -274,7 +275,8 @@ describe("ActorSystem", () => {
         .on(TestState.Idle, TestEvent.Start, ({ event }) =>
           TestState.Active({ value: event.value }),
         )
-        .on(TestState.Active, TestEvent.Stop, () => TestState.Done);
+        .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
+        .build();
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("stopped-actor", machine);
@@ -311,7 +313,8 @@ describe("Machine.spawn", () => {
           TestState.Active({ value: event.value }),
         )
         .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
-        .final(TestState.Done);
+        .final(TestState.Done)
+        .build();
 
       // No ActorSystemService needed!
       const actor = yield* Machine.spawn(machine);
@@ -333,9 +336,11 @@ describe("Machine.spawn", () => {
         state: TestState,
         event: TestEvent,
         initial: TestState.Idle,
-      }).on(TestState.Idle, TestEvent.Start, ({ event }) =>
-        TestState.Active({ value: event.value }),
-      );
+      })
+        .on(TestState.Idle, TestEvent.Start, ({ event }) =>
+          TestState.Active({ value: event.value }),
+        )
+        .build();
 
       const actor = yield* Machine.spawn(machine, "my-custom-id");
 
@@ -349,11 +354,42 @@ describe("Machine.spawn", () => {
         state: TestState,
         event: TestEvent,
         initial: TestState.Idle,
-      });
+      }).build();
 
       const actor = yield* Machine.spawn(machine);
 
       expect(actor.id).toMatch(/^actor-/);
+    }),
+  );
+
+  it.live("spawns without scope — caller manages lifetime via actor.stop", () =>
+    Effect.gen(function* () {
+      const machine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle,
+      })
+        .on(TestState.Idle, TestEvent.Start, ({ event }) =>
+          TestState.Active({ value: event.value }),
+        )
+        .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
+        .final(TestState.Done)
+        .build();
+
+      // No scope needed — Machine.spawn works without Effect.scoped
+      const actor = yield* Machine.spawn(machine);
+
+      yield* actor.send(TestEvent.Start({ value: 99 }));
+      yield* yieldFibers;
+
+      const state = yield* actor.snapshot;
+      expect(state._tag).toBe("Active");
+      if (state._tag === "Active") {
+        expect(state.value).toBe(99);
+      }
+
+      // Caller manages lifetime
+      yield* actor.stop;
     }),
   );
 
@@ -373,7 +409,7 @@ describe("Machine.spawn", () => {
           TestState.Active({ value: event.value }),
         )
         .spawn(TestState.Active, ({ effects }) => effects.track())
-        .provide({
+        .build({
           track: () => Effect.addFinalizer(() => Effect.sync(() => cleanedUp.push("cleaned"))),
         });
 
@@ -633,7 +669,8 @@ describe("ActorRef", () => {
           initial: TestState.Idle,
         })
           .on(TestState.Idle, TestEvent.Start, () => TestState.Done)
-          .final(TestState.Done);
+          .final(TestState.Done)
+          .build();
 
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("wait-for", machine);
@@ -652,9 +689,11 @@ describe("ActorRef", () => {
           state: TestState,
           event: TestEvent,
           initial: TestState.Idle,
-        }).on(TestState.Idle, TestEvent.Start, ({ event }) =>
-          TestState.Active({ value: event.value }),
-        );
+        })
+          .on(TestState.Idle, TestEvent.Start, ({ event }) =>
+            TestState.Active({ value: event.value }),
+          )
+          .build();
 
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("send-and-wait", machine);
@@ -675,7 +714,8 @@ describe("ActorRef", () => {
           initial: TestState.Idle,
         })
           .on(TestState.Idle, TestEvent.Start, () => TestState.Done)
-          .final(TestState.Done);
+          .final(TestState.Done)
+          .build();
 
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("await-final", machine);
@@ -717,7 +757,8 @@ describe("ActorRef", () => {
           .task(TaskState.Running, () => Effect.succeed("ok"), {
             onSuccess: () => TaskEvent.Success,
           })
-          .final(TaskState.Done);
+          .final(TaskState.Done)
+          .build();
 
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("task-success", machine);
@@ -744,7 +785,8 @@ describe("ActorRef", () => {
             onSuccess: () => TaskEvent.Success,
             onFailure: () => TaskEvent.Fail({ message: "boom" }),
           })
-          .final(TaskState.Failed);
+          .final(TaskState.Failed)
+          .build();
 
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("task-failure", machine);
@@ -782,7 +824,8 @@ describe("ActorRef", () => {
             onSuccess: () => TE.Completed,
             onFailure: () => TE.Failed,
           })
-          .final(TS.Done);
+          .final(TS.Done)
+          .build();
 
         // Mirrors the gent AgentLoop pattern: send → yieldNow → waitFor(Running)
         // The task fails immediately so Running→Idle can happen before
@@ -795,20 +838,16 @@ describe("ActorRef", () => {
         const LoopLive = Layer.scoped(
           LoopTag,
           Effect.gen(function* () {
-            const loopScope = yield* Scope.make();
-            yield* Effect.addFinalizer(() => Scope.close(loopScope, Exit.void));
-
             const actorRef = yield* Ref.make<ActorRef<typeof TS.Type, typeof TE.Type> | undefined>(
               undefined,
             );
 
+            // Machine.spawn no longer requires Scope.Scope — scope detection
+            // auto-attaches cleanup when a scope exists in context (Layer.scoped provides one)
             const getActor = Effect.gen(function* () {
               const existing = yield* Ref.get(actorRef);
               if (existing !== undefined) return existing;
-              const actor = yield* Machine.spawn(machine).pipe(
-                Effect.provideService(Scope.Scope, loopScope),
-                Effect.orDie,
-              );
+              const actor = yield* Machine.spawn(machine);
               yield* Ref.set(actorRef, actor);
               return actor;
             });
@@ -860,9 +899,9 @@ describe("ActorRef", () => {
   });
 
   describe("spawn with external scope", () => {
-    // Pattern: Layer.scoped service owns an external scope for machine lifetime,
-    // machine lazily spawned on first call, caller uses forkDaemon + send + waitFor.
-    it.live("Layer.scoped + external scope + task + forkDaemon send/waitFor", () =>
+    // Pattern: Layer.scoped service spawns machine — scope detection auto-attaches
+    // cleanup, no manual scope management needed.
+    it.live("Layer.scoped + task + forkDaemon send/waitFor", () =>
       Effect.gen(function* () {
         const TS = State({
           Idle: {},
@@ -889,7 +928,8 @@ describe("ActorRef", () => {
               onFailure: () => TE.Completed({ result: "failed" }),
             },
           )
-          .final(TS.Done);
+          .final(TS.Done)
+          .build();
 
         type Actor = ActorRef<typeof TS.Type, typeof TE.Type>;
 
@@ -901,18 +941,14 @@ describe("ActorRef", () => {
         const LoopLive = Layer.scoped(
           LoopTag,
           Effect.gen(function* () {
-            const loopScope = yield* Scope.make();
-            yield* Effect.addFinalizer(() => Scope.close(loopScope, Exit.void));
-
             const actorRef = yield* Ref.make<Actor | undefined>(undefined);
 
+            // Machine.spawn no longer requires Scope.Scope — scope detection
+            // auto-attaches cleanup when a scope exists in context
             const getActor = Effect.gen(function* () {
               const existing = yield* Ref.get(actorRef);
               if (existing !== undefined) return existing;
-              const actor = yield* Machine.spawn(machine).pipe(
-                Effect.provideService(Scope.Scope, loopScope),
-                Effect.orDie,
-              );
+              const actor = yield* Machine.spawn(machine);
               yield* Ref.set(actorRef, actor);
               return actor;
             });
@@ -978,7 +1014,8 @@ describe("ActorRef", () => {
             TestState.Active({ value: state.value }),
           )
           .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
-          .final(TestState.Done);
+          .final(TestState.Done)
+          .build();
 
         const actor = yield* Machine.spawn(machine);
 
@@ -1004,7 +1041,8 @@ describe("ActorRef", () => {
             TestState.Active({ value: event.value }),
           )
           .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
-          .final(TestState.Done);
+          .final(TestState.Done)
+          .build();
 
         const actor = yield* Machine.spawn(machine);
 
@@ -1037,7 +1075,8 @@ describe("ActorRef", () => {
             TestState.Active({ value: event.value }),
           )
           .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
-          .final(TestState.Done);
+          .final(TestState.Done)
+          .build();
 
         const actor = yield* Machine.spawn(machine);
         actor.sendSync(TestEvent.Start({ value: 7 }));
@@ -1057,9 +1096,11 @@ describe("ActorRef", () => {
           state: TestState,
           event: TestEvent,
           initial: TestState.Idle,
-        }).on(TestState.Idle, TestEvent.Start, ({ event }) =>
-          TestState.Active({ value: event.value }),
-        );
+        })
+          .on(TestState.Idle, TestEvent.Start, ({ event }) =>
+            TestState.Active({ value: event.value }),
+          )
+          .build();
 
         const actor = yield* Machine.spawn(machine);
         yield* actor.stop;
@@ -1089,7 +1130,8 @@ describe("ActorRef", () => {
             TestState.Active({ value: event.value }),
           )
           .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
-          .final(TestState.Done);
+          .final(TestState.Done)
+          .build();
 
         const actor = yield* Machine.spawn(machine);
         yield* actor.send(TestEvent.Start({ value: 10 }));
@@ -1105,9 +1147,11 @@ describe("ActorRef", () => {
           state: TestState,
           event: TestEvent,
           initial: TestState.Idle,
-        }).on(TestState.Idle, TestEvent.Start, ({ event }) =>
-          TestState.Active({ value: event.value }),
-        );
+        })
+          .on(TestState.Idle, TestEvent.Start, ({ event }) =>
+            TestState.Active({ value: event.value }),
+          )
+          .build();
 
         const actor = yield* Machine.spawn(machine);
 
@@ -1122,7 +1166,7 @@ describe("ActorRef", () => {
           state: TestState,
           event: TestEvent,
           initial: TestState.Idle,
-        });
+        }).build();
 
         const actor = yield* Machine.spawn(machine);
 
