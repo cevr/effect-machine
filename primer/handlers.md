@@ -158,6 +158,51 @@ Or with `$match`:
 )
 ```
 
+## Multi-State Transitions
+
+Handle the same event from multiple states:
+
+```ts
+// Array of states — handler ctx.state is the union type
+.on([State.Draft, State.Review], Event.Cancel, () => State.Cancelled)
+
+// Also works with .reenter()
+.reenter([State.A, State.B], Event.Reset, ({ state }) =>
+  State.A.derive(state, { count: 0 })
+)
+
+// Empty array is a no-op
+.on([], Event.Cancel, () => State.Cancelled) // No transitions registered
+```
+
+## Wildcard Transitions
+
+`.onAny()` matches an event from any state. Specific `.on()` always takes priority:
+
+```ts
+.on(State.Active, Event.Cancel, () => State.Paused)    // Specific
+.onAny(Event.Cancel, () => State.Cancelled)             // Fallback
+
+// Active + Cancel → Paused (specific wins)
+// Idle + Cancel → Cancelled (wildcard fires)
+```
+
+## State.derive() in Handlers
+
+Use `derive` to construct states without manually spreading fields:
+
+```ts
+// Same-state update — preserves other fields
+.on(State.Form, Event.SetName, ({ state, event }) =>
+  State.Form.derive(state, { name: event.name })
+)
+
+// Cross-state — picks only target fields from source
+.on(State.Processing, Event.Ship, ({ state, event }) =>
+  State.Shipped.derive(state, { trackingId: event.trackingId })
+)
+```
+
 ## Same-State Transitions
 
 By default, transitioning to the same state tag skips lifecycle effects:
@@ -174,7 +219,7 @@ Use `.reenter()` to force lifecycle even on same tag:
 ```ts
 // Forces spawn effects to restart (e.g., reset a timer)
 .reenter(State.Active, Event.Reset, ({ state }) =>
-  State.Active({ count: 0 })
+  State.Active.derive(state, { count: 0 })
 )
 ```
 
@@ -191,12 +236,11 @@ State is typed based on the source state:
 })
 ```
 
-For shared transitions, use type narrowing:
+For shared transitions, use multi-state `.on()`:
 
 ```ts
-// Registered for multiple states
-.on(State.Loading, Event.Cancel, ({ state }) => State.Cancelled)
-.on(State.Processing, Event.Cancel, ({ state }) => State.Cancelled)
+// Single handler for multiple source states
+.on([State.Loading, State.Processing], Event.Cancel, () => State.Cancelled)
 ```
 
 ## Error Handling

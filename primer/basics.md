@@ -27,6 +27,29 @@ MyState.Error({ message: "fail", code: 500 });
 
 **Key insight**: States ARE schemas. This enables automatic serialization for persistence and clustering.
 
+### State.derive()
+
+Construct new states from existing ones — picks overlapping fields, applies overrides:
+
+```ts
+const TS = State({
+  A: { x: Schema.Number, y: Schema.String },
+  B: { x: Schema.Number, z: Schema.Boolean },
+  Empty: {},
+});
+
+const a = TS.A({ x: 42, y: "hello" });
+
+// Same-state: preserve fields, override specific ones
+TS.A.derive(a, { x: 99 }); // { _tag: "A", x: 99, y: "hello" }
+
+// Cross-state: picks only target fields from source
+TS.B.derive(a, { z: true }); // { _tag: "B", x: 42, z: true }
+
+// Empty variant: ignores source
+TS.Empty.derive(a); // { _tag: "Empty" }
+```
+
 ## Event Schema
 
 Events follow the same pattern:
@@ -158,6 +181,19 @@ const machine = Machine.make({
 ```
 
 **Key pattern**: Guards/effects called inside handler with `yield*`. Implementations in `.provide()`.
+
+## Validating Slots
+
+`.validate()` throws `UnprovidedSlotsError` if any slots are missing. Chainable after `.provide()`:
+
+```ts
+const machine = Machine.make({...})
+  .on(...)
+  .provide({ canRetry: ..., fetch: ... })
+  .validate(); // Throws immediately if slots missing
+```
+
+Without `.validate()`, missing slots are caught at spawn time.
 
 ## Provide Signature
 

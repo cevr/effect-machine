@@ -26,13 +26,32 @@ bun run fmt           # oxfmt
 ```ts
 const machine = Machine.make({ state, event, initial })
   .on(State.Idle, Event.Start, () => State.Running)
+  .on([State.Draft, State.Review], Event.Cancel, () => State.Cancelled)  // multi-state
+  .onAny(Event.Reset, () => State.Idle)  // wildcard (any state)
   .spawn(State.Running, ({ effects }) => effects.poll())
   .provide({ poll: () => Effect.forever(...) })
+  .validate()  // assert all slots provided
   .final(State.Done);
 ```
 
 - Builder methods mutate `this`, return `this`
 - Exception: `provide()` creates new instance (base reusable)
+- `.onAny()` fires when no specific `.on()` matches for that event
+
+## State.derive()
+
+Construct state from existing source — picks overlapping fields, applies overrides:
+
+```ts
+// Same-state: preserve other fields
+State.Active.derive(state, { count: state.count + 1 });
+
+// Cross-state: picks only target fields from source
+State.Shipped.derive(state, { trackingId: event.trackingId });
+
+// Empty variant: returns { _tag: "Idle" }
+State.Idle.derive(anyState);
+```
 
 ## Slots
 
@@ -74,6 +93,17 @@ const system = yield * ActorSystemService;
 const actor = yield * system.spawn("my-id", machine);
 ```
 
+## ActorRef API
+
+```ts
+actor.send(event); // Effect — queue event
+actor.sendSync(event); // Sync fire-and-forget (for UI hooks)
+actor.waitFor(State.Active); // Wait for state (accepts constructor or predicate)
+actor.sendAndWait(ev, State.X); // Send + wait for state
+actor.awaitFinal; // Wait for final state
+actor.subscribe(fn); // Sync callback, returns unsubscribe
+```
+
 ## spawn vs on
 
 - `.on()` - transitions, guards/effects run inline
@@ -102,6 +132,7 @@ Handlers are strictly typed - `.provide()` is the only way to add requirements:
 - Same-state transitions skip spawn/finalizers - use `.reenter()` to force
 - TestClock needs `TestContext.TestContext` layer
 - Empty structs: `State.Idle` not `State.Idle()`
+- `.onAny()` only fires when no specific `.on()` matches
 
 ## Documentation
 

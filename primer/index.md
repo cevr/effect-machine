@@ -29,7 +29,7 @@ What are you doing?
 | Topic       | File             | When to Read                     |
 | ----------- | ---------------- | -------------------------------- |
 | Core        | `basics.md`      | First time, understanding API    |
-| Handlers    | `handlers.md`    | Writing transitions, guards      |
+| Handlers    | `handlers.md`    | Transitions, guards, derive      |
 | Effects     | `effects.md`     | spawn, background, timeouts      |
 | Testing     | `testing.md`     | simulate, harness, assertions    |
 | Actors      | `actors.md`      | ActorSystem, ActorRef, lifecycle |
@@ -53,7 +53,7 @@ import {
 const OrderState = State({
   Pending: { orderId: Schema.String },
   Processing: { orderId: Schema.String },
-  Shipped: { trackingId: Schema.String },
+  Shipped: { orderId: Schema.String, trackingId: Schema.String },
   Cancelled: {},
 });
 
@@ -76,15 +76,11 @@ const orderMachine = Machine.make({
   effects: OrderEffects,
   initial: OrderState.Pending({ orderId: "order-1" }),
 })
-  .on(OrderState.Pending, OrderEvent.Process, ({ state }) =>
-    OrderState.Processing({ orderId: state.orderId }),
+  .on(OrderState.Pending, OrderEvent.Process, ({ state }) => OrderState.Processing.derive(state))
+  .on(OrderState.Processing, OrderEvent.Ship, ({ state, event }) =>
+    OrderState.Shipped.derive(state, { trackingId: event.trackingId }),
   )
-  .on(OrderState.Processing, OrderEvent.Ship, ({ event }) =>
-    OrderState.Shipped({ trackingId: event.trackingId }),
-  )
-  .on(OrderState.Pending, OrderEvent.Cancel, () => OrderState.Cancelled)
-  .on(OrderState.Processing, OrderEvent.Cancel, () => OrderState.Cancelled)
-  // Spawn effect when entering Processing - auto-cancelled on exit
+  .onAny(OrderEvent.Cancel, () => OrderState.Cancelled)
   .spawn(OrderState.Processing, ({ effects, state }) =>
     effects.notifyWarehouse({ orderId: state.orderId }),
   )
@@ -92,9 +88,9 @@ const orderMachine = Machine.make({
     notifyWarehouse: ({ orderId }, { self }) =>
       Effect.gen(function* () {
         yield* Effect.log(`Notifying warehouse for ${orderId}`);
-        // Effect continues until state exits
       }),
   })
+  .validate()
   .final(OrderState.Shipped)
   .final(OrderState.Cancelled);
 
@@ -106,8 +102,8 @@ const program = Effect.gen(function* () {
   yield* actor.send(OrderEvent.Process);
   yield* actor.send(OrderEvent.Ship({ trackingId: "TRACK-123" }));
 
-  const state = yield* actor.snapshot;
-  console.log(state); // Shipped { trackingId: "TRACK-123" }
+  const state = yield* actor.waitFor(OrderState.Shipped);
+  console.log(state); // Shipped { orderId: "order-1", trackingId: "TRACK-123" }
 });
 
 Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))));
@@ -119,9 +115,10 @@ Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))
 | ----------- | ----------------------------------------------------------------------------------------------------------- |
 | **State**   | Schema-first tagged union. Empty = value (`State.Idle`), non-empty = constructor (`State.Loading({ url })`) |
 | **Event**   | Schema-first tagged union. Same pattern as State.                                                           |
-| **Machine** | Fluent builder. `.on()` for transitions, `.spawn()` for state-scoped effects.                               |
+| **Machine** | Fluent builder. `.on()` for transitions, `.onAny()` for wildcards, `.spawn()` for state-scoped effects.     |
 | **Slots**   | Parameterized guards/effects. Define with `Slot.Guards`/`Slot.Effects`, provide with `.provide()`.          |
-| **Actor**   | Running machine instance with send/stop/state. Spawned via `ActorSystem.spawn()`.                           |
+| **Actor**   | Running machine instance with send/stop/state. Spawned via `Machine.spawn()` or `ActorSystem.spawn()`.      |
+| **derive**  | Construct state from source — `State.X.derive(source, overrides)` picks overlapping fields.                 |
 
 ## API Quick Reference
 
@@ -131,10 +128,13 @@ Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))
 | ----------------------------------------- | ------------------------------- |
 | `Machine.make({ state, event, initial })` | Create machine                  |
 | `.on(State.X, Event.Y, handler)`          | Add transition                  |
+| `.on([State.X, State.Y], Event.Z, h)`     | Multi-state transition          |
+| `.onAny(Event.X, handler)`                | Wildcard (specific .on() wins)  |
 | `.reenter(State.X, Event.Y, handler)`     | Transition with forced re-entry |
 | `.spawn(State.X, handler)`                | State-scoped effect             |
 | `.background(handler)`                    | Machine-lifetime effect         |
 | `.provide({ slot: impl })`                | Provide slot implementations    |
+| `.validate()`                             | Assert all slots provided       |
 | `.final(State.X)`                         | Mark state as final             |
 | `.persist(config)`                        | Enable persistence              |
 
@@ -148,17 +148,20 @@ Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))
 
 ### Actor
 
-| Method                   | Sync   | Description       |
-| ------------------------ | ------ | ----------------- |
-| `actor.send(event)`      | No     | Send event        |
-| `actor.snapshot`         | No     | Get state         |
-| `actor.snapshotSync()`   | Yes    | Get state         |
-| `actor.matches(tag)`     | No     | Check state tag   |
-| `actor.matchesSync(tag)` | Yes    | Check state tag   |
-| `actor.can(event)`       | No     | Can handle event? |
-| `actor.canSync(event)`   | Yes    | Can handle event? |
-| `actor.changes`          | Stream | State changes     |
-| `actor.subscribe(fn)`    | Yes    | Sync callback     |
+| Method                           | Sync   | Description                        |
+| -------------------------------- | ------ | ---------------------------------- |
+| `actor.send(event)`              | No     | Send event                         |
+| `actor.sendSync(event)`          | Yes    | Fire-and-forget (for UI hooks)     |
+| `actor.snapshot`                 | No     | Get state                          |
+| `actor.snapshotSync()`           | Yes    | Get state                          |
+| `actor.matches(tag)`             | No     | Check state tag                    |
+| `actor.matchesSync(tag)`         | Yes    | Check state tag                    |
+| `actor.can(event)`               | No     | Can handle event?                  |
+| `actor.canSync(event)`           | Yes    | Can handle event?                  |
+| `actor.changes`                  | Stream | State changes                      |
+| `actor.waitFor(State.X)`         | No     | Wait for state (constructor or fn) |
+| `actor.sendAndWait(ev, State.X)` | No     | Send + wait for state              |
+| `actor.subscribe(fn)`            | Yes    | Sync callback                      |
 
 ## See Also
 

@@ -119,14 +119,15 @@ const machine = Machine.make({...})
 // Missing .provide({ canRetry: ... })
 ```
 
-Always provide all slots before spawning:
+Always provide all slots before spawning. Use `.validate()` for early feedback:
 
 ```ts
 const machine = Machine.make({...})
   .on(...)
   .provide({
     canRetry: ({ max }, { state }) => state.attempts < max,
-  });
+  })
+  .validate(); // Throws immediately if any slots still missing
 ```
 
 ## TestClock Not Provided
@@ -271,6 +272,20 @@ Non-empty variants are constructors:
 State.Loading({ url: "/api" }); // ✓ Constructor with args
 Event.Fetch({ url: "/api" }); // ✓ Constructor with args
 ```
+
+## .onAny() Priority
+
+`.onAny()` only fires when no specific `.on()` matches:
+
+```ts
+.on(State.Active, Event.Cancel, () => State.Paused)    // Specific
+.onAny(Event.Cancel, () => State.Cancelled)             // Fallback
+
+// Active + Cancel → Paused (specific wins)
+// Any other state + Cancel → Cancelled
+```
+
+If you expect `.onAny()` to fire for a state that has a specific `.on()` for the same event, it won't.
 
 ## See Also
 

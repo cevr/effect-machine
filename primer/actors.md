@@ -29,21 +29,23 @@ Effect.runPromise(Effect.scoped(program).pipe(Effect.provide(ActorSystemDefault)
 
 ## ActorRef Methods
 
-| Method             | Type              | Description                        |
-| ------------------ | ----------------- | ---------------------------------- |
-| `send(event)`      | `Effect<void>`    | Queue event for processing         |
-| `snapshot`         | `Effect<State>`   | Get current state                  |
-| `snapshotSync()`   | `State`           | Get current state (sync)           |
-| `matches(tag)`     | `Effect<boolean>` | Check if in state                  |
-| `matchesSync(tag)` | `boolean`         | Check if in state (sync)           |
-| `can(event)`       | `Effect<boolean>` | Can handle event in current state? |
-| `canSync(event)`   | `boolean`         | Can handle event? (sync)           |
-| `changes`          | `Stream<State>`   | Stream of state changes            |
-| `waitFor(fn)`      | `Effect<State>`   | Wait for matching state            |
-| `awaitFinal`       | `Effect<State>`   | Wait for final state               |
-| `sendAndWait`      | `Effect<State>`   | Send event + wait                  |
-| `subscribe(fn)`    | `() => void`      | Sync callback, returns unsubscribe |
-| `stop`             | `Effect<void>`    | Stop actor gracefully              |
+| Method                     | Type              | Description                        |
+| -------------------------- | ----------------- | ---------------------------------- |
+| `send(event)`              | `Effect<void>`    | Queue event for processing         |
+| `sendSync(event)`          | `void`            | Fire-and-forget (sync, for UI)     |
+| `snapshot`                 | `Effect<State>`   | Get current state                  |
+| `snapshotSync()`           | `State`           | Get current state (sync)           |
+| `matches(tag)`             | `Effect<boolean>` | Check if in state                  |
+| `matchesSync(tag)`         | `boolean`         | Check if in state (sync)           |
+| `can(event)`               | `Effect<boolean>` | Can handle event in current state? |
+| `canSync(event)`           | `boolean`         | Can handle event? (sync)           |
+| `changes`                  | `Stream<State>`   | Stream of state changes            |
+| `waitFor(State.X)`         | `Effect<State>`   | Wait for state (constructor or fn) |
+| `awaitFinal`               | `Effect<State>`   | Wait for final state               |
+| `sendAndWait(ev, State.X)` | `Effect<State>`   | Send + wait for state              |
+| `sendAndWait(ev)`          | `Effect<State>`   | Send + wait for final state        |
+| `subscribe(fn)`            | `() => void`      | Sync callback, returns unsubscribe |
+| `stop`                     | `Effect<void>`    | Stop actor gracefully              |
 
 ## Sending Events
 
@@ -63,18 +65,37 @@ const state = yield * actor.snapshot;
 
 Sending after `stop` is a no-op (no error, no state change).
 
+### sendSync (for UI integration)
+
+`sendSync` is a synchronous fire-and-forget send for framework hooks (React, Solid):
+
+```ts
+// In a React onClick handler or Solid effect
+actor.sendSync(Event.Start({ url: "/api" }));
+```
+
+No-op on stopped actors.
+
 ## Waiting for State
 
 Prefer `waitFor`/`awaitFinal` over manual `changes` streams to avoid races:
 
 ```ts
+// Accept state constructor
 yield * actor.send(Event.Start);
+const state = yield * actor.waitFor(MyState.Done);
+
+// Or predicate function
 const state = yield * actor.waitFor((s) => s._tag === "Done");
 ```
 
 Send and await in one step:
 
 ```ts
+// Wait for specific state
+const state = yield * actor.sendAndWait(Event.Start, MyState.Active);
+
+// Wait for final state
 const state = yield * actor.sendAndWait(Event.Start);
 ```
 

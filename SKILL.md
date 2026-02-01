@@ -36,15 +36,33 @@ const machine = Machine.make({
 
 ## Key Methods
 
-| Method                            | Purpose                              |
-| --------------------------------- | ------------------------------------ |
-| `.on(state, event, handler)`      | Add transition                       |
-| `.reenter(state, event, handler)` | Force lifecycle on same-state        |
-| `.spawn(state, handler)`          | State-scoped effect (auto-cancelled) |
-| `.background(handler)`            | Machine-lifetime effect              |
-| `.provide({ slot: impl })`        | Wire slot implementations            |
-| `.final(state)`                   | Mark final state                     |
-| `.persist(config)`                | Enable persistence                   |
+| Method                            | Purpose                                 |
+| --------------------------------- | --------------------------------------- |
+| `.on(state, event, handler)`      | Add transition                          |
+| `.on([stateA, stateB], event, h)` | Multi-state transition                  |
+| `.onAny(event, handler)`          | Wildcard (any state, specific .on wins) |
+| `.reenter(state, event, handler)` | Force lifecycle on same-state           |
+| `.spawn(state, handler)`          | State-scoped effect (auto-cancelled)    |
+| `.background(handler)`            | Machine-lifetime effect                 |
+| `.provide({ slot: impl })`        | Wire slot implementations               |
+| `.validate()`                     | Assert all slots provided               |
+| `.final(state)`                   | Mark final state                        |
+| `.persist(config)`                | Enable persistence                      |
+
+## State.derive()
+
+Construct state from existing source:
+
+```ts
+// Same-state: preserve fields, override specific ones
+State.Active.derive(state, { count: state.count + 1 });
+
+// Cross-state: picks only target fields
+State.Shipped.derive(processingState, { trackingId: "TRACK-123" });
+
+// Empty variant
+State.Idle.derive(anyState); // → { _tag: "Idle" }
+```
 
 ## Slots (Guards/Effects)
 
@@ -75,8 +93,7 @@ machine
 const program = Effect.gen(function* () {
   const actor = yield* Machine.spawn(machine);
   yield* actor.send(Event.Start({ url: "/api" }));
-  yield* Effect.yieldNow();
-  const state = yield* actor.snapshot;
+  const state = yield* actor.waitFor(MyState.Done);
 });
 
 Effect.runPromise(Effect.scoped(program));
@@ -93,6 +110,20 @@ const program = Effect.gen(function* () {
 
 Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))));
 ```
+
+## ActorRef API
+
+| Method                           | Description                        |
+| -------------------------------- | ---------------------------------- |
+| `actor.send(event)`              | Queue event (Effect)               |
+| `actor.sendSync(event)`          | Fire-and-forget (sync, for UI)     |
+| `actor.waitFor(State.X)`         | Wait for state (constructor or fn) |
+| `actor.sendAndWait(ev, State.X)` | Send + wait for state              |
+| `actor.awaitFinal`               | Wait for final state               |
+| `actor.snapshot`                 | Get current state                  |
+| `actor.snapshotSync()`           | Get current state (sync)           |
+| `actor.matches(tag)`             | Check state tag                    |
+| `actor.subscribe(fn)`            | Sync callback, returns unsubscribe |
 
 ## Testing
 
@@ -118,13 +149,15 @@ yield * TestClock.adjust("30 seconds"); // For timeouts
 3. **simulate skips spawn**: Use real actors for spawn effect tests
 4. **Same-state skips lifecycle**: Use `.reenter()` to force
 5. **Never throw in Effect.gen**: Use `yield* Effect.fail()`
+6. **`.onAny()` is fallback**: Specific `.on()` always takes priority
+7. **`.validate()` is optional**: Unprovided slots also caught at spawn time
 
 ## Files
 
 | File         | Purpose                  |
 | ------------ | ------------------------ |
 | `machine.ts` | Machine builder          |
-| `schema.ts`  | State/Event factories    |
+| `schema.ts`  | State/Event + derive     |
 | `slot.ts`    | Slot.Guards/Slot.Effects |
 | `actor.ts`   | ActorSystem, event loop  |
 | `testing.ts` | simulate, harness        |

@@ -6,7 +6,7 @@
 src/
 ├── index.ts              # Public exports
 ├── machine.ts            # Machine class + namespace (fluent builder)
-├── schema.ts             # Schema-first State/Event factories
+├── schema.ts             # Schema-first State/Event factories + derive
 ├── slot.ts               # Slot.Guards/Slot.Effects factories
 ├── actor.ts              # ActorRef + ActorSystem + event loop
 ├── testing.ts            # simulate, harness, assertions
@@ -22,26 +22,22 @@ src/
 │   ├── to-entity.ts      # toEntity - Entity from machine
 │   └── entity-machine.ts # EntityMachine.layer
 └── internal/
-    ├── transition.ts     # Transition execution + O(1) index
+    ├── transition.ts     # Transition execution + O(1) index + wildcard fallback
     ├── brands.ts         # StateBrand/EventBrand types
     └── utils.ts          # isEffect, getTag, constants
 
 test/
-├── actor.test.ts         # ActorRef + ActorSystem tests
-├── machine.test.ts       # Machine builder tests
-├── schema.test.ts        # State/Event schema tests
+├── actor.test.ts         # ActorRef, ActorSystem, waitFor, sendSync, deadlock regression
+├── machine.test.ts       # Machine builder, multi-state .on(), .onAny(), .validate()
+├── schema.test.ts        # State/Event schema, derive, pattern matching
 ├── slot.test.ts          # Guard/Effect slot tests
+├── reenter.test.ts       # Reenter transitions, derive usage
 ├── testing.test.ts       # Test utility tests
 ├── inspection.test.ts    # Inspector tests
 ├── persistence.test.ts   # Persistence tests
-├── same-state.test.ts    # Same-state transition tests
-├── choose.test.ts        # Conditional transition tests
-├── delay.test.ts         # Timeout patterns
-├── dynamic-delay.test.ts # Dynamic timeout patterns
-├── force.test.ts         # Reenter transition tests
+├── conditional-transitions.test.ts  # Guard-based conditional transitions
+├── timeouts.task.test.ts # Timeout/task patterns
 ├── type-constraints.test.ts # Compile-time type constraint verification
-├── utils/
-│   └── effect-test.ts    # Test helpers
 ├── internal/
 │   └── transition.test.ts # Transition index tests
 ├── patterns/             # Real-world patterns
@@ -55,18 +51,20 @@ test/
 
 ## Key Files
 
-| File                     | Purpose                                              |
-| ------------------------ | ---------------------------------------------------- |
-| `machine.ts`             | Machine class, fluent builder, `Machine.spawn`       |
-| `schema.ts`              | `State`/`Event` factories - schema-first definitions |
-| `slot.ts`                | `Slot.Guards`/`Slot.Effects` - parameterized slots   |
-| `actor.ts`               | ActorRef, ActorSystem (registry), createActor        |
-| `internal/transition.ts` | Transition execution, O(1) lookup index              |
+| File                     | Purpose                                                                          |
+| ------------------------ | -------------------------------------------------------------------------------- |
+| `machine.ts`             | Machine class, fluent builder, `Machine.spawn`, `.on()`/`.onAny()`/`.validate()` |
+| `schema.ts`              | `State`/`Event` factories, `derive()`, `$is`/`$match`                            |
+| `slot.ts`                | `Slot.Guards`/`Slot.Effects` - parameterized slots                               |
+| `actor.ts`               | ActorRef (`waitFor`, `sendSync`, `sendAndWait`), ActorSystem, createActor        |
+| `internal/transition.ts` | Transition execution, O(1) lookup index, wildcard `"*"` fallback                 |
 
 ## Event Flow
 
 ```
 Event → resolveTransition → handler (guards/effects) → update state → spawn effects
+          ↓ no specific match
+        wildcard "*" fallback (.onAny transitions)
 ```
 
 - Handler receives `{ state, event, guards, effects }`
@@ -89,15 +87,35 @@ get transitions(): ReadonlyArray<Transition>
 - Builder methods mutate `this`, return `this` for chaining
 - Exception: `provide()` creates new instance (reusable base)
 - Phantom types constrain state/event to schema variants
+- `.on()` accepts single state or `ReadonlyArray` of states
+- `.onAny()` stores transition with `stateTag: "*"` sentinel
 
 ## Transition Index
 
 `internal/transition.ts` - O(1) lookup via WeakMap cache:
 
-- `findTransitions(machine, stateTag, eventTag)`
+- `findTransitions(machine, stateTag, eventTag)` — specific match first, `"*"` wildcard fallback
 - `findSpawnEffects(machine, stateTag)`
 - `runTransitionHandler` - shared handler execution (used by actor, testing, persistence)
-- Index built on first access, cached per machine
+- Index built on first access, cached per machine, invalidated on mutation
+
+## State.derive()
+
+`schema.ts` — `derive` attached to each variant constructor/value:
+
+- Reads `_definition` to know target field names
+- Picks matching fields from source object
+- Applies partial overrides (overrides win over source)
+- Empty variants return `{ _tag }` regardless of source
+
+## waitFor / sendAndWait
+
+`actor.ts` — deadlock-free via sync listeners + Deferred:
+
+- `SubscriptionRef.get` for initial snapshot (quick semaphore acquire/release)
+- Sync listener callback (no semaphore held) + `Deferred.await` for future changes
+- Re-checks after subscribing to close race window
+- Accepts state constructor (`State.Active`) or predicate function
 
 ## Actor Registry
 

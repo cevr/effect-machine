@@ -31,7 +31,7 @@ import { Machine, State, Event, Slot } from "effect-machine";
 const OrderState = State({
   Pending: { orderId: Schema.String },
   Processing: { orderId: Schema.String },
-  Shipped: { trackingId: Schema.String },
+  Shipped: { orderId: Schema.String, trackingId: Schema.String },
   Cancelled: {},
 });
 
@@ -54,14 +54,12 @@ const orderMachine = Machine.make({
   effects: OrderEffects,
   initial: OrderState.Pending({ orderId: "order-1" }),
 })
-  .on(OrderState.Pending, OrderEvent.Process, ({ state }) =>
-    OrderState.Processing({ orderId: state.orderId }),
+  .on(OrderState.Pending, OrderEvent.Process, ({ state }) => OrderState.Processing.derive(state))
+  .on(OrderState.Processing, OrderEvent.Ship, ({ state, event }) =>
+    OrderState.Shipped.derive(state, { trackingId: event.trackingId }),
   )
-  .on(OrderState.Processing, OrderEvent.Ship, ({ event }) =>
-    OrderState.Shipped({ trackingId: event.trackingId }),
-  )
-  .on(OrderState.Pending, OrderEvent.Cancel, () => OrderState.Cancelled)
-  .on(OrderState.Processing, OrderEvent.Cancel, () => OrderState.Cancelled)
+  // Cancel from any state
+  .onAny(OrderEvent.Cancel, () => OrderState.Cancelled)
   // Effect runs when entering Processing, cancelled on exit
   .spawn(OrderState.Processing, ({ effects, state }) =>
     effects.notifyWarehouse({ orderId: state.orderId }),
@@ -79,8 +77,8 @@ const program = Effect.gen(function* () {
   yield* actor.send(OrderEvent.Process);
   yield* actor.send(OrderEvent.Ship({ trackingId: "TRACK-123" }));
 
-  const state = yield* actor.snapshot;
-  console.log(state); // Shipped { trackingId: "TRACK-123" }
+  const state = yield* actor.waitFor(OrderState.Shipped);
+  console.log(state); // Shipped { orderId: "order-1", trackingId: "TRACK-123" }
 });
 
 Effect.runPromise(Effect.scoped(program));
@@ -100,6 +98,34 @@ const MyState = State({
 
 MyState.Idle; // Value (no parens)
 MyState.Loading({ url: "/api" }); // Constructor
+```
+
+### State.derive()
+
+Construct new states from existing ones — picks overlapping fields, applies overrides:
+
+```ts
+// Same-state: preserve fields, override specific ones
+.on(State.Active, Event.Update, ({ state, event }) =>
+  State.Active.derive(state, { count: event.count })
+)
+
+// Cross-state: picks only target fields from source
+.on(State.Processing, Event.Ship, ({ state, event }) =>
+  State.Shipped.derive(state, { trackingId: event.trackingId })
+)
+```
+
+### Multi-State Transitions
+
+Handle the same event from multiple states:
+
+```ts
+// Array of states — handler receives union type
+.on([State.Draft, State.Review], Event.Cancel, () => State.Cancelled)
+
+// Wildcard — fires from any state (specific .on() takes priority)
+.onAny(Event.Cancel, () => State.Cancelled)
 ```
 
 ### Guards and Effects as Slots
@@ -133,7 +159,8 @@ machine
         const data = yield* Http.get(url);
         yield* self.send(MyEvent.Resolve({ data }));
       }),
-  });
+  })
+  .validate(); // Early check that all slots are provided
 ```
 
 ### State-Scoped Effects
@@ -189,17 +216,29 @@ See the [primer](./primer/) for comprehensive documentation:
 
 ### Building
 
-| Method                                    | Purpose                      |
-| ----------------------------------------- | ---------------------------- |
-| `Machine.make({ state, event, initial })` | Create machine               |
-| `.on(State.X, Event.Y, handler)`          | Add transition               |
-| `.reenter(State.X, Event.Y, handler)`     | Force re-entry on same state |
-| `.spawn(State.X, handler)`                | State-scoped effect          |
-| `.task(State.X, run, { onSuccess })`      | State-scoped task            |
-| `.background(handler)`                    | Machine-lifetime effect      |
-| `.provide({ slot: impl })`                | Provide implementations      |
-| `.final(State.X)`                         | Mark final state             |
-| `.persist(config)`                        | Enable persistence           |
+| Method                                    | Purpose                                   |
+| ----------------------------------------- | ----------------------------------------- |
+| `Machine.make({ state, event, initial })` | Create machine                            |
+| `.on(State.X, Event.Y, handler)`          | Add transition                            |
+| `.on([State.X, State.Y], Event.Z, h)`     | Multi-state transition                    |
+| `.onAny(Event.X, handler)`                | Wildcard transition (any state)           |
+| `.reenter(State.X, Event.Y, handler)`     | Force re-entry on same state              |
+| `.spawn(State.X, handler)`                | State-scoped effect                       |
+| `.task(State.X, run, { onSuccess })`      | State-scoped task                         |
+| `.background(handler)`                    | Machine-lifetime effect                   |
+| `.provide({ slot: impl })`                | Provide implementations                   |
+| `.validate()`                             | Assert all slots provided (throws if not) |
+| `.final(State.X)`                         | Mark final state                          |
+| `.persist(config)`                        | Enable persistence                        |
+
+### State Constructors
+
+| Method                                 | Purpose                        |
+| -------------------------------------- | ------------------------------ |
+| `State.X.derive(source)`               | Pick target fields from source |
+| `State.X.derive(source, { field: v })` | Pick fields + apply overrides  |
+| `State.$is("X")(value)`                | Type guard                     |
+| `State.$match(value, { X: fn, ... })`  | Pattern matching               |
 
 ### Running
 
@@ -221,17 +260,18 @@ See the [primer](./primer/) for comprehensive documentation:
 
 ### Actor
 
-| Method                | Description       |
-| --------------------- | ----------------- |
-| `actor.send(event)`   | Queue event       |
-| `actor.snapshot`      | Get current state |
-| `actor.matches(tag)`  | Check state tag   |
-| `actor.can(event)`    | Can handle event? |
-| `actor.changes`       | Stream of changes |
-| `actor.waitFor(fn)`   | Wait for match    |
-| `actor.awaitFinal`    | Wait final state  |
-| `actor.sendAndWait`   | Send + wait       |
-| `actor.subscribe(fn)` | Sync callback     |
+| Method                           | Description                        |
+| -------------------------------- | ---------------------------------- |
+| `actor.send(event)`              | Queue event                        |
+| `actor.sendSync(event)`          | Fire-and-forget (sync, for UI)     |
+| `actor.snapshot`                 | Get current state                  |
+| `actor.matches(tag)`             | Check state tag                    |
+| `actor.can(event)`               | Can handle event?                  |
+| `actor.changes`                  | Stream of changes                  |
+| `actor.waitFor(State.X)`         | Wait for state (constructor or fn) |
+| `actor.awaitFinal`               | Wait final state                   |
+| `actor.sendAndWait(ev, State.X)` | Send + wait for state              |
+| `actor.subscribe(fn)`            | Sync callback                      |
 
 ## License
 
