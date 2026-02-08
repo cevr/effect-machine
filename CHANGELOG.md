@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.3.2
+
+### Patch Changes
+
+- [`a16c44e`](https://github.com/cevr/effect-machine/commit/a16c44e3e0da49712d5600092ac6eee6485d5270) Thanks [@cevr](https://github.com/cevr)! - Add tsdown build step. Library now ships pre-built ESM with .d.ts declarations instead of raw TypeScript source.
+
 ## 0.3.1
 
 ### Patch Changes
