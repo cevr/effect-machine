@@ -45,6 +45,7 @@ Effect.runPromise(Effect.scoped(program).pipe(Effect.provide(ActorSystemDefault)
 | `sendAndWait(ev, State.X)` | `Effect<State>`   | Send + wait for state              |
 | `sendAndWait(ev)`          | `Effect<State>`   | Send + wait for final state        |
 | `subscribe(fn)`            | `() => void`      | Sync callback, returns unsubscribe |
+| `system`                   | `ActorSystem`     | Access the actor's system          |
 | `stop`                     | `Effect<void>`    | Stop actor gracefully              |
 
 ## Sending Events
@@ -139,14 +140,80 @@ const unsubscribe = actor.subscribe((state) => {
 unsubscribe();
 ```
 
+## Implicit System
+
+Every actor always has a system. `Machine.spawn` detects `ActorSystem` in context:
+
+- **Found** (e.g. via `ActorSystemDefault`): reuses it
+- **Not found**: creates a scoped implicit system, torn down on `actor.stop`
+
+```ts
+// No ActorSystemDefault needed — implicit system created
+const actor = yield * Machine.spawn(machine);
+actor.system; // ActorSystem — always available
+
+// Children inherit parent's system
+const child = yield * actor.system.get("child-id");
+```
+
+## Child Actors
+
+Spawn children from `.spawn()` or `.background()` handlers via `self.spawn`:
+
+```ts
+machine
+  .spawn(State.Active, ({ self }) =>
+    Effect.gen(function* () {
+      const child = yield* self.spawn("worker-1", workerMachine).pipe(Effect.orDie);
+      yield* child.send(WorkerEvent.Start);
+      // child auto-stopped when parent exits Active state
+    }),
+  )
+  .build();
+```
+
+### Lifecycle Coupling
+
+| Spawn location          | Child lifetime   | Mechanism                      |
+| ----------------------- | ---------------- | ------------------------------ |
+| `.spawn()` handler      | State-scoped     | Child stopped when state exits |
+| `.background()` handler | Machine-lifetime | Child stopped on parent stop   |
+
+### Accessing Children Externally
+
+Use `actor.system` to query children from outside:
+
+```ts
+const parent = yield * Machine.spawn(parentMachine);
+yield * parent.send(ParentEvent.Activate);
+
+// Access child via parent's system
+const maybeChild = yield * parent.system.get("worker-1");
+if (Option.isSome(maybeChild)) {
+  yield * maybeChild.value.send(WorkerEvent.Ping);
+}
+```
+
+### System Sharing
+
+All actors in the same tree share one system:
+
+```ts
+// Explicit system — all actors registered here
+const system = yield * ActorSystemService;
+const parent = yield * system.spawn("parent", parentMachine);
+// parent.system === system
+// children spawned via self.spawn also registered in this system
+```
+
 ## Actor Lifecycle
 
-1. **Spawn** - `system.spawn(id, machine)`
+1. **Spawn** - `system.spawn(id, machine)` or `Machine.spawn(machine)`
 2. **Initial state** - Background effects start, initial spawn effects run
 3. **Event processing** - Events processed in order
-4. **State transitions** - Spawn effects cancelled on exit, new ones start on enter
-5. **Final state** - Actor stops, all effects interrupted
-6. **Scope close** - Cleanup finalizers run
+4. **State transitions** - Spawn effects cancelled on exit (children too), new ones start on enter
+5. **Final state** - Actor stops, all effects interrupted, children stopped
+6. **Scope close** - Cleanup finalizers run, implicit system torn down if applicable
 
 ## Multiple Actors
 

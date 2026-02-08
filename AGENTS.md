@@ -103,6 +103,28 @@ const actor = yield * system.spawn("my-id", machine);
 
 **Lifecycle:** `Machine.spawn` and `system.spawn` do NOT require `Scope.Scope` in `R`. Both detect scope via `Effect.serviceOption` — if present, attach finalizer; if absent, skip. Forgetting `actor.stop` without a scope = permanent fiber leak.
 
+## Child Actors
+
+Spawn children from `.spawn()`/`.background()` handlers via `self.spawn(id, childMachine)`:
+
+```ts
+machine
+  .spawn(State.Active, ({ self }) =>
+    Effect.gen(function* () {
+      const child = yield* self.spawn("worker-1", workerMachine);
+      yield* child.send(WorkerEvent.Start);
+      // child auto-stopped when parent exits Active state
+    }),
+  )
+  .build();
+```
+
+- Children spawned in `.spawn()` handlers are **state-scoped** — auto-stopped on state exit
+- Children spawned in `.background()` handlers live for machine lifetime
+- `self.spawn` returns `Effect<ActorRef, DuplicateActorError, R>` — use `Effect.orDie` in handlers since error channel must be `never`
+- Every `ActorRef` has `actor.system` for external child access: `actor.system.get("worker-1")`
+- Every actor always has a system — `Machine.spawn` creates an implicit one if none in context
+
 ## ActorRef API
 
 ```ts
@@ -112,6 +134,7 @@ actor.waitFor(State.Active); // Wait for state (accepts constructor or predicate
 actor.sendAndWait(ev, State.X); // Send + wait for state
 actor.awaitFinal; // Wait for final state
 actor.subscribe(fn); // Sync callback, returns unsubscribe
+actor.system; // ActorSystem — access child actors via .get(id)
 ```
 
 ## spawn vs on
@@ -144,6 +167,7 @@ Handlers are strictly typed - `.build()` is the only way to add requirements:
 - Empty structs: `State.Idle` not `State.Idle()`
 - `.onAny()` only fires when no specific `.on()` matches
 - `.build()` is terminal — no `.on()`, `.final()` after it
+- `self.spawn` errors with `DuplicateActorError` — handlers require `never` error, so wrap with `Effect.orDie`
 
 ## Documentation
 

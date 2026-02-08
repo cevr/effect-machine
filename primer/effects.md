@@ -136,6 +136,42 @@ Polling stops automatically when leaving Monitoring state.
 - Runs until machine stops (final state or explicit stop)
 - Not tied to any specific state
 
+## Spawning Child Actors from Effects
+
+Use `self.spawn` in `.spawn()` or `.background()` handlers to create child actors:
+
+```ts
+machine
+  .spawn(State.Supervising, ({ self }) =>
+    Effect.gen(function* () {
+      // Spawn children — state-scoped, auto-stopped on state exit
+      const worker1 = yield* self.spawn("worker-1", workerMachine).pipe(Effect.orDie);
+      const worker2 = yield* self.spawn("worker-2", workerMachine).pipe(Effect.orDie);
+
+      yield* worker1.send(WorkerEvent.Start);
+      yield* worker2.send(WorkerEvent.Start);
+
+      // Wait for both to finish
+      yield* worker1.awaitFinal;
+      yield* worker2.awaitFinal;
+
+      yield* self.send(Event.AllDone);
+    }),
+  )
+  .build();
+```
+
+**Key**: `self.spawn` returns `Effect<ActorRef, DuplicateActorError, R>`. Handlers require error = `never`, so use `Effect.orDie` to convert the error.
+
+Children can also be spawned from slot implementations in `.build()`:
+
+```ts
+.build({
+  startWorker: ({ id }, { self }) =>
+    self.spawn(id, workerMachine).pipe(Effect.orDie),
+})
+```
+
 ## Multiple Spawn Effects
 
 Multiple effects can run in the same state:

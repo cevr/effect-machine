@@ -183,6 +183,29 @@ machine.task(State.Loading, ({ effects, state }) => effects.fetchData({ url: sta
 });
 ```
 
+### Child Actors
+
+Spawn children from `.spawn()` handlers with `self.spawn`. Children are state-scoped — auto-stopped on state exit:
+
+```ts
+machine
+  .spawn(State.Active, ({ self }) =>
+    Effect.gen(function* () {
+      const child = yield* self.spawn("worker-1", workerMachine).pipe(Effect.orDie);
+      yield* child.send(WorkerEvent.Start);
+      // child auto-stopped when parent exits Active state
+    }),
+  )
+  .build();
+
+// Access children externally via actor.system
+const parent = yield * Machine.spawn(parentMachine);
+yield * parent.send(Event.Activate);
+const child = yield * parent.system.get("worker-1"); // Option<ActorRef>
+```
+
+Every actor always has a system — `Machine.spawn` creates an implicit one if no `ActorSystem` is in context.
+
 ### Testing
 
 Test transitions without actors:
@@ -273,6 +296,7 @@ See the [primer](./primer/) for comprehensive documentation:
 | `actor.awaitFinal`               | Wait final state                   |
 | `actor.sendAndWait(ev, State.X)` | Send + wait for state              |
 | `actor.subscribe(fn)`            | Sync callback                      |
+| `actor.system`                   | Access the actor's `ActorSystem`   |
 
 ## License
 

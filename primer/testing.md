@@ -182,6 +182,38 @@ export const it = {
 };
 ```
 
+## Testing Child Actors
+
+Child actors require real actors (not simulate/harness). Use `actor.system.get(id)` to verify children:
+
+```ts
+it.scoped("child spawned on state entry", () =>
+  Effect.gen(function* () {
+    const parent = yield* Machine.spawn(parentMachine);
+
+    yield* parent.send(ParentEvent.Activate);
+    yield* yieldFibers;
+
+    // Child visible via parent's system
+    const maybeChild = yield* parent.system.get("worker-1");
+    expect(Option.isSome(maybeChild)).toBe(true);
+
+    // Child auto-stopped on state exit
+    yield* parent.send(ParentEvent.Deactivate);
+    yield* yieldFibers;
+
+    const afterExit = yield* parent.system.get("worker-1");
+    expect(Option.isNone(afterExit)).toBe(true);
+  }),
+);
+```
+
+**Key patterns**:
+
+- `Machine.spawn` creates an implicit system — no `ActorSystemDefault` needed
+- Children are state-scoped: verify cleanup by checking `system.get` after state exit
+- Use `actor.system.get(id)` (not `ActorSystemService`) to access children
+
 ## Testing Persistent Actors
 
 Use `InMemoryPersistenceAdapter`:

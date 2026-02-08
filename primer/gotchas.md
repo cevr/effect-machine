@@ -272,6 +272,28 @@ State.Loading({ url: "/api" }); // ✓ Constructor with args
 Event.Fetch({ url: "/api" }); // ✓ Constructor with args
 ```
 
+## self.spawn Requires Effect.orDie
+
+`self.spawn` returns `Effect<ActorRef, DuplicateActorError, R>`, but `.spawn()` handlers require error channel = `never`:
+
+```ts
+// ✗ Won't compile — DuplicateActorError in error channel
+.spawn(State.Active, ({ self }) =>
+  Effect.gen(function* () {
+    const child = yield* self.spawn("worker", workerMachine);
+  })
+)
+
+// ✓ Wrap with Effect.orDie
+.spawn(State.Active, ({ self }) =>
+  Effect.gen(function* () {
+    const child = yield* self.spawn("worker", workerMachine).pipe(Effect.orDie);
+  })
+)
+```
+
+If duplicate IDs are expected, use `Effect.catchTag("DuplicateActorError", ...)` before `Effect.orDie`.
+
 ## .onAny() Priority
 
 `.onAny()` only fires when no specific `.on()` matches:

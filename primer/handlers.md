@@ -7,12 +7,22 @@ Writing transition handlers, guards, and conditional logic.
 Handlers receive a context object:
 
 ```ts
-.on(State.X, Event.Y, ({ state, event, guards, effects }) => {
+.on(State.X, Event.Y, ({ state, event, guards, effects, system }) => {
   // state: current state (typed to State.X)
   // event: triggering event (typed to Event.Y)
   // guards: slot accessors for guards
   // effects: slot accessors for effects
+  // system: ActorSystem — query/spawn actors
   return newState;
+})
+```
+
+`.spawn()`/`.background()` handlers also receive `self`:
+
+```ts
+.spawn(State.X, ({ self, state, effects, system }) => {
+  // self.send(event) — send events to this actor
+  // self.spawn(id, machine) — spawn child actor
 })
 ```
 

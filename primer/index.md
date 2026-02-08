@@ -118,6 +118,7 @@ Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))
 | **Slots**        | Parameterized guards/effects. Define with `Slot.Guards`/`Slot.Effects`, wire with `.build()`.               |
 | **BuiltMachine** | Result of `.build()` — ready to spawn. `Machine.spawn()` and `ActorSystem.spawn()` accept `BuiltMachine`.   |
 | **Actor**        | Running machine instance with send/stop/state. Spawned via `Machine.spawn()` or `ActorSystem.spawn()`.      |
+| **Child Actor**  | Actor spawned from a handler via `self.spawn(id, machine)`. State-scoped when in `.spawn()` handler.        |
 | **derive**       | Construct state from source — `State.X.derive(source, overrides)` picks overlapping fields.                 |
 
 ## API Quick Reference
@@ -159,6 +160,7 @@ Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))
 | `actor.can(event)`               | No     | Can handle event?                  |
 | `actor.canSync(event)`           | Yes    | Can handle event?                  |
 | `actor.changes`                  | Stream | State changes                      |
+| `actor.system`                   | Sync   | Access the actor's `ActorSystem`   |
 | `actor.waitFor(State.X)`         | No     | Wait for state (constructor or fn) |
 | `actor.sendAndWait(ev, State.X)` | No     | Send + wait for state              |
 | `actor.subscribe(fn)`            | Yes    | Sync callback                      |

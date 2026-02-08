@@ -24,10 +24,11 @@ src/
 └── internal/
     ├── transition.ts     # Transition execution + O(1) index + wildcard fallback
     ├── brands.ts         # StateBrand/EventBrand types
-    └── utils.ts          # isEffect, getTag, constants
+    └── utils.ts          # isEffect, getTag, constants, stubSystem
 
 test/
 ├── actor.test.ts         # ActorRef, ActorSystem, waitFor, sendSync, deadlock regression
+├── child-actor.test.ts   # Child actors: self.spawn, lifecycle coupling, implicit system
 ├── machine.test.ts       # Machine builder, multi-state .on(), .onAny(), .build()
 ├── schema.test.ts        # State/Event schema, derive, pattern matching
 ├── slot.test.ts          # Guard/Effect slot tests
@@ -56,7 +57,7 @@ test/
 | `machine.ts`             | Machine class, fluent builder, `Machine.spawn`, `.on()`/`.onAny()`/`.build()` → `BuiltMachine` |
 | `schema.ts`              | `State`/`Event` factories, `derive()`, `$is`/`$match`                                          |
 | `slot.ts`                | `Slot.Guards`/`Slot.Effects` - parameterized slots                                             |
-| `actor.ts`               | ActorRef (`waitFor`, `sendSync`, `sendAndWait`), ActorSystem, createActor                      |
+| `actor.ts`               | ActorRef (`waitFor`, `sendSync`, `sendAndWait`), ActorSystem, createActor, implicit system     |
 | `internal/transition.ts` | Transition execution, O(1) lookup index, wildcard `"*"` fallback                               |
 
 ## Event Flow
@@ -67,7 +68,8 @@ Event → resolveTransition → handler (guards/effects) → update state → sp
         wildcard "*" fallback (.onAny transitions)
 ```
 
-- Handler receives `{ state, event, guards, effects }`
+- Handler receives `{ state, event, guards, effects, system }`
+- `.spawn()`/`.background()` handlers also get `self` (with `self.spawn(id, machine)` for child actors)
 - Guards checked inside handler: `yield* guards.xxx(params)`
 - Same-state transitions skip spawn/finalizers by default
 - `.reenter()` forces lifecycle even for same state tag
@@ -121,6 +123,15 @@ get transitions(): ReadonlyArray<Transition>
 ## Actor Registry
 
 `actor.ts` uses `MutableHashMap` for O(1) spawn/stop/get operations.
+
+## Implicit System
+
+`createActor` detects `ActorSystem` in context via `Effect.serviceOption`:
+
+- **Found**: reuses it (system-spawned actors, children inheriting parent's system)
+- **Not found**: creates scoped implicit system (torn down on `actor.stop`)
+
+All descendants share the same system through Effect service context (daemon fibers inherit environment).
 
 ## Shared Context
 
