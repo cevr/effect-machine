@@ -5,6 +5,7 @@ import { BuiltMachine } from "./machine.js";
 import { AssertionError } from "./errors.js";
 import type { GuardsDef, EffectsDef } from "./slot.js";
 import { executeTransition } from "./internal/transition.js";
+import { stubSystem } from "./internal/utils.js";
 
 /** Accept either Machine or BuiltMachine for testing utilities. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -60,13 +61,14 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
   // Create a dummy self for slot accessors
   const dummySelf: MachineRef<E> = {
     send: Effect.fn("effect-machine.testing.simulate.send")((_event: E) => Effect.void),
+    spawn: () => Effect.die("spawn not supported in simulation"),
   };
 
   let currentState = machine.initial;
   const states: S[] = [currentState];
 
   for (const event of events) {
-    const result = yield* executeTransition(machine, currentState, event, dummySelf);
+    const result = yield* executeTransition(machine, currentState, event, dummySelf, stubSystem);
 
     if (!result.transitioned) {
       continue;
@@ -252,6 +254,7 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
   // Create a dummy self for slot accessors
   const dummySelf: MachineRef<E> = {
     send: Effect.fn("effect-machine.testing.harness.send")((_event: E) => Effect.void),
+    spawn: () => Effect.die("spawn not supported in test harness"),
   };
 
   const stateRef = yield* SubscriptionRef.make(machine.initial);
@@ -259,7 +262,7 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
   const send = Effect.fn("effect-machine.testHarness.send")(function* (event: E) {
     const currentState = yield* SubscriptionRef.get(stateRef);
 
-    const result = yield* executeTransition(machine, currentState, event, dummySelf);
+    const result = yield* executeTransition(machine, currentState, event, dummySelf, stubSystem);
 
     if (!result.transitioned) {
       return currentState;

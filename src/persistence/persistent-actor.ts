@@ -15,8 +15,8 @@ import {
   SubscriptionRef,
 } from "effect";
 
-import type { ActorRef, Listeners } from "../actor.js";
-import { buildActorRefCore, notifyListeners } from "../actor.js";
+import type { ActorRef, ActorSystem, Listeners } from "../actor.js";
+import { ActorSystem as ActorSystemTag, buildActorRefCore, notifyListeners } from "../actor.js";
 import type { MachineRef, Machine } from "../machine.js";
 import type { Inspector } from "../inspection.js";
 import { Inspector as InspectorTag } from "../inspection.js";
@@ -28,7 +28,7 @@ import {
 } from "../internal/transition.js";
 import type { ProcessEventError } from "../internal/transition.js";
 import type { GuardsDef, EffectsDef } from "../slot.js";
-import { INTERNAL_INIT_EVENT } from "../internal/utils.js";
+import { INTERNAL_INIT_EVENT, stubSystem } from "../internal/utils.js";
 import { emitWithTimestamp } from "../internal/inspection.js";
 
 import type {
@@ -96,7 +96,14 @@ const replayEvents = Effect.fn("effect-machine.persistentActor.replayEvents")(fu
 
     const transition = resolveTransition(machine, state, persistedEvent.event);
     if (transition !== undefined) {
-      state = yield* runTransitionHandler(machine, transition, state, persistedEvent.event, self);
+      state = yield* runTransitionHandler(
+        machine,
+        transition,
+        state,
+        persistedEvent.event,
+        self,
+        stubSystem,
+      );
     }
     version = persistedEvent.version;
   }
@@ -123,6 +130,7 @@ const buildPersistentActorRef = <
   listeners: Listeners<S>,
   stop: Effect.Effect<void>,
   adapter: PersistenceAdapter,
+  system: ActorSystem,
 ): PersistentActorRef<S, E, R> => {
   const { machine, persistence } = persistentMachine;
   const typedMachine = machine as unknown as Machine<
@@ -157,17 +165,16 @@ const buildPersistentActorRef = <
   ) {
     const currentVersion = yield* Ref.get(versionRef);
     if (targetVersion <= currentVersion) {
+      const dummySelf: MachineRef<E> = {
+        send: Effect.fn("effect-machine.persistentActor.replay.send")((_event: E) => Effect.void),
+        spawn: () => Effect.die("spawn not supported in replay"),
+      };
+
       const maybeSnapshot = yield* adapter.loadSnapshot(id, persistence.stateSchema);
       if (Option.isSome(maybeSnapshot)) {
         const snapshot = maybeSnapshot.value;
         if (snapshot.version <= targetVersion) {
           const events = yield* adapter.loadEvents(id, persistence.eventSchema, snapshot.version);
-          const dummySelf: MachineRef<E> = {
-            send: Effect.fn("effect-machine.persistentActor.replay.send")(
-              (_event: E) => Effect.void,
-            ),
-          };
-
           const result = yield* replayEvents(
             typedMachine,
             snapshot.state,
@@ -184,11 +191,6 @@ const buildPersistentActorRef = <
         // No snapshot - replay from initial state if events exist
         const events = yield* adapter.loadEvents(id, persistence.eventSchema);
         if (events.length > 0) {
-          const dummySelf: MachineRef<E> = {
-            send: Effect.fn("effect-machine.persistentActor.replay.send")(
-              (_event: E) => Effect.void,
-            ),
-          };
           const result = yield* replayEvents(
             typedMachine,
             typedMachine.initial,
@@ -212,6 +214,7 @@ const buildPersistentActorRef = <
     stoppedRef,
     listeners,
     stop,
+    system,
   );
 
   return {
@@ -251,6 +254,14 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
     EFD
   >;
 
+  // Resolve actor system from context.
+  // Persistent actors are always created through system.spawn, so system should always exist.
+  const existingSystem = yield* Effect.serviceOption(ActorSystemTag);
+  if (Option.isNone(existingSystem)) {
+    return yield* Effect.die("PersistentActor requires ActorSystem in context");
+  }
+  const system: ActorSystem = existingSystem.value;
+
   // Get optional inspector from context
   const inspector = Option.getOrUndefined(yield* Effect.serviceOption(InspectorTag)) as
     | Inspector<S, E>
@@ -267,6 +278,8 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
       }
       yield* Queue.offer(eventQueue, event);
     }),
+    spawn: (childId, childMachine) =>
+      system.spawn(childId, childMachine).pipe(Effect.provideService(ActorSystemTag, system)),
   };
 
   // Determine initial state and version
@@ -343,13 +356,13 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
   // Fork background effects (run for entire machine lifetime)
   const backgroundFibers: Fiber.Fiber<void, never>[] = [];
   const initEvent = { _tag: INTERNAL_INIT_EVENT } as E;
-  const initCtx = { state: resolvedInitial, event: initEvent, self };
+  const initCtx = { state: resolvedInitial, event: initEvent, self, system };
   const { effects: effectSlots } = typedMachine._slots;
 
   for (const bg of typedMachine.backgroundEffects) {
     const fiber = yield* Effect.forkDaemon(
       bg
-        .handler({ state: resolvedInitial, event: initEvent, self, effects: effectSlots })
+        .handler({ state: resolvedInitial, event: initEvent, self, effects: effectSlots, system })
         .pipe(Effect.provideService(typedMachine.Context, initCtx)),
     );
     backgroundFibers.push(fiber);
@@ -369,6 +382,7 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
     stateScopeRef.current,
     id,
     inspector,
+    system,
   );
 
   // Check if initial state is final
@@ -398,6 +412,7 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
       listeners,
       stop,
       adapter,
+      system,
     );
   }
 
@@ -422,6 +437,7 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
       snapshotFiber,
       persistenceFiber,
       inspector,
+      system,
     ),
   );
 
@@ -451,6 +467,7 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
     listeners,
     stop,
     adapter,
+    system,
   );
 });
 
@@ -481,7 +498,8 @@ const persistentEventLoop = Effect.fn("effect-machine.persistentActor.eventLoop"
   persistenceQueue: Queue.Queue<Effect.Effect<void, never>>,
   snapshotFiber: Fiber.Fiber<void, never>,
   persistenceFiber: Fiber.Fiber<void, never>,
-  inspector?: Inspector<S, E>,
+  inspector: Inspector<S, E> | undefined,
+  system: ActorSystem,
 ) {
   const { machine, persistence } = persistentMachine;
   const typedMachine = machine as unknown as Machine<
@@ -547,6 +565,7 @@ const persistentEventLoop = Effect.fn("effect-machine.persistentActor.eventLoop"
       event,
       self,
       stateScopeRef,
+      system,
       hooks,
     );
 
@@ -624,7 +643,8 @@ const runSpawnEffectsWithInspection = Effect.fn("effect-machine.persistentActor.
     self: MachineRef<E>,
     stateScope: Scope.CloseableScope,
     actorId: string,
-    inspector?: Inspector<S, E>,
+    inspector: Inspector<S, E> | undefined,
+    system: ActorSystem,
   ) {
     yield* emitWithTimestamp(inspector, (timestamp) => ({
       type: "@machine.effect",
@@ -648,7 +668,7 @@ const runSpawnEffectsWithInspection = Effect.fn("effect-machine.persistentActor.
               timestamp,
             }));
 
-    yield* runSpawnEffects(machine, state, event, self, stateScope, onError);
+    yield* runSpawnEffects(machine, state, event, self, stateScope, system, onError);
   },
 );
 

@@ -162,6 +162,12 @@ export interface ActorRef<State extends { readonly _tag: string }, Event> {
    * Returns unsubscribe function
    */
   readonly subscribe: (fn: (state: State) => void) => () => void;
+
+  /**
+   * The actor system this actor belongs to.
+   * Every actor always has a system — either inherited from context or implicitly created.
+   */
+  readonly system: ActorSystem;
 }
 
 // ============================================================================
@@ -348,6 +354,7 @@ export const buildActorRefCore = <
   stoppedRef: Ref.Ref<boolean>,
   listeners: Listeners<S>,
   stop: Effect.Effect<void>,
+  system: ActorSystem,
 ): ActorRef<S, E> => {
   const send = Effect.fn("effect-machine.actor.send")(function* (event: E) {
     const stopped = yield* Ref.get(stoppedRef);
@@ -455,6 +462,7 @@ export const buildActorRefCore = <
         listeners.delete(fn);
       };
     },
+    system,
   };
 };
 
@@ -474,6 +482,19 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
 >(id: string, machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>) {
   yield* Effect.annotateCurrentSpan("effect_machine.actor.id", id);
 
+  // Resolve actor system: use existing from context, or create implicit one
+  const existingSystem = yield* Effect.serviceOption(ActorSystem);
+  let system: ActorSystem;
+  let implicitSystemScope: Scope.CloseableScope | undefined;
+
+  if (Option.isSome(existingSystem)) {
+    system = existingSystem.value;
+  } else {
+    const scope = yield* Scope.make();
+    system = yield* make().pipe(Effect.provideService(Scope.Scope, scope));
+    implicitSystemScope = scope;
+  }
+
   // Get optional inspector from context
   const inspectorValue = Option.getOrUndefined(yield* Effect.serviceOption(InspectorTag)) as
     | Inspector<S, E>
@@ -490,6 +511,8 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       }
       yield* Queue.offer(eventQueue, event);
     }),
+    spawn: (childId, childMachine) =>
+      system.spawn(childId, childMachine).pipe(Effect.provideService(ActorSystem, system)),
   };
 
   // Annotate span with initial state
@@ -510,13 +533,13 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   // Fork background effects (run for entire machine lifetime)
   const backgroundFibers: Fiber.Fiber<void, never>[] = [];
   const initEvent = { _tag: INTERNAL_INIT_EVENT } as E;
-  const ctx = { state: machine.initial, event: initEvent, self };
+  const ctx = { state: machine.initial, event: initEvent, self, system };
   const { effects: effectSlots } = machine._slots;
 
   for (const bg of machine.backgroundEffects) {
     const fiber = yield* Effect.forkDaemon(
       bg
-        .handler({ state: machine.initial, event: initEvent, self, effects: effectSlots })
+        .handler({ state: machine.initial, event: initEvent, self, effects: effectSlots, system })
         .pipe(Effect.provideService(machine.Context, ctx)),
     );
     backgroundFibers.push(fiber);
@@ -536,6 +559,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     stateScopeRef.current,
     id,
     inspectorValue,
+    system,
   );
 
   // Check if initial state (after always) is final
@@ -550,11 +574,23 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       timestamp,
     }));
     yield* Ref.set(stoppedRef, true);
+    if (implicitSystemScope !== undefined) {
+      yield* Scope.close(implicitSystemScope, Exit.void);
+    }
     const stop = Ref.set(stoppedRef, true).pipe(
       Effect.withSpan("effect-machine.actor.stop"),
       Effect.asVoid,
     );
-    return buildActorRefCore(id, machine, stateRef, eventQueue, stoppedRef, listeners, stop);
+    return buildActorRefCore(
+      id,
+      machine,
+      stateRef,
+      eventQueue,
+      stoppedRef,
+      listeners,
+      stop,
+      system,
+    );
   }
 
   // Start the event loop — use forkDaemon so the event loop fiber's lifetime
@@ -571,6 +607,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       stateScopeRef,
       id,
       inspectorValue,
+      system,
     ),
   );
 
@@ -588,9 +625,13 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     yield* Scope.close(stateScopeRef.current, Exit.void);
     // Interrupt background effects (in parallel)
     yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
+    // If this actor created an implicit system, tear it down (stops all children)
+    if (implicitSystemScope !== undefined) {
+      yield* Scope.close(implicitSystemScope, Exit.void);
+    }
   }).pipe(Effect.withSpan("effect-machine.actor.stop"), Effect.asVoid);
 
-  return buildActorRefCore(id, machine, stateRef, eventQueue, stoppedRef, listeners, stop);
+  return buildActorRefCore(id, machine, stateRef, eventQueue, stoppedRef, listeners, stop, system);
 });
 
 /**
@@ -612,7 +653,8 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
   backgroundFibers: Fiber.Fiber<void, never>[],
   stateScopeRef: { current: Scope.CloseableScope },
   actorId: string,
-  inspector?: Inspector<S, E>,
+  inspector: Inspector<S, E> | undefined,
+  system: ActorSystem,
 ) {
   while (true) {
     // Block waiting for next event - will fail with QueueShutdown when queue is shut down
@@ -638,6 +680,7 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
         stateScopeRef,
         actorId,
         inspector,
+        system,
       ),
     );
 
@@ -670,7 +713,8 @@ const processEvent = Effect.fn("effect-machine.actor.processEvent")(function* <
   listeners: Listeners<S>,
   stateScopeRef: { current: Scope.CloseableScope },
   actorId: string,
-  inspector?: Inspector<S, E>,
+  inspector: Inspector<S, E> | undefined,
+  system: ActorSystem,
 ) {
   // Emit event received
   yield* emitWithTimestamp(inspector, (timestamp) => ({
@@ -716,7 +760,15 @@ const processEvent = Effect.fn("effect-machine.actor.processEvent")(function* <
         };
 
   // Process event using shared core
-  const result = yield* processEventCore(machine, currentState, event, self, stateScopeRef, hooks);
+  const result = yield* processEventCore(
+    machine,
+    currentState,
+    event,
+    self,
+    stateScopeRef,
+    system,
+    hooks,
+  );
 
   if (!result.transitioned) {
     yield* Effect.annotateCurrentSpan("effect_machine.transition.matched", false);
@@ -768,7 +820,8 @@ const runSpawnEffectsWithInspection = Effect.fn("effect-machine.actor.spawnEffec
   self: MachineRef<E>,
   stateScope: Scope.CloseableScope,
   actorId: string,
-  inspector?: Inspector<S, E>,
+  inspector: Inspector<S, E> | undefined,
+  system: ActorSystem,
 ) {
   // Emit inspection event before running effects
   yield* emitWithTimestamp(inspector, (timestamp) => ({
@@ -794,7 +847,7 @@ const runSpawnEffectsWithInspection = Effect.fn("effect-machine.actor.spawnEffec
             timestamp,
           }));
 
-  yield* runSpawnEffects(machine, state, event, self, stateScope, onError);
+  yield* runSpawnEffects(machine, state, event, self, stateScope, system, onError);
 });
 
 // ============================================================================

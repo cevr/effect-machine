@@ -5,11 +5,11 @@
  */
 import { Entity } from "@effect/cluster";
 import type { Rpc } from "@effect/rpc";
-import { Effect, type Layer, Queue, Ref, Scope } from "effect";
+import { Effect, type Layer, Option, Queue, Ref, Scope } from "effect";
 
 import type { Machine, MachineRef } from "../machine.js";
-import { runSpawnEffects, processEventCore } from "../actor.js";
-import type { ProcessEventHooks } from "../actor.js";
+import type { ActorSystem, ProcessEventHooks } from "../actor.js";
+import { ActorSystem as ActorSystemTag, runSpawnEffects, processEventCore } from "../actor.js";
 import type { GuardsDef, EffectsDef } from "../slot.js";
 
 /**
@@ -66,12 +66,21 @@ const processEvent = Effect.fn("effect-machine.cluster.processEvent")(function* 
   event: E,
   self: MachineRef<E>,
   stateScopeRef: { current: Scope.CloseableScope },
+  system: ActorSystem,
   hooks?: ProcessEventHooks<S, E>,
 ) {
   const currentState = yield* Ref.get(stateRef);
 
   // Process event using shared core
-  const result = yield* processEventCore(machine, currentState, event, self, stateScopeRef, hooks);
+  const result = yield* processEventCore(
+    machine,
+    currentState,
+    event,
+    self,
+    stateScopeRef,
+    system,
+    hooks,
+  );
 
   // Update state ref if transition occurred
   if (result.transitioned) {
@@ -143,12 +152,21 @@ export const EntityMachine = {
           ? options.initializeState(entityId)
           : machine.initial;
 
+      // Resolve actor system from context
+      const existingSystem = yield* Effect.serviceOption(ActorSystemTag);
+      if (Option.isNone(existingSystem)) {
+        return yield* Effect.die("EntityMachine requires ActorSystem in context");
+      }
+      const system: ActorSystem = existingSystem.value;
+
       // Create self reference for sending events back to machine
       const internalQueue = yield* Queue.unbounded<E>();
       const self: MachineRef<E> = {
         send: Effect.fn("effect-machine.cluster.self.send")(function* (event: E) {
           yield* Queue.offer(internalQueue, event);
         }),
+        spawn: (childId, childMachine) =>
+          system.spawn(childId, childMachine).pipe(Effect.provideService(ActorSystemTag, system)),
       };
 
       // Create state ref
@@ -169,13 +187,14 @@ export const EntityMachine = {
         initEvent,
         self,
         stateScopeRef.current,
+        system,
         options?.hooks?.onError,
       );
 
       // Process internal events in background
       const runInternalEvent = Effect.fn("effect-machine.cluster.internalEvent")(function* () {
         const event = yield* Queue.take(internalQueue);
-        yield* processEvent(machine, stateRef, event, self, stateScopeRef, options?.hooks);
+        yield* processEvent(machine, stateRef, event, self, stateScopeRef, system, options?.hooks);
       });
       yield* Effect.forkScoped(Effect.forever(runInternalEvent()));
 
@@ -189,6 +208,7 @@ export const EntityMachine = {
             envelope.payload.event,
             self,
             stateScopeRef,
+            system,
             options?.hooks,
           ),
 

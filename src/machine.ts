@@ -52,7 +52,9 @@ import type { MachineStateSchema, MachineEventSchema, VariantsUnion } from "./sc
 import type { PersistentMachine, WithPersistenceConfig } from "./persistence/persistent-machine.js";
 import { persist as persistImpl } from "./persistence/persistent-machine.js";
 import { SlotProvisionError, ProvisionValidationError } from "./errors.js";
+import type { DuplicateActorError } from "./errors.js";
 import { invalidateIndex } from "./internal/transition.js";
+import type { ActorRef, ActorSystem } from "./actor.js";
 import type {
   GuardsSchema,
   EffectsSchema,
@@ -75,6 +77,10 @@ import { MachineContextTag } from "./slot.js";
  */
 export interface MachineRef<Event> {
   readonly send: (event: Event) => Effect.Effect<void>;
+  readonly spawn: <S2 extends { readonly _tag: string }, E2 extends { readonly _tag: string }, R2>(
+    id: string,
+    machine: BuiltMachine<S2, E2, R2>,
+  ) => Effect.Effect<ActorRef<S2, E2>, DuplicateActorError, R2>;
 }
 
 /**
@@ -95,6 +101,7 @@ export interface StateHandlerContext<State, Event, ED extends EffectsDef> {
   readonly event: Event;
   readonly self: MachineRef<Event>;
   readonly effects: EffectSlots<ED>;
+  readonly system: ActorSystem;
 }
 
 /**
@@ -772,7 +779,6 @@ export const make = Machine.make;
 // spawn function - simple actor creation without ActorSystem
 // ============================================================================
 
-import type { ActorRef } from "./actor.js";
 import { createActor } from "./actor.js";
 
 /**

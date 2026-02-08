@@ -12,6 +12,7 @@ import { Cause, Effect, Exit, Scope } from "effect";
 
 import type { Machine, MachineRef, Transition, SpawnEffect, HandlerContext } from "../machine.js";
 import { BuiltMachine } from "../machine.js";
+import type { ActorSystem } from "../actor.js";
 import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
 import { isEffect, INTERNAL_ENTER_EVENT } from "./utils.js";
 
@@ -53,8 +54,9 @@ export const runTransitionHandler = Effect.fn("effect-machine.runTransitionHandl
   state: S,
   event: E,
   self: MachineRef<E>,
+  system: ActorSystem,
 ) {
-  const ctx: MachineContext<S, E, MachineRef<E>> = { state, event, self };
+  const ctx: MachineContext<S, E, MachineRef<E>> = { state, event, self, system };
   const { guards, effects } = machine._slots;
 
   const handlerCtx: HandlerContext<S, E, GD, EFD> = { state, event, guards, effects };
@@ -89,6 +91,7 @@ export const executeTransition = Effect.fn("effect-machine.executeTransition")(f
   currentState: S,
   event: E,
   self: MachineRef<E>,
+  system: ActorSystem,
 ) {
   const transition = resolveTransition(machine, currentState, event);
 
@@ -100,7 +103,14 @@ export const executeTransition = Effect.fn("effect-machine.executeTransition")(f
     };
   }
 
-  const newState = yield* runTransitionHandler(machine, transition, currentState, event, self);
+  const newState = yield* runTransitionHandler(
+    machine,
+    transition,
+    currentState,
+    event,
+    self,
+    system,
+  );
 
   return {
     newState,
@@ -175,10 +185,11 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
   event: E,
   self: MachineRef<E>,
   stateScopeRef: { current: Scope.CloseableScope },
+  system: ActorSystem,
   hooks?: ProcessEventHooks<S, E>,
 ) {
   // Execute transition (defect-aware)
-  const result = yield* executeTransition(machine, currentState, event, self).pipe(
+  const result = yield* executeTransition(machine, currentState, event, self, system).pipe(
     Effect.catchAllCause((cause) => {
       if (Cause.isInterruptedOnly(cause)) {
         return Effect.interrupt;
@@ -235,6 +246,7 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
       enterEvent,
       self,
       stateScopeRef.current,
+      system,
       hooks?.onError,
     );
   }
@@ -265,17 +277,18 @@ export const runSpawnEffects = Effect.fn("effect-machine.runSpawnEffects")(funct
   event: E,
   self: MachineRef<E>,
   stateScope: Scope.CloseableScope,
+  system: ActorSystem,
   onError?: (info: ProcessEventError<S, E>) => Effect.Effect<void>,
 ) {
   const spawnEffects = findSpawnEffects(machine, state._tag);
-  const ctx: MachineContext<S, E, MachineRef<E>> = { state, event, self };
+  const ctx: MachineContext<S, E, MachineRef<E>> = { state, event, self, system };
   const { effects: effectSlots } = machine._slots;
   const reportError = onError;
 
   for (const spawnEffect of spawnEffects) {
     // Fork the spawn effect into the state scope - interrupted when scope closes
     const effect = (
-      spawnEffect.handler({ state, event, self, effects: effectSlots }) as Effect.Effect<
+      spawnEffect.handler({ state, event, self, effects: effectSlots, system }) as Effect.Effect<
         void,
         never,
         R

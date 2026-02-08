@@ -35,6 +35,7 @@
  */
 import { Context } from "effect";
 import type { Effect, Schema } from "effect";
+import type { ActorSystem } from "./actor.js";
 
 // ============================================================================
 // Type-level utilities
@@ -106,6 +107,7 @@ export interface MachineContext<State, Event, Self> {
   readonly state: State;
   readonly event: Event;
   readonly self: Self;
+  readonly system: ActorSystem;
 }
 
 /**
