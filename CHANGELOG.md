@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.4.0
+
+### Minor Changes
+
+- [`bd3953e`](https://github.com/cevr/effect-machine/commit/bd3953eaf0f2069ec6368a9a4c74451a9ab707fc) Thanks [@cevr](https://github.com/cevr)! - Add child actor support: `self.spawn()` from handlers, `actor.system` on every ActorRef, implicit system creation for `Machine.spawn`, and automatic lifecycle coupling to state scope
+
 ## 0.3.2
 
 ### Patch Changes
