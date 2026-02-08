@@ -6,13 +6,22 @@
     "url": "https://github.com/cevr/effect-machine.git"
   },
   "files": [
-    "src",
-    "tsconfig.json"
+    "dist"
   ],
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./cluster": "./src/cluster/index.ts"
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./cluster": {
+      "import": {
+        "types": "./dist/cluster/index.d.ts",
+        "default": "./dist/cluster/index.js"
+      }
+    }
   },
   "publishConfig": {
     "access": "public"
@@ -25,10 +34,11 @@
     "fmt:check": "oxfmt --check",
     "test": "bun test",
     "test:watch": "bun test --watch",
-    "gate": "concurrently -n type,lint,fmt,test -c blue,yellow,magenta,green \"bun run typecheck\" \"bun run lint:fix\" \"bun run fmt\" \"bun run test\"",
+    "gate": "concurrently -n type,lint,fmt,test,build -c blue,yellow,magenta,green,cyan \"bun run typecheck\" \"bun run lint:fix\" \"bun run fmt\" \"bun run test\" \"bun run build\"",
     "prepare": "lefthook install || true && effect-language-service patch",
     "version": "changeset version",
-    "release": "changeset publish"
+    "build": "tsdown",
+    "release": "bun run build && changeset publish"
   },
   "dependencies": {
     "effect": "^3.19.15"
@@ -46,6 +56,7 @@
     "lefthook": "^2.0.15",
     "oxfmt": "^0.26.0",
     "oxlint": "^1.41.0",
+    "tsdown": "^0.20.3",
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
