@@ -131,6 +131,7 @@ const buildPersistentActorRef = <
   stop: Effect.Effect<void>,
   adapter: PersistenceAdapter,
   system: ActorSystem,
+  childrenMap: ReadonlyMap<string, ActorRef<{ readonly _tag: string }, unknown>>,
 ): PersistentActorRef<S, E, R> => {
   const { machine, persistence } = persistentMachine;
   const typedMachine = machine as unknown as Machine<
@@ -215,6 +216,7 @@ const buildPersistentActorRef = <
     listeners,
     stop,
     system,
+    childrenMap,
   );
 
   return {
@@ -270,6 +272,7 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
   // Create self reference for sending events
   const eventQueue = yield* Queue.unbounded<E>();
   const stoppedRef = yield* Ref.make(false);
+  const childrenMap = new Map<string, ActorRef<{ readonly _tag: string }, unknown>>();
   const self: MachineRef<E> = {
     send: Effect.fn("effect-machine.persistentActor.self.send")(function* (event: E) {
       const stopped = yield* Ref.get(stoppedRef);
@@ -279,7 +282,22 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
       yield* Queue.offer(eventQueue, event);
     }),
     spawn: (childId, childMachine) =>
-      system.spawn(childId, childMachine).pipe(Effect.provideService(ActorSystemTag, system)),
+      Effect.gen(function* () {
+        const child = yield* system
+          .spawn(childId, childMachine)
+          .pipe(Effect.provideService(ActorSystemTag, system));
+        childrenMap.set(childId, child as unknown as ActorRef<{ readonly _tag: string }, unknown>);
+        const maybeScope = yield* Effect.serviceOption(Scope.Scope);
+        if (Option.isSome(maybeScope)) {
+          yield* Scope.addFinalizer(
+            maybeScope.value,
+            Effect.sync(() => {
+              childrenMap.delete(childId);
+            }),
+          );
+        }
+        return child;
+      }),
   };
 
   // Determine initial state and version
@@ -413,6 +431,7 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
       stop,
       adapter,
       system,
+      childrenMap,
     );
   }
 
@@ -468,6 +487,7 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
     stop,
     adapter,
     system,
+    childrenMap,
   );
 });
 

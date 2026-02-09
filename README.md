@@ -206,6 +206,30 @@ const child = yield * parent.system.get("worker-1"); // Option<ActorRef>
 
 Every actor always has a system — `Machine.spawn` creates an implicit one if no `ActorSystem` is in context.
 
+### System Observation
+
+React to actors joining and leaving the system:
+
+```ts
+const system = yield * ActorSystemService;
+
+// Sync callback — like ActorRef.subscribe
+const unsub = system.subscribe((event) => {
+  // event._tag: "ActorSpawned" | "ActorStopped"
+  console.log(`${event._tag}: ${event.id}`);
+});
+
+// Sync snapshot of all registered actors
+const actors = system.actors; // ReadonlyMap<string, ActorRef>
+
+// Async stream (each subscriber gets own queue)
+yield *
+  system.events.pipe(
+    Stream.tap((e) => Effect.log(e._tag, e.id)),
+    Stream.runDrain,
+  );
+```
+
 ### Testing
 
 Test transitions without actors:
@@ -297,6 +321,18 @@ See the [primer](./primer/) for comprehensive documentation:
 | `actor.sendAndWait(ev, State.X)` | Send + wait for state              |
 | `actor.subscribe(fn)`            | Sync callback                      |
 | `actor.system`                   | Access the actor's `ActorSystem`   |
+| `actor.children`                 | Child actors (`ReadonlyMap`)       |
+
+### ActorSystem
+
+| Method / Property      | Description                                 |
+| ---------------------- | ------------------------------------------- |
+| `system.spawn(id, m)`  | Spawn actor                                 |
+| `system.get(id)`       | Get actor by ID                             |
+| `system.stop(id)`      | Stop actor by ID                            |
+| `system.actors`        | Sync snapshot of all actors (`ReadonlyMap`) |
+| `system.subscribe(fn)` | Sync callback for spawn/stop events         |
+| `system.events`        | Async `Stream<SystemEvent>` for spawn/stop  |
 
 ## License
 

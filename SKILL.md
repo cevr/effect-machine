@@ -124,6 +124,21 @@ Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))
 | `actor.snapshotSync()`           | Get current state (sync)           |
 | `actor.matches(tag)`             | Check state tag                    |
 | `actor.subscribe(fn)`            | Sync callback, returns unsubscribe |
+| `actor.system`                   | Access the actor's `ActorSystem`   |
+| `actor.children`                 | Child actors (`ReadonlyMap`)       |
+
+## System Observation
+
+```ts
+// Sync callback — ActorSpawned / ActorStopped events
+const unsub = system.subscribe((event) => console.log(event._tag, event.id));
+
+// Sync snapshot of all registered actors
+const actors: ReadonlyMap<string, ActorRef> = system.actors;
+
+// Async stream (late subscribers miss prior events)
+system.events.pipe(Stream.take(10), Stream.runCollect);
+```
 
 ## Testing
 

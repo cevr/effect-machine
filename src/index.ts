@@ -49,7 +49,7 @@ export type {
 } from "./machine.js";
 
 // Actor types and system
-export type { ActorRef, ActorSystem } from "./actor.js";
+export type { ActorRef, ActorSystem, SystemEvent, SystemEventListener } from "./actor.js";
 export { ActorSystem as ActorSystemService, Default as ActorSystemDefault } from "./actor.js";
 
 // Testing utilities

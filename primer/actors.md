@@ -29,24 +29,25 @@ Effect.runPromise(Effect.scoped(program).pipe(Effect.provide(ActorSystemDefault)
 
 ## ActorRef Methods
 
-| Method                     | Type              | Description                        |
-| -------------------------- | ----------------- | ---------------------------------- |
-| `send(event)`              | `Effect<void>`    | Queue event for processing         |
-| `sendSync(event)`          | `void`            | Fire-and-forget (sync, for UI)     |
-| `snapshot`                 | `Effect<State>`   | Get current state                  |
-| `snapshotSync()`           | `State`           | Get current state (sync)           |
-| `matches(tag)`             | `Effect<boolean>` | Check if in state                  |
-| `matchesSync(tag)`         | `boolean`         | Check if in state (sync)           |
-| `can(event)`               | `Effect<boolean>` | Can handle event in current state? |
-| `canSync(event)`           | `boolean`         | Can handle event? (sync)           |
-| `changes`                  | `Stream<State>`   | Stream of state changes            |
-| `waitFor(State.X)`         | `Effect<State>`   | Wait for state (constructor or fn) |
-| `awaitFinal`               | `Effect<State>`   | Wait for final state               |
-| `sendAndWait(ev, State.X)` | `Effect<State>`   | Send + wait for state              |
-| `sendAndWait(ev)`          | `Effect<State>`   | Send + wait for final state        |
-| `subscribe(fn)`            | `() => void`      | Sync callback, returns unsubscribe |
-| `system`                   | `ActorSystem`     | Access the actor's system          |
-| `stop`                     | `Effect<void>`    | Stop actor gracefully              |
+| Method                     | Type              | Description                         |
+| -------------------------- | ----------------- | ----------------------------------- |
+| `send(event)`              | `Effect<void>`    | Queue event for processing          |
+| `sendSync(event)`          | `void`            | Fire-and-forget (sync, for UI)      |
+| `snapshot`                 | `Effect<State>`   | Get current state                   |
+| `snapshotSync()`           | `State`           | Get current state (sync)            |
+| `matches(tag)`             | `Effect<boolean>` | Check if in state                   |
+| `matchesSync(tag)`         | `boolean`         | Check if in state (sync)            |
+| `can(event)`               | `Effect<boolean>` | Can handle event in current state?  |
+| `canSync(event)`           | `boolean`         | Can handle event? (sync)            |
+| `changes`                  | `Stream<State>`   | Stream of state changes             |
+| `waitFor(State.X)`         | `Effect<State>`   | Wait for state (constructor or fn)  |
+| `awaitFinal`               | `Effect<State>`   | Wait for final state                |
+| `sendAndWait(ev, State.X)` | `Effect<State>`   | Send + wait for state               |
+| `sendAndWait(ev)`          | `Effect<State>`   | Send + wait for final state         |
+| `subscribe(fn)`            | `() => void`      | Sync callback, returns unsubscribe  |
+| `system`                   | `ActorSystem`     | Access the actor's system           |
+| `children`                 | `ReadonlyMap`     | Child actors spawned via self.spawn |
+| `stop`                     | `Effect<void>`    | Stop actor gracefully               |
 
 ## Sending Events
 
@@ -246,6 +247,57 @@ if (Option.isSome(maybeActor)) {
 const stopped = yield * system.stop("order-1");
 // true if actor existed and was stopped
 ```
+
+## System Observation
+
+Observe actors joining and leaving the system without polling:
+
+### Sync Callback
+
+```ts
+const system = yield * ActorSystemService;
+
+const unsub = system.subscribe((event) => {
+  switch (event._tag) {
+    case "ActorSpawned":
+      console.log(`Spawned: ${event.id}`);
+      break;
+    case "ActorStopped":
+      console.log(`Stopped: ${event.id}`);
+      // event.actor still readable — can check final state
+      break;
+  }
+});
+
+// Later: unsub() to stop receiving events
+```
+
+### Actors Snapshot
+
+```ts
+// Sync snapshot — returns new Map each time (not live)
+const actors = system.actors; // ReadonlyMap<string, ActorRef>
+console.log(`${actors.size} actors running`);
+```
+
+### Async Stream
+
+```ts
+// Each subscriber gets own queue — late subscribers miss prior events
+yield *
+  system.events.pipe(
+    Stream.tap((e) => Effect.log(e._tag, e.id)),
+    Stream.runDrain,
+  );
+```
+
+### Edge Cases
+
+- **System teardown**: No events emitted — PubSub is shutting down
+- **Late stream subscribers**: Miss prior events (PubSub gives each subscriber their own queue)
+- **Listener errors**: Caught and ignored — won't crash the system
+- **Scope cleanup**: Actors stopped via scope close emit `ActorStopped`
+- **Double stop**: `system.stop(id)` + scope finalizer won't double-emit (guarded by map check)
 
 ## Duplicate Actor Prevention
 

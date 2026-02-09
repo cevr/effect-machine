@@ -3,7 +3,7 @@
  * @internal
  */
 import type { Effect } from "effect";
-import { Effect as E } from "effect";
+import { Effect as E, Stream } from "effect";
 import type { ActorSystem } from "../actor.js";
 
 // ============================================================================
@@ -95,6 +95,11 @@ export const stubSystem: ActorSystem = {
   restore: () => E.die("restore not supported in stub system"),
   get: () => E.die("get not supported in stub system"),
   stop: () => E.die("stop not supported in stub system"),
+  events: Stream.empty,
+  get actors() {
+    return new Map();
+  },
+  subscribe: () => () => {},
   listPersisted: () => E.die("listPersisted not supported in stub system"),
   restoreMany: () => E.die("restoreMany not supported in stub system"),
   restoreAll: () => E.die("restoreAll not supported in stub system"),

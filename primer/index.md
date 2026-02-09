@@ -164,6 +164,17 @@ Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))
 | `actor.waitFor(State.X)`         | No     | Wait for state (constructor or fn) |
 | `actor.sendAndWait(ev, State.X)` | No     | Send + wait for state              |
 | `actor.subscribe(fn)`            | Yes    | Sync callback                      |
+| `actor.children`                 | Sync   | Child actors (`ReadonlyMap`)       |
+
+### ActorSystem Observation
+
+| Method / Property      | Description                                 |
+| ---------------------- | ------------------------------------------- |
+| `system.actors`        | Sync snapshot of all actors (`ReadonlyMap`) |
+| `system.subscribe(fn)` | Sync callback for `SystemEvent`             |
+| `system.events`        | Async `Stream<SystemEvent>`                 |
+
+`SystemEvent` = `{ _tag: "ActorSpawned" | "ActorStopped", id: string, actor: ActorRef }`
 
 ## See Also
 

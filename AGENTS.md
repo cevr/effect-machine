@@ -135,7 +135,35 @@ actor.sendAndWait(ev, State.X); // Send + wait for state
 actor.awaitFinal; // Wait for final state
 actor.subscribe(fn); // Sync callback, returns unsubscribe
 actor.system; // ActorSystem — access child actors via .get(id)
+actor.children; // ReadonlyMap<string, ActorRef> — child actors spawned via self.spawn
 ```
+
+## System Observation
+
+Observe actors joining/leaving the system:
+
+```ts
+const system = yield * ActorSystemService;
+
+// Sync callback (like ActorRef.subscribe pattern)
+const unsub = system.subscribe((event) => {
+  // event: { _tag: "ActorSpawned" | "ActorStopped", id: string, actor: ActorRef }
+});
+
+// Sync snapshot of all registered actors
+const actors: ReadonlyMap<string, ActorRef> = system.actors;
+
+// Async stream (each subscriber gets own queue — late subscribers miss prior events)
+yield *
+  system.events.pipe(
+    Stream.tap((e) => Effect.log(e._tag, e.id)),
+    Stream.runDrain,
+  );
+```
+
+- `system.actors` returns a new Map on each access (snapshot, not live)
+- No events emitted during system teardown (PubSub is shutting down)
+- Works with both explicit (`ActorSystemDefault`) and implicit (`Machine.spawn`) systems
 
 ## spawn vs on
 

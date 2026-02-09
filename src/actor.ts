@@ -6,7 +6,6 @@
  * - ActorSystem service (spawn/stop/get actors)
  * - Actor creation and event loop
  */
-import type { Stream } from "effect";
 import {
   Cause,
   Context,
@@ -17,10 +16,12 @@ import {
   Layer,
   MutableHashMap,
   Option,
+  PubSub,
   Queue,
   Ref,
   Runtime,
   Scope,
+  Stream,
   SubscriptionRef,
 } from "effect";
 
@@ -168,6 +169,12 @@ export interface ActorRef<State extends { readonly _tag: string }, Event> {
    * Every actor always has a system — either inherited from context or implicitly created.
    */
   readonly system: ActorSystem;
+
+  /**
+   * Child actors spawned via `self.spawn` in this actor's handlers.
+   * State-scoped children are auto-removed on state exit.
+   */
+  readonly children: ReadonlyMap<string, ActorRef<AnyState, unknown>>;
 }
 
 // ============================================================================
@@ -176,6 +183,30 @@ export interface ActorRef<State extends { readonly _tag: string }, Event> {
 
 /** Base type for stored actors (internal) */
 type AnyState = { readonly _tag: string };
+
+// ============================================================================
+// System Observation Types
+// ============================================================================
+
+/**
+ * Events emitted by the ActorSystem when actors are spawned or stopped.
+ */
+export type SystemEvent =
+  | {
+      readonly _tag: "ActorSpawned";
+      readonly id: string;
+      readonly actor: ActorRef<AnyState, unknown>;
+    }
+  | {
+      readonly _tag: "ActorStopped";
+      readonly id: string;
+      readonly actor: ActorRef<AnyState, unknown>;
+    };
+
+/**
+ * Listener callback for system events.
+ */
+export type SystemEventListener = (event: SystemEvent) => void;
 
 /**
  * Actor system for managing actor lifecycles
@@ -251,6 +282,24 @@ export interface ActorSystem {
    * Stop an actor by ID
    */
   readonly stop: (id: string) => Effect.Effect<boolean>;
+
+  /**
+   * Async stream of system events (actor spawned/stopped).
+   * Each subscriber gets their own queue — late subscribers miss prior events.
+   */
+  readonly events: Stream.Stream<SystemEvent>;
+
+  /**
+   * Sync snapshot of all currently registered actors.
+   * Returns a new Map on each access (not live).
+   */
+  readonly actors: ReadonlyMap<string, ActorRef<AnyState, unknown>>;
+
+  /**
+   * Subscribe to system events synchronously.
+   * Returns an unsubscribe function.
+   */
+  readonly subscribe: (fn: SystemEventListener) => () => void;
 
   /**
    * List all persisted actor metadata.
@@ -355,6 +404,7 @@ export const buildActorRefCore = <
   listeners: Listeners<S>,
   stop: Effect.Effect<void>,
   system: ActorSystem,
+  childrenMap: ReadonlyMap<string, ActorRef<AnyState, unknown>>,
 ): ActorRef<S, E> => {
   const send = Effect.fn("effect-machine.actor.send")(function* (event: E) {
     const stopped = yield* Ref.get(stoppedRef);
@@ -463,6 +513,7 @@ export const buildActorRefCore = <
       };
     },
     system,
+    children: childrenMap,
   };
 };
 
@@ -503,6 +554,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   // Create self reference for sending events
   const eventQueue = yield* Queue.unbounded<E>();
   const stoppedRef = yield* Ref.make(false);
+  const childrenMap = new Map<string, ActorRef<AnyState, unknown>>();
   const self: MachineRef<E> = {
     send: Effect.fn("effect-machine.actor.self.send")(function* (event: E) {
       const stopped = yield* Ref.get(stoppedRef);
@@ -512,7 +564,22 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       yield* Queue.offer(eventQueue, event);
     }),
     spawn: (childId, childMachine) =>
-      system.spawn(childId, childMachine).pipe(Effect.provideService(ActorSystem, system)),
+      Effect.gen(function* () {
+        const child = yield* system
+          .spawn(childId, childMachine)
+          .pipe(Effect.provideService(ActorSystem, system));
+        childrenMap.set(childId, child as unknown as ActorRef<AnyState, unknown>);
+        const maybeScope = yield* Effect.serviceOption(Scope.Scope);
+        if (Option.isSome(maybeScope)) {
+          yield* Scope.addFinalizer(
+            maybeScope.value,
+            Effect.sync(() => {
+              childrenMap.delete(childId);
+            }),
+          );
+        }
+        return child;
+      }),
   };
 
   // Annotate span with initial state
@@ -590,6 +657,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       listeners,
       stop,
       system,
+      childrenMap,
     );
   }
 
@@ -631,7 +699,17 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     }
   }).pipe(Effect.withSpan("effect-machine.actor.stop"), Effect.asVoid);
 
-  return buildActorRefCore(id, machine, stateRef, eventQueue, stoppedRef, listeners, stop, system);
+  return buildActorRefCore(
+    id,
+    machine,
+    stateRef,
+    eventQueue,
+    stoppedRef,
+    listeners,
+    stop,
+    system,
+    childrenMap,
+  );
 });
 
 /**
@@ -854,22 +932,44 @@ const runSpawnEffectsWithInspection = Effect.fn("effect-machine.actor.spawnEffec
 // ActorSystem Implementation
 // ============================================================================
 
-/**
- * Internal implementation
- */
+/** Notify all system event listeners (sync). */
+const notifySystemListeners = (listeners: Set<SystemEventListener>, event: SystemEvent): void => {
+  for (const listener of listeners) {
+    try {
+      listener(event);
+    } catch {
+      // Ignore listener failures to avoid crashing the system
+    }
+  }
+};
+
 const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
   // MutableHashMap for O(1) spawn/stop/get operations
-  const actors = MutableHashMap.empty<string, ActorRef<AnyState, unknown>>();
+  const actorsMap = MutableHashMap.empty<string, ActorRef<AnyState, unknown>>();
   const spawnGate = yield* Effect.makeSemaphore(1);
   const withSpawnGate = spawnGate.withPermits(1);
 
-  // Stop all actors on system teardown
+  // Observable infrastructure
+  const eventPubSub = yield* PubSub.unbounded<SystemEvent>();
+  const eventListeners = new Set<SystemEventListener>();
+
+  const emitSystemEvent = (event: SystemEvent): Effect.Effect<void> =>
+    Effect.sync(() => notifySystemListeners(eventListeners, event)).pipe(
+      Effect.andThen(PubSub.publish(eventPubSub, event)),
+      Effect.catchAllCause(() => Effect.void),
+      Effect.asVoid,
+    );
+
+  // Stop all actors on system teardown (no events — PubSub is about to die)
   yield* Effect.addFinalizer(() => {
     const stops: Effect.Effect<void>[] = [];
-    MutableHashMap.forEach(actors, (actor) => {
+    MutableHashMap.forEach(actorsMap, (actor) => {
       stops.push(actor.stop);
     });
-    return Effect.all(stops, { concurrency: "unbounded" }).pipe(Effect.asVoid);
+    return Effect.all(stops, { concurrency: "unbounded" }).pipe(
+      Effect.andThen(PubSub.shutdown(eventPubSub)),
+      Effect.asVoid,
+    );
   });
 
   /** Check for duplicate ID, register actor, attach scope cleanup if available */
@@ -877,14 +977,19 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     T extends { stop: Effect.Effect<void> },
   >(id: string, actor: T) {
     // Check if actor already exists
-    if (MutableHashMap.has(actors, id)) {
+    if (MutableHashMap.has(actorsMap, id)) {
       // Stop the newly created actor to avoid leaks
       yield* actor.stop;
       return yield* new DuplicateActorError({ actorId: id });
     }
 
+    const actorRef = actor as unknown as ActorRef<AnyState, unknown>;
+
     // Register it - O(1)
-    MutableHashMap.set(actors, id, actor as unknown as ActorRef<AnyState, unknown>);
+    MutableHashMap.set(actorsMap, id, actorRef);
+
+    // Emit spawned event
+    yield* emitSystemEvent({ _tag: "ActorSpawned", id, actor: actorRef });
 
     // If scope available, attach per-actor cleanup
     const maybeScope = yield* Effect.serviceOption(Scope.Scope);
@@ -892,8 +997,12 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
       yield* Scope.addFinalizer(
         maybeScope.value,
         Effect.gen(function* () {
+          // Guard: only emit if still registered (system.stop may have already removed it)
+          if (MutableHashMap.has(actorsMap, id)) {
+            yield* emitSystemEvent({ _tag: "ActorStopped", id, actor: actorRef });
+            MutableHashMap.remove(actorsMap, id);
+          }
           yield* actor.stop;
-          MutableHashMap.remove(actors, id);
         }),
       );
     }
@@ -906,7 +1015,7 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     E extends { readonly _tag: string },
     R,
   >(id: string, built: BuiltMachine<S, E, R>) {
-    if (MutableHashMap.has(actors, id)) {
+    if (MutableHashMap.has(actorsMap, id)) {
       return yield* new DuplicateActorError({ actorId: id });
     }
     // Create and register the actor
@@ -919,7 +1028,7 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     E extends { readonly _tag: string },
     R,
   >(id: string, persistentMachine: PersistentMachine<S, E, R>) {
-    if (MutableHashMap.has(actors, id)) {
+    if (MutableHashMap.has(actorsMap, id)) {
       return yield* new DuplicateActorError({ actorId: id });
     }
     const adapter = yield* PersistenceAdapterTag;
@@ -1007,17 +1116,20 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
   ) => withSpawnGate(restoreImpl(id, persistentMachine));
 
   const get = Effect.fn("effect-machine.actorSystem.get")(function* (id: string) {
-    return yield* Effect.sync(() => MutableHashMap.get(actors, id));
+    return yield* Effect.sync(() => MutableHashMap.get(actorsMap, id));
   });
 
   const stop = Effect.fn("effect-machine.actorSystem.stop")(function* (id: string) {
-    const maybeActor = MutableHashMap.get(actors, id);
+    const maybeActor = MutableHashMap.get(actorsMap, id);
     if (Option.isNone(maybeActor)) {
       return false;
     }
 
-    yield* maybeActor.value.stop;
-    MutableHashMap.remove(actors, id);
+    const actor = maybeActor.value;
+    // Remove first to prevent scope finalizer double-emit
+    MutableHashMap.remove(actorsMap, id);
+    yield* emitSystemEvent({ _tag: "ActorStopped", id, actor });
+    yield* actor.stop;
     return true;
   });
 
@@ -1042,7 +1154,7 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
 
     for (const id of ids) {
       // Skip if already running
-      if (MutableHashMap.has(actors, id)) {
+      if (MutableHashMap.has(actorsMap, id)) {
         continue;
       }
 
@@ -1102,7 +1214,29 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     return yield* restoreMany(ids, persistentMachine);
   });
 
-  return ActorSystem.of({ spawn, restore, get, stop, listPersisted, restoreMany, restoreAll });
+  return ActorSystem.of({
+    spawn,
+    restore,
+    get,
+    stop,
+    events: Stream.fromPubSub(eventPubSub),
+    get actors() {
+      const snapshot = new Map<string, ActorRef<AnyState, unknown>>();
+      MutableHashMap.forEach(actorsMap, (actor, id) => {
+        snapshot.set(id, actor);
+      });
+      return snapshot as ReadonlyMap<string, ActorRef<AnyState, unknown>>;
+    },
+    subscribe: (fn) => {
+      eventListeners.add(fn);
+      return () => {
+        eventListeners.delete(fn);
+      };
+    },
+    listPersisted,
+    restoreMany,
+    restoreAll,
+  });
 });
 
 /**
