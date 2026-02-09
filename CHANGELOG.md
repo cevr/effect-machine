@@ -1,5 +1,22 @@
 # effect-machine
 
+## 0.6.0
+
+### Minor Changes
+
+- [`9d5bd6f`](https://github.com/cevr/effect-machine/commit/9d5bd6fa81b3421124732d75fca210b2bb04c57c) Thanks [@cevr](https://github.com/cevr)! - Add actor.children to expose child actors spawned via self.spawn
+  - `actor.children` returns `ReadonlyMap<string, ActorRef>` of children spawned via `self.spawn`
+  - State-scoped children auto-removed from map on state exit
+  - Works for both regular and persistent actors
+
+- [`9d5bd6f`](https://github.com/cevr/effect-machine/commit/9d5bd6fa81b3421124732d75fca210b2bb04c57c) Thanks [@cevr](https://github.com/cevr)! - Add observable ActorSystem with event stream and sync observation
+  - `system.subscribe(fn)` — sync callback for `ActorSpawned` / `ActorStopped` events, returns unsubscribe
+  - `system.actors` — sync snapshot of all registered actors (`ReadonlyMap`)
+  - `system.events` — async `Stream<SystemEvent>` via PubSub (each subscriber gets own queue)
+  - Works with both explicit (`ActorSystemDefault`) and implicit (`Machine.spawn`) systems
+  - No events emitted during system teardown
+  - Double-stop prevention: `system.stop` + scope finalizer won't emit duplicate `ActorStopped`
+
 ## 0.5.0
 
 ### Minor Changes
