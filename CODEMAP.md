@@ -28,7 +28,8 @@ src/
 
 test/
 ├── actor.test.ts         # ActorRef, ActorSystem, waitFor, sendSync, deadlock regression
-├── child-actor.test.ts   # Child actors: self.spawn, lifecycle coupling, implicit system
+├── actor-system-observation.test.ts  # System observation: subscribe, actors, events stream
+├── child-actor.test.ts   # Child actors: self.spawn, lifecycle coupling, actor.children
 ├── machine.test.ts       # Machine builder, multi-state .on(), .onAny(), .build()
 ├── schema.test.ts        # State/Event schema, derive, pattern matching
 ├── slot.test.ts          # Guard/Effect slot tests
@@ -52,13 +53,13 @@ test/
 
 ## Key Files
 
-| File                     | Purpose                                                                                        |
-| ------------------------ | ---------------------------------------------------------------------------------------------- |
-| `machine.ts`             | Machine class, fluent builder, `Machine.spawn`, `.on()`/`.onAny()`/`.build()` → `BuiltMachine` |
-| `schema.ts`              | `State`/`Event` factories, `derive()`, `$is`/`$match`                                          |
-| `slot.ts`                | `Slot.Guards`/`Slot.Effects` - parameterized slots                                             |
-| `actor.ts`               | ActorRef (`waitFor`, `sendSync`, `sendAndWait`), ActorSystem, createActor, implicit system     |
-| `internal/transition.ts` | Transition execution, O(1) lookup index, wildcard `"*"` fallback                               |
+| File                     | Purpose                                                                                                  |
+| ------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `machine.ts`             | Machine class, fluent builder, `Machine.spawn`, `.on()`/`.onAny()`/`.build()` → `BuiltMachine`           |
+| `schema.ts`              | `State`/`Event` factories, `derive()`, `$is`/`$match`                                                    |
+| `slot.ts`                | `Slot.Guards`/`Slot.Effects` - parameterized slots                                                       |
+| `actor.ts`               | ActorRef (`waitFor`, `sendSync`, `children`), ActorSystem (`events`, `actors`, `subscribe`), createActor |
+| `internal/transition.ts` | Transition execution, O(1) lookup index, wildcard `"*"` fallback                                         |
 
 ## Event Flow
 
@@ -123,6 +124,23 @@ get transitions(): ReadonlyArray<Transition>
 ## Actor Registry
 
 `actor.ts` uses `MutableHashMap` for O(1) spawn/stop/get operations.
+
+## System Observation
+
+`actor.ts` — PubSub + sync listeners for system events:
+
+- `system.subscribe(fn)` — sync callback for `ActorSpawned`/`ActorStopped`, returns unsubscribe
+- `system.actors` — sync `ReadonlyMap` snapshot (new Map per access, not live)
+- `system.events` — `Stream.fromPubSub` (each subscriber gets own queue, late subscribers miss prior events)
+- No events during system teardown (PubSub shuts down after actor stops)
+- Double-stop guard: `system.stop` removes from map before emitting, scope finalizer checks map presence
+
+## actor.children
+
+`actor.ts` / `persistent-actor.ts` — mutable `Map` exposed as `ReadonlyMap`:
+
+- Populated by `self.spawn` in `.spawn()`/`.background()` handlers
+- State-scoped children auto-removed via scope finalizer on state exit
 
 ## Implicit System
 
