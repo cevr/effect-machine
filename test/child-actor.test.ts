@@ -402,4 +402,202 @@ describe("Child Actor Support", () => {
       }),
     );
   });
+
+  describe("actor.children", () => {
+    it.scopedLive("contains spawned child after self.spawn", () =>
+      Effect.gen(function* () {
+        const parentMachine = Machine.make({
+          state: ParentState,
+          event: ParentEvent,
+          initial: ParentState.Idle,
+        })
+          .on(ParentState.Idle, ParentEvent.Activate, () => ParentState.Active)
+          .spawn(ParentState.Active, ({ self }) =>
+            self.spawn("child-1", childMachine).pipe(Effect.asVoid, Effect.orDie),
+          )
+          .final(ParentState.Done)
+          .build();
+
+        const parent = yield* Machine.spawn(parentMachine);
+        expect(parent.children.size).toBe(0);
+
+        yield* parent.send(ParentEvent.Activate);
+        yield* Effect.yieldNow();
+        yield* yieldFibers;
+
+        expect(parent.children.size).toBe(1);
+        expect(parent.children.has("child-1")).toBe(true);
+
+        yield* parent.stop;
+      }),
+    );
+
+    it.scopedLive("children cleared after state exit (state-scoped)", () =>
+      Effect.gen(function* () {
+        const parentMachine = Machine.make({
+          state: ParentState,
+          event: ParentEvent,
+          initial: ParentState.Idle,
+        })
+          .on(ParentState.Idle, ParentEvent.Activate, () => ParentState.Active)
+          .on(ParentState.Active, ParentEvent.Deactivate, () => ParentState.Idle)
+          .spawn(ParentState.Active, ({ self }) =>
+            self.spawn("child-1", childMachine).pipe(Effect.asVoid, Effect.orDie),
+          )
+          .final(ParentState.Done)
+          .build();
+
+        const parent = yield* Machine.spawn(parentMachine);
+        yield* parent.send(ParentEvent.Activate);
+        yield* Effect.yieldNow();
+        yield* yieldFibers;
+
+        expect(parent.children.size).toBe(1);
+
+        // Transition out of Active — state scope closes, child removed
+        yield* parent.send(ParentEvent.Deactivate);
+        yield* Effect.yieldNow();
+        yield* yieldFibers;
+        yield* Effect.sleep("50 millis");
+
+        expect(parent.children.size).toBe(0);
+
+        yield* parent.stop;
+      }),
+    );
+
+    it.scopedLive("dynamic children: spawn N workers, iterate", () =>
+      Effect.gen(function* () {
+        const parentMachine = Machine.make({
+          state: ParentState,
+          event: ParentEvent,
+          initial: ParentState.Idle,
+        })
+          .on(ParentState.Idle, ParentEvent.Activate, () => ParentState.Active)
+          .spawn(ParentState.Active, ({ self }) =>
+            Effect.all([
+              self.spawn("worker-0", childMachine),
+              self.spawn("worker-1", childMachine),
+              self.spawn("worker-2", childMachine),
+            ]).pipe(Effect.asVoid, Effect.orDie),
+          )
+          .final(ParentState.Done)
+          .build();
+
+        const parent = yield* Machine.spawn(parentMachine);
+        yield* parent.send(ParentEvent.Activate);
+        yield* Effect.yieldNow();
+        yield* yieldFibers;
+
+        expect(parent.children.size).toBe(3);
+        const ids = [...parent.children.keys()].sort();
+        expect(ids).toEqual(["worker-0", "worker-1", "worker-2"]);
+
+        yield* parent.stop;
+      }),
+    );
+
+    it.scopedLive("background children live for machine lifetime", () =>
+      Effect.gen(function* () {
+        const parentMachine = Machine.make({
+          state: ParentState,
+          event: ParentEvent,
+          initial: ParentState.Idle,
+        })
+          .on(ParentState.Idle, ParentEvent.Activate, () => ParentState.Active)
+          .on(ParentState.Active, ParentEvent.Deactivate, () => ParentState.Idle)
+          .background(({ self }) =>
+            self.spawn("bg-child", childMachine).pipe(Effect.asVoid, Effect.orDie),
+          )
+          .final(ParentState.Done)
+          .build();
+
+        const parent = yield* Machine.spawn(parentMachine);
+        yield* Effect.yieldNow();
+        yield* yieldFibers;
+
+        // Background child should be in children
+        expect(parent.children.size).toBe(1);
+        expect(parent.children.has("bg-child")).toBe(true);
+
+        // State transitions shouldn't remove background children
+        yield* parent.send(ParentEvent.Activate);
+        yield* Effect.yieldNow();
+        yield* yieldFibers;
+        yield* parent.send(ParentEvent.Deactivate);
+        yield* Effect.yieldNow();
+        yield* yieldFibers;
+        yield* Effect.sleep("50 millis");
+
+        // Background child still there
+        expect(parent.children.has("bg-child")).toBe(true);
+
+        yield* parent.stop;
+      }),
+    );
+
+    it.scopedLive("grandchild in child.children, not parent.children", () =>
+      Effect.gen(function* () {
+        const ChildWithGrandchildState = State({
+          Idle: {},
+          Active: {},
+          Done: {},
+        });
+
+        const ChildWithGrandchildEvent = Event({
+          Activate: {},
+          Stop: {},
+        });
+
+        const childWithGrandchild = Machine.make({
+          state: ChildWithGrandchildState,
+          event: ChildWithGrandchildEvent,
+          initial: ChildWithGrandchildState.Idle,
+        })
+          .on(
+            ChildWithGrandchildState.Idle,
+            ChildWithGrandchildEvent.Activate,
+            () => ChildWithGrandchildState.Active,
+          )
+          .spawn(ChildWithGrandchildState.Active, ({ self }) =>
+            self.spawn("grandchild", grandchildMachine).pipe(Effect.asVoid, Effect.orDie),
+          )
+          .final(ChildWithGrandchildState.Done)
+          .build();
+
+        const parentMachine = Machine.make({
+          state: ParentState,
+          event: ParentEvent,
+          initial: ParentState.Idle,
+        })
+          .on(ParentState.Idle, ParentEvent.Activate, () => ParentState.Active)
+          .spawn(ParentState.Active, ({ self }) =>
+            Effect.gen(function* () {
+              const child = yield* self.spawn("child", childWithGrandchild).pipe(Effect.orDie);
+              yield* child.send(ChildWithGrandchildEvent.Activate);
+            }),
+          )
+          .final(ParentState.Done)
+          .build();
+
+        const system = yield* ActorSystemService;
+        const parent = yield* system.spawn("parent", parentMachine);
+        yield* parent.send(ParentEvent.Activate);
+        yield* Effect.yieldNow();
+        yield* yieldFibers;
+        yield* Effect.sleep("50 millis");
+
+        // Parent has child, but not grandchild
+        expect(parent.children.size).toBe(1);
+        expect(parent.children.has("child")).toBe(true);
+        expect(parent.children.has("grandchild")).toBe(false);
+
+        // Child has grandchild
+        const child = parent.children.get("child")!;
+        expect(child.children.has("grandchild")).toBe(true);
+
+        yield* parent.stop;
+      }).pipe(Effect.provide(ActorSystemDefault)),
+    );
+  });
 });
