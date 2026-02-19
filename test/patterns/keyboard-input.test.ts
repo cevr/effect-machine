@@ -9,7 +9,7 @@ import { assertPath, Event, Machine, simulate, State } from "../../src/index.js"
  */
 describe("Keyboard Input Pattern", () => {
   type InputMode = "insert" | "append" | "replace";
-  const InputMode = Schema.Literal("insert", "append", "replace");
+  const InputMode = Schema.Literals(["insert", "append", "replace"]);
 
   const KeyboardState = State({
     Idle: { value: Schema.String, mode: InputMode },

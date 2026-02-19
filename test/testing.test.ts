@@ -98,18 +98,18 @@ describe("Testing", () => {
           testMachine,
           [TestEvent.Fetch, TestEvent.Resolve({ data: "ok" })],
           "Success",
-        ).pipe(Effect.either),
+        ).pipe(Effect.result),
       );
 
-      expect(result._tag).toBe("Right");
+      expect(result._tag).toBe("Success");
     });
 
     test("fails when state is not reached", async () => {
       const result = await Effect.runPromise(
-        assertReaches(testMachine, [TestEvent.Fetch], "Success").pipe(Effect.either),
+        assertReaches(testMachine, [TestEvent.Fetch], "Success").pipe(Effect.result),
       );
 
-      expect(result._tag).toBe("Left");
+      expect(result._tag).toBe("Failure");
     });
   });
 
@@ -120,10 +120,10 @@ describe("Testing", () => {
           testMachine,
           [TestEvent.Fetch, TestEvent.Resolve({ data: "ok" })],
           ["Idle", "Loading", "Success"],
-        ).pipe(Effect.either),
+        ).pipe(Effect.result),
       );
 
-      expect(result._tag).toBe("Right");
+      expect(result._tag).toBe("Success");
     });
 
     test("fails on path mismatch", async () => {
@@ -132,10 +132,10 @@ describe("Testing", () => {
           testMachine,
           [TestEvent.Fetch, TestEvent.Resolve({ data: "ok" })],
           ["Idle", "Success"], // Wrong path
-        ).pipe(Effect.either),
+        ).pipe(Effect.result),
       );
 
-      expect(result._tag).toBe("Left");
+      expect(result._tag).toBe("Failure");
     });
 
     test("fails on wrong state in path", async () => {
@@ -144,10 +144,10 @@ describe("Testing", () => {
           testMachine,
           [TestEvent.Fetch, TestEvent.Resolve({ data: "ok" })],
           ["Idle", "Loading", "Error"], // Wrong final state
-        ).pipe(Effect.either),
+        ).pipe(Effect.result),
       );
 
-      expect(result._tag).toBe("Left");
+      expect(result._tag).toBe("Failure");
     });
   });
 
@@ -158,10 +158,10 @@ describe("Testing", () => {
           testMachine,
           [TestEvent.Fetch, TestEvent.Resolve({ data: "ok" })],
           "Error",
-        ).pipe(Effect.either),
+        ).pipe(Effect.result),
       );
 
-      expect(result._tag).toBe("Right");
+      expect(result._tag).toBe("Success");
     });
 
     test("fails when forbidden state is reached", async () => {
@@ -170,10 +170,10 @@ describe("Testing", () => {
           testMachine,
           [TestEvent.Fetch, TestEvent.Reject({ message: "oops" })],
           "Error",
-        ).pipe(Effect.either),
+        ).pipe(Effect.result),
       );
 
-      expect(result._tag).toBe("Left");
+      expect(result._tag).toBe("Failure");
     });
   });
 

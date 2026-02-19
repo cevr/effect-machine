@@ -94,7 +94,7 @@ describe("Child Actor Support", () => {
 
         const parent = yield* Machine.spawn(parentMachine);
         yield* parent.send(ParentEvent.Activate);
-        yield* Effect.yieldNow();
+        yield* Effect.yieldNow;
         yield* yieldFibers;
 
         // Child should be visible via parent's system
@@ -127,7 +127,7 @@ describe("Child Actor Support", () => {
 
         const parent = yield* Machine.spawn(parentMachine);
         yield* parent.send(ParentEvent.Activate);
-        yield* Effect.yieldNow();
+        yield* Effect.yieldNow;
         yield* yieldFibers;
 
         // Child should exist
@@ -136,7 +136,7 @@ describe("Child Actor Support", () => {
 
         // Transition out of Active state
         yield* parent.send(ParentEvent.Deactivate);
-        yield* Effect.yieldNow();
+        yield* Effect.yieldNow;
         yield* yieldFibers;
 
         // Give the state scope close time to propagate
@@ -167,7 +167,7 @@ describe("Child Actor Support", () => {
 
         const parent = yield* Machine.spawn(parentMachine);
         yield* parent.send(ParentEvent.Activate);
-        yield* Effect.yieldNow();
+        yield* Effect.yieldNow;
         yield* yieldFibers;
 
         // Child should exist
@@ -200,7 +200,7 @@ describe("Child Actor Support", () => {
 
         const parent = yield* Machine.spawn(parentMachine);
         yield* parent.send(ParentEvent.Activate);
-        yield* Effect.yieldNow();
+        yield* Effect.yieldNow;
         yield* yieldFibers;
 
         // All children should exist
@@ -211,7 +211,7 @@ describe("Child Actor Support", () => {
 
         // Transition out of Active
         yield* parent.send(ParentEvent.Deactivate);
-        yield* Effect.yieldNow();
+        yield* Effect.yieldNow;
         yield* yieldFibers;
         yield* Effect.sleep("50 millis");
 
@@ -258,7 +258,7 @@ describe("Child Actor Support", () => {
 
         const parent = yield* Machine.spawn(parentMachine);
         yield* parent.send(ParentEvent.Activate);
-        yield* Effect.yieldNow();
+        yield* Effect.yieldNow;
         yield* yieldFibers;
 
         const worker = yield* parent.system.get("worker");
@@ -288,7 +288,7 @@ describe("Child Actor Support", () => {
 
         const parent = yield* system.spawn("parent", parentMachine);
         yield* parent.send(ParentEvent.Activate);
-        yield* Effect.yieldNow();
+        yield* Effect.yieldNow;
         yield* yieldFibers;
 
         // parent.system should be the same system
@@ -352,7 +352,7 @@ describe("Child Actor Support", () => {
         const system = yield* ActorSystemService;
         const parent = yield* system.spawn("parent", parentMachine);
         yield* parent.send(ParentEvent.Activate);
-        yield* Effect.yieldNow();
+        yield* Effect.yieldNow;
         yield* yieldFibers;
         yield* Effect.sleep("50 millis");
 
@@ -391,7 +391,7 @@ describe("Child Actor Support", () => {
 
         const parent = yield* Machine.spawn(parentMachine);
         yield* parent.send(ParentEvent.Activate);
-        yield* Effect.yieldNow();
+        yield* Effect.yieldNow;
         yield* yieldFibers;
         yield* Effect.sleep("50 millis");
 
@@ -422,7 +422,7 @@ describe("Child Actor Support", () => {
         expect(parent.children.size).toBe(0);
 
         yield* parent.send(ParentEvent.Activate);
-        yield* Effect.yieldNow();
+        yield* Effect.yieldNow;
         yield* yieldFibers;
 
         expect(parent.children.size).toBe(1);
@@ -449,14 +449,14 @@ describe("Child Actor Support", () => {
 
         const parent = yield* Machine.spawn(parentMachine);
         yield* parent.send(ParentEvent.Activate);
-        yield* Effect.yieldNow();
+        yield* Effect.yieldNow;
         yield* yieldFibers;
 
         expect(parent.children.size).toBe(1);
 
         // Transition out of Active — state scope closes, child removed
         yield* parent.send(ParentEvent.Deactivate);
-        yield* Effect.yieldNow();
+        yield* Effect.yieldNow;
         yield* yieldFibers;
         yield* Effect.sleep("50 millis");
 
@@ -486,7 +486,7 @@ describe("Child Actor Support", () => {
 
         const parent = yield* Machine.spawn(parentMachine);
         yield* parent.send(ParentEvent.Activate);
-        yield* Effect.yieldNow();
+        yield* Effect.yieldNow;
         yield* yieldFibers;
 
         expect(parent.children.size).toBe(3);
@@ -513,7 +513,7 @@ describe("Child Actor Support", () => {
           .build();
 
         const parent = yield* Machine.spawn(parentMachine);
-        yield* Effect.yieldNow();
+        yield* Effect.yieldNow;
         yield* yieldFibers;
 
         // Background child should be in children
@@ -522,10 +522,10 @@ describe("Child Actor Support", () => {
 
         // State transitions shouldn't remove background children
         yield* parent.send(ParentEvent.Activate);
-        yield* Effect.yieldNow();
+        yield* Effect.yieldNow;
         yield* yieldFibers;
         yield* parent.send(ParentEvent.Deactivate);
-        yield* Effect.yieldNow();
+        yield* Effect.yieldNow;
         yield* yieldFibers;
         yield* Effect.sleep("50 millis");
 
@@ -583,7 +583,7 @@ describe("Child Actor Support", () => {
         const system = yield* ActorSystemService;
         const parent = yield* system.spawn("parent", parentMachine);
         yield* parent.send(ParentEvent.Activate);
-        yield* Effect.yieldNow();
+        yield* Effect.yieldNow;
         yield* yieldFibers;
         yield* Effect.sleep("50 millis");
 

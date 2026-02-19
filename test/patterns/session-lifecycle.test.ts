@@ -1,5 +1,6 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Effect, Schema, TestClock } from "effect";
+import { Effect, Schema, SubscriptionRef } from "effect";
+import { TestClock } from "effect/testing";
 
 import {
   ActorSystemDefault,
@@ -17,13 +18,13 @@ import { describe, expect, it, yieldFibers } from "effect-bun-test";
  * Tests: initial state calculation, maintenance interrupt, session timeout
  */
 describe("Session Lifecycle Pattern", () => {
-  const UserRole = Schema.Literal("guest", "user", "admin");
+  const UserRole = Schema.Literals(["guest", "user", "admin"]);
   type UserRole = typeof UserRole.Type;
 
   const SessionState = State({
     Guest: {},
     Active: { userId: Schema.String, role: UserRole, lastActivity: Schema.Number },
-    Maintenance: { message: Schema.String, previousState: Schema.Literal("Guest", "Active") },
+    Maintenance: { message: Schema.String, previousState: Schema.Literals(["Guest", "Active"]) },
     SessionExpired: {},
     LoggedOut: {},
   });
@@ -162,7 +163,7 @@ describe("Session Lifecycle Pattern", () => {
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("session", activeMachine);
 
-      let state = yield* actor.state.get;
+      let state = yield* SubscriptionRef.get(actor.state);
       expect(state._tag).toBe("Active");
 
       // Activity within timeout window
@@ -170,7 +171,7 @@ describe("Session Lifecycle Pattern", () => {
       yield* actor.send(SessionEvent.Activity);
       yield* yieldFibers;
 
-      state = yield* actor.state.get;
+      state = yield* SubscriptionRef.get(actor.state);
       expect(state._tag).toBe("Active");
 
       // Activity does NOT reset timer (internal transition)
@@ -178,7 +179,7 @@ describe("Session Lifecycle Pattern", () => {
       yield* TestClock.adjust("15 minutes");
       yield* yieldFibers;
 
-      state = yield* actor.state.get;
+      state = yield* SubscriptionRef.get(actor.state);
       expect(state._tag).toBe("SessionExpired");
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
@@ -216,21 +217,21 @@ describe("Session Lifecycle Pattern", () => {
       yield* actor.send(SessionEvent.Activity);
       yield* yieldFibers;
 
-      let state = yield* actor.state.get;
+      let state = yield* SubscriptionRef.get(actor.state);
       expect(state._tag).toBe("Active");
 
       // 20 more minutes (40 total, but only 20 from activity)
       yield* TestClock.adjust("20 minutes");
       yield* yieldFibers;
 
-      state = yield* actor.state.get;
+      state = yield* SubscriptionRef.get(actor.state);
       expect(state._tag).toBe("Active"); // Timer was reset
 
       // 10 more minutes (30 from activity)
       yield* TestClock.adjust("10 minutes");
       yield* yieldFibers;
 
-      state = yield* actor.state.get;
+      state = yield* SubscriptionRef.get(actor.state);
       expect(state._tag).toBe("SessionExpired");
     }).pipe(Effect.provide(ActorSystemDefault)),
   );

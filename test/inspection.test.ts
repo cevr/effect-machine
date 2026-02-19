@@ -145,7 +145,7 @@ describe("Inspection", () => {
         state: TestState,
         event: TestEvent,
         initial: TestState.Idle,
-      }).spawn(TestState.Idle, () => Effect.dieMessage("boom"));
+      }).spawn(TestState.Idle, () => Effect.die("boom"));
 
       const system = yield* ActorSystemService;
       yield* system.spawn("test", machine.build());

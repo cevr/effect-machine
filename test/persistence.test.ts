@@ -307,7 +307,7 @@ describe("Persistence", () => {
               OrderState.Paid({ orderId: state.orderId, amount: event.amount }),
             )
             .persist({
-              snapshotSchedule: Schedule.stop,
+              snapshotSchedule: Schedule.recurs(0),
               journalEvents: true,
             });
 
@@ -370,7 +370,7 @@ describe("Persistence", () => {
               OrderState.Paid({ orderId: state.orderId, amount: event.amount }),
             )
             .persist({
-              snapshotSchedule: Schedule.stop,
+              snapshotSchedule: Schedule.recurs(0),
               journalEvents: true,
             });
 
@@ -479,7 +479,7 @@ describe("Persistence", () => {
           OrderState.Pending({ orderId: event.orderId }),
         )
         .persist({
-          snapshotSchedule: Schedule.stop,
+          snapshotSchedule: Schedule.recurs(0),
           journalEvents: false,
         });
 
@@ -521,7 +521,7 @@ describe("Persistence", () => {
           OrderState.Paid({ orderId: state.orderId, amount: event.amount }),
         )
         .persist({
-          snapshotSchedule: Schedule.stop,
+          snapshotSchedule: Schedule.recurs(0),
           journalEvents: true,
         });
 
@@ -580,7 +580,7 @@ describe("Persistence", () => {
           mark: () => Ref.update(counter, (n) => n + 1),
         })
         .persist({
-          snapshotSchedule: Schedule.stop,
+          snapshotSchedule: Schedule.recurs(0),
           journalEvents: false,
         });
 
@@ -970,12 +970,12 @@ describe("Persistence Registry", () => {
           // Machine without explicit machineType
           const noTypeMachine = createPersistentMachine(undefined);
 
-          const result = yield* Effect.either(system.restoreAll(noTypeMachine));
+          const result = yield* Effect.result(system.restoreAll(noTypeMachine));
 
-          expect(result._tag).toBe("Left");
-          if (result._tag === "Left") {
-            expect(result.left._tag).toBe("PersistenceError");
-            expect(result.left.message).toContain("machineType");
+          expect(result._tag).toBe("Failure");
+          if (result._tag === "Failure") {
+            expect(result.failure._tag).toBe("PersistenceError");
+            expect(result.failure.message).toContain("machineType");
           }
         }).pipe(Effect.provide(sharedLayer)),
       );

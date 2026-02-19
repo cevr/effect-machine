@@ -1,5 +1,6 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Duration, Effect, Schema, TestClock } from "effect";
+import { Duration, Effect, Schema, SubscriptionRef } from "effect";
+import { TestClock } from "effect/testing";
 
 import {
   ActorSystemDefault,
@@ -48,7 +49,7 @@ describe("Timeout Transitions via Task", () => {
       const actor = yield* system.spawn("notification", machine);
 
       // Initial state
-      let current = yield* actor.state.get;
+      let current = yield* SubscriptionRef.get(actor.state);
       expect(current._tag).toBe("Showing");
 
       // Advance time by 3 seconds
@@ -58,7 +59,7 @@ describe("Timeout Transitions via Task", () => {
       yield* yieldFibers;
 
       // Should have transitioned
-      current = yield* actor.state.get;
+      current = yield* SubscriptionRef.get(actor.state);
       expect(current._tag).toBe("Dismissed");
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
@@ -87,14 +88,14 @@ describe("Timeout Transitions via Task", () => {
       yield* actor.send(NotifEvent.Dismiss);
       yield* yieldFibers;
 
-      let current = yield* actor.state.get;
+      let current = yield* SubscriptionRef.get(actor.state);
       expect(current._tag).toBe("Dismissed");
 
       // Advance time - should not cause issues since timer was cancelled
       yield* TestClock.adjust("5 seconds");
       yield* yieldFibers;
 
-      current = yield* actor.state.get;
+      current = yield* SubscriptionRef.get(actor.state);
       expect(current._tag).toBe("Dismissed");
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
@@ -139,21 +140,21 @@ describe("Dynamic Timeout Duration via Task", () => {
       const actor = yield* system.spawn("waiter", machine);
 
       // Initial state
-      let current = yield* actor.state.get;
+      let current = yield* SubscriptionRef.get(actor.state);
       expect(current._tag).toBe("Waiting");
 
       // Advance 3 seconds - not enough
       yield* TestClock.adjust("3 seconds");
       yield* yieldFibers;
 
-      current = yield* actor.state.get;
+      current = yield* SubscriptionRef.get(actor.state);
       expect(current._tag).toBe("Waiting");
 
       // Advance 2 more seconds (5 total) - should timeout
       yield* TestClock.adjust("2 seconds");
       yield* yieldFibers;
 
-      current = yield* actor.state.get;
+      current = yield* SubscriptionRef.get(actor.state);
       expect(current._tag).toBe("TimedOut");
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
@@ -202,7 +203,7 @@ describe("Dynamic Timeout Duration via Task", () => {
       const actor = yield* system.spawn("retry", machine);
 
       // First attempt - 1 second backoff timer starts
-      let current = yield* actor.state.get;
+      let current = yield* SubscriptionRef.get(actor.state);
       expect(current._tag).toBe("Retrying");
       expect((current as RetryState & { _tag: "Retrying" }).backoff).toBe(1);
 
@@ -212,19 +213,19 @@ describe("Dynamic Timeout Duration via Task", () => {
       yield* yieldFibers;
 
       // Now backoff is 2 seconds, new timer started
-      current = yield* actor.state.get;
+      current = yield* SubscriptionRef.get(actor.state);
       expect((current as RetryState & { _tag: "Retrying" }).backoff).toBe(2);
 
       // Wait 1.5 seconds - should still be retrying (need 2s for new timer)
       yield* TestClock.adjust("1500 millis");
       yield* yieldFibers;
-      current = yield* actor.state.get;
+      current = yield* SubscriptionRef.get(actor.state);
       expect(current._tag).toBe("Retrying");
 
       // Wait 0.5 more seconds (2 total from retry) - should give up
       yield* TestClock.adjust("500 millis");
       yield* yieldFibers;
-      current = yield* actor.state.get;
+      current = yield* SubscriptionRef.get(actor.state);
       expect(current._tag).toBe("Failed");
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
@@ -253,7 +254,7 @@ describe("Dynamic Timeout Duration via Task", () => {
       yield* TestClock.adjust("3 seconds");
       yield* yieldFibers;
 
-      const current = yield* actor.state.get;
+      const current = yield* SubscriptionRef.get(actor.state);
       expect(current._tag).toBe("TimedOut");
     }).pipe(Effect.provide(ActorSystemDefault)),
   );

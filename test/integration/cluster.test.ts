@@ -7,8 +7,8 @@
  * - toEntity for generating Entity definitions
  * - EntityMachine.layer for wiring machine to cluster
  */
-import { Entity, ShardingConfig } from "@effect/cluster";
-import { Rpc } from "@effect/rpc";
+import { Entity, ShardingConfig } from "effect/unstable/cluster";
+import { Rpc } from "effect/unstable/rpc";
 import { Effect, Ref, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 

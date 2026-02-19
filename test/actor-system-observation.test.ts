@@ -170,19 +170,19 @@ describe("ActorSystem Observation", () => {
 
         // Collect 2 events from stream in background
         const fiber = yield* Stream.runCollect(system.events.pipe(Stream.take(2))).pipe(
-          Effect.fork,
+          Effect.forkChild,
         );
 
         // Give the stream subscription time to register
-        yield* Effect.yieldNow();
+        yield* Effect.yieldNow;
         yield* yieldFibers;
 
         yield* system.spawn("a1", testMachine);
-        yield* Effect.yieldNow();
+        yield* Effect.yieldNow;
         yield* yieldFibers;
 
         yield* system.stop("a1");
-        yield* Effect.yieldNow();
+        yield* Effect.yieldNow;
         yield* yieldFibers;
 
         const collected = Array.from(yield* fiber.pipe(Fiber.join));
@@ -219,7 +219,7 @@ describe("ActorSystem Observation", () => {
 
         const actor = yield* system.spawn("a1", testMachine);
         yield* actor.send(TestEvent.Activate);
-        yield* Effect.yieldNow();
+        yield* Effect.yieldNow;
         yield* yieldFibers;
 
         yield* system.stop("a1");

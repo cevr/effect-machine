@@ -153,8 +153,11 @@ interface MachineSchemaBase<D extends Record<string, Schema.Struct.Fields>, Bran
  * The D type parameter captures the definition, creating a unique brand
  * per distinct schema definition shape.
  */
-export type MachineStateSchema<D extends Record<string, Schema.Struct.Fields>> = Schema.Schema<
-  VariantsUnion<D> & FullStateBrand<D>
+export type MachineStateSchema<D extends Record<string, Schema.Struct.Fields>> = Schema.Codec<
+  VariantsUnion<D> & FullStateBrand<D>,
+  unknown,
+  never,
+  never
 > &
   MachineSchemaBase<D, FullStateBrand<D>> &
   VariantConstructors<D, FullStateBrand<D>>;
@@ -165,8 +168,11 @@ export type MachineStateSchema<D extends Record<string, Schema.Struct.Fields>> =
  * The D type parameter captures the definition, creating a unique brand
  * per distinct schema definition shape.
  */
-export type MachineEventSchema<D extends Record<string, Schema.Struct.Fields>> = Schema.Schema<
-  VariantsUnion<D> & FullEventBrand<D>
+export type MachineEventSchema<D extends Record<string, Schema.Struct.Fields>> = Schema.Codec<
+  VariantsUnion<D> & FullEventBrand<D>,
+  unknown,
+  never,
+  never
 > &
   MachineSchemaBase<D, FullEventBrand<D>> &
   VariantConstructors<D, FullEventBrand<D>>;
@@ -243,7 +249,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
       ? // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- checked length above
         variantArray[0]!
       : // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic schema union
-        Schema.Union(variantArray as [any, any, ...any[]]);
+        Schema.Union(variantArray as any);
 
   // Type guard
   const $is =

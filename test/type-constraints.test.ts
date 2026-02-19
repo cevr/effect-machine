@@ -12,7 +12,7 @@
  *
  * All "bad" tests use @ts-expect-error on the handler return expression.
  */
-import { Effect, Schema, Context } from "effect";
+import { Effect, Schema, ServiceMap } from "effect";
 import { Machine, State, Event } from "../src/index.js";
 
 const MyState = State({
@@ -27,7 +27,7 @@ const MyEvent = Event({
 });
 
 // Test 1: Handler cannot require arbitrary services
-class MyService extends Context.Tag("@test/MyService")<MyService, { foo: string }>() {}
+class MyService extends ServiceMap.Service<MyService, { foo: string }>()("@test/MyService") {}
 
 const _test1 = Machine.make({
   state: MyState,
@@ -54,7 +54,7 @@ const _test2 = Machine.make({
 }).on(MyState.Idle, MyEvent.Start, () => WrongState.Other);
 
 // Test 3: Handler cannot produce errors
-class MyError extends Schema.TaggedError<MyError>()("MyError", {}) {}
+class MyError extends Schema.TaggedErrorClass<MyError>()("MyError", {}) {}
 
 const _test3 = Machine.make({
   state: MyState,
@@ -63,7 +63,7 @@ const _test3 = Machine.make({
   // @ts-expect-error - Handler cannot produce errors (MyError not assignable to never)
 }).on(MyState.Idle, MyEvent.Start, () =>
   Effect.gen(function* () {
-    return yield* new MyError();
+    return yield* new MyError({});
   }),
 );
 

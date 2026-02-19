@@ -1,5 +1,6 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Effect, Schema, TestClock } from "effect";
+import { Effect, Schema, SubscriptionRef } from "effect";
+import { TestClock } from "effect/testing";
 
 import {
   ActorSystemDefault,
@@ -55,7 +56,7 @@ describe("Same-state Transitions", () => {
       yield* actor.send(FormEvent.SetName({ name: "Alice" }));
       yield* yieldFibers;
 
-      const state = yield* actor.state.get;
+      const state = yield* SubscriptionRef.get(actor.state);
       expect(state._tag).toBe("Form");
       expect((state as FormState & { _tag: "Form" }).name).toBe("Alice");
       expect(effects).toEqual(["enter:Form"]);
@@ -165,7 +166,7 @@ describe("Reenter Transitions", () => {
       yield* actor.send(PollEvent.Reset);
       yield* yieldFibers;
 
-      const state = yield* actor.state.get;
+      const state = yield* SubscriptionRef.get(actor.state);
       expect(state._tag).toBe("Polling");
       expect((state as PollState & { _tag: "Polling" }).attempts).toBe(1);
       expect(effects).toEqual(["enter:Polling:0", "exit:Polling:0", "enter:Polling:1"]);
@@ -210,7 +211,7 @@ describe("Reenter Transitions", () => {
       yield* TestClock.adjust("3 seconds");
       yield* yieldFibers;
 
-      let state = yield* actor.state.get;
+      let state = yield* SubscriptionRef.get(actor.state);
       expect(state._tag).toBe("Polling");
 
       // Reset - should restart the 5 second timer
@@ -221,14 +222,14 @@ describe("Reenter Transitions", () => {
       yield* TestClock.adjust("3 seconds");
       yield* yieldFibers;
 
-      state = yield* actor.state.get;
+      state = yield* SubscriptionRef.get(actor.state);
       expect(state._tag).toBe("Polling"); // Timer not done yet
 
       // Advance 2 more seconds (5 total from reset)
       yield* TestClock.adjust("2 seconds");
       yield* yieldFibers;
 
-      state = yield* actor.state.get;
+      state = yield* SubscriptionRef.get(actor.state);
       expect(state._tag).toBe("Done"); // Timer fired
     }).pipe(Effect.provide(ActorSystemDefault)),
   );

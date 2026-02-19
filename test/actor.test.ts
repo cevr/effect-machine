@@ -1,5 +1,15 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Context, Deferred, Effect, Fiber, Layer, Ref, Schema, Stream } from "effect";
+import {
+  Deferred,
+  Effect,
+  Fiber,
+  Layer,
+  Ref,
+  Schema,
+  ServiceMap,
+  Stream,
+  SubscriptionRef,
+} from "effect";
 
 import type { ActorRef } from "../src/index.js";
 import {
@@ -90,13 +100,13 @@ describe("ActorSystem", () => {
       yield* actor.send(TestEvent.Start({ value: 10 }));
       yield* yieldFibers;
 
-      const state1 = yield* actor.state.get;
+      const state1 = yield* actor.snapshot;
       expect(state1._tag).toBe("Active");
 
       yield* actor.send(TestEvent.Update({ value: 20 }));
       yield* yieldFibers;
 
-      const state2 = yield* actor.state.get;
+      const state2 = yield* actor.snapshot;
       expect(state2._tag).toBe("Active");
       if (state2._tag === "Active") {
         expect(state2.value).toBe(20);
@@ -105,7 +115,7 @@ describe("ActorSystem", () => {
       yield* actor.send(TestEvent.Stop);
       yield* yieldFibers;
 
-      const state3 = yield* actor.state.get;
+      const state3 = yield* actor.snapshot;
       expect(state3._tag).toBe("Done");
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
@@ -163,10 +173,10 @@ describe("ActorSystem", () => {
       yield* system.spawn("dup-actor", machine);
       yield* yieldFibers;
 
-      const result = yield* Effect.either(system.spawn("dup-actor", machine));
-      expect(result._tag).toBe("Left");
-      if (result._tag === "Left") {
-        expect(result.left._tag).toBe("DuplicateActorError");
+      const result = yield* Effect.result(system.spawn("dup-actor", machine));
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(result.failure._tag).toBe("DuplicateActorError");
       }
 
       yield* yieldFibers;
@@ -197,16 +207,16 @@ describe("ActorSystem", () => {
       const system = yield* ActorSystemService;
       const [resultA, resultB] = yield* Effect.all(
         [
-          Effect.either(system.spawn("concurrent-actor", machine)),
-          Effect.either(system.spawn("concurrent-actor", machine)),
+          Effect.result(system.spawn("concurrent-actor", machine)),
+          Effect.result(system.spawn("concurrent-actor", machine)),
         ],
         { concurrency: "unbounded" },
       );
 
-      const failures = [resultA, resultB].filter((result) => result._tag === "Left");
+      const failures = [resultA, resultB].filter((result) => result._tag === "Failure");
       expect(failures.length).toBe(1);
-      if (failures[0]?._tag === "Left") {
-        expect(failures[0].left._tag).toBe("DuplicateActorError");
+      if (failures[0]?._tag === "Failure") {
+        expect(failures[0].failure._tag).toBe("DuplicateActorError");
       }
 
       yield* yieldFibers;
@@ -573,7 +583,7 @@ describe("ActorRef", () => {
         const actor = yield* system.spawn("test", machine);
 
         // Access state directly
-        const state = yield* actor.state;
+        const state = yield* SubscriptionRef.get(actor.state);
         expect(state._tag).toBe("Idle");
       }).pipe(Effect.provide(ActorSystemDefault)),
     );
@@ -587,8 +597,8 @@ describe("ActorRef", () => {
         const tags: string[] = [];
 
         // Start collecting changes in background
-        yield* Effect.fork(
-          actor.state.changes.pipe(
+        yield* Effect.forkChild(
+          SubscriptionRef.changes(actor.state).pipe(
             Stream.take(3),
             Stream.tap((s) =>
               Effect.sync(() => {
@@ -833,9 +843,9 @@ describe("ActorRef", () => {
         interface LoopService {
           readonly run: () => Effect.Effect<string>;
         }
-        const LoopTag = Context.GenericTag<LoopService>("test/FastFailLoop");
+        const LoopTag = ServiceMap.Service<LoopService>("test/FastFailLoop");
 
-        const LoopLive = Layer.scoped(
+        const LoopLive = Layer.effect(
           LoopTag,
           Effect.gen(function* () {
             const actorRef = yield* Ref.make<ActorRef<typeof TS.Type, typeof TE.Type> | undefined>(
@@ -857,7 +867,7 @@ describe("ActorRef", () => {
                 Effect.gen(function* () {
                   const actor = yield* getActor;
                   yield* actor.send(TE.Start);
-                  yield* Effect.yieldNow();
+                  yield* Effect.yieldNow;
                   yield* actor.waitFor(TS.Running);
                   yield* actor.waitFor((s) => s._tag !== "Running");
                   const final = yield* actor.snapshot;
@@ -872,16 +882,16 @@ describe("ActorRef", () => {
         const program = Effect.gen(function* () {
           const svc = yield* LoopTag;
 
-          const fiber = yield* Effect.forkDaemon(
+          const fiber = yield* Effect.forkDetach(
             svc.run().pipe(
               Effect.tap((result) => Deferred.succeed(done, result)),
-              Effect.catchAllCause(() => Deferred.succeed(done, "error")),
+              Effect.catchCause(() => Deferred.succeed(done, "error")),
             ),
           );
 
           const result = yield* Deferred.await(done).pipe(
             Effect.timeout("2 seconds"),
-            Effect.catchAll(() => Effect.succeed("timeout" as const)),
+            Effect.catchEager(() => Effect.succeed("timeout" as const)),
           );
 
           if (result === "timeout") {
@@ -936,9 +946,9 @@ describe("ActorRef", () => {
         interface LoopService {
           readonly run: (value: number) => Effect.Effect<void>;
         }
-        const LoopTag = Context.GenericTag<LoopService>("test/LoopService");
+        const LoopTag = ServiceMap.Service<LoopService>("test/LoopService");
 
-        const LoopLive = Layer.scoped(
+        const LoopLive = Layer.effect(
           LoopTag,
           Effect.gen(function* () {
             const actorRef = yield* Ref.make<Actor | undefined>(undefined);
@@ -958,7 +968,7 @@ describe("ActorRef", () => {
                 Effect.gen(function* () {
                   const actor = yield* getActor;
                   yield* actor.send(TE.Start({ value }));
-                  yield* Effect.yieldNow();
+                  yield* Effect.yieldNow;
                   yield* actor.waitFor(TS.Running);
                   yield* actor.waitFor(TS.Done);
                 }),
@@ -971,16 +981,16 @@ describe("ActorRef", () => {
         const program = Effect.gen(function* () {
           const svc = yield* LoopTag;
 
-          const fiber = yield* Effect.forkDaemon(
+          const fiber = yield* Effect.forkDetach(
             svc.run(42).pipe(
               Effect.tap(() => Deferred.succeed(done, void 0)),
-              Effect.catchAllCause(() => Effect.void),
+              Effect.catchCause(() => Effect.void),
             ),
           );
 
           const result = yield* Deferred.await(done).pipe(
             Effect.timeout("2 seconds"),
-            Effect.catchAll(() => Effect.succeed("timeout" as const)),
+            Effect.catchEager(() => Effect.succeed("timeout" as const)),
           );
 
           if (result === "timeout") {

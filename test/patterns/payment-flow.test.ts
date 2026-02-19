@@ -1,5 +1,6 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Effect, Schema, TestClock } from "effect";
+import { Effect, Schema, SubscriptionRef } from "effect";
+import { TestClock } from "effect/testing";
 
 import {
   ActorSystemDefault,
@@ -18,7 +19,7 @@ import { describe, expect, it, yieldFibers } from "effect-bun-test";
  * Tests: retry after error, bridge vs API routing, mid-flow cancellation
  */
 describe("Payment Flow Pattern", () => {
-  const PaymentMethod = Schema.Literal("card", "bridge", "cash");
+  const PaymentMethod = Schema.Literals(["card", "bridge", "cash"]);
   type PaymentMethod = typeof PaymentMethod.Type;
 
   const PaymentState = State({
@@ -222,7 +223,7 @@ describe("Payment Flow Pattern", () => {
       yield* actor.send(PaymentEvent.Retry);
       yield* yieldFibers;
 
-      const state = yield* actor.state.get;
+      const state = yield* SubscriptionRef.get(actor.state);
       expect(state._tag).toBe("PaymentError");
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
@@ -256,14 +257,14 @@ describe("Payment Flow Pattern", () => {
       yield* actor.send(PaymentEvent.SelectMethod({ method: "bridge" }));
       yield* yieldFibers;
 
-      let state = yield* actor.state.get;
+      let state = yield* SubscriptionRef.get(actor.state);
       expect(state._tag).toBe("AwaitingBridgeConfirm");
 
       // Advance past timeout
       yield* TestClock.adjust("30 seconds");
       yield* yieldFibers;
 
-      state = yield* actor.state.get;
+      state = yield* SubscriptionRef.get(actor.state);
       expect(state._tag).toBe("PaymentError");
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
@@ -278,14 +279,14 @@ describe("Payment Flow Pattern", () => {
       yield* actor.send(PaymentEvent.PaymentFailed({ error: "Card declined", canRetry: false }));
       yield* yieldFibers;
 
-      let state = yield* actor.state.get;
+      let state = yield* SubscriptionRef.get(actor.state);
       expect(state._tag).toBe("PaymentError");
 
       // Wait for auto-dismiss
       yield* TestClock.adjust("5 seconds");
       yield* yieldFibers;
 
-      state = yield* actor.state.get;
+      state = yield* SubscriptionRef.get(actor.state);
       expect(state._tag).toBe("Idle");
     }).pipe(Effect.provide(ActorSystemDefault)),
   );

@@ -12,7 +12,7 @@
         "@changesets/cli": "^2.29.8",
         "@types/bun": "1.3.8",
         "concurrently": "^9.2.1",
-        "effect-bun-test": "^0.1.0",
+        "effect-bun-test": "0.2.0",
         "effect-v3": "npm:effect@^3.19.16",
         "lefthook": "^2.1.0",
         "oxfmt": "^0.28.0",
@@ -275,7 +275,7 @@
 
     "effect": ["effect@4.0.0-beta.5", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "fast-check": "^4.5.3", "find-my-way-ts": "^0.1.6", "ini": "^6.0.0", "kubernetes-types": "^1.30.0", "msgpackr": "^1.11.8", "multipasta": "^0.2.7", "toml": "^3.0.0", "uuid": "^13.0.0", "yaml": "^2.8.2" } }, "sha512-M78LYkzjnfUgYvdNF/CoLF9gK74zEORHd0pSoSa/p2BQNJhe7fuOyksddBaZULfJeajzTEOKyRfymsBdaxKA7w=="],
 
-    "effect-bun-test": ["effect-bun-test@0.1.0", "", { "dependencies": { "effect": "^3.19.15" }, "peerDependencies": { "bun": "*" } }, "sha512-PdZykwRKjfRfPqL9CXti180LUcDs+u5pr60cstUB/ayx29R/QJsOtjfcYoPWw0HYVjVF73veHcSRi0IyMSmilQ=="],
+    "effect-bun-test": ["effect-bun-test@0.2.0", "", { "dependencies": { "effect": "4.0.0-beta.5" }, "peerDependencies": { "bun": "*" } }, "sha512-JYrCptYsWEgrYCHhW7C1+LAPkdAY9gr2+E9xU3hTsEvUV8eaqgtOOv43j2nunP/0H9mOPhQLmUkNKXPqos20eQ=="],
 
     "effect-v3": ["effect@3.19.16", "", { "dependencies": { "@standard-schema/spec": "^1.0.0", "fast-check": "^3.23.1" } }, "sha512-7+XC3vGrbAhCHd8LTFHvnZjRpZKZ8YHRZqJTkpNoxcJ2mCyNs2SwI+6VkV/ij8Y3YW7wfBN4EbU06/F5+m/wkQ=="],
 
