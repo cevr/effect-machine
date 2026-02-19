@@ -725,8 +725,10 @@ const snapshotWorker = Effect.fn("effect-machine.persistentActor.snapshotWorker"
     if (!(yield* Ref.get(enabledRef))) {
       continue;
     }
-    const now = yield* Clock.currentTimeMillis;
-    const shouldSnapshot = yield* (step(now, state) as Pull.Pull<unknown, unknown, unknown>).pipe(
+    const currentTime = yield* Clock.currentTimeMillis;
+    const shouldSnapshot = yield* (
+      step(currentTime, state) as Pull.Pull<unknown, unknown, unknown>
+    ).pipe(
       Effect.match({
         onFailure: () => false,
         onSuccess: () => true,
