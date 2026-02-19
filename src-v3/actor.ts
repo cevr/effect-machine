@@ -8,6 +8,7 @@
  */
 import {
   Cause,
+  Context,
   Deferred,
   Effect,
   Exit,
@@ -18,8 +19,8 @@ import {
   PubSub,
   Queue,
   Ref,
+  Runtime,
   Scope,
-  ServiceMap,
   Stream,
   SubscriptionRef,
 } from "effect";
@@ -362,7 +363,7 @@ export interface ActorSystem {
 /**
  * ActorSystem service tag
  */
-export const ActorSystem = ServiceMap.Service<ActorSystem>("@effect/machine/ActorSystem");
+export const ActorSystem = Context.GenericTag<ActorSystem>("@effect/machine/ActorSystem");
 
 // ============================================================================
 // Actor Core Helpers
@@ -444,14 +445,13 @@ export const buildActorRefCore = <
     // semaphore for the duration of a stream (which causes deadlock when
     // send triggers SubscriptionRef.set concurrently).
     const done = yield* Deferred.make<S>();
-    // @effect-diagnostics runEffectInsideEffect:off
+    const rt = yield* Effect.runtime<never>();
+    const runFork = Runtime.runFork(rt);
     const listener = (state: S) => {
       if (predicate(state)) {
-        // Sync callback context — not inside Effect.gen
-        Effect.runFork(Deferred.succeed(done, state));
+        runFork(Deferred.succeed(done, state));
       }
     };
-    // @effect-diagnostics runEffectInsideEffect:on
     listeners.add(listener);
 
     // Re-check after subscribing to close the race window
@@ -496,7 +496,7 @@ export const buildActorRefCore = <
       const state = Effect.runSync(SubscriptionRef.get(stateRef));
       return resolveTransition(machine, state, event) !== undefined;
     },
-    changes: SubscriptionRef.changes(stateRef),
+    changes: stateRef.changes,
     waitFor,
     awaitFinal,
     sendAndWait,
@@ -536,7 +536,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   // Resolve actor system: use existing from context, or create implicit one
   const existingSystem = yield* Effect.serviceOption(ActorSystem);
   let system: ActorSystem;
-  let implicitSystemScope: Scope.Closeable | undefined;
+  let implicitSystemScope: Scope.CloseableScope | undefined;
 
   if (Option.isSome(existingSystem)) {
     system = existingSystem.value;
@@ -604,7 +604,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   const { effects: effectSlots } = machine._slots;
 
   for (const bg of machine.backgroundEffects) {
-    const fiber = yield* Effect.forkDetach(
+    const fiber = yield* Effect.forkDaemon(
       bg
         .handler({ state: machine.initial, event: initEvent, self, effects: effectSlots, system })
         .pipe(Effect.provideService(machine.Context, ctx)),
@@ -613,7 +613,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   }
 
   // Create state scope for initial state's spawn effects
-  const stateScopeRef: { current: Scope.Closeable } = {
+  const stateScopeRef: { current: Scope.CloseableScope } = {
     current: yield* Scope.make(),
   };
 
@@ -663,7 +663,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
 
   // Start the event loop — use forkDaemon so the event loop fiber's lifetime
   // is detached from any parent scope/fiber. actor.stop handles cleanup.
-  const loopFiber = yield* Effect.forkDetach(
+  const loopFiber = yield* Effect.forkDaemon(
     eventLoop(
       machine,
       stateRef,
@@ -729,7 +729,7 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
   self: MachineRef<E>,
   listeners: Listeners<S>,
   backgroundFibers: Fiber.Fiber<void, never>[],
-  stateScopeRef: { current: Scope.Closeable },
+  stateScopeRef: { current: Scope.CloseableScope },
   actorId: string,
   inspector: Inspector<S, E> | undefined,
   system: ActorSystem,
@@ -789,7 +789,7 @@ const processEvent = Effect.fn("effect-machine.actor.processEvent")(function* <
   stateRef: SubscriptionRef.SubscriptionRef<S>,
   self: MachineRef<E>,
   listeners: Listeners<S>,
-  stateScopeRef: { current: Scope.Closeable },
+  stateScopeRef: { current: Scope.CloseableScope },
   actorId: string,
   inspector: Inspector<S, E> | undefined,
   system: ActorSystem,
@@ -896,7 +896,7 @@ const runSpawnEffectsWithInspection = Effect.fn("effect-machine.actor.spawnEffec
   state: S,
   event: E,
   self: MachineRef<E>,
-  stateScope: Scope.Closeable,
+  stateScope: Scope.CloseableScope,
   actorId: string,
   inspector: Inspector<S, E> | undefined,
   system: ActorSystem,
@@ -956,7 +956,7 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
   const emitSystemEvent = (event: SystemEvent): Effect.Effect<void> =>
     Effect.sync(() => notifySystemListeners(eventListeners, event)).pipe(
       Effect.andThen(PubSub.publish(eventPubSub, event)),
-      Effect.catchCause(() => Effect.void),
+      Effect.catchAllCause(() => Effect.void),
       Effect.asVoid,
     );
 
@@ -1158,11 +1158,11 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
         continue;
       }
 
-      const result = yield* Effect.result(restore(id, persistentMachine));
-      if (result._tag === "Failure") {
-        failed.push({ id, error: result.failure });
-      } else if (Option.isSome(result.success)) {
-        restored.push(result.success.value);
+      const result = yield* Effect.either(restore(id, persistentMachine));
+      if (result._tag === "Left") {
+        failed.push({ id, error: result.left });
+      } else if (Option.isSome(result.right)) {
+        restored.push(result.right.value);
       } else {
         // No persisted state for this ID
         failed.push({
@@ -1242,4 +1242,4 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
 /**
  * Default ActorSystem layer
  */
-export const Default = Layer.effect(ActorSystem, make());
+export const Default = Layer.scoped(ActorSystem, make());

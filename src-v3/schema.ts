@@ -91,10 +91,10 @@ type VariantConstructors<D extends Record<string, Schema.Struct.Fields>, Brand> 
         Brand & {
           readonly derive: (source: object) => TaggedStructType<K, D[K]> & Brand;
         }
-    : ((args: Schema.Struct.Type<D[K]>) => TaggedStructType<K, D[K]> & Brand) & {
+    : ((args: Schema.Struct.Constructor<D[K]>) => TaggedStructType<K, D[K]> & Brand) & {
         readonly derive: (
           source: object,
-          partial?: Partial<Schema.Struct.Type<D[K]>>,
+          partial?: Partial<Schema.Struct.Constructor<D[K]>>,
         ) => TaggedStructType<K, D[K]> & Brand;
         readonly _tag: K;
       };
@@ -154,7 +154,9 @@ interface MachineSchemaBase<D extends Record<string, Schema.Struct.Fields>, Bran
  * per distinct schema definition shape.
  */
 export type MachineStateSchema<D extends Record<string, Schema.Struct.Fields>> = Schema.Schema<
-  VariantsUnion<D> & FullStateBrand<D>
+  VariantsUnion<D> & FullStateBrand<D>,
+  VariantsUnion<D>,
+  never
 > &
   MachineSchemaBase<D, FullStateBrand<D>> &
   VariantConstructors<D, FullStateBrand<D>>;
@@ -166,7 +168,9 @@ export type MachineStateSchema<D extends Record<string, Schema.Struct.Fields>> =
  * per distinct schema definition shape.
  */
 export type MachineEventSchema<D extends Record<string, Schema.Struct.Fields>> = Schema.Schema<
-  VariantsUnion<D> & FullEventBrand<D>
+  VariantsUnion<D> & FullEventBrand<D>,
+  VariantsUnion<D>,
+  never
 > &
   MachineSchemaBase<D, FullEventBrand<D>> &
   VariantConstructors<D, FullEventBrand<D>>;
@@ -181,7 +185,7 @@ export type MachineEventSchema<D extends Record<string, Schema.Struct.Fields>> =
 const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
   definition: D,
 ): {
-  schema: Schema.Schema<VariantsUnion<D>>;
+  schema: Schema.Schema<VariantsUnion<D>, VariantsUnion<D>, never>;
   variants: VariantSchemas<D>;
   constructors: Record<string, (args: Record<string, unknown>) => Record<string, unknown>>;
   _definition: D;
@@ -234,7 +238,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
   // Build union schema from all variants
   const variantArray = Object.values(variants);
   if (variantArray.length === 0) {
-    throw new InvalidSchemaError({});
+    throw new InvalidSchemaError();
   }
 
   // Schema.Union requires at least 2 members, handle single variant case
@@ -243,7 +247,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
       ? // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- checked length above
         variantArray[0]!
       : // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic schema union
-        Schema.Union(variantArray as [any, any, ...any[]]);
+        Schema.Union(...(variantArray as [any, any, ...any[]]));
 
   // Type guard
   const $is =
@@ -275,7 +279,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
   };
 
   return {
-    schema: unionSchema as unknown as Schema.Schema<VariantsUnion<D>>,
+    schema: unionSchema as unknown as Schema.Schema<VariantsUnion<D>, VariantsUnion<D>, never>,
     variants: variants as unknown as VariantSchemas<D>,
     constructors,
     _definition: definition,

@@ -56,11 +56,10 @@ const make = Effect.gen(function* () {
     });
   });
 
-  const saveSnapshot = Effect.fn("effect-machine.persistence.inMemory.saveSnapshot")(function* <S>(
-    id: string,
-    snapshot: Snapshot<S>,
-    schema: Schema.Codec<S, unknown, never, never>,
-  ) {
+  const saveSnapshot = Effect.fn("effect-machine.persistence.inMemory.saveSnapshot")(function* <
+    S,
+    SI,
+  >(id: string, snapshot: Snapshot<S>, schema: Schema.Schema<S, SI, never>) {
     const actorStorage = yield* getOrCreateStorage(id);
 
     // Optimistic locking: check version
@@ -78,7 +77,7 @@ const make = Effect.gen(function* () {
     }
 
     // Encode state using schema
-    const encoded = yield* Schema.encodeEffect(schema)(snapshot.state).pipe(
+    const encoded = yield* Schema.encode(schema)(snapshot.state).pipe(
       Effect.mapError(
         (cause) =>
           new PersistenceError({
@@ -100,10 +99,10 @@ const make = Effect.gen(function* () {
     }));
   });
 
-  const loadSnapshot = Effect.fn("effect-machine.persistence.inMemory.loadSnapshot")(function* <S>(
-    id: string,
-    schema: Schema.Codec<S, unknown, never, never>,
-  ) {
+  const loadSnapshot = Effect.fn("effect-machine.persistence.inMemory.loadSnapshot")(function* <
+    S,
+    SI,
+  >(id: string, schema: Schema.Schema<S, SI, never>) {
     const actorStorage = yield* getOrCreateStorage(id);
 
     if (Option.isNone(actorStorage.snapshot)) {
@@ -113,7 +112,7 @@ const make = Effect.gen(function* () {
     const stored = actorStorage.snapshot.value;
 
     // Decode state using schema
-    const decoded = yield* Schema.decodeEffect(schema)(stored.data as S).pipe(
+    const decoded = yield* Schema.decode(schema)(stored.data as SI).pipe(
       Effect.mapError(
         (cause) =>
           new PersistenceError({
@@ -132,15 +131,14 @@ const make = Effect.gen(function* () {
     });
   });
 
-  const appendEvent = Effect.fn("effect-machine.persistence.inMemory.appendEvent")(function* <E>(
-    id: string,
-    event: PersistedEvent<E>,
-    schema: Schema.Codec<E, unknown, never, never>,
-  ) {
+  const appendEvent = Effect.fn("effect-machine.persistence.inMemory.appendEvent")(function* <
+    E,
+    EI,
+  >(id: string, event: PersistedEvent<E>, schema: Schema.Schema<E, EI, never>) {
     yield* getOrCreateStorage(id);
 
     // Encode event using schema
-    const encoded = yield* Schema.encodeEffect(schema)(event.event).pipe(
+    const encoded = yield* Schema.encode(schema)(event.event).pipe(
       Effect.mapError(
         (cause) =>
           new PersistenceError({
@@ -165,9 +163,9 @@ const make = Effect.gen(function* () {
     }));
   });
 
-  const loadEvents = Effect.fn("effect-machine.persistence.inMemory.loadEvents")(function* <E>(
+  const loadEvents = Effect.fn("effect-machine.persistence.inMemory.loadEvents")(function* <E, EI>(
     id: string,
-    schema: Schema.Codec<E, unknown, never, never>,
+    schema: Schema.Schema<E, EI, never>,
     afterVersion?: number,
   ) {
     const actorStorage = yield* getOrCreateStorage(id);
@@ -177,7 +175,7 @@ const make = Effect.gen(function* () {
     for (const stored of actorStorage.events) {
       if (afterVersion !== undefined && stored.version <= afterVersion) continue;
 
-      const event = yield* Schema.decodeEffect(schema)(stored.data as E).pipe(
+      const event = yield* Schema.decode(schema)(stored.data as EI).pipe(
         Effect.mapError(
           (cause) =>
             new PersistenceError({

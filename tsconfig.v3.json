@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "paths": {
+      "effect": ["./node_modules/effect-v3"],
+      "effect/*": ["./node_modules/effect-v3/*"],
+      "@effect/cluster": ["./node_modules/@effect/cluster"],
+      "@effect/rpc": ["./node_modules/@effect/rpc"]
+    }
+  },
+  "include": ["src-v3"],
+  "exclude": ["node_modules"]
+}

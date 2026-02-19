@@ -3,8 +3,8 @@
  *
  * @module
  */
-import { Entity } from "effect/unstable/cluster";
-import { Rpc } from "effect/unstable/rpc";
+import { Entity } from "@effect/cluster";
+import { Rpc } from "@effect/rpc";
 import type { Schema } from "effect";
 
 import type { Machine } from "../machine.js";
@@ -26,7 +26,10 @@ export interface ToEntityOptions {
  * - `Send` - Send event to machine, returns new state
  * - `GetState` - Get current state
  */
-export type EntityRpcs<StateSchema extends Schema.Top, EventSchema extends Schema.Top> = readonly [
+export type EntityRpcs<
+  StateSchema extends Schema.Schema.Any,
+  EventSchema extends Schema.Schema.Any,
+> = readonly [
   Rpc.Rpc<
     "Send",
     Schema.Struct<{ readonly event: EventSchema }>,

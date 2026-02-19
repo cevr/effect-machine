@@ -14,7 +14,6 @@ import {
   Scope,
   SubscriptionRef,
 } from "effect";
-import type { Pull } from "effect";
 
 import type { ActorRef, ActorSystem, Listeners } from "../actor.js";
 import { ActorSystem as ActorSystemTag, buildActorRefCore, notifyListeners } from "../actor.js";
@@ -358,7 +357,7 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
 
   const snapshotEnabledRef = yield* Ref.make(true);
   const persistenceQueue = yield* Queue.unbounded<Effect.Effect<void, never>>();
-  const persistenceFiber = yield* Effect.forkDetach(persistenceWorker(persistenceQueue));
+  const persistenceFiber = yield* Effect.forkDaemon(persistenceWorker(persistenceQueue));
 
   // Save initial metadata
   yield* Queue.offer(
@@ -368,7 +367,7 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
 
   // Snapshot scheduler
   const snapshotQueue = yield* Queue.unbounded<{ state: S; version: number }>();
-  const snapshotFiber = yield* Effect.forkDetach(
+  const snapshotFiber = yield* Effect.forkDaemon(
     snapshotWorker(id, persistence, adapter, snapshotQueue, snapshotEnabledRef),
   );
 
@@ -379,7 +378,7 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
   const { effects: effectSlots } = typedMachine._slots;
 
   for (const bg of typedMachine.backgroundEffects) {
-    const fiber = yield* Effect.forkDetach(
+    const fiber = yield* Effect.forkDaemon(
       bg
         .handler({ state: resolvedInitial, event: initEvent, self, effects: effectSlots, system })
         .pipe(Effect.provideService(typedMachine.Context, initCtx)),
@@ -388,7 +387,7 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
   }
 
   // Create state scope for spawn effects
-  const stateScopeRef: { current: Scope.Closeable } = {
+  const stateScopeRef: { current: Scope.CloseableScope } = {
     current: yield* Scope.make(),
   };
 
@@ -437,7 +436,7 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
   }
 
   // Start the persistent event loop
-  const loopFiber = yield* Effect.forkDetach(
+  const loopFiber = yield* Effect.forkDaemon(
     persistentEventLoop(
       id,
       persistentMachine,
@@ -512,7 +511,7 @@ const persistentEventLoop = Effect.fn("effect-machine.persistentActor.eventLoop"
   listeners: Listeners<S>,
   adapter: PersistenceAdapter,
   createdAt: number,
-  stateScopeRef: { current: Scope.Closeable },
+  stateScopeRef: { current: Scope.CloseableScope },
   backgroundFibers: ReadonlyArray<Fiber.Fiber<void, never>>,
   snapshotQueue: Queue.Queue<{ state: S; version: number }>,
   snapshotEnabledRef: Ref.Ref<boolean>,
@@ -611,7 +610,7 @@ const persistentEventLoop = Effect.fn("effect-machine.persistentActor.eventLoop"
         timestamp,
       };
       const journalTask = adapter.appendEvent(id, persistedEvent, persistence.eventSchema).pipe(
-        Effect.catchEager((e) => Effect.logWarning(`Failed to journal event for actor ${id}`, e)),
+        Effect.catchAll((e) => Effect.logWarning(`Failed to journal event for actor ${id}`, e)),
         Effect.asVoid,
       );
       yield* Queue.offer(persistenceQueue, journalTask);
@@ -662,7 +661,7 @@ const runSpawnEffectsWithInspection = Effect.fn("effect-machine.persistentActor.
     state: S,
     event: E,
     self: MachineRef<E>,
-    stateScope: Scope.Closeable,
+    stateScope: Scope.CloseableScope,
     actorId: string,
     inspector: Inspector<S, E> | undefined,
     system: ActorSystem,
@@ -718,15 +717,14 @@ const snapshotWorker = Effect.fn("effect-machine.persistentActor.snapshotWorker"
   queue: Queue.Queue<{ state: S; version: number }>,
   enabledRef: Ref.Ref<boolean>,
 ) {
-  const step = yield* Schedule.toStep(persistence.snapshotSchedule);
+  const driver = yield* Schedule.driver(persistence.snapshotSchedule);
 
   while (true) {
     const { state, version } = yield* Queue.take(queue);
     if (!(yield* Ref.get(enabledRef))) {
       continue;
     }
-    const now = yield* Clock.currentTimeMillis;
-    const shouldSnapshot = yield* (step(now, state) as Pull.Pull<unknown, unknown, unknown>).pipe(
+    const shouldSnapshot = yield* driver.next(state).pipe(
       Effect.match({
         onFailure: () => false,
         onSuccess: () => true,
@@ -763,9 +761,7 @@ const saveSnapshot = Effect.fn("effect-machine.persistentActor.saveSnapshot")(fu
   };
   yield* adapter
     .saveSnapshot(id, snapshot, persistence.stateSchema)
-    .pipe(
-      Effect.catchEager((e) => Effect.logWarning(`Failed to save snapshot for actor ${id}`, e)),
-    );
+    .pipe(Effect.catchAll((e) => Effect.logWarning(`Failed to save snapshot for actor ${id}`, e)));
 });
 
 /**
@@ -797,7 +793,7 @@ const saveMetadata = Effect.fn("effect-machine.persistentActor.saveMetadata")(fu
     stateTag: state._tag,
   };
   yield* save(metadata).pipe(
-    Effect.catchEager((e) => Effect.logWarning(`Failed to save metadata for actor ${id}`, e)),
+    Effect.catchAll((e) => Effect.logWarning(`Failed to save metadata for actor ${id}`, e)),
   );
 });
 

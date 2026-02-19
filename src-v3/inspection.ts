@@ -1,4 +1,4 @@
-import { ServiceMap, type Schema } from "effect";
+import { Context, type Schema } from "effect";
 
 // ============================================================================
 // Type-level helpers
@@ -7,7 +7,7 @@ import { ServiceMap, type Schema } from "effect";
 /**
  * Resolve a type param: if it's a Schema, extract `.Type`; otherwise use as-is.
  */
-type ResolveType<T> = T extends Schema.Schema<infer A> ? A : T;
+type ResolveType<T> = T extends Schema.Schema<infer A, infer _I, infer _R> ? A : T;
 
 // ============================================================================
 // Inspection Events
@@ -118,7 +118,7 @@ export interface Inspector<S, E> {
  * Uses `any` types to allow variance flexibility when providing the service
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const Inspector = ServiceMap.Service<Inspector<any, any>>("@effect/machine/Inspector");
+export const Inspector = Context.GenericTag<Inspector<any, any>>("@effect/machine/Inspector");
 
 /**
  * Create an inspector from a callback function.

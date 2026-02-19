@@ -33,7 +33,7 @@
  *
  * @module
  */
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 import type { Effect, Schema } from "effect";
 import type { ActorSystem } from "./actor.js";
 
@@ -42,7 +42,7 @@ import type { ActorSystem } from "./actor.js";
 // ============================================================================
 
 /** Schema fields definition (like Schema.Struct.Fields) */
-type Fields = Record<string, Schema.Top>;
+type Fields = Record<string, Schema.Schema.All>;
 
 /** Extract the encoded type from schema fields (used for parameters) */
 type FieldsToParams<F extends Fields> = keyof F extends never
@@ -117,7 +117,7 @@ export interface MachineContext<State, Event, Self> {
  */
 /* eslint-disable @typescript-eslint/no-explicit-any -- generic context tag */
 export const MachineContextTag =
-  ServiceMap.Service<MachineContext<any, any, any>>("@effect-machine/Context");
+  Context.GenericTag<MachineContext<any, any, any>>("@effect-machine/Context");
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 // ============================================================================

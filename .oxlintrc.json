@@ -18,7 +18,13 @@
     "import/no-duplicates": "error",
     "no-unused-vars": ["error", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }]
   },
-  "ignorePatterns": ["**/dist/**", "**/node_modules/**", "**/*.d.ts"],
+  "ignorePatterns": [
+    "**/dist/**",
+    "**/dist-v3/**",
+    "**/node_modules/**",
+    "**/*.d.ts",
+    "**/src-v3/**"
+  ],
   "overrides": [
     {
       "files": ["**/*.test.ts"],

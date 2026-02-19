@@ -184,14 +184,14 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
   currentState: S,
   event: E,
   self: MachineRef<E>,
-  stateScopeRef: { current: Scope.Closeable },
+  stateScopeRef: { current: Scope.CloseableScope },
   system: ActorSystem,
   hooks?: ProcessEventHooks<S, E>,
 ) {
   // Execute transition (defect-aware)
   const result = yield* executeTransition(machine, currentState, event, self, system).pipe(
-    Effect.catchCause((cause) => {
-      if (Cause.hasInterruptsOnly(cause)) {
+    Effect.catchAllCause((cause) => {
+      if (Cause.isInterruptedOnly(cause)) {
         return Effect.interrupt;
       }
       const onError = hooks?.onError;
@@ -203,7 +203,7 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
         state: currentState,
         event,
         cause,
-      }).pipe(Effect.andThen(Effect.failCause(cause).pipe(Effect.orDie)));
+      }).pipe(Effect.zipRight(Effect.failCause(cause).pipe(Effect.orDie)));
     }),
   );
 
@@ -276,7 +276,7 @@ export const runSpawnEffects = Effect.fn("effect-machine.runSpawnEffects")(funct
   state: S,
   event: E,
   self: MachineRef<E>,
-  stateScope: Scope.Closeable,
+  stateScope: Scope.CloseableScope,
   system: ActorSystem,
   onError?: (info: ProcessEventError<S, E>) => Effect.Effect<void>,
 ) {
@@ -295,8 +295,8 @@ export const runSpawnEffects = Effect.fn("effect-machine.runSpawnEffects")(funct
       >
     ).pipe(
       Effect.provideService(machine.Context, ctx),
-      Effect.catchCause((cause) => {
-        if (Cause.hasInterruptsOnly(cause)) {
+      Effect.catchAllCause((cause) => {
+        if (Cause.isInterruptedOnly(cause)) {
           return Effect.interrupt;
         }
         if (reportError === undefined) {
@@ -307,7 +307,7 @@ export const runSpawnEffects = Effect.fn("effect-machine.runSpawnEffects")(funct
           state,
           event,
           cause,
-        }).pipe(Effect.andThen(Effect.failCause(cause).pipe(Effect.orDie)));
+        }).pipe(Effect.zipRight(Effect.failCause(cause).pipe(Effect.orDie)));
       }),
     );
 

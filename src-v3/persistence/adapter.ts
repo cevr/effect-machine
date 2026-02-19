@@ -1,4 +1,4 @@
-import { Schema, ServiceMap } from "effect";
+import { Context, Schema } from "effect";
 import type { Effect, Option } from "effect";
 
 import type { PersistentActorRef } from "./persistent-actor.js";
@@ -70,36 +70,36 @@ export interface PersistenceAdapter {
    * Save a snapshot of actor state.
    * Implementations should use optimistic locking — fail if version mismatch.
    */
-  readonly saveSnapshot: <S>(
+  readonly saveSnapshot: <S, SI>(
     id: string,
     snapshot: Snapshot<S>,
-    schema: Schema.Codec<S, unknown, never, never>,
+    schema: Schema.Schema<S, SI, never>,
   ) => Effect.Effect<void, PersistenceError | VersionConflictError>;
 
   /**
    * Load the latest snapshot for an actor.
    * Returns None if no snapshot exists.
    */
-  readonly loadSnapshot: <S>(
+  readonly loadSnapshot: <S, SI>(
     id: string,
-    schema: Schema.Codec<S, unknown, never, never>,
+    schema: Schema.Schema<S, SI, never>,
   ) => Effect.Effect<Option.Option<Snapshot<S>>, PersistenceError>;
 
   /**
    * Append an event to the actor's event journal.
    */
-  readonly appendEvent: <E>(
+  readonly appendEvent: <E, EI>(
     id: string,
     event: PersistedEvent<E>,
-    schema: Schema.Codec<E, unknown, never, never>,
+    schema: Schema.Schema<E, EI, never>,
   ) => Effect.Effect<void, PersistenceError>;
 
   /**
    * Load events from the journal, optionally after a specific version.
    */
-  readonly loadEvents: <E>(
+  readonly loadEvents: <E, EI>(
     id: string,
-    schema: Schema.Codec<E, unknown, never, never>,
+    schema: Schema.Schema<E, EI, never>,
     afterVersion?: number,
   ) => Effect.Effect<ReadonlyArray<PersistedEvent<E>>, PersistenceError>;
 
@@ -143,20 +143,17 @@ export interface PersistenceAdapter {
 /**
  * Error type for persistence operations
  */
-export class PersistenceError extends Schema.TaggedErrorClass<PersistenceError>()(
-  "PersistenceError",
-  {
-    operation: Schema.String,
-    actorId: Schema.String,
-    cause: Schema.optional(Schema.Unknown),
-    message: Schema.optional(Schema.String),
-  },
-) {}
+export class PersistenceError extends Schema.TaggedError<PersistenceError>()("PersistenceError", {
+  operation: Schema.String,
+  actorId: Schema.String,
+  cause: Schema.optional(Schema.Unknown),
+  message: Schema.optional(Schema.String),
+}) {}
 
 /**
  * Version conflict error — snapshot version doesn't match expected
  */
-export class VersionConflictError extends Schema.TaggedErrorClass<VersionConflictError>()(
+export class VersionConflictError extends Schema.TaggedError<VersionConflictError>()(
   "VersionConflictError",
   {
     actorId: Schema.String,
@@ -168,7 +165,6 @@ export class VersionConflictError extends Schema.TaggedErrorClass<VersionConflic
 /**
  * PersistenceAdapter service tag
  */
-export class PersistenceAdapterTag extends ServiceMap.Service<
-  PersistenceAdapterTag,
-  PersistenceAdapter
->()("effect-machine/src/persistence/adapter/PersistenceAdapterTag") {}
+export class PersistenceAdapterTag extends Context.Tag(
+  "effect-machine/src/persistence/adapter/PersistenceAdapterTag",
+)<PersistenceAdapterTag, PersistenceAdapter>() {}

@@ -3,8 +3,8 @@
  *
  * @module
  */
-import { Entity } from "effect/unstable/cluster";
-import type { Rpc } from "effect/unstable/rpc";
+import { Entity } from "@effect/cluster";
+import type { Rpc } from "@effect/rpc";
 import { Effect, type Layer, Option, Queue, Ref, Scope } from "effect";
 
 import type { Machine, MachineRef } from "../machine.js";
@@ -65,7 +65,7 @@ const processEvent = Effect.fn("effect-machine.cluster.processEvent")(function* 
   stateRef: Ref.Ref<S>,
   event: E,
   self: MachineRef<E>,
-  stateScopeRef: { current: Scope.Closeable },
+  stateScopeRef: { current: Scope.CloseableScope },
   system: ActorSystem,
   hooks?: ProcessEventHooks<S, E>,
 ) {
@@ -173,7 +173,7 @@ export const EntityMachine = {
       const stateRef = yield* Ref.make<S>(initialState);
 
       // Create state scope for spawn effects
-      const stateScopeRef: { current: Scope.Closeable } = {
+      const stateScopeRef: { current: Scope.CloseableScope } = {
         current: yield* Scope.make(),
       };
 

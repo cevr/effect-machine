@@ -15,7 +15,7 @@ type BrandedEvent = { readonly _tag: string } & EventBrand;
  * Note: Schema types S and E should match the structural shape of the machine's
  * state and event types (without brands). The schemas don't know about brands.
  */
-export interface PersistenceConfig<S, E> {
+export interface PersistenceConfig<S, E, SSI = unknown, ESI = unknown> {
   /**
    * Schedule controlling when snapshots are taken.
    * Input is the new state after each transition.
@@ -37,13 +37,13 @@ export interface PersistenceConfig<S, E> {
    * Schema for serializing/deserializing state.
    * Always present at runtime (resolved from config or machine).
    */
-  readonly stateSchema: Schema.Codec<S, unknown, never, never>;
+  readonly stateSchema: Schema.Schema<S, SSI, never>;
 
   /**
    * Schema for serializing/deserializing events.
    * Always present at runtime (resolved from config or machine).
    */
-  readonly eventSchema: Schema.Codec<E, unknown, never, never>;
+  readonly eventSchema: Schema.Schema<E, ESI, never>;
 
   /**
    * User-provided identifier for the machine type.

@@ -42,7 +42,7 @@
  *
  * @module
  */
-import type { Schema, Schedule, ServiceMap } from "effect";
+import type { Schema, Schedule, Context } from "effect";
 import { Cause, Effect, Exit, Option, Scope } from "effect";
 
 import type { TransitionResult } from "./internal/utils.js";
@@ -295,17 +295,17 @@ export class Machine<
     guards: GuardSlots<GD>;
     effects: EffectSlots<EFD>;
   };
-  readonly stateSchema?: Schema.Schema<State>;
-  readonly eventSchema?: Schema.Schema<Event>;
+  readonly stateSchema?: Schema.Schema<State, unknown, never>;
+  readonly eventSchema?: Schema.Schema<Event, unknown, never>;
 
   /**
    * Context tag for accessing machine state/event/self in slot handlers.
    * Uses shared module-level tag for all machines.
    */
-  readonly Context: ServiceMap.Service<
+  readonly Context: Context.Tag<
     MachineContext<State, Event, MachineRef<Event>>,
     MachineContext<State, Event, MachineRef<Event>>
-  > = MachineContextTag as ServiceMap.Service<
+  > = MachineContextTag as Context.Tag<
     MachineContext<State, Event, MachineRef<Event>>,
     MachineContext<State, Event, MachineRef<Event>>
   >;
@@ -333,8 +333,8 @@ export class Machine<
   /** @internal */
   constructor(
     initial: State,
-    stateSchema?: Schema.Schema<State>,
-    eventSchema?: Schema.Schema<Event>,
+    stateSchema?: Schema.Schema<State, unknown, never>,
+    eventSchema?: Schema.Schema<Event, unknown, never>,
     guardsSchema?: GuardsSchema<GD>,
     effectsSchema?: EffectsSchema<EFD>,
   ) {
@@ -353,11 +353,7 @@ export class Machine<
     const guardSlots =
       this._guardsSchema !== undefined
         ? this._guardsSchema._createSlots((name: string, params: unknown) =>
-            Effect.flatMap(Effect.serviceOption(this.Context), (maybeCtx) => {
-              if (Option.isNone(maybeCtx)) {
-                return Effect.die("MachineContext not available");
-              }
-              const ctx = maybeCtx.value;
+            Effect.flatMap(Effect.serviceOptional(this.Context).pipe(Effect.orDie), (ctx) => {
               const handler = this._guardHandlers.get(name);
               if (handler === undefined) {
                 return Effect.die(new SlotProvisionError({ slotName: name, slotType: "guard" }));
@@ -372,11 +368,7 @@ export class Machine<
     const effectSlots =
       this._effectsSchema !== undefined
         ? this._effectsSchema._createSlots((name: string, params: unknown) =>
-            Effect.flatMap(Effect.serviceOption(this.Context), (maybeCtx) => {
-              if (Option.isNone(maybeCtx)) {
-                return Effect.die("MachineContext not available");
-              }
-              const ctx = maybeCtx.value;
+            Effect.flatMap(Effect.serviceOptional(this.Context).pipe(Effect.orDie), (ctx) => {
               const handler = this._effectHandlers.get(name);
               if (handler === undefined) {
                 return Effect.die(new SlotProvisionError({ slotName: name, slotType: "effect" }));
@@ -593,17 +585,17 @@ export class Machine<
       const exit = yield* Effect.exit(run(ctx));
       if (Exit.isSuccess(exit)) {
         yield* ctx.self.send(options.onSuccess(exit.value, ctx));
-        yield* Effect.yieldNow;
+        yield* Effect.yieldNow();
         return;
       }
 
       const cause = exit.cause;
-      if (Cause.hasInterruptsOnly(cause)) {
+      if (Cause.isInterruptedOnly(cause)) {
         return;
       }
       if (options.onFailure !== undefined) {
         yield* ctx.self.send(options.onFailure(cause, ctx));
-        yield* Effect.yieldNow;
+        yield* Effect.yieldNow();
         return;
       }
       return yield* Effect.failCause(cause).pipe(Effect.orDie);
@@ -706,8 +698,8 @@ export class Machine<
       // Create new machine to preserve original for reuse with different providers
       const result = new Machine<State, Event, R | R2, _SD, _ED, GD, EFD>(
         this.initial,
-        this.stateSchema as Schema.Schema<State>,
-        this.eventSchema as Schema.Schema<Event>,
+        this.stateSchema as Schema.Schema<State, unknown, never>,
+        this.eventSchema as Schema.Schema<Event, unknown, never>,
         this._guardsSchema,
         this._effectsSchema,
       );
@@ -769,8 +761,8 @@ export class Machine<
   >(config: MakeConfig<SD, ED, S, E, GD, EFD>): Machine<S, E, never, SD, ED, GD, EFD> {
     return new Machine<S, E, never, SD, ED, GD, EFD>(
       config.initial,
-      config.state as unknown as Schema.Schema<S>,
-      config.event as unknown as Schema.Schema<E>,
+      config.state as unknown as Schema.Schema<S, unknown, never>,
+      config.event as unknown as Schema.Schema<E, unknown, never>,
       config.guards as GuardsSchema<GD> | undefined,
       config.effects as EffectsSchema<EFD> | undefined,
     );

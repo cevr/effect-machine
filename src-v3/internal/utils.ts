@@ -2,7 +2,8 @@
  * Internal utilities for effect-machine.
  * @internal
  */
-import { Effect, Stream } from "effect";
+import type { Effect } from "effect";
+import { Effect as E, Stream } from "effect";
 import type { ActorSystem } from "../actor.js";
 
 // ============================================================================
@@ -76,8 +77,8 @@ export const getTag = (
 };
 
 /** Check if a value is an Effect */
-export const isEffect: (value: unknown) => value is Effect.Effect<unknown, unknown, unknown> =
-  Effect.isEffect;
+export const isEffect = (value: unknown): value is Effect.Effect<unknown, unknown, unknown> =>
+  typeof value === "object" && value !== null && E.EffectTypeId in value;
 
 // ============================================================================
 // Stub System
@@ -90,17 +91,17 @@ export const isEffect: (value: unknown) => value is Effect.Effect<unknown, unkno
  * @internal
  */
 export const stubSystem: ActorSystem = {
-  spawn: () => Effect.die("spawn not supported in stub system"),
-  restore: () => Effect.die("restore not supported in stub system"),
-  get: () => Effect.die("get not supported in stub system"),
-  stop: () => Effect.die("stop not supported in stub system"),
+  spawn: () => E.die("spawn not supported in stub system"),
+  restore: () => E.die("restore not supported in stub system"),
+  get: () => E.die("get not supported in stub system"),
+  stop: () => E.die("stop not supported in stub system"),
   events: Stream.empty,
   get actors() {
     return new Map();
   },
   subscribe: () => () => {},
-  listPersisted: () => Effect.die("listPersisted not supported in stub system"),
-  restoreMany: () => Effect.die("restoreMany not supported in stub system"),
-  restoreAll: () => Effect.die("restoreAll not supported in stub system"),
+  listPersisted: () => E.die("listPersisted not supported in stub system"),
+  restoreMany: () => E.die("restoreMany not supported in stub system"),
+  restoreAll: () => E.die("restoreAll not supported in stub system"),
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- structural stub, overloaded spawn signature doesn't match
 } as any;

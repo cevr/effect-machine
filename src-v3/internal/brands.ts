@@ -1,20 +1,26 @@
 // eslint-disable-next-line eslint-plugin-import/namespace -- false positive: Brand is a type namespace in effect
 import type { Brand } from "effect";
 
-// String-based type IDs for branding (v4 Brand requires string keys)
-export type StateTypeId = "effect-machine/StateTypeId";
-export type EventTypeId = "effect-machine/EventTypeId";
+// Unique symbols for type-level branding
+declare const StateTypeId: unique symbol;
+declare const EventTypeId: unique symbol;
 
-// Brand interfaces
+export type StateTypeId = typeof StateTypeId;
+export type EventTypeId = typeof EventTypeId;
+
+// Brand interfaces - eslint-disable-next-line comments for false positive namespace warnings
+// eslint-disable-next-line import/namespace
 export interface StateBrand extends Brand.Brand<StateTypeId> {}
+// eslint-disable-next-line import/namespace
 export interface EventBrand extends Brand.Brand<EventTypeId> {}
 
 // Shared branded type constraints used across all combinators
 export type BrandedState = { readonly _tag: string } & StateBrand;
 export type BrandedEvent = { readonly _tag: string } & EventBrand;
 
-// String-based schema branding (ties brand to specific schema definition)
-type SchemaIdTypeId = "effect-machine/SchemaIdTypeId";
+// Unique symbols for schema-level branding (ties brand to specific schema definition)
+declare const SchemaIdTypeId: unique symbol;
+type SchemaIdTypeId = typeof SchemaIdTypeId;
 
 /**
  * Brand that captures the schema definition type D.
@@ -23,6 +29,7 @@ type SchemaIdTypeId = "effect-machine/SchemaIdTypeId";
  */
 export interface SchemaIdBrand<
   _D extends Record<string, unknown>,
+  // eslint-disable-next-line import/namespace
 > extends Brand.Brand<SchemaIdTypeId> {}
 
 /**
