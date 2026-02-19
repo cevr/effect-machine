@@ -1,11 +1,10 @@
 ---
-"effect-machine": patch
+"effect-machine": minor
 ---
 
-Migrate test suite to Effect v4
+Migrate to Effect v4 (4.0.0-beta.5)
 
-- Update effect-bun-test to v0.2.0 (v4-compatible)
-- Migrate all 19 test files to v4 APIs (Effect, Schema, SubscriptionRef, ServiceMap)
-- Fix MachineStateSchema/MachineEventSchema types to use Schema.Codec for encode/decode compat
-- Disable oxlint import/namespace rule (false positives on type-only Brand imports)
-- Update MIGRATION-GUIDE.md with new findings and bulk migration strategy
+- Default export now targets Effect v4 — v3 users should import from `effect-machine/v3`
+- Migrate src/ and test suite to v4 APIs (Effect, Schema, SubscriptionRef, ServiceMap)
+- MachineStateSchema/MachineEventSchema now use Schema.Codec for encode/decode compat
+- 213 tests passing across 19 files
