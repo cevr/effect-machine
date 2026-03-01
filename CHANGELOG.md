@@ -1,5 +1,12 @@
 # effect-machine
 
+## 0.7.1
+
+### Patch Changes
+
+- [`fa54c61`](https://github.com/cevr/effect-machine/commit/fa54c61db824bdd9bf77976269844fa83d73e96b) Thanks [@cevr](https://github.com/cevr)! - Update Effect dependency to 4.0.0-beta.21
+  - Replace `Effect.makeSemaphore` with `Semaphore.make` (removed in beta.6)
+
 ## 0.7.0
 
 ### Minor Changes
