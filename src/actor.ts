@@ -19,6 +19,7 @@ import {
   Queue,
   Ref,
   Scope,
+  Semaphore,
   ServiceMap,
   Stream,
   SubscriptionRef,
@@ -946,7 +947,7 @@ const notifySystemListeners = (listeners: Set<SystemEventListener>, event: Syste
 const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
   // MutableHashMap for O(1) spawn/stop/get operations
   const actorsMap = MutableHashMap.empty<string, ActorRef<AnyState, unknown>>();
-  const spawnGate = yield* Effect.makeSemaphore(1);
+  const spawnGate = yield* Semaphore.make(1);
   const withSpawnGate = spawnGate.withPermits(1);
 
   // Observable infrastructure

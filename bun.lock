@@ -5,7 +5,7 @@
     "": {
       "name": "effect-machine",
       "dependencies": {
-        "effect": "4.0.0-beta.5",
+        "effect": "4.0.0-beta.21",
       },
       "devDependencies": {
         "@changesets/changelog-github": "^0.5.2",
@@ -27,7 +27,7 @@
     },
   },
   "overrides": {
-    "effect": "4.0.0-beta.5",
+    "effect": "4.0.0-beta.21",
   },
   "packages": {
     "@babel/generator": ["@babel/generator@8.0.0-rc.1", "", { "dependencies": { "@babel/parser": "^8.0.0-rc.1", "@babel/types": "^8.0.0-rc.1", "@jridgewell/gen-mapping": "^0.3.12", "@jridgewell/trace-mapping": "^0.3.28", "@types/jsesc": "^2.5.0", "jsesc": "^3.0.2" } }, "sha512-3ypWOOiC4AYHKr8vYRVtWtWmyvcoItHtVqF8paFax+ydpmUdPsJpLBkBBs5ItmhdrwC3a0ZSqqFAdzls4ODP3w=="],
@@ -320,7 +320,7 @@
 
     "dts-resolver": ["dts-resolver@2.1.3", "", { "peerDependencies": { "oxc-resolver": ">=11.0.0" }, "optionalPeers": ["oxc-resolver"] }, "sha512-bihc7jPC90VrosXNzK0LTE2cuLP6jr0Ro8jk+kMugHReJVLIpHz/xadeq3MhuwyO4TD4OA3L1Q8pBBFRc08Tsw=="],
 
-    "effect": ["effect@4.0.0-beta.5", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "fast-check": "^4.5.3", "find-my-way-ts": "^0.1.6", "ini": "^6.0.0", "kubernetes-types": "^1.30.0", "msgpackr": "^1.11.8", "multipasta": "^0.2.7", "toml": "^3.0.0", "uuid": "^13.0.0", "yaml": "^2.8.2" } }, "sha512-M78LYkzjnfUgYvdNF/CoLF9gK74zEORHd0pSoSa/p2BQNJhe7fuOyksddBaZULfJeajzTEOKyRfymsBdaxKA7w=="],
+    "effect": ["effect@4.0.0-beta.21", "", { "dependencies": { "@standard-schema/spec": "^1.1.0", "fast-check": "^4.5.3", "find-my-way-ts": "^0.1.6", "ini": "^6.0.0", "kubernetes-types": "^1.30.0", "msgpackr": "^1.11.8", "multipasta": "^0.2.7", "toml": "^3.0.0", "uuid": "^13.0.0", "yaml": "^2.8.2" } }, "sha512-M2pujOGwVpu3q+10S7C99Ql19BreKgxKXNLZy8NpJ7ymT1vs7NzG9NWI6dFtcF5do0Dzas1Kpa8NwSH+sqy/Cw=="],
 
     "effect-bun-test": ["effect-bun-test@0.2.0", "", { "dependencies": { "effect": "4.0.0-beta.5" }, "peerDependencies": { "bun": "*" } }, "sha512-JYrCptYsWEgrYCHhW7C1+LAPkdAY9gr2+E9xU3hTsEvUV8eaqgtOOv43j2nunP/0H9mOPhQLmUkNKXPqos20eQ=="],
 
