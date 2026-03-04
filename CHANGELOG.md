@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.7.2
+
+### Patch Changes
+
+- [`f6c5bbe`](https://github.com/cevr/effect-machine/commit/f6c5bbee39bc118544f8cd88599a23655545c74f) Thanks [@cevr](https://github.com/cevr)! - Update Effect dependency to 4.0.0-beta.26
+
 ## 0.7.1
 
 ### Patch Changes
