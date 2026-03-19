@@ -55,7 +55,7 @@
     "release": "bun run build && changeset publish"
   },
   "dependencies": {
-    "effect": "4.0.0-beta.26"
+    "effect": "4.0.0-beta.35"
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.5.2",
@@ -80,6 +80,6 @@
     }
   },
   "overrides": {
-    "effect": "4.0.0-beta.26"
+    "effect": "4.0.0-beta.35"
   }
 }
