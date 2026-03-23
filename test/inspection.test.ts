@@ -4,12 +4,15 @@ import { Effect, Schema } from "effect";
 import {
   ActorSystemDefault,
   ActorSystemService,
+  combineInspectors,
   collectingInspector,
   type InspectionEvent,
   makeInspector,
+  makeInspectorEffect,
   InspectorService,
   Machine,
   State,
+  tracingInspector,
   Event,
 } from "../src/index.js";
 import { describe, expect, it, yieldFibers } from "effect-bun-test";
@@ -262,6 +265,87 @@ describe("Inspection", () => {
           throw new Error("boom");
         }),
       ),
+    ),
+  );
+
+  it.scopedLive("effectful inspectors run inside the actor flow", () => {
+    const events: InspectionEvent<TestState, TestEvent>[] = [];
+
+    return Effect.gen(function* () {
+      const machine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle,
+      }).on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }));
+
+      const system = yield* ActorSystemService;
+      const actor = yield* system.spawn("test", machine.build());
+
+      yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
+      yield* yieldFibers;
+
+      expect(events.some((event) => event.type === "@machine.transition")).toBe(true);
+    }).pipe(
+      Effect.provide(ActorSystemDefault),
+      Effect.provideService(
+        InspectorService,
+        makeInspectorEffect((event) =>
+          Effect.sync(() => {
+            events.push(event);
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.scopedLive("combined inspectors isolate failures", () => {
+    const events: InspectionEvent<TestState, TestEvent>[] = [];
+
+    return Effect.gen(function* () {
+      const machine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle,
+      }).on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }));
+
+      const system = yield* ActorSystemService;
+      const actor = yield* system.spawn("test", machine.build());
+
+      yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
+      yield* yieldFibers;
+
+      expect(events.some((event) => event.type === "@machine.transition")).toBe(true);
+    }).pipe(
+      Effect.provide(ActorSystemDefault),
+      Effect.provideService(
+        InspectorService,
+        combineInspectors(
+          makeInspectorEffect(() => Effect.die("boom")),
+          collectingInspector(events),
+        ),
+      ),
+    );
+  });
+
+  it.scopedLive("tracing inspector does not break actor processing", () =>
+    Effect.gen(function* () {
+      const machine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle,
+      }).on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }));
+
+      const system = yield* ActorSystemService;
+      const actor = yield* system.spawn("test", machine.build());
+
+      yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
+      yield* yieldFibers;
+
+      const state = yield* actor.snapshot;
+      expect(state._tag).toBe("Loading");
+    }).pipe(
+      Effect.provide(ActorSystemDefault),
+      Effect.provideService(InspectorService, tracingInspector()),
     ),
   );
 

@@ -70,15 +70,20 @@ export type {
   EventReceivedEvent,
   InspectionEvent,
   Inspector,
+  InspectorHandler,
   SpawnEvent,
   StopEvent,
+  TracingInspectorOptions,
   TransitionEvent,
 } from "./inspection.js";
 export {
+  combineInspectors,
   collectingInspector,
   consoleInspector,
   Inspector as InspectorService,
   makeInspector,
+  makeInspectorEffect,
+  tracingInspector,
 } from "./inspection.js";
 
 // Persistence

@@ -1,4 +1,4 @@
-import { ServiceMap, type Schema } from "effect";
+import { Effect, Option, ServiceMap, type Schema } from "effect";
 
 // ============================================================================
 // Type-level helpers
@@ -109,8 +109,12 @@ export type AnyInspectionEvent = InspectionEvent<
 /**
  * Inspector interface for observing machine behavior
  */
+export type InspectorHandler<S, E> = (
+  event: InspectionEvent<S, E>,
+) => void | Effect.Effect<void, never, never>;
+
 export interface Inspector<S, E> {
-  readonly onInspect: (event: InspectionEvent<S, E>) => void;
+  readonly onInspect: InspectorHandler<S, E>;
 }
 
 /**
@@ -129,8 +133,156 @@ export const Inspector = ServiceMap.Service<Inspector<any, any>>("@effect/machin
  * - `makeInspector<typeof MyState, typeof MyEvent>(cb)` — schema constructors (auto-extracts `.Type`)
  */
 export const makeInspector = <S = { readonly _tag: string }, E = { readonly _tag: string }>(
-  onInspect: (event: InspectionEvent<ResolveType<S>, ResolveType<E>>) => void,
+  onInspect: InspectorHandler<ResolveType<S>, ResolveType<E>>,
 ): Inspector<ResolveType<S>, ResolveType<E>> => ({ onInspect });
+
+export const makeInspectorEffect = <S = { readonly _tag: string }, E = { readonly _tag: string }>(
+  onInspect: (
+    event: InspectionEvent<ResolveType<S>, ResolveType<E>>,
+  ) => Effect.Effect<void, never, never>,
+): Inspector<ResolveType<S>, ResolveType<E>> => ({ onInspect });
+
+const inspectionEffect = <S, E>(
+  inspector: Inspector<S, E>,
+  event: InspectionEvent<S, E>,
+): Effect.Effect<void, never, never> => {
+  const result = inspector.onInspect(event);
+  return Effect.isEffect(result) ? result : Effect.void;
+};
+
+export const combineInspectors = <S, E>(
+  ...inspectors: ReadonlyArray<Inspector<S, E>>
+): Inspector<S, E> => ({
+  onInspect: (event) =>
+    Effect.forEach(
+      inspectors,
+      (inspector) => inspectionEffect(inspector, event).pipe(Effect.catchCause(() => Effect.void)),
+      { concurrency: "unbounded", discard: true },
+    ),
+});
+
+export interface TracingInspectorOptions<S, E> {
+  readonly spanName?: string | ((event: InspectionEvent<S, E>) => string);
+  readonly attributes?: (
+    event: InspectionEvent<S, E>,
+  ) => Readonly<Record<string, string | number | boolean>>;
+  readonly eventName?: (event: InspectionEvent<S, E>) => string;
+}
+
+const inspectionSpanName = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+>(
+  event: InspectionEvent<S, E>,
+) => {
+  switch (event.type) {
+    case "@machine.spawn":
+      return `Machine.inspect ${event.initialState._tag}`;
+    case "@machine.event":
+      return `Machine.inspect ${event.event._tag}`;
+    case "@machine.transition":
+      return `Machine.inspect ${event.fromState._tag}->${event.toState._tag}`;
+    case "@machine.effect":
+      return `Machine.inspect ${event.effectType}`;
+    case "@machine.error":
+      return `Machine.inspect ${event.phase}`;
+    case "@machine.stop":
+      return `Machine.inspect ${event.finalState._tag}`;
+  }
+};
+
+const inspectionTraceName = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+>(
+  event: InspectionEvent<S, E>,
+) => {
+  switch (event.type) {
+    case "@machine.spawn":
+      return `machine.spawn ${event.initialState._tag}`;
+    case "@machine.event":
+      return `machine.event ${event.event._tag}`;
+    case "@machine.transition":
+      return `machine.transition ${event.fromState._tag}->${event.toState._tag}`;
+    case "@machine.effect":
+      return `machine.effect ${event.effectType}`;
+    case "@machine.error":
+      return `machine.error ${event.phase}`;
+    case "@machine.stop":
+      return `machine.stop ${event.finalState._tag}`;
+  }
+};
+
+const inspectionAttributes = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+>(
+  event: InspectionEvent<S, E>,
+): Record<string, string | number | boolean> => {
+  const shared = {
+    "machine.actor.id": event.actorId,
+    "machine.inspection.type": event.type,
+  };
+
+  switch (event.type) {
+    case "@machine.spawn":
+      return { ...shared, "machine.state.initial": event.initialState._tag };
+    case "@machine.event":
+      return {
+        ...shared,
+        "machine.state.current": event.state._tag,
+        "machine.event.tag": event.event._tag,
+      };
+    case "@machine.transition":
+      return {
+        ...shared,
+        "machine.state.from": event.fromState._tag,
+        "machine.state.to": event.toState._tag,
+        "machine.event.tag": event.event._tag,
+      };
+    case "@machine.effect":
+      return {
+        ...shared,
+        "machine.state.current": event.state._tag,
+        "machine.effect.kind": event.effectType,
+      };
+    case "@machine.error":
+      return {
+        ...shared,
+        "machine.phase": event.phase,
+        "machine.state.current": event.state._tag,
+      };
+    case "@machine.stop":
+      return { ...shared, "machine.state.final": event.finalState._tag };
+  }
+};
+
+export const tracingInspector = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+>(
+  options?: TracingInspectorOptions<S, E>,
+): Inspector<S, E> => ({
+  onInspect: (event) => {
+    const spanName =
+      typeof options?.spanName === "function" ? options.spanName(event) : options?.spanName;
+    const traceName = options?.eventName?.(event) ?? inspectionTraceName(event);
+    const attributes = {
+      ...inspectionAttributes(event),
+      ...(options?.attributes?.(event) ?? {}),
+    };
+
+    return Effect.gen(function* () {
+      const currentSpan = yield* Effect.option(Effect.currentSpan);
+      if (Option.isSome(currentSpan)) {
+        currentSpan.value.event(traceName, BigInt(event.timestamp) * 1_000_000n, {
+          actorId: event.actorId,
+          inspectionType: event.type,
+        });
+      }
+    }).pipe(Effect.withSpan(spanName ?? inspectionSpanName(event), { attributes }));
+  },
+});
 
 // ============================================================================
 // Built-in Inspectors
@@ -175,4 +327,8 @@ export const collectingInspector = <
   E extends { readonly _tag: string },
 >(
   events: InspectionEvent<S, E>[],
-): Inspector<S, E> => ({ onInspect: (event) => events.push(event) });
+): Inspector<S, E> => ({
+  onInspect: (event) => {
+    events.push(event);
+  },
+});
