@@ -601,13 +601,20 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   // Fork background effects (run for entire machine lifetime)
   const backgroundFibers: Fiber.Fiber<void, never>[] = [];
   const initEvent = { _tag: INTERNAL_INIT_EVENT } as E;
-  const ctx = { state: machine.initial, event: initEvent, self, system };
+  const ctx = { actorId: id, state: machine.initial, event: initEvent, self, system };
   const { effects: effectSlots } = machine._slots;
 
   for (const bg of machine.backgroundEffects) {
     const fiber = yield* Effect.forkDetach(
       bg
-        .handler({ state: machine.initial, event: initEvent, self, effects: effectSlots, system })
+        .handler({
+          actorId: id,
+          state: machine.initial,
+          event: initEvent,
+          self,
+          effects: effectSlots,
+          system,
+        })
         .pipe(Effect.provideService(machine.Context, ctx)),
     );
     backgroundFibers.push(fiber);
@@ -846,6 +853,7 @@ const processEvent = Effect.fn("effect-machine.actor.processEvent")(function* <
     self,
     stateScopeRef,
     system,
+    actorId,
     hooks,
   );
 
@@ -926,7 +934,7 @@ const runSpawnEffectsWithInspection = Effect.fn("effect-machine.actor.spawnEffec
             timestamp,
           }));
 
-  yield* runSpawnEffects(machine, state, event, self, stateScope, system, onError);
+  yield* runSpawnEffects(machine, state, event, self, stateScope, system, actorId, onError);
 });
 
 // ============================================================================

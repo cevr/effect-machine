@@ -104,6 +104,7 @@ const replayEvents = Effect.fn("effect-machine.persistentActor.replayEvents")(fu
         persistedEvent.event,
         self,
         stubSystem,
+        "restore",
       );
     }
     version = persistedEvent.version;
@@ -375,13 +376,20 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
   // Fork background effects (run for entire machine lifetime)
   const backgroundFibers: Fiber.Fiber<void, never>[] = [];
   const initEvent = { _tag: INTERNAL_INIT_EVENT } as E;
-  const initCtx = { state: resolvedInitial, event: initEvent, self, system };
+  const initCtx = { actorId: id, state: resolvedInitial, event: initEvent, self, system };
   const { effects: effectSlots } = typedMachine._slots;
 
   for (const bg of typedMachine.backgroundEffects) {
     const fiber = yield* Effect.forkDetach(
       bg
-        .handler({ state: resolvedInitial, event: initEvent, self, effects: effectSlots, system })
+        .handler({
+          actorId: id,
+          state: resolvedInitial,
+          event: initEvent,
+          self,
+          effects: effectSlots,
+          system,
+        })
         .pipe(Effect.provideService(typedMachine.Context, initCtx)),
     );
     backgroundFibers.push(fiber);
@@ -587,6 +595,7 @@ const persistentEventLoop = Effect.fn("effect-machine.persistentActor.eventLoop"
       self,
       stateScopeRef,
       system,
+      id,
       hooks,
     );
 
@@ -689,7 +698,7 @@ const runSpawnEffectsWithInspection = Effect.fn("effect-machine.persistentActor.
               timestamp,
             }));
 
-    yield* runSpawnEffects(machine, state, event, self, stateScope, system, onError);
+    yield* runSpawnEffects(machine, state, event, self, stateScope, system, actorId, onError);
   },
 );
 

@@ -68,7 +68,14 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
   const states: S[] = [currentState];
 
   for (const event of events) {
-    const result = yield* executeTransition(machine, currentState, event, dummySelf, stubSystem);
+    const result = yield* executeTransition(
+      machine,
+      currentState,
+      event,
+      dummySelf,
+      stubSystem,
+      "simulation",
+    );
 
     if (!result.transitioned) {
       continue;
@@ -262,7 +269,14 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
   const send = Effect.fn("effect-machine.testHarness.send")(function* (event: E) {
     const currentState = yield* SubscriptionRef.get(stateRef);
 
-    const result = yield* executeTransition(machine, currentState, event, dummySelf, stubSystem);
+    const result = yield* executeTransition(
+      machine,
+      currentState,
+      event,
+      dummySelf,
+      stubSystem,
+      "test-harness",
+    );
 
     if (!result.transitioned) {
       return currentState;

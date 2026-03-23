@@ -54,7 +54,9 @@ import { persist as persistImpl } from "./persistence/persistent-machine.js";
 import { SlotProvisionError, ProvisionValidationError } from "./errors.js";
 import type { DuplicateActorError } from "./errors.js";
 import { invalidateIndex } from "./internal/transition.js";
+import { emitWithTimestamp } from "./internal/inspection.js";
 import type { ActorRef, ActorSystem } from "./actor.js";
+import { Inspector as InspectorTag } from "./inspection.js";
 import type {
   GuardsSchema,
   EffectsSchema,
@@ -97,6 +99,7 @@ export interface HandlerContext<State, Event, GD extends GuardsDef, ED extends E
  * Handler context passed to state effect handlers (onEnter, spawn, background)
  */
 export interface StateHandlerContext<State, Event, ED extends EffectsDef> {
+  readonly actorId: string;
   readonly state: State;
   readonly event: Event;
   readonly self: MachineRef<Event>;
@@ -154,6 +157,12 @@ export interface PersistOptions {
   readonly machineType?: string;
 }
 
+export interface TaskOptions<State, Event, ED extends EffectsDef, A, E1, ES, EF> {
+  readonly onSuccess: (value: A, ctx: StateHandlerContext<State, Event, ED>) => ES;
+  readonly onFailure?: (cause: Cause.Cause<E1>, ctx: StateHandlerContext<State, Event, ED>) => EF;
+  readonly name?: string;
+}
+
 // ============================================================================
 // Internal helpers
 // ============================================================================
@@ -161,6 +170,27 @@ export interface PersistOptions {
 type IsAny<T> = 0 extends 1 & T ? true : false;
 type IsUnknown<T> = unknown extends T ? ([T] extends [unknown] ? true : false) : false;
 type NormalizeR<T> = IsAny<T> extends true ? T : IsUnknown<T> extends true ? never : T;
+
+const emitTaskInspection = <S extends { readonly _tag: string }>(input: {
+  readonly actorId: string;
+  readonly state: S;
+  readonly taskName: string | undefined;
+  readonly phase: "start" | "success" | "failure" | "interrupt";
+  readonly error?: string;
+}) =>
+  Effect.flatMap(Effect.serviceOption(InspectorTag), (inspector) =>
+    Option.isNone(inspector)
+      ? Effect.void
+      : emitWithTimestamp(inspector.value, (timestamp) => ({
+          type: "@machine.task",
+          actorId: input.actorId,
+          state: input.state,
+          taskName: input.taskName,
+          phase: input.phase,
+          error: input.error,
+          timestamp,
+        })),
+  );
 
 // ============================================================================
 // MakeConfig
@@ -391,6 +421,59 @@ export class Machine<
 
   // ---- on ----
 
+  from<NS extends VariantsUnion<_SD> & BrandedState, R1>(
+    state: TaggedOrConstructor<NS>,
+    build: (scope: TransitionScope<State, Event, R, _SD, _ED, GD, EFD, NS>) => R1,
+  ): Machine<State, Event, R, _SD, _ED, GD, EFD>;
+  from<NS extends ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>, R1>(
+    states: NS,
+    build: (
+      scope: TransitionScope<
+        State,
+        Event,
+        R,
+        _SD,
+        _ED,
+        GD,
+        EFD,
+        NS[number] extends TaggedOrConstructor<infer S extends VariantsUnion<_SD> & BrandedState>
+          ? S
+          : never
+      >,
+    ) => R1,
+  ): Machine<State, Event, R, _SD, _ED, GD, EFD>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  from(
+    stateOrStates: any,
+    build: (scope: TransitionScope<any, any, any, any, any, any, any, any>) => unknown,
+  ) {
+    const states = Array.isArray(stateOrStates) ? stateOrStates : [stateOrStates];
+    build(new TransitionScope(this, states));
+    return this;
+  }
+
+  /** @internal */
+  scopeTransition<
+    NS extends VariantsUnion<_SD> & BrandedState,
+    NE extends VariantsUnion<_ED> & BrandedEvent,
+    RS extends VariantsUnion<_SD> & BrandedState,
+  >(
+    states: ReadonlyArray<TaggedOrConstructor<NS>>,
+    event: TaggedOrConstructor<NE>,
+    handler: TransitionHandler<NS, NE, RS, GD, EFD, never>,
+    reenter: boolean,
+  ): Machine<State, Event, R, _SD, _ED, GD, EFD> {
+    for (const state of states) {
+      this.addTransition(
+        state,
+        event,
+        handler as TransitionHandler<NS, NE, BrandedState, GD, EFD, never>,
+        reenter,
+      );
+    }
+    return this;
+  }
+
   /** Register transition for a single state */
   on<
     NS extends VariantsUnion<_SD> & BrandedState,
@@ -576,22 +659,27 @@ export class Machine<
     run: (
       ctx: StateHandlerContext<NS, VariantsUnion<_ED> & BrandedEvent, EFD>,
     ) => Effect.Effect<A, E1, Scope.Scope>,
-    options: {
-      readonly onSuccess: (
-        value: A,
-        ctx: StateHandlerContext<NS, VariantsUnion<_ED> & BrandedEvent, EFD>,
-      ) => ES;
-      readonly onFailure?: (
-        cause: Cause.Cause<E1>,
-        ctx: StateHandlerContext<NS, VariantsUnion<_ED> & BrandedEvent, EFD>,
-      ) => EF;
-    },
+    options: TaskOptions<NS, VariantsUnion<_ED> & BrandedEvent, EFD, A, E1, ES, EF>,
   ): Machine<State, Event, R, _SD, _ED, GD, EFD> {
     const handler = Effect.fn("effect-machine.task")(function* (
       ctx: StateHandlerContext<NS, VariantsUnion<_ED> & BrandedEvent, EFD>,
     ) {
+      yield* emitTaskInspection({
+        actorId: ctx.actorId,
+        state: ctx.state,
+        taskName: options.name,
+        phase: "start",
+      });
+
       const exit = yield* Effect.exit(run(ctx));
+
       if (Exit.isSuccess(exit)) {
+        yield* emitTaskInspection({
+          actorId: ctx.actorId,
+          state: ctx.state,
+          taskName: options.name,
+          phase: "success",
+        });
         yield* ctx.self.send(options.onSuccess(exit.value, ctx));
         yield* Effect.yieldNow;
         return;
@@ -599,8 +687,21 @@ export class Machine<
 
       const cause = exit.cause;
       if (Cause.hasInterruptsOnly(cause)) {
+        yield* emitTaskInspection({
+          actorId: ctx.actorId,
+          state: ctx.state,
+          taskName: options.name,
+          phase: "interrupt",
+        });
         return;
       }
+      yield* emitTaskInspection({
+        actorId: ctx.actorId,
+        state: ctx.state,
+        taskName: options.name,
+        phase: "failure",
+        error: Cause.pretty(cause),
+      });
       if (options.onFailure !== undefined) {
         yield* ctx.self.send(options.onFailure(cause, ctx));
         yield* Effect.yieldNow;
@@ -774,6 +875,41 @@ export class Machine<
       config.guards as GuardsSchema<GD> | undefined,
       config.effects as EffectsSchema<EFD> | undefined,
     );
+  }
+}
+
+class TransitionScope<
+  State,
+  Event,
+  R,
+  _SD extends Record<string, Schema.Struct.Fields>,
+  _ED extends Record<string, Schema.Struct.Fields>,
+  GD extends GuardsDef,
+  EFD extends EffectsDef,
+  SelectedState extends VariantsUnion<_SD> & BrandedState,
+> {
+  constructor(
+    private readonly machine: Machine<State, Event, R, _SD, _ED, GD, EFD>,
+    private readonly states: ReadonlyArray<TaggedOrConstructor<SelectedState>>,
+  ) {}
+
+  on<NE extends VariantsUnion<_ED> & BrandedEvent, RS extends VariantsUnion<_SD> & BrandedState>(
+    event: TaggedOrConstructor<NE>,
+    handler: TransitionHandler<SelectedState, NE, RS, GD, EFD, never>,
+  ): TransitionScope<State, Event, R, _SD, _ED, GD, EFD, SelectedState> {
+    this.machine.scopeTransition(this.states, event, handler, false);
+    return this;
+  }
+
+  reenter<
+    NE extends VariantsUnion<_ED> & BrandedEvent,
+    RS extends VariantsUnion<_SD> & BrandedState,
+  >(
+    event: TaggedOrConstructor<NE>,
+    handler: TransitionHandler<SelectedState, NE, RS, GD, EFD, never>,
+  ): TransitionScope<State, Event, R, _SD, _ED, GD, EFD, SelectedState> {
+    this.machine.scopeTransition(this.states, event, handler, true);
+    return this;
   }
 }
 

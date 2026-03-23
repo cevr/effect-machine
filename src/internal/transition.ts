@@ -55,8 +55,9 @@ export const runTransitionHandler = Effect.fn("effect-machine.runTransitionHandl
   event: E,
   self: MachineRef<E>,
   system: ActorSystem,
+  actorId: string,
 ) {
-  const ctx: MachineContext<S, E, MachineRef<E>> = { state, event, self, system };
+  const ctx: MachineContext<S, E, MachineRef<E>> = { actorId, state, event, self, system };
   const { guards, effects } = machine._slots;
 
   const handlerCtx: HandlerContext<S, E, GD, EFD> = { state, event, guards, effects };
@@ -92,6 +93,7 @@ export const executeTransition = Effect.fn("effect-machine.executeTransition")(f
   event: E,
   self: MachineRef<E>,
   system: ActorSystem,
+  actorId: string,
 ) {
   const transition = resolveTransition(machine, currentState, event);
 
@@ -110,6 +112,7 @@ export const executeTransition = Effect.fn("effect-machine.executeTransition")(f
     event,
     self,
     system,
+    actorId,
   );
 
   return {
@@ -186,10 +189,11 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
   self: MachineRef<E>,
   stateScopeRef: { current: Scope.Closeable },
   system: ActorSystem,
+  actorId: string,
   hooks?: ProcessEventHooks<S, E>,
 ) {
   // Execute transition (defect-aware)
-  const result = yield* executeTransition(machine, currentState, event, self, system).pipe(
+  const result = yield* executeTransition(machine, currentState, event, self, system, actorId).pipe(
     Effect.catchCause((cause) => {
       if (Cause.hasInterruptsOnly(cause)) {
         return Effect.interrupt;
@@ -247,6 +251,7 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
       self,
       stateScopeRef.current,
       system,
+      actorId,
       hooks?.onError,
     );
   }
@@ -278,21 +283,25 @@ export const runSpawnEffects = Effect.fn("effect-machine.runSpawnEffects")(funct
   self: MachineRef<E>,
   stateScope: Scope.Closeable,
   system: ActorSystem,
+  actorId: string,
   onError?: (info: ProcessEventError<S, E>) => Effect.Effect<void>,
 ) {
   const spawnEffects = findSpawnEffects(machine, state._tag);
-  const ctx: MachineContext<S, E, MachineRef<E>> = { state, event, self, system };
+  const ctx: MachineContext<S, E, MachineRef<E>> = { actorId, state, event, self, system };
   const { effects: effectSlots } = machine._slots;
   const reportError = onError;
 
   for (const spawnEffect of spawnEffects) {
     // Fork the spawn effect into the state scope - interrupted when scope closes
     const effect = (
-      spawnEffect.handler({ state, event, self, effects: effectSlots, system }) as Effect.Effect<
-        void,
-        never,
-        R
-      >
+      spawnEffect.handler({
+        actorId,
+        state,
+        event,
+        self,
+        effects: effectSlots,
+        system,
+      }) as Effect.Effect<void, never, R>
     ).pipe(
       Effect.provideService(machine.Context, ctx),
       Effect.catchCause((cause) => {

@@ -45,6 +45,7 @@ export type {
   PersistOptions,
   HandlerContext,
   StateHandlerContext,
+  TaskOptions,
   ProvideHandlers,
 } from "./machine.js";
 
@@ -73,6 +74,7 @@ export type {
   InspectorHandler,
   SpawnEvent,
   StopEvent,
+  TaskEvent,
   TracingInspectorOptions,
   TransitionEvent,
 } from "./inspection.js";

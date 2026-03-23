@@ -388,4 +388,51 @@ describe("Inspection", () => {
       Effect.provideService(InspectorService, collectingInspector(events)),
     );
   });
+
+  it.scopedLive("named tasks emit lifecycle inspection events", () => {
+    const TaskState = State({
+      Idle: {},
+      Running: {},
+      Done: {},
+    });
+    const TaskEvent = Event({
+      Start: {},
+      Success: {},
+    });
+    const events: InspectionEvent<typeof TaskState.Type, typeof TaskEvent.Type>[] = [];
+
+    return Effect.gen(function* () {
+      const machine = Machine.make({
+        state: TaskState,
+        event: TaskEvent,
+        initial: TaskState.Idle,
+      })
+        .on(TaskState.Idle, TaskEvent.Start, () => TaskState.Running)
+        .on(TaskState.Running, TaskEvent.Success, () => TaskState.Done)
+        .task(TaskState.Running, () => Effect.succeed("ok"), {
+          name: "load-user",
+          onSuccess: () => TaskEvent.Success,
+        })
+        .final(TaskState.Done);
+
+      const system = yield* ActorSystemService;
+      const actor = yield* system.spawn("task-events", machine.build());
+
+      yield* actor.send(TaskEvent.Start);
+      yield* actor.awaitFinal;
+
+      const taskEvents = events.filter((event) => event.type === "@machine.task");
+      expect(
+        taskEvents.map((event) => (event.type === "@machine.task" ? event.phase : "bad")),
+      ).toEqual(["start", "success"]);
+      for (const event of taskEvents) {
+        if (event.type === "@machine.task") {
+          expect(event.taskName).toBe("load-user");
+        }
+      }
+    }).pipe(
+      Effect.provide(ActorSystemDefault),
+      Effect.provideService(InspectorService, collectingInspector(events)),
+    );
+  });
 });

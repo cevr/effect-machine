@@ -307,6 +307,43 @@ describe(".onAny()", () => {
   });
 });
 
+describe(".from()", () => {
+  test("scopes repeated transitions to shared states", async () => {
+    const FlowState = State({
+      Draft: {},
+      Review: {},
+      Approved: {},
+      Cancelled: {},
+    });
+    const FlowEvent = Event({
+      Submit: {},
+      Approve: {},
+      Cancel: {},
+    });
+
+    const machine = Machine.make({
+      state: FlowState,
+      event: FlowEvent,
+      initial: FlowState.Draft,
+    })
+      .on(FlowState.Draft, FlowEvent.Submit, () => FlowState.Review)
+      .from([FlowState.Draft, FlowState.Review], (scope) =>
+        scope.on(FlowEvent.Cancel, () => FlowState.Cancelled),
+      )
+      .from(FlowState.Review, (scope) => scope.on(FlowEvent.Approve, () => FlowState.Approved))
+      .final(FlowState.Cancelled)
+      .final(FlowState.Approved);
+
+    const cancelled = await Effect.runPromise(simulate(machine, [FlowEvent.Cancel]));
+    expect(cancelled.finalState._tag).toBe("Cancelled");
+
+    const approved = await Effect.runPromise(
+      simulate(machine, [FlowEvent.Submit, FlowEvent.Approve]),
+    );
+    expect(approved.finalState._tag).toBe("Approved");
+  });
+});
+
 // ============================================================================
 // .build() (F7)
 // ============================================================================

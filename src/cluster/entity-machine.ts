@@ -79,6 +79,7 @@ const processEvent = Effect.fn("effect-machine.cluster.processEvent")(function* 
     self,
     stateScopeRef,
     system,
+    "*",
     hooks,
   );
 
@@ -188,6 +189,7 @@ export const EntityMachine = {
         self,
         stateScopeRef.current,
         system,
+        entityId,
         options?.hooks?.onError,
       );
 

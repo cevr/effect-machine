@@ -57,6 +57,16 @@ export interface EffectEvent<S> {
   readonly timestamp: number;
 }
 
+export interface TaskEvent<S> {
+  readonly type: "@machine.task";
+  readonly actorId: string;
+  readonly state: S;
+  readonly taskName?: string;
+  readonly phase: "start" | "success" | "failure" | "interrupt";
+  readonly error?: string;
+  readonly timestamp: number;
+}
+
 /**
  * Event emitted when a transition handler or spawn effect fails with a defect
  */
@@ -88,6 +98,7 @@ export type InspectionEvent<S, E> =
   | EventReceivedEvent<S, E>
   | TransitionEvent<S, E>
   | EffectEvent<S>
+  | TaskEvent<S>
   | ErrorEvent<S, E>
   | StopEvent<S>;
 
@@ -184,6 +195,8 @@ const inspectionSpanName = <
       return `Machine.inspect ${event.fromState._tag}->${event.toState._tag}`;
     case "@machine.effect":
       return `Machine.inspect ${event.effectType}`;
+    case "@machine.task":
+      return `Machine.inspect task:${event.phase}`;
     case "@machine.error":
       return `Machine.inspect ${event.phase}`;
     case "@machine.stop":
@@ -206,6 +219,8 @@ const inspectionTraceName = <
       return `machine.transition ${event.fromState._tag}->${event.toState._tag}`;
     case "@machine.effect":
       return `machine.effect ${event.effectType}`;
+    case "@machine.task":
+      return `machine.task ${event.phase}${event.taskName === undefined ? "" : ` ${event.taskName}`}`;
     case "@machine.error":
       return `machine.error ${event.phase}`;
     case "@machine.stop":
@@ -245,6 +260,13 @@ const inspectionAttributes = <
         ...shared,
         "machine.state.current": event.state._tag,
         "machine.effect.kind": event.effectType,
+      };
+    case "@machine.task":
+      return {
+        ...shared,
+        "machine.state.current": event.state._tag,
+        "machine.task.phase": event.phase,
+        ...(event.taskName === undefined ? {} : { "machine.task.name": event.taskName }),
       };
     case "@machine.error":
       return {
@@ -309,6 +331,16 @@ export const consoleInspector = (): Inspector<
         break;
       case "@machine.effect":
         console.log(prefix, event.effectType, "effect in", event.state._tag);
+        break;
+      case "@machine.task":
+        console.log(
+          prefix,
+          "task",
+          event.phase,
+          event.taskName ?? "<unnamed>",
+          "in",
+          event.state._tag,
+        );
         break;
       case "@machine.error":
         console.log(prefix, "error in", event.phase, event.state._tag, "-", event.error);

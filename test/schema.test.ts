@@ -386,11 +386,12 @@ describe("State/Event with Machine", () => {
       initial: EditorState.Idle,
     })
       .on(EditorState.Idle, EditorEvent.Focus, () => EditorState.Typing({ text: "" }))
-      .on(EditorState.Typing, EditorEvent.KeyPress, ({ state, event }) =>
-        EditorState.Typing({ text: state.text + event.key }),
-      )
-      .on(EditorState.Typing, EditorEvent.Submit, ({ state }) =>
-        EditorState.Submitted({ text: state.text }),
+      .from(EditorState.Typing, (typing) =>
+        typing
+          .on(EditorEvent.KeyPress, ({ state, event }) =>
+            EditorState.Typing({ text: state.text + event.key }),
+          )
+          .on(EditorEvent.Submit, ({ state }) => EditorState.Submitted({ text: state.text })),
       )
       .final(EditorState.Submitted);
 
