@@ -442,10 +442,13 @@ export class Machine<
       >,
     ) => R1,
   ): Machine<State, Event, R, _SD, _ED, GD, EFD>;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   from(
-    stateOrStates: any,
-    build: (scope: TransitionScope<any, any, any, any, any, any, any, any>) => unknown,
+    stateOrStates:
+      | TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>
+      | ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>,
+    build: (
+      scope: TransitionScope<State, Event, R, _SD, _ED, GD, EFD, VariantsUnion<_SD> & BrandedState>,
+    ) => unknown,
   ) {
     const states = Array.isArray(stateOrStates) ? stateOrStates : [stateOrStates];
     build(new TransitionScope(this, states));
