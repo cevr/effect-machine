@@ -184,6 +184,8 @@ export type MachineEventSchema<D extends Record<string, Schema.Struct.Fields>> =
 /**
  * Build a schema-first definition from a record of tag -> fields
  */
+const RESERVED_DERIVE_KEYS = new Set(["_tag"]);
+
 const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
   definition: D,
 ): {
@@ -225,6 +227,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
         }
         if (partial !== undefined) {
           for (const [key, value] of Object.entries(partial)) {
+            if (RESERVED_DERIVE_KEYS.has(key)) continue;
             result[key] = value;
           }
         }

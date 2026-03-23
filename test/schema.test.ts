@@ -249,6 +249,19 @@ describe("State.derive()", () => {
     expect(s2.y).toBe(2);
   });
 
+  test("partial cannot override reserved _tag", () => {
+    const TS = State({
+      A: { x: Schema.Number },
+      B: { x: Schema.Number },
+    });
+
+    const a = TS.A({ x: 1 });
+    const b = TS.B.derive(a, { _tag: "A" } as never);
+
+    expect(b._tag).toBe("B");
+    expect(b.x).toBe(1);
+  });
+
   test("fields not in target are dropped", () => {
     const TS = State({
       A: { x: Schema.Number, extra: Schema.String },
