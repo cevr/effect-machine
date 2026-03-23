@@ -1,5 +1,15 @@
 # effect-machine
 
+## 0.8.0
+
+### Minor Changes
+
+- [`675f461`](https://github.com/cevr/effect-machine/commit/675f461b259639e1c2251d9a13cd334ae17881b4) Thanks [@cevr](https://github.com/cevr)! - Add effectful inspectors, scoped `from(...)` transitions, and named task inspection events.
+
+### Patch Changes
+
+- [`ac8f691`](https://github.com/cevr/effect-machine/commit/ac8f69125cacf9eb3ffe0dd63f2c71af36f306d9) Thanks [@cevr](https://github.com/cevr)! - Update Effect dependency to 4.0.0-beta.35
+
 ## 0.7.2
 
 ### Patch Changes
