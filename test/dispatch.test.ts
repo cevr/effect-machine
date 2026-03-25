@@ -166,3 +166,35 @@ describe("ActorRef.dispatch", () => {
     }),
   );
 });
+
+describe("ActorRef.dispatchPromise", () => {
+  it.scopedLive("returns ProcessEventResult as Promise", () =>
+    Effect.gen(function* () {
+      const machine = createMachine();
+      const actor = yield* Machine.spawn(machine);
+
+      const result = yield* Effect.promise(() =>
+        actor.dispatchPromise(TestEvent.Start({ value: 99 })),
+      );
+
+      expect(result.transitioned).toBe(true);
+      expect(result.previousState._tag).toBe("Idle");
+      expect(result.newState._tag).toBe("Active");
+      if (result.newState._tag === "Active") {
+        expect(result.newState.value).toBe(99);
+      }
+    }),
+  );
+
+  it.scopedLive("non-matching event returns transitioned false", () =>
+    Effect.gen(function* () {
+      const machine = createMachine();
+      const actor = yield* Machine.spawn(machine);
+
+      const result = yield* Effect.promise(() => actor.dispatchPromise(TestEvent.Unknown));
+
+      expect(result.transitioned).toBe(false);
+      expect(result.newState._tag).toBe("Idle");
+    }),
+  );
+});

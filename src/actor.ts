@@ -182,6 +182,12 @@ export interface ActorRef<State extends { readonly _tag: string }, Event> {
   readonly dispatch: (event: Event) => Effect.Effect<ProcessEventResult<State>>;
 
   /**
+   * Promise-based dispatch — send event and get back the transition result.
+   * Use at non-Effect boundaries (React event handlers, framework hooks, tests).
+   */
+  readonly dispatchPromise: (event: Event) => Promise<ProcessEventResult<State>>;
+
+  /**
    * Subscribe to state changes (sync callback)
    * Returns unsubscribe function
    */
@@ -549,6 +555,7 @@ export const buildActorRefCore = <
       }
     },
     dispatch,
+    dispatchPromise: (event) => Effect.runPromise(dispatch(event)),
     subscribe: (fn) => {
       listeners.add(fn);
       return () => {
