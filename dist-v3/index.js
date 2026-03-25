@@ -32,7 +32,6 @@ import {
   makeInMemoryPersistenceAdapter,
 } from "./persistence/adapters/in-memory.js";
 import "./persistence/index.js";
-
 export {
   Default as ActorSystemDefault,
   ActorSystem as ActorSystemService,

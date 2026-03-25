@@ -1,5 +1,4 @@
 import { Context, Schema } from "effect";
-
 //#region src-v3/persistence/adapter.ts
 /**
  * Error type for persistence operations
@@ -24,6 +23,5 @@ var VersionConflictError = class extends Schema.TaggedError()("VersionConflictEr
 var PersistenceAdapterTag = class extends Context.Tag(
   "effect-machine/src/persistence/adapter/PersistenceAdapterTag",
 )() {};
-
 //#endregion
 export { PersistenceAdapterTag, PersistenceError, VersionConflictError };

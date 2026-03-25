@@ -24,7 +24,6 @@ import {
   Stream,
   SubscriptionRef,
 } from "effect";
-
 //#region src-v3/actor.ts
 /**
  * Actor system: spawning, lifecycle, and event processing.
@@ -662,7 +661,6 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
  * Default ActorSystem layer
  */
 const Default = Layer.scoped(ActorSystem, make());
-
 //#endregion
 export {
   ActorSystem,

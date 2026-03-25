@@ -2,7 +2,6 @@ import { processEventCore, runSpawnEffects } from "../internal/transition.js";
 import { ActorSystem } from "../actor.js";
 import { CurrentAddress } from "../node_modules/@effect/cluster/dist/esm/Entity.js";
 import { Effect, Option, Queue, Ref, Scope } from "effect";
-
 //#region src-v3/cluster/entity-machine.ts
 /**
  * EntityMachine adapter - wires a machine to a cluster Entity layer.
@@ -117,6 +116,5 @@ const EntityMachine = {
     return entity.toLayer(layer());
   },
 };
-
 //#endregion
 export { EntityMachine };

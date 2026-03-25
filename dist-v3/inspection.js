@@ -1,5 +1,4 @@
 import { Context } from "effect";
-
 //#region src-v3/inspection.ts
 /**
  * Inspector service tag - optional service for machine introspection
@@ -46,6 +45,5 @@ const consoleInspector = () =>
  * Collecting inspector that stores events in an array for testing
  */
 const collectingInspector = (events) => ({ onInspect: (event) => events.push(event) });
-
 //#endregion
 export { Inspector, collectingInspector, consoleInspector, makeInspector };

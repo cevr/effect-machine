@@ -1,7 +1,6 @@
 import { MissingSchemaError } from "../errors.js";
 import { make } from "../node_modules/@effect/rpc/dist/esm/Rpc.js";
 import { make as make$1 } from "../node_modules/@effect/cluster/dist/esm/Entity.js";
-
 //#region src-v3/cluster/to-entity.ts
 /**
  * Generate Entity definition from a machine.
@@ -52,6 +51,5 @@ const toEntity = (machine, options) => {
     make("GetState", { success: stateSchema }),
   ]);
 };
-
 //#endregion
 export { toEntity };

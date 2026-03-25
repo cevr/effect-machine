@@ -1,6 +1,5 @@
 import { InvalidSchemaError, MissingMatchHandlerError } from "./errors.js";
 import { Schema } from "effect";
-
 //#region src-v3/schema.ts
 /**
  * Schema-first State/Event definitions for effect-machine.
@@ -163,6 +162,5 @@ const State = (definition) => createMachineSchema(definition);
  * ```
  */
 const Event = (definition) => createMachineSchema(definition);
-
 //#endregion
 export { Event, State };

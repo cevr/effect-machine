@@ -1,8 +1,6 @@
 import { Machine } from "../machine.js";
 import { Rpc } from "../node_modules/@effect/rpc/dist/dts/Rpc.js";
 import { Entity } from "../node_modules/@effect/cluster/dist/dts/Entity.js";
-import "../node_modules/@effect/cluster/dist/dts/index.js";
-import "../node_modules/@effect/rpc/dist/dts/index.js";
 import { Schema } from "effect";
 
 //#region src-v3/cluster/to-entity.d.ts

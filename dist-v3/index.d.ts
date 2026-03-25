@@ -48,7 +48,6 @@ import {
   InMemoryPersistenceAdapter,
   makeInMemoryPersistenceAdapter,
 } from "./persistence/adapters/in-memory.js";
-import "./persistence/index.js";
 import {
   BackgroundEffect,
   BuiltMachine,

@@ -4,6 +4,7 @@
 import {
   Clock,
   Cause,
+  Deferred,
   Effect,
   Exit,
   Fiber,
@@ -16,7 +17,7 @@ import {
 } from "effect";
 import type { Pull } from "effect";
 
-import type { ActorRef, ActorSystem, Listeners } from "../actor.js";
+import type { ActorRef, ActorSystem, Listeners, QueuedEvent } from "../actor.js";
 import { ActorSystem as ActorSystemTag, buildActorRefCore, notifyListeners } from "../actor.js";
 import type { MachineRef, Machine } from "../machine.js";
 import type { Inspector } from "../inspection.js";
@@ -127,7 +128,7 @@ const buildPersistentActorRef = <
   persistentMachine: PersistentMachine<S, E, R>,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
   versionRef: Ref.Ref<number>,
-  eventQueue: Queue.Queue<E>,
+  eventQueue: Queue.Queue<QueuedEvent<E>>,
   stoppedRef: Ref.Ref<boolean>,
   listeners: Listeners<S>,
   stop: Effect.Effect<void>,
@@ -272,7 +273,7 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
     | undefined;
 
   // Create self reference for sending events
-  const eventQueue = yield* Queue.unbounded<E>();
+  const eventQueue = yield* Queue.unbounded<QueuedEvent<E>>();
   const stoppedRef = yield* Ref.make(false);
   const childrenMap = new Map<string, ActorRef<{ readonly _tag: string }, unknown>>();
   const self: MachineRef<E> = {
@@ -281,7 +282,7 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
       if (stopped) {
         return;
       }
-      yield* Queue.offer(eventQueue, event);
+      yield* Queue.offer(eventQueue, { event });
     }),
     spawn: (childId, childMachine) =>
       Effect.gen(function* () {
@@ -514,7 +515,7 @@ const persistentEventLoop = Effect.fn("effect-machine.persistentActor.eventLoop"
   persistentMachine: PersistentMachine<S, E, R>,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
   versionRef: Ref.Ref<number>,
-  eventQueue: Queue.Queue<E>,
+  eventQueue: Queue.Queue<QueuedEvent<E>>,
   stoppedRef: Ref.Ref<boolean>,
   self: MachineRef<E>,
   listeners: Listeners<S>,
@@ -575,7 +576,8 @@ const persistentEventLoop = Effect.fn("effect-machine.persistentActor.eventLoop"
         };
 
   while (true) {
-    const event = yield* Queue.take(eventQueue);
+    const queued = yield* Queue.take(eventQueue);
+    const { event, reply } = queued;
     const currentState = yield* SubscriptionRef.get(stateRef);
     const currentVersion = yield* Ref.get(versionRef);
 
@@ -598,6 +600,11 @@ const persistentEventLoop = Effect.fn("effect-machine.persistentActor.eventLoop"
       id,
       hooks,
     );
+
+    // Resolve dispatch reply if present
+    if (reply !== undefined) {
+      yield* Deferred.succeed(reply, result);
+    }
 
     if (!result.transitioned) {
       continue;

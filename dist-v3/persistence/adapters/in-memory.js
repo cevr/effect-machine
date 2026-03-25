@@ -1,6 +1,5 @@
 import { PersistenceAdapterTag, PersistenceError, VersionConflictError } from "../adapter.js";
 import { Effect, Layer, Option, Ref, Schema } from "effect";
-
 //#region src-v3/persistence/adapters/in-memory.ts
 /**
  * Create an in-memory persistence adapter.
@@ -209,6 +208,5 @@ const makeInMemoryPersistenceAdapter = make;
  * ```
  */
 const InMemoryPersistenceAdapter = Layer.effect(PersistenceAdapterTag, make);
-
 //#endregion
 export { InMemoryPersistenceAdapter, makeInMemoryPersistenceAdapter };

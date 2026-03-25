@@ -1,7 +1,6 @@
 import { INTERNAL_ENTER_EVENT, isEffect } from "./utils.js";
 import { BuiltMachine } from "../machine.js";
 import { Cause, Effect, Exit, Scope } from "effect";
-
 //#region src-v3/internal/transition.ts
 /**
  * Transition execution and indexing.
@@ -260,7 +259,6 @@ const findTransitions = (input, stateTag, eventTag) => {
 const findSpawnEffects = (machine, stateTag) => {
   return getIndex(machine).spawn.get(stateTag) ?? [];
 };
-
 //#endregion
 export {
   executeTransition,

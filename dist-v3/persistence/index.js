@@ -5,7 +5,6 @@ import {
   InMemoryPersistenceAdapter,
   makeInMemoryPersistenceAdapter,
 } from "./adapters/in-memory.js";
-
 export {
   InMemoryPersistenceAdapter,
   PersistenceAdapterTag,

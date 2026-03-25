@@ -22,7 +22,6 @@ import {
   Scope,
   SubscriptionRef,
 } from "effect";
-
 //#region src-v3/persistence/persistent-actor.ts
 /** Get current time in milliseconds using Effect Clock */
 const now = Clock.currentTimeMillis;
@@ -590,6 +589,5 @@ const restorePersistentActor = Effect.fn("effect-machine.persistentActor.restore
     return Option.some(actor);
   },
 );
-
 //#endregion
 export { createPersistentActor, restorePersistentActor };

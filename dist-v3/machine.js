@@ -6,7 +6,6 @@ import { MachineContextTag } from "./slot.js";
 import { findTransitions, invalidateIndex } from "./internal/transition.js";
 import { createActor } from "./actor.js";
 import { Cause, Effect, Exit, Option, Scope } from "effect";
-
 //#region src-v3/machine.ts
 var machine_exports = /* @__PURE__ */ __exportAll({
   BuiltMachine: () => BuiltMachine,
@@ -308,33 +307,7 @@ var Machine = class Machine {
   }
 };
 const make = Machine.make;
-/**
- * Spawn an actor directly without ActorSystem ceremony.
- * Accepts only `BuiltMachine` (call `.build()` first).
- *
- * **Single actor, no registry.** Caller manages lifetime via `actor.stop`.
- * If a `Scope` exists in context, cleanup attaches automatically on scope close.
- *
- * For registry, lookup by ID, persistence, or multi-actor coordination,
- * use `ActorSystemService` / `system.spawn` instead.
- *
- * @example
- * ```ts
- * // Fire-and-forget — caller manages lifetime
- * const actor = yield* Machine.spawn(machine.build());
- * yield* actor.send(Event.Start);
- * yield* actor.awaitFinal;
- * yield* actor.stop;
- *
- * // Scope-aware — auto-cleans up on scope close
- * yield* Effect.scoped(Effect.gen(function* () {
- *   const actor = yield* Machine.spawn(machine.build());
- *   yield* actor.send(Event.Start);
- *   // actor.stop called automatically when scope closes
- * }));
- * ```
- */
-const spawnImpl = Effect.fn("effect-machine.spawn")(function* (built, id) {
+const spawn = Effect.fn("effect-machine.spawn")(function* (built, id) {
   const actor = yield* createActor(
     id ?? `actor-${Math.random().toString(36).slice(2)}`,
     built._inner,
@@ -343,7 +316,5 @@ const spawnImpl = Effect.fn("effect-machine.spawn")(function* (built, id) {
   if (Option.isSome(maybeScope)) yield* Scope.addFinalizer(maybeScope.value, actor.stop);
   return actor;
 });
-const spawn = spawnImpl;
-
 //#endregion
 export { BuiltMachine, Machine, findTransitions, machine_exports, make, spawn };

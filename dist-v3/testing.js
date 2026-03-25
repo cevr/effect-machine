@@ -3,7 +3,6 @@ import { AssertionError } from "./errors.js";
 import { BuiltMachine } from "./machine.js";
 import { executeTransition } from "./internal/transition.js";
 import { Effect, SubscriptionRef } from "effect";
-
 //#region src-v3/testing.ts
 /**
  * Simulate a sequence of events through a machine without running an actor.
@@ -150,7 +149,6 @@ const createTestHarness = Effect.fn("effect-machine.createTestHarness")(function
     getState: SubscriptionRef.get(stateRef),
   };
 });
-
 //#endregion
 export {
   AssertionError,

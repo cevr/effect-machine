@@ -1,5 +1,4 @@
 import { Context } from "effect";
-
 //#region src-v3/slot.ts
 /**
  * Slot module - schema-based, parameterized guards and effects.
@@ -94,6 +93,5 @@ const Slot = {
   Guards,
   Effects,
 };
-
 //#endregion
 export { Effects, Guards, MachineContextTag, Slot };

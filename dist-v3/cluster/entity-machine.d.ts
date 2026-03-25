@@ -1,11 +1,8 @@
 import { EffectsDef, GuardsDef } from "../slot.js";
 import { ProcessEventHooks } from "../internal/transition.js";
 import { Machine } from "../machine.js";
-import "../actor.js";
 import { Any } from "../node_modules/@effect/rpc/dist/dts/Rpc.js";
 import { Entity } from "../node_modules/@effect/cluster/dist/dts/Entity.js";
-import "../node_modules/@effect/cluster/dist/dts/index.js";
-import "../node_modules/@effect/rpc/dist/dts/index.js";
 import { Layer } from "effect";
 
 //#region src-v3/cluster/entity-machine.d.ts

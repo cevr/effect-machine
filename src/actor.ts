@@ -29,7 +29,11 @@ import type { Machine, MachineRef, BuiltMachine } from "./machine.js";
 import type { Inspector } from "./inspection.js";
 import { Inspector as InspectorTag } from "./inspection.js";
 import { processEventCore, runSpawnEffects, resolveTransition } from "./internal/transition.js";
-import type { ProcessEventError, ProcessEventHooks } from "./internal/transition.js";
+import type {
+  ProcessEventError,
+  ProcessEventHooks,
+  ProcessEventResult,
+} from "./internal/transition.js";
 import { emitWithTimestamp } from "./internal/inspection.js";
 
 // Re-export for external use (cluster, persistence)
@@ -39,6 +43,16 @@ export type {
   ProcessEventHooks,
   ProcessEventResult,
 } from "./internal/transition.js";
+
+// ============================================================================
+// QueuedEvent (internal wrapper for event queue)
+// ============================================================================
+
+/** Queued event with optional reply channel */
+export interface QueuedEvent<E> {
+  readonly event: E;
+  readonly reply?: Deferred.Deferred<ProcessEventResult<{ readonly _tag: string }>>;
+}
 import type { GuardsDef, EffectsDef } from "./slot.js";
 import { DuplicateActorError } from "./errors.js";
 import { INTERNAL_INIT_EVENT } from "./internal/utils.js";
@@ -157,6 +171,15 @@ export interface ActorRef<State extends { readonly _tag: string }, Event> {
    * (e.g. framework hooks, event handlers).
    */
   readonly sendSync: (event: Event) => void;
+
+  /**
+   * Send event and wait for the transition result (synchronous processing).
+   * The event is processed through the queue (preserving serialization)
+   * but the caller gets back the ProcessEventResult.
+   *
+   * OTP gen_server:call equivalent — use when you need to know what happened.
+   */
+  readonly dispatch: (event: Event) => Effect.Effect<ProcessEventResult<State>>;
 
   /**
    * Subscribe to state changes (sync callback)
@@ -399,7 +422,7 @@ export const buildActorRefCore = <
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
   machine: Machine<S, E, R, any, any, GD, EFD>,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
-  eventQueue: Queue.Queue<E>,
+  eventQueue: Queue.Queue<QueuedEvent<E>>,
   stoppedRef: Ref.Ref<boolean>,
   listeners: Listeners<S>,
   stop: Effect.Effect<void>,
@@ -411,7 +434,25 @@ export const buildActorRefCore = <
     if (stopped) {
       return;
     }
-    yield* Queue.offer(eventQueue, event);
+    yield* Queue.offer(eventQueue, { event });
+  });
+
+  const dispatch = Effect.fn("effect-machine.actor.dispatch")(function* (event: E) {
+    const stopped = yield* Ref.get(stoppedRef);
+    if (stopped) {
+      // Actor already stopped — return a no-op result with current state
+      const currentState = yield* SubscriptionRef.get(stateRef);
+      return {
+        newState: currentState,
+        previousState: currentState,
+        transitioned: false,
+        lifecycleRan: false,
+        isFinal: machine.finalStates.has(currentState._tag),
+      } as ProcessEventResult<S>;
+    }
+    const reply = yield* Deferred.make<ProcessEventResult<{ readonly _tag: string }>>();
+    yield* Queue.offer(eventQueue, { event, reply });
+    return (yield* Deferred.await(reply)) as ProcessEventResult<S>;
   });
 
   const snapshot = SubscriptionRef.get(stateRef).pipe(
@@ -504,9 +545,10 @@ export const buildActorRefCore = <
     sendSync: (event) => {
       const stopped = Effect.runSync(Ref.get(stoppedRef));
       if (!stopped) {
-        Effect.runSync(Queue.offer(eventQueue, event));
+        Effect.runSync(Queue.offer(eventQueue, { event }));
       }
     },
+    dispatch,
     subscribe: (fn) => {
       listeners.add(fn);
       return () => {
@@ -553,7 +595,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     | undefined;
 
   // Create self reference for sending events
-  const eventQueue = yield* Queue.unbounded<E>();
+  const eventQueue = yield* Queue.unbounded<QueuedEvent<E>>();
   const stoppedRef = yield* Ref.make(false);
   const childrenMap = new Map<string, ActorRef<AnyState, unknown>>();
   const self: MachineRef<E> = {
@@ -562,7 +604,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       if (stopped) {
         return;
       }
-      yield* Queue.offer(eventQueue, event);
+      yield* Queue.offer(eventQueue, { event });
     }),
     spawn: (childId, childMachine) =>
       Effect.gen(function* () {
@@ -732,7 +774,7 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
 >(
   machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
-  eventQueue: Queue.Queue<E>,
+  eventQueue: Queue.Queue<QueuedEvent<E>>,
   stoppedRef: Ref.Ref<boolean>,
   self: MachineRef<E>,
   listeners: Listeners<S>,
@@ -744,12 +786,13 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
 ) {
   while (true) {
     // Block waiting for next event - will fail with QueueShutdown when queue is shut down
-    const event = yield* Queue.take(eventQueue);
+    const queued = yield* Queue.take(eventQueue);
+    const { event, reply } = queued;
 
     const currentState = yield* SubscriptionRef.get(stateRef);
 
     // Process event in a span
-    const shouldStop = yield* Effect.withSpan("effect-machine.event.process", {
+    const { shouldStop, result } = yield* Effect.withSpan("effect-machine.event.process", {
       attributes: {
         "effect_machine.actor.id": actorId,
         "effect_machine.state.current": currentState._tag,
@@ -769,6 +812,11 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
         system,
       ),
     );
+
+    // Resolve dispatch reply if present
+    if (reply !== undefined) {
+      yield* Deferred.succeed(reply, result);
+    }
 
     if (shouldStop) {
       // Close state scope and interrupt background effects when reaching final state
@@ -859,7 +907,7 @@ const processEvent = Effect.fn("effect-machine.actor.processEvent")(function* <
 
   if (!result.transitioned) {
     yield* Effect.annotateCurrentSpan("effect_machine.transition.matched", false);
-    return false;
+    return { shouldStop: false, result };
   }
 
   yield* Effect.annotateCurrentSpan("effect_machine.transition.matched", true);
@@ -882,11 +930,11 @@ const processEvent = Effect.fn("effect-machine.actor.processEvent")(function* <
         finalState: result.newState,
         timestamp,
       }));
-      return true;
+      return { shouldStop: true, result };
     }
   }
 
-  return false;
+  return { shouldStop: false, result };
 });
 
 /**

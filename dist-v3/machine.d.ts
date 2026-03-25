@@ -15,7 +15,6 @@ import {
   MachineContext,
 } from "./slot.js";
 import { findTransitions } from "./internal/transition.js";
-import "./persistence/index.js";
 import { ActorRef, ActorSystem } from "./actor.js";
 import { Cause, Context, Effect, Schedule, Schema, Scope } from "effect";
 

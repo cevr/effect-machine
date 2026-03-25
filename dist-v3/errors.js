@@ -1,5 +1,4 @@
 import { Schema } from "effect";
-
 //#region src-v3/errors.ts
 /**
  * Typed error classes for effect-machine.
@@ -43,7 +42,6 @@ var ProvisionValidationError = class extends Schema.TaggedError()("ProvisionVali
 var AssertionError = class extends Schema.TaggedError()("AssertionError", {
   message: Schema.String,
 }) {};
-
 //#endregion
 export {
   AssertionError,

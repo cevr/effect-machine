@@ -1,5 +1,4 @@
 import { Effect, Stream } from "effect";
-
 //#region src-v3/internal/utils.ts
 /**
  * Internal event tags used for lifecycle effect contexts.
@@ -48,6 +47,5 @@ const stubSystem = {
   restoreMany: () => Effect.die("restoreMany not supported in stub system"),
   restoreAll: () => Effect.die("restoreAll not supported in stub system"),
 };
-
 //#endregion
 export { INTERNAL_ENTER_EVENT, INTERNAL_INIT_EVENT, getTag, isEffect, stubSystem };

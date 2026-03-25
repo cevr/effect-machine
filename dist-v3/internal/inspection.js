@@ -1,5 +1,4 @@
 import { Clock, Effect } from "effect";
-
 //#region src-v3/internal/inspection.ts
 /**
  * Emit an inspection event with timestamp from Clock.
@@ -12,6 +11,5 @@ const emitWithTimestamp = Effect.fn("effect-machine.emitWithTimestamp")(
     yield* Effect.try(() => inspector.onInspect(makeEvent(timestamp))).pipe(Effect.ignore);
   },
 );
-
 //#endregion
 export { emitWithTimestamp };

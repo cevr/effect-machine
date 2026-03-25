@@ -1,5 +1,4 @@
 import { MissingSchemaError } from "../errors.js";
-
 //#region src-v3/persistence/persistent-machine.ts
 /**
  * Type guard to check if a value is a PersistentMachine
@@ -24,6 +23,5 @@ const persist = (config) => (machine) => {
     },
   };
 };
-
 //#endregion
 export { isPersistentMachine, persist };
