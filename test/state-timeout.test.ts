@@ -88,6 +88,54 @@ describe(".timeout()", () => {
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
 
+  it.scoped("same-tag .on() transition does not restart the timer", () =>
+    Effect.gen(function* () {
+      const CountState = State({
+        Active: { count: Schema.Number },
+        TimedOut: {},
+      });
+
+      const CountEvent = Event({
+        Increment: {},
+        Timeout: {},
+      });
+
+      const machine = Machine.make({
+        state: CountState,
+        event: CountEvent,
+        initial: CountState.Active({ count: 0 }),
+      })
+        // Normal same-tag transition (not .reenter) — should NOT restart timer
+        .on(CountState.Active, CountEvent.Increment, ({ state }) =>
+          CountState.Active({ count: state.count + 1 }),
+        )
+        .on(CountState.Active, CountEvent.Timeout, () => CountState.TimedOut)
+        .timeout(CountState.Active, {
+          duration: Duration.seconds(3),
+          event: CountEvent.Timeout,
+        })
+        .final(CountState.TimedOut)
+        .build();
+
+      const system = yield* ActorSystemService;
+      const actor = yield* system.spawn("test", machine);
+
+      // Advance 2 seconds
+      yield* TestClock.adjust("2 seconds");
+      yield* yieldFibers;
+
+      // Same-tag transition — should NOT restart the timer
+      yield* actor.send(CountEvent.Increment);
+      yield* yieldFibers;
+
+      // Advance 1 more second (3 total from start) → timeout should fire
+      yield* TestClock.adjust("1 second");
+      yield* yieldFibers;
+
+      expect((yield* SubscriptionRef.get(actor.state))._tag).toBe("TimedOut");
+    }).pipe(Effect.provide(ActorSystemDefault)),
+  );
+
   it.scoped("reenter restarts the timer", () =>
     Effect.gen(function* () {
       const RetryState = State({
