@@ -1,5 +1,17 @@
 # effect-machine
 
+## 0.9.0
+
+### Minor Changes
+
+- [`6e3497b`](https://github.com/cevr/effect-machine/commit/6e3497bfadf0e354bd6f6284d940df8a72c27e9e) Thanks [@cevr](https://github.com/cevr)! - Add `dispatch` and `dispatchPromise` to ActorRef — synchronous event processing with transition receipts.
+
+  **`dispatch(event)`** — Effect-based. Sends event through the queue (preserving serialization) and returns `ProcessEventResult<State>` with `{ transitioned, previousState, newState, lifecycleRan, isFinal }`. OTP `gen_server:call` equivalent.
+
+  **`dispatchPromise(event)`** — Promise-based. Same semantics as `dispatch` for use at non-Effect boundaries (React event handlers, framework hooks, tests).
+
+  Also exports `ProcessEventResult` from the public API.
+
 ## 0.8.0
 
 ### Minor Changes
