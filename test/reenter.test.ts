@@ -53,22 +53,21 @@ describe("Same-state Transitions", () => {
       expect(effects).toEqual(["enter:Form"]);
 
       // Same state tag - no exit/enter
-      yield* actor.send(FormEvent.SetName({ name: "Alice" }));
+      const r1 = yield* actor.call(FormEvent.SetName({ name: "Alice" }));
       yield* yieldFibers;
 
-      const state = yield* SubscriptionRef.get(actor.state);
-      expect(state._tag).toBe("Form");
-      expect((state as FormState & { _tag: "Form" }).name).toBe("Alice");
+      expect(r1.newState._tag).toBe("Form");
+      expect((r1.newState as FormState & { _tag: "Form" }).name).toBe("Alice");
       expect(effects).toEqual(["enter:Form"]);
 
       // Another same-state transition
-      yield* actor.send(FormEvent.SetName({ name: "Bob" }));
+      yield* actor.call(FormEvent.SetName({ name: "Bob" }));
       yield* yieldFibers;
 
       expect(effects).toEqual(["enter:Form"]);
 
       // Different state tag - runs exit
-      yield* actor.send(FormEvent.Submit);
+      yield* actor.call(FormEvent.Submit);
       yield* yieldFibers;
 
       expect(effects).toEqual(["enter:Form", "exit:Form"]);
@@ -103,7 +102,7 @@ describe("Same-state Transitions", () => {
       expect(effects).toEqual(["enter:Form"]);
 
       // reenter runs exit/enter even for same state tag
-      yield* actor.send(FormEvent.SetName({ name: "Alice" }));
+      yield* actor.call(FormEvent.SetName({ name: "Alice" }));
       yield* yieldFibers;
 
       expect(effects).toEqual(["enter:Form", "exit:Form", "enter:Form"]);
@@ -163,16 +162,15 @@ describe("Reenter Transitions", () => {
       expect(effects).toEqual(["enter:Polling:0"]);
 
       // reenter runs exit/enter
-      yield* actor.send(PollEvent.Reset);
+      const r1 = yield* actor.call(PollEvent.Reset);
       yield* yieldFibers;
 
-      const state = yield* SubscriptionRef.get(actor.state);
-      expect(state._tag).toBe("Polling");
-      expect((state as PollState & { _tag: "Polling" }).attempts).toBe(1);
+      expect(r1.newState._tag).toBe("Polling");
+      expect((r1.newState as PollState & { _tag: "Polling" }).attempts).toBe(1);
       expect(effects).toEqual(["enter:Polling:0", "exit:Polling:0", "enter:Polling:1"]);
 
       // Another reenter transition
-      yield* actor.send(PollEvent.Reset);
+      yield* actor.call(PollEvent.Reset);
       yield* yieldFibers;
 
       expect(effects).toEqual([

@@ -97,26 +97,17 @@ describe("ActorSystem", () => {
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test-actor", machine);
 
-      yield* actor.send(TestEvent.Start({ value: 10 }));
-      yield* yieldFibers;
+      const r1 = yield* actor.call(TestEvent.Start({ value: 10 }));
+      expect(r1.newState._tag).toBe("Active");
 
-      const state1 = yield* actor.snapshot;
-      expect(state1._tag).toBe("Active");
-
-      yield* actor.send(TestEvent.Update({ value: 20 }));
-      yield* yieldFibers;
-
-      const state2 = yield* actor.snapshot;
-      expect(state2._tag).toBe("Active");
-      if (state2._tag === "Active") {
-        expect(state2.value).toBe(20);
+      const r2 = yield* actor.call(TestEvent.Update({ value: 20 }));
+      expect(r2.newState._tag).toBe("Active");
+      if (r2.newState._tag === "Active") {
+        expect(r2.newState.value).toBe(20);
       }
 
-      yield* actor.send(TestEvent.Stop);
-      yield* yieldFibers;
-
-      const state3 = yield* actor.snapshot;
-      expect(state3._tag).toBe("Done");
+      const r3 = yield* actor.call(TestEvent.Stop);
+      expect(r3.newState._tag).toBe("Done");
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
 
@@ -135,12 +126,10 @@ describe("ActorSystem", () => {
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test-actor", machine);
 
-      yield* actor.send(TestEvent.Start({ value: 5 }));
-      yield* yieldFibers;
+      const r = yield* actor.call(TestEvent.Start({ value: 5 }));
 
       // Verify actor is in expected state before stopping
-      const stateBeforeStop = yield* actor.snapshot;
-      expect(stateBeforeStop._tag).toBe("Active");
+      expect(r.newState._tag).toBe("Active");
 
       yield* system.stop("test-actor");
 
@@ -264,14 +253,10 @@ describe("ActorSystem", () => {
         throw new Error("boom");
       });
 
-      yield* actor.send(TestEvent.Start({ value: 1 }));
-      yield* yieldFibers;
+      yield* actor.call(TestEvent.Start({ value: 1 }));
 
-      yield* actor.send(TestEvent.Stop);
-      yield* yieldFibers;
-
-      const state = yield* actor.snapshot;
-      expect(state._tag).toBe("Done");
+      const r = yield* actor.call(TestEvent.Stop);
+      expect(r.newState._tag).toBe("Done");
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
 
@@ -291,11 +276,8 @@ describe("ActorSystem", () => {
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("stopped-actor", machine);
 
-      yield* actor.send(TestEvent.Start({ value: 10 }));
-      yield* yieldFibers;
-
-      const beforeStop = yield* actor.snapshot;
-      expect(beforeStop._tag).toBe("Active");
+      const r = yield* actor.call(TestEvent.Start({ value: 10 }));
+      expect(r.newState._tag).toBe("Active");
 
       yield* actor.stop;
       yield* actor.send(TestEvent.Stop);
@@ -329,13 +311,10 @@ describe("Machine.spawn", () => {
       // No ActorSystemService needed!
       const actor = yield* Machine.spawn(machine);
 
-      yield* actor.send(TestEvent.Start({ value: 42 }));
-      yield* yieldFibers;
-
-      const state = yield* actor.snapshot;
-      expect(state._tag).toBe("Active");
-      if (state._tag === "Active") {
-        expect(state.value).toBe(42);
+      const r = yield* actor.call(TestEvent.Start({ value: 42 }));
+      expect(r.newState._tag).toBe("Active");
+      if (r.newState._tag === "Active") {
+        expect(r.newState.value).toBe(42);
       }
     }),
   );
@@ -389,13 +368,10 @@ describe("Machine.spawn", () => {
       // No scope needed — Machine.spawn works without Effect.scoped
       const actor = yield* Machine.spawn(machine);
 
-      yield* actor.send(TestEvent.Start({ value: 99 }));
-      yield* yieldFibers;
-
-      const state = yield* actor.snapshot;
-      expect(state._tag).toBe("Active");
-      if (state._tag === "Active") {
-        expect(state.value).toBe(99);
+      const r = yield* actor.call(TestEvent.Start({ value: 99 }));
+      expect(r.newState._tag).toBe("Active");
+      if (r.newState._tag === "Active") {
+        expect(r.newState.value).toBe(99);
       }
 
       // Caller manages lifetime
@@ -473,12 +449,9 @@ describe("ActorRef", () => {
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("test", machine);
 
-        yield* actor.send(TestEvent.Start({ value: 42 }));
-        yield* yieldFibers;
-
-        const state = yield* actor.snapshot;
-        expect(state._tag).toBe("Loading");
-        expect((state as { value: number }).value).toBe(42);
+        const r = yield* actor.call(TestEvent.Start({ value: 42 }));
+        expect(r.newState._tag).toBe("Loading");
+        expect((r.newState as { value: number }).value).toBe(42);
       }).pipe(Effect.provide(ActorSystemDefault)),
     );
   });
@@ -515,11 +488,9 @@ describe("ActorRef", () => {
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("test", machine);
 
-        yield* actor.send(TestEvent.Start({ value: 10 }));
-        yield* yieldFibers;
-
-        expect(yield* actor.matches("Loading")).toBe(true);
-        expect(yield* actor.matches("Idle")).toBe(false);
+        const r = yield* actor.call(TestEvent.Start({ value: 10 }));
+        expect(r.newState._tag).toBe("Loading");
+        expect(r.previousState._tag).toBe("Idle");
       }).pipe(Effect.provide(ActorSystemDefault)),
     );
   });
@@ -559,10 +530,8 @@ describe("ActorRef", () => {
         const actor = yield* system.spawn("test", machine);
 
         // Transition to Active state
-        yield* actor.send(TestEvent.Start({ value: 10 }));
-        yield* yieldFibers;
-        yield* actor.send(TestEvent.Complete);
-        yield* yieldFibers;
+        yield* actor.call(TestEvent.Start({ value: 10 }));
+        yield* actor.call(TestEvent.Complete);
 
         // Update with value <= 100 uses regular path
         const canUpdateLow = yield* actor.can(TestEvent.Update({ value: 50 }));

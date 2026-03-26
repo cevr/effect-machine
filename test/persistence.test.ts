@@ -66,23 +66,17 @@ describe("Persistence", () => {
       expect(initialState._tag).toBe("Idle");
 
       // Send events
-      yield* actor.send(OrderEvent.Submit({ orderId: "ORD-123" }));
-      yield* yieldFibers;
-
-      const state1 = yield* actor.snapshot;
-      expect(state1._tag).toBe("Pending");
-      if (state1._tag === "Pending") {
-        expect(state1.orderId).toBe("ORD-123");
+      const r1 = yield* actor.call(OrderEvent.Submit({ orderId: "ORD-123" }));
+      expect(r1.newState._tag).toBe("Pending");
+      if (r1.newState._tag === "Pending") {
+        expect(r1.newState.orderId).toBe("ORD-123");
       }
 
-      yield* actor.send(OrderEvent.Pay({ amount: 99.99 }));
-      yield* yieldFibers;
-
-      const state2 = yield* actor.snapshot;
-      expect(state2._tag).toBe("Paid");
-      if (state2._tag === "Paid") {
-        expect(state2.orderId).toBe("ORD-123");
-        expect(state2.amount).toBe(99.99);
+      const r2 = yield* actor.call(OrderEvent.Pay({ amount: 99.99 }));
+      expect(r2.newState._tag).toBe("Paid");
+      if (r2.newState._tag === "Paid") {
+        expect(r2.newState.orderId).toBe("ORD-123");
+        expect(r2.newState.amount).toBe(99.99);
       }
     }).pipe(Effect.provide(TestLayer)),
   );
@@ -164,15 +158,11 @@ describe("Persistence", () => {
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("order-snap", machine);
 
-      yield* actor.send(StepEvent.Next);
-      yield* yieldFibers;
-      yield* actor.send(StepEvent.Next);
-      yield* yieldFibers;
-      yield* actor.send(StepEvent.Next);
-      yield* yieldFibers;
+      yield* actor.call(StepEvent.Next);
+      yield* actor.call(StepEvent.Next);
+      const r = yield* actor.call(StepEvent.Next);
 
-      const state = yield* actor.snapshot;
-      expect(state._tag).toBe("Four");
+      expect(r.newState._tag).toBe("Four");
     }).pipe(Effect.provide(TestLayer)),
   );
 
@@ -200,11 +190,8 @@ describe("Persistence", () => {
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("order-slow", machine);
 
-        yield* actor.send(OrderEvent.Submit({ orderId: "ORD-SLOW" }));
-        yield* yieldFibers;
-
-        const state = yield* actor.snapshot;
-        expect(state._tag).toBe("Pending");
+        const r = yield* actor.call(OrderEvent.Submit({ orderId: "ORD-SLOW" }));
+        expect(r.newState._tag).toBe("Pending");
 
         yield* Deferred.succeed(gate, void 0);
       }).pipe(
@@ -640,15 +627,11 @@ describe("Persistence", () => {
         PersistentActorRef<OrderState, OrderEvent>
       >;
 
-      yield* actor.send(OrderEvent.Submit({ orderId: "ORD-FINAL" }));
-      yield* yieldFibers;
-      yield* actor.send(OrderEvent.Pay({ amount: 100 }));
-      yield* yieldFibers;
-      yield* actor.send(OrderEvent.Complete);
-      yield* yieldFibers;
+      yield* actor.call(OrderEvent.Submit({ orderId: "ORD-FINAL" }));
+      yield* actor.call(OrderEvent.Pay({ amount: 100 }));
+      const r = yield* actor.call(OrderEvent.Complete);
 
-      const state = yield* actor.snapshot;
-      expect(state._tag).toBe("Done");
+      expect(r.newState._tag).toBe("Done");
     }).pipe(Effect.provide(TestLayer)),
   );
 });

@@ -106,10 +106,8 @@ describe(".postpone()", () => {
       const actor = yield* system.spawn("test", machine);
 
       // Failed is not postponed — processes immediately
-      yield* actor.send(ConnEvent.Failed);
-      yield* yieldFibers;
-
-      expect((yield* SubscriptionRef.get(actor.state))._tag).toBe("Failed");
+      const r = yield* actor.call(ConnEvent.Failed);
+      expect(r.newState._tag).toBe("Failed");
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
 
