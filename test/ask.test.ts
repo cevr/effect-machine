@@ -14,6 +14,7 @@ const TestEvent = Event({
   Start: {},
   Increment: {},
   GetCount: {},
+  GetNothing: {},
   Stop: {},
 });
 
@@ -31,6 +32,11 @@ const createMachine = () =>
     .on(TestState.Active, TestEvent.GetCount, ({ state }) => ({
       state: TestState.Active({ count: state.count }),
       reply: state.count,
+    }))
+    // Handler that returns { state, reply: undefined } — explicit undefined reply
+    .on(TestState.Active, TestEvent.GetNothing, ({ state }) => ({
+      state: TestState.Active({ count: state.count }),
+      reply: undefined,
     }))
     .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
     .final(TestState.Done)
@@ -108,6 +114,18 @@ describe("ActorRef.ask", () => {
       yield* actor.call(TestEvent.Increment);
       const count2 = yield* actor.ask<number>(TestEvent.GetCount);
       expect(count2).toBe(2);
+    }),
+  );
+
+  it.scopedLive("reply: undefined is a valid reply, not NoReplyError", () =>
+    Effect.gen(function* () {
+      const machine = createMachine();
+      const actor = yield* Machine.spawn(machine);
+
+      yield* actor.call(TestEvent.Start);
+
+      const result = yield* actor.ask<undefined>(TestEvent.GetNothing);
+      expect(result).toBeUndefined();
     }),
   );
 });
