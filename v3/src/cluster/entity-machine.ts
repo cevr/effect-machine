@@ -79,6 +79,7 @@ const processEvent = Effect.fn("effect-machine.cluster.processEvent")(function* 
     self,
     stateScopeRef,
     system,
+    "*",
     hooks,
   );
 
@@ -161,10 +162,12 @@ export const EntityMachine = {
 
       // Create self reference for sending events back to machine
       const internalQueue = yield* Queue.unbounded<E>();
+      const clusterSend = Effect.fn("effect-machine.cluster.self.send")(function* (event: E) {
+        yield* Queue.offer(internalQueue, event);
+      });
       const self: MachineRef<E> = {
-        send: Effect.fn("effect-machine.cluster.self.send")(function* (event: E) {
-          yield* Queue.offer(internalQueue, event);
-        }),
+        send: clusterSend,
+        cast: clusterSend,
         spawn: (childId, childMachine) =>
           system.spawn(childId, childMachine).pipe(Effect.provideService(ActorSystemTag, system)),
       };
@@ -188,6 +191,7 @@ export const EntityMachine = {
         self,
         stateScopeRef.current,
         system,
+        entityId,
         options?.hooks?.onError,
       );
 

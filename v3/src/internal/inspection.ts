@@ -14,5 +14,15 @@ export const emitWithTimestamp = Effect.fn("effect-machine.emitWithTimestamp")(f
     return;
   }
   const timestamp = yield* Clock.currentTimeMillis;
-  yield* Effect.try(() => inspector.onInspect(makeEvent(timestamp))).pipe(Effect.ignore);
+  const event = makeEvent(timestamp);
+  const result = yield* Effect.sync(() => {
+    try {
+      return inspector.onInspect(event);
+    } catch {
+      return undefined;
+    }
+  });
+  if (result !== undefined && Effect.isEffect(result)) {
+    yield* (result as Effect.Effect<void>).pipe(Effect.catchAllCause(() => Effect.void));
+  }
 });

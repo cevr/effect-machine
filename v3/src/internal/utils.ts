@@ -31,10 +31,19 @@ export type InstanceOf<C> = C extends (...args: unknown[]) => infer R ? R : neve
  */
 export type TaggedConstructor<T extends { readonly _tag: string }> = (args: Omit<T, "_tag">) => T;
 
+/** Reply tuple returned from transition handlers for ask support */
+export interface TransitionReply<State> {
+  readonly state: State;
+  readonly reply: unknown;
+}
+
 /**
- * Transition handler result - either a new state or Effect producing one
+ * Transition handler result - either a new state, reply tuple, or Effect producing one
  */
-export type TransitionResult<State, R> = State | Effect.Effect<State, never, R>;
+export type TransitionResult<State, R> =
+  | State
+  | TransitionReply<State>
+  | Effect.Effect<State | TransitionReply<State>, never, R>;
 
 // ============================================================================
 // Constants

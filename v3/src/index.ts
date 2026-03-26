@@ -19,11 +19,13 @@ export type {
 
 // Errors
 export {
+  ActorStoppedError,
   AssertionError,
   DuplicateActorError,
   InvalidSchemaError,
   MissingMatchHandlerError,
   MissingSchemaError,
+  NoReplyError,
   ProvisionValidationError,
   SlotProvisionError,
   UnprovidedSlotsError,
@@ -45,11 +47,19 @@ export type {
   PersistOptions,
   HandlerContext,
   StateHandlerContext,
+  TaskOptions,
   ProvideHandlers,
 } from "./machine.js";
 
 // Actor types and system
-export type { ActorRef, ActorSystem, SystemEvent, SystemEventListener } from "./actor.js";
+export type {
+  ActorRef,
+  ActorRefSync,
+  ActorSystem,
+  ProcessEventResult,
+  SystemEvent,
+  SystemEventListener,
+} from "./actor.js";
 export { ActorSystem as ActorSystemService, Default as ActorSystemDefault } from "./actor.js";
 
 // Testing utilities
@@ -70,15 +80,21 @@ export type {
   EventReceivedEvent,
   InspectionEvent,
   Inspector,
+  InspectorHandler,
   SpawnEvent,
   StopEvent,
+  TaskEvent,
+  TracingInspectorOptions,
   TransitionEvent,
 } from "./inspection.js";
 export {
+  combineInspectors,
   collectingInspector,
   consoleInspector,
   Inspector as InspectorService,
   makeInspector,
+  makeInspectorEffect,
+  tracingInspector,
 } from "./inspection.js";
 
 // Persistence

@@ -4,6 +4,7 @@
 import {
   Clock,
   Cause,
+  Deferred,
   Effect,
   Exit,
   Fiber,
@@ -15,8 +16,13 @@ import {
   SubscriptionRef,
 } from "effect";
 
-import type { ActorRef, ActorSystem, Listeners } from "../actor.js";
-import { ActorSystem as ActorSystemTag, buildActorRefCore, notifyListeners } from "../actor.js";
+import type { ActorRef, ActorSystem, Listeners, QueuedEvent } from "../actor.js";
+import {
+  ActorSystem as ActorSystemTag,
+  buildActorRefCore,
+  notifyListeners,
+  settlePendingReplies,
+} from "../actor.js";
 import type { MachineRef, Machine } from "../machine.js";
 import type { Inspector } from "../inspection.js";
 import { Inspector as InspectorTag } from "../inspection.js";
@@ -25,10 +31,12 @@ import {
   resolveTransition,
   runSpawnEffects,
   runTransitionHandler,
+  shouldPostpone,
 } from "../internal/transition.js";
 import type { ProcessEventError } from "../internal/transition.js";
 import type { GuardsDef, EffectsDef } from "../slot.js";
 import { INTERNAL_INIT_EVENT, stubSystem } from "../internal/utils.js";
+import { NoReplyError } from "../errors.js";
 import { emitWithTimestamp } from "../internal/inspection.js";
 
 import type {
@@ -96,14 +104,16 @@ const replayEvents = Effect.fn("effect-machine.persistentActor.replayEvents")(fu
 
     const transition = resolveTransition(machine, state, persistedEvent.event);
     if (transition !== undefined) {
-      state = yield* runTransitionHandler(
+      const handlerResult = yield* runTransitionHandler(
         machine,
         transition,
         state,
         persistedEvent.event,
         self,
         stubSystem,
+        "restore",
       );
+      state = handlerResult.newState;
     }
     version = persistedEvent.version;
   }
@@ -125,13 +135,14 @@ const buildPersistentActorRef = <
   persistentMachine: PersistentMachine<S, E, R>,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
   versionRef: Ref.Ref<number>,
-  eventQueue: Queue.Queue<E>,
+  eventQueue: Queue.Queue<QueuedEvent<E>>,
   stoppedRef: Ref.Ref<boolean>,
   listeners: Listeners<S>,
   stop: Effect.Effect<void>,
   adapter: PersistenceAdapter,
   system: ActorSystem,
   childrenMap: ReadonlyMap<string, ActorRef<{ readonly _tag: string }, unknown>>,
+  pendingReplies: Set<Deferred.Deferred<unknown, unknown>>,
 ): PersistentActorRef<S, E, R> => {
   const { machine, persistence } = persistentMachine;
   const typedMachine = machine as unknown as Machine<
@@ -166,8 +177,12 @@ const buildPersistentActorRef = <
   ) {
     const currentVersion = yield* Ref.get(versionRef);
     if (targetVersion <= currentVersion) {
+      const dummySend = Effect.fn("effect-machine.persistentActor.replay.send")(
+        (_event: E) => Effect.void,
+      );
       const dummySelf: MachineRef<E> = {
-        send: Effect.fn("effect-machine.persistentActor.replay.send")((_event: E) => Effect.void),
+        send: dummySend,
+        cast: dummySend,
         spawn: () => Effect.die("spawn not supported in replay"),
       };
 
@@ -217,6 +232,7 @@ const buildPersistentActorRef = <
     stop,
     system,
     childrenMap,
+    pendingReplies,
   );
 
   return {
@@ -270,17 +286,19 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
     | undefined;
 
   // Create self reference for sending events
-  const eventQueue = yield* Queue.unbounded<E>();
+  const eventQueue = yield* Queue.unbounded<QueuedEvent<E>>();
   const stoppedRef = yield* Ref.make(false);
   const childrenMap = new Map<string, ActorRef<{ readonly _tag: string }, unknown>>();
+  const selfSend = Effect.fn("effect-machine.persistentActor.self.send")(function* (event: E) {
+    const stopped = yield* Ref.get(stoppedRef);
+    if (stopped) {
+      return;
+    }
+    yield* Queue.offer(eventQueue, { _tag: "send", event });
+  });
   const self: MachineRef<E> = {
-    send: Effect.fn("effect-machine.persistentActor.self.send")(function* (event: E) {
-      const stopped = yield* Ref.get(stoppedRef);
-      if (stopped) {
-        return;
-      }
-      yield* Queue.offer(eventQueue, event);
-    }),
+    send: selfSend,
+    cast: selfSend,
     spawn: (childId, childMachine) =>
       Effect.gen(function* () {
         const child = yield* system
@@ -374,13 +392,20 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
   // Fork background effects (run for entire machine lifetime)
   const backgroundFibers: Fiber.Fiber<void, never>[] = [];
   const initEvent = { _tag: INTERNAL_INIT_EVENT } as E;
-  const initCtx = { state: resolvedInitial, event: initEvent, self, system };
+  const initCtx = { actorId: id, state: resolvedInitial, event: initEvent, self, system };
   const { effects: effectSlots } = typedMachine._slots;
 
   for (const bg of typedMachine.backgroundEffects) {
     const fiber = yield* Effect.forkDaemon(
       bg
-        .handler({ state: resolvedInitial, event: initEvent, self, effects: effectSlots, system })
+        .handler({
+          actorId: id,
+          state: resolvedInitial,
+          event: initEvent,
+          self,
+          effects: effectSlots,
+          system,
+        })
         .pipe(Effect.provideService(typedMachine.Context, initCtx)),
     );
     backgroundFibers.push(fiber);
@@ -432,8 +457,12 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
       adapter,
       system,
       childrenMap,
+      new Set(),
     );
   }
+
+  // Pending reply tracking
+  const pendingReplies = new Set<Deferred.Deferred<unknown, unknown>>();
 
   // Start the persistent event loop
   const loopFiber = yield* Effect.forkDaemon(
@@ -457,6 +486,7 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
       persistenceFiber,
       inspector,
       system,
+      pendingReplies,
     ),
   );
 
@@ -470,6 +500,7 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
     }));
     yield* Ref.set(stoppedRef, true);
     yield* Fiber.interrupt(loopFiber);
+    yield* settlePendingReplies(pendingReplies, id);
     yield* Scope.close(stateScopeRef.current, Exit.void);
     yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
     yield* Fiber.interrupt(snapshotFiber);
@@ -488,6 +519,7 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
     adapter,
     system,
     childrenMap,
+    pendingReplies,
   );
 });
 
@@ -505,7 +537,7 @@ const persistentEventLoop = Effect.fn("effect-machine.persistentActor.eventLoop"
   persistentMachine: PersistentMachine<S, E, R>,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
   versionRef: Ref.Ref<number>,
-  eventQueue: Queue.Queue<E>,
+  eventQueue: Queue.Queue<QueuedEvent<E>>,
   stoppedRef: Ref.Ref<boolean>,
   self: MachineRef<E>,
   listeners: Listeners<S>,
@@ -520,6 +552,7 @@ const persistentEventLoop = Effect.fn("effect-machine.persistentActor.eventLoop"
   persistenceFiber: Fiber.Fiber<void, never>,
   inspector: Inspector<S, E> | undefined,
   system: ActorSystem,
+  pendingReplies: Set<Deferred.Deferred<unknown, unknown>>,
 ) {
   const { machine, persistence } = persistentMachine;
   const typedMachine = machine as unknown as Machine<
@@ -565,10 +598,38 @@ const persistentEventLoop = Effect.fn("effect-machine.persistentActor.eventLoop"
             })),
         };
 
+  // Postpone buffer + pending drain queue (processed with priority before mailbox)
+  const postponed: QueuedEvent<E>[] = [];
+  const pendingDrain: QueuedEvent<E>[] = [];
+  const hasPostponeRules = machine.postponeRules.length > 0;
+
   while (true) {
-    const event = yield* Queue.take(eventQueue);
+    // Take from pending drain first (postponed events have priority), else mailbox
+    const queued =
+      pendingDrain.length > 0
+        ? (pendingDrain.shift() as QueuedEvent<E>)
+        : yield* Queue.take(eventQueue);
+    const event = queued.event;
     const currentState = yield* SubscriptionRef.get(stateRef);
     const currentVersion = yield* Ref.get(versionRef);
+
+    // Check postpone rules before processing
+    if (hasPostponeRules && shouldPostpone(typedMachine, currentState._tag, event._tag)) {
+      postponed.push(queued);
+      if (queued._tag === "call") {
+        yield* Deferred.succeed(queued.reply, {
+          newState: currentState,
+          previousState: currentState,
+          transitioned: false,
+          lifecycleRan: false,
+          isFinal: false,
+          hasReply: false,
+          reply: undefined,
+          postponed: true,
+        });
+      }
+      continue;
+    }
 
     // Emit event received
     yield* emitWithTimestamp(inspector, (timestamp) => ({
@@ -586,8 +647,20 @@ const persistentEventLoop = Effect.fn("effect-machine.persistentActor.eventLoop"
       self,
       stateScopeRef,
       system,
+      id,
       hooks,
     );
+
+    // Settle reply based on request type
+    if (queued._tag === "call") {
+      yield* Deferred.succeed(queued.reply, result);
+    } else if (queued._tag === "ask") {
+      if (result.hasReply) {
+        yield* Deferred.succeed(queued.reply, result.reply);
+      } else {
+        yield* Deferred.fail(queued.reply, new NoReplyError({ actorId: id, eventTag: event._tag }));
+      }
+    }
 
     if (!result.transitioned) {
       continue;
@@ -636,11 +709,18 @@ const persistentEventLoop = Effect.fn("effect-machine.persistentActor.eventLoop"
         timestamp,
       }));
       yield* Ref.set(stoppedRef, true);
+      postponed.length = 0;
+      yield* settlePendingReplies(pendingReplies, id);
       yield* Scope.close(stateScopeRef.current, Exit.void);
       yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
       yield* Fiber.interrupt(snapshotFiber);
       yield* Fiber.interrupt(persistenceFiber);
       return;
+    }
+
+    // Drain postponed events with priority (before taking next from mailbox)
+    if (result.lifecycleRan && postponed.length > 0) {
+      pendingDrain.push(...postponed.splice(0));
     }
   }
 });
@@ -688,7 +768,7 @@ const runSpawnEffectsWithInspection = Effect.fn("effect-machine.persistentActor.
               timestamp,
             }));
 
-    yield* runSpawnEffects(machine, state, event, self, stateScope, system, onError);
+    yield* runSpawnEffects(machine, state, event, self, stateScope, system, actorId, onError);
   },
 );
 

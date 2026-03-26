@@ -104,6 +104,7 @@ export type EffectSlots<D extends EffectsDef> = {
  * Shared across all machines via MachineContextTag.
  */
 export interface MachineContext<State, Event, Self> {
+  readonly actorId: string;
   readonly state: State;
   readonly event: Event;
   readonly self: Self;

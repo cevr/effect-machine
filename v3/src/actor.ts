@@ -28,8 +28,17 @@ import {
 import type { Machine, MachineRef, BuiltMachine } from "./machine.js";
 import type { Inspector } from "./inspection.js";
 import { Inspector as InspectorTag } from "./inspection.js";
-import { processEventCore, runSpawnEffects, resolveTransition } from "./internal/transition.js";
-import type { ProcessEventError, ProcessEventHooks } from "./internal/transition.js";
+import {
+  processEventCore,
+  runSpawnEffects,
+  resolveTransition,
+  shouldPostpone,
+} from "./internal/transition.js";
+import type {
+  ProcessEventError,
+  ProcessEventHooks,
+  ProcessEventResult,
+} from "./internal/transition.js";
 import { emitWithTimestamp } from "./internal/inspection.js";
 
 // Re-export for external use (cluster, persistence)
@@ -39,8 +48,29 @@ export type {
   ProcessEventHooks,
   ProcessEventResult,
 } from "./internal/transition.js";
+
+// ============================================================================
+// QueuedEvent (internal wrapper for event queue)
+// ============================================================================
+
+/** Discriminated mailbox request */
+export type QueuedEvent<E> =
+  | { readonly _tag: "send"; readonly event: E }
+  | {
+      readonly _tag: "call";
+      readonly event: E;
+      readonly reply: Deferred.Deferred<
+        ProcessEventResult<{ readonly _tag: string }>,
+        ActorStoppedError
+      >;
+    }
+  | {
+      readonly _tag: "ask";
+      readonly event: E;
+      readonly reply: Deferred.Deferred<unknown, NoReplyError | ActorStoppedError>;
+    };
 import type { GuardsDef, EffectsDef } from "./slot.js";
-import { DuplicateActorError } from "./errors.js";
+import { DuplicateActorError, ActorStoppedError, NoReplyError } from "./errors.js";
 import { INTERNAL_INIT_EVENT } from "./internal/utils.js";
 import type {
   ActorMetadata,
@@ -64,116 +94,83 @@ import { createPersistentActor, restorePersistentActor } from "./persistence/per
 /**
  * Reference to a running actor.
  */
+/**
+ * Sync projection of ActorRef for non-Effect boundaries (React hooks, framework callbacks).
+ */
+export interface ActorRefSync<State extends { readonly _tag: string }, Event> {
+  readonly send: (event: Event) => void;
+  readonly stop: () => void;
+  readonly snapshot: () => State;
+  readonly matches: (tag: State["_tag"]) => boolean;
+  readonly can: (event: Event) => boolean;
+}
+
 export interface ActorRef<State extends { readonly _tag: string }, Event> {
-  /**
-   * Unique identifier for this actor
-   */
   readonly id: string;
 
-  /**
-   * Send an event to the actor
-   */
+  /** Send an event (fire-and-forget). */
   readonly send: (event: Event) => Effect.Effect<void>;
 
+  /** Fire-and-forget alias for send (OTP gen_server:cast). */
+  readonly cast: (event: Event) => Effect.Effect<void>;
+
   /**
-   * Observable state of the actor
+   * Serialized request-reply (OTP gen_server:call).
+   * Event is processed through the queue; caller gets ProcessEventResult back.
    */
+  readonly call: (event: Event) => Effect.Effect<ProcessEventResult<State>>;
+
+  /**
+   * Typed request-reply. Event is processed through the queue; caller gets
+   * the domain value returned by the handler's `reply` field.
+   * Fails with NoReplyError if the handler doesn't provide a reply.
+   */
+  readonly ask: <R>(event: Event) => Effect.Effect<R, NoReplyError | ActorStoppedError>;
+
+  /** Observable state. */
   readonly state: SubscriptionRef.SubscriptionRef<State>;
 
-  /**
-   * Stop the actor gracefully
-   */
+  /** Stop the actor gracefully. */
   readonly stop: Effect.Effect<void>;
 
-  /**
-   * Stop the actor (fire-and-forget).
-   * Signals graceful shutdown without waiting for completion.
-   * Use when stopping from sync contexts (e.g. framework cleanup hooks).
-   */
-  readonly stopSync: () => void;
-
-  /**
-   * Get current state snapshot (Effect)
-   */
+  /** Get current state snapshot. */
   readonly snapshot: Effect.Effect<State>;
 
-  /**
-   * Get current state snapshot (sync)
-   */
-  readonly snapshotSync: () => State;
-
-  /**
-   * Check if current state matches tag (Effect)
-   */
+  /** Check if current state matches tag. */
   readonly matches: (tag: State["_tag"]) => Effect.Effect<boolean>;
 
-  /**
-   * Check if current state matches tag (sync)
-   */
-  readonly matchesSync: (tag: State["_tag"]) => boolean;
-
-  /**
-   * Check if event can be handled in current state (Effect)
-   */
+  /** Check if event can be handled in current state. */
   readonly can: (event: Event) => Effect.Effect<boolean>;
 
-  /**
-   * Check if event can be handled in current state (sync)
-   */
-  readonly canSync: (event: Event) => boolean;
-
-  /**
-   * Stream of state changes
-   */
+  /** Stream of state changes. */
   readonly changes: Stream.Stream<State>;
 
-  /**
-   * Wait for a state that matches predicate or state variant (includes current snapshot).
-   * Accepts a predicate function or a state constructor/value (e.g. `State.Active`).
-   */
+  /** Wait for a state matching predicate or variant (includes current snapshot). */
   readonly waitFor: {
     (predicate: (state: State) => boolean): Effect.Effect<State>;
     (state: { readonly _tag: State["_tag"] }): Effect.Effect<State>;
   };
 
-  /**
-   * Wait for a final state (includes current snapshot)
-   */
+  /** Wait for a final state (includes current snapshot). */
   readonly awaitFinal: Effect.Effect<State>;
 
-  /**
-   * Send event and wait for predicate, state variant, or final state.
-   * Accepts a predicate function or a state constructor/value (e.g. `State.Active`).
-   */
+  /** Send event and wait for predicate, state variant, or final state. */
   readonly sendAndWait: {
     (event: Event, predicate: (state: State) => boolean): Effect.Effect<State>;
     (event: Event, state: { readonly _tag: State["_tag"] }): Effect.Effect<State>;
     (event: Event): Effect.Effect<State>;
   };
 
-  /**
-   * Send event synchronously (fire-and-forget).
-   * No-op on stopped actors. Use when you need to send from sync contexts
-   * (e.g. framework hooks, event handlers).
-   */
-  readonly sendSync: (event: Event) => void;
-
-  /**
-   * Subscribe to state changes (sync callback)
-   * Returns unsubscribe function
-   */
+  /** Subscribe to state changes (sync callback). Returns unsubscribe function. */
   readonly subscribe: (fn: (state: State) => void) => () => void;
 
-  /**
-   * The actor system this actor belongs to.
-   * Every actor always has a system — either inherited from context or implicitly created.
-   */
+  /** Sync helpers for non-Effect boundaries. */
+  readonly sync: ActorRefSync<State, Event>;
+
+  /** The actor system this actor belongs to. */
   readonly system: ActorSystem;
 
-  /**
-   * Child actors spawned via `self.spawn` in this actor's handlers.
-   * State-scoped children are auto-removed on state exit.
-   */
+  /** Child actors spawned via `self.spawn` in this actor's handlers. */
   readonly children: ReadonlyMap<string, ActorRef<AnyState, unknown>>;
 }
 
@@ -399,19 +396,71 @@ export const buildActorRefCore = <
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
   machine: Machine<S, E, R, any, any, GD, EFD>,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
-  eventQueue: Queue.Queue<E>,
+  eventQueue: Queue.Queue<QueuedEvent<E>>,
   stoppedRef: Ref.Ref<boolean>,
   listeners: Listeners<S>,
   stop: Effect.Effect<void>,
   system: ActorSystem,
   childrenMap: ReadonlyMap<string, ActorRef<AnyState, unknown>>,
+  pendingReplies: Set<Deferred.Deferred<unknown, unknown>>,
 ): ActorRef<S, E> => {
   const send = Effect.fn("effect-machine.actor.send")(function* (event: E) {
     const stopped = yield* Ref.get(stoppedRef);
     if (stopped) {
       return;
     }
-    yield* Queue.offer(eventQueue, event);
+    yield* Queue.offer(eventQueue, { _tag: "send", event });
+  });
+
+  const call = Effect.fn("effect-machine.actor.call")(function* (event: E) {
+    const stopped = yield* Ref.get(stoppedRef);
+    if (stopped) {
+      const currentState = yield* SubscriptionRef.get(stateRef);
+      return {
+        newState: currentState,
+        previousState: currentState,
+        transitioned: false,
+        lifecycleRan: false,
+        isFinal: machine.finalStates.has(currentState._tag),
+      } as ProcessEventResult<S>;
+    }
+    const reply = yield* Deferred.make<
+      ProcessEventResult<{ readonly _tag: string }>,
+      ActorStoppedError
+    >();
+    pendingReplies.add(reply as Deferred.Deferred<unknown, unknown>);
+    yield* Queue.offer(eventQueue, { _tag: "call", event, reply });
+    return (yield* Deferred.await(reply).pipe(
+      Effect.ensuring(
+        Effect.sync(() => pendingReplies.delete(reply as Deferred.Deferred<unknown, unknown>)),
+      ),
+      Effect.catchTag("ActorStoppedError", () =>
+        SubscriptionRef.get(stateRef).pipe(
+          Effect.map((currentState) => ({
+            newState: currentState,
+            previousState: currentState,
+            transitioned: false,
+            lifecycleRan: false,
+            isFinal: machine.finalStates.has(currentState._tag),
+          })),
+        ),
+      ),
+    )) as ProcessEventResult<S>;
+  });
+
+  const ask = Effect.fn("effect-machine.actor.ask")(function* (event: E) {
+    const stopped = yield* Ref.get(stoppedRef);
+    if (stopped) {
+      return yield* new ActorStoppedError({ actorId: id });
+    }
+    const reply = yield* Deferred.make<unknown, NoReplyError | ActorStoppedError>();
+    pendingReplies.add(reply as Deferred.Deferred<unknown, unknown>);
+    yield* Queue.offer(eventQueue, { _tag: "ask", event, reply });
+    return yield* Deferred.await(reply).pipe(
+      Effect.ensuring(
+        Effect.sync(() => pendingReplies.delete(reply as Deferred.Deferred<unknown, unknown>)),
+      ),
+    );
   });
 
   const snapshot = SubscriptionRef.get(stateRef).pipe(
@@ -484,33 +533,38 @@ export const buildActorRefCore = <
   return {
     id,
     send,
+    cast: send,
+    call,
+    ask: ask as ActorRef<S, E>["ask"],
     state: stateRef,
     stop,
-    stopSync: () => Effect.runFork(stop),
     snapshot,
-    snapshotSync: () => Effect.runSync(SubscriptionRef.get(stateRef)),
     matches,
-    matchesSync: (tag) => Effect.runSync(SubscriptionRef.get(stateRef))._tag === tag,
     can,
-    canSync: (event) => {
-      const state = Effect.runSync(SubscriptionRef.get(stateRef));
-      return resolveTransition(machine, state, event) !== undefined;
-    },
     changes: stateRef.changes,
     waitFor,
     awaitFinal,
     sendAndWait,
-    sendSync: (event) => {
-      const stopped = Effect.runSync(Ref.get(stoppedRef));
-      if (!stopped) {
-        Effect.runSync(Queue.offer(eventQueue, event));
-      }
-    },
     subscribe: (fn) => {
       listeners.add(fn);
       return () => {
         listeners.delete(fn);
       };
+    },
+    sync: {
+      send: (event) => {
+        const stopped = Effect.runSync(Ref.get(stoppedRef));
+        if (!stopped) {
+          Effect.runSync(Queue.offer(eventQueue, { _tag: "send", event }));
+        }
+      },
+      stop: () => Effect.runFork(stop),
+      snapshot: () => Effect.runSync(SubscriptionRef.get(stateRef)),
+      matches: (tag) => Effect.runSync(SubscriptionRef.get(stateRef))._tag === tag,
+      can: (event) => {
+        const state = Effect.runSync(SubscriptionRef.get(stateRef));
+        return resolveTransition(machine, state, event) !== undefined;
+      },
     },
     system,
     children: childrenMap,
@@ -552,17 +606,19 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     | undefined;
 
   // Create self reference for sending events
-  const eventQueue = yield* Queue.unbounded<E>();
+  const eventQueue = yield* Queue.unbounded<QueuedEvent<E>>();
   const stoppedRef = yield* Ref.make(false);
   const childrenMap = new Map<string, ActorRef<AnyState, unknown>>();
+  const selfSend = Effect.fn("effect-machine.actor.self.send")(function* (event: E) {
+    const stopped = yield* Ref.get(stoppedRef);
+    if (stopped) {
+      return;
+    }
+    yield* Queue.offer(eventQueue, { _tag: "send", event });
+  });
   const self: MachineRef<E> = {
-    send: Effect.fn("effect-machine.actor.self.send")(function* (event: E) {
-      const stopped = yield* Ref.get(stoppedRef);
-      if (stopped) {
-        return;
-      }
-      yield* Queue.offer(eventQueue, event);
-    }),
+    send: selfSend,
+    cast: selfSend,
     spawn: (childId, childMachine) =>
       Effect.gen(function* () {
         const child = yield* system
@@ -600,13 +656,20 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   // Fork background effects (run for entire machine lifetime)
   const backgroundFibers: Fiber.Fiber<void, never>[] = [];
   const initEvent = { _tag: INTERNAL_INIT_EVENT } as E;
-  const ctx = { state: machine.initial, event: initEvent, self, system };
+  const ctx = { actorId: id, state: machine.initial, event: initEvent, self, system };
   const { effects: effectSlots } = machine._slots;
 
   for (const bg of machine.backgroundEffects) {
     const fiber = yield* Effect.forkDaemon(
       bg
-        .handler({ state: machine.initial, event: initEvent, self, effects: effectSlots, system })
+        .handler({
+          actorId: id,
+          state: machine.initial,
+          event: initEvent,
+          self,
+          effects: effectSlots,
+          system,
+        })
         .pipe(Effect.provideService(machine.Context, ctx)),
     );
     backgroundFibers.push(fiber);
@@ -658,8 +721,12 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       stop,
       system,
       childrenMap,
+      new Set(),
     );
   }
+
+  // Pending reply tracking — registered before enqueue, settled on stop
+  const pendingReplies = new Set<Deferred.Deferred<unknown, unknown>>();
 
   // Start the event loop — use forkDaemon so the event loop fiber's lifetime
   // is detached from any parent scope/fiber. actor.stop handles cleanup.
@@ -676,6 +743,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       id,
       inspectorValue,
       system,
+      pendingReplies,
     ),
   );
 
@@ -689,6 +757,8 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     }));
     yield* Ref.set(stoppedRef, true);
     yield* Fiber.interrupt(loopFiber);
+    // Fail all pending call/ask Deferreds
+    yield* settlePendingReplies(pendingReplies, id);
     // Close state scope (interrupts spawn fibers)
     yield* Scope.close(stateScopeRef.current, Exit.void);
     // Interrupt background effects (in parallel)
@@ -709,11 +779,28 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     stop,
     system,
     childrenMap,
+    pendingReplies,
   );
 });
 
+/** Fail all pending call/ask Deferreds with ActorStoppedError. Safe to call multiple times. */
+export const settlePendingReplies = (
+  pendingReplies: Set<Deferred.Deferred<unknown, unknown>>,
+  actorId: string,
+) =>
+  Effect.sync(() => {
+    const error = new ActorStoppedError({ actorId });
+    for (const deferred of pendingReplies) {
+      // Deferred.fail returns false if already completed — safe to double-settle
+      Effect.runFork(Deferred.fail(deferred, error));
+    }
+    pendingReplies.clear();
+  });
+
 /**
- * Main event loop for the actor
+ * Main event loop for the actor.
+ * Includes postpone buffer — events matching postpone rules are buffered
+ * and drained after state tag changes (gen_statem semantics).
  */
 const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
   S extends { readonly _tag: string },
@@ -724,7 +811,7 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
 >(
   machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
-  eventQueue: Queue.Queue<E>,
+  eventQueue: Queue.Queue<QueuedEvent<E>>,
   stoppedRef: Ref.Ref<boolean>,
   self: MachineRef<E>,
   listeners: Listeners<S>,
@@ -733,15 +820,39 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
   actorId: string,
   inspector: Inspector<S, E> | undefined,
   system: ActorSystem,
+  pendingReplies: Set<Deferred.Deferred<unknown, unknown>>,
 ) {
-  while (true) {
-    // Block waiting for next event - will fail with QueueShutdown when queue is shut down
-    const event = yield* Queue.take(eventQueue);
+  // Postpone buffer — events deferred for retry after next state change
+  const postponed: QueuedEvent<E>[] = [];
+  const hasPostponeRules = machine.postponeRules.length > 0;
 
+  // Process a single queued event: check postpone, run transition, settle reply
+  const processQueued = Effect.fn("effect-machine.actor.processQueued")(function* (
+    queued: QueuedEvent<E>,
+  ) {
+    const event = queued.event;
     const currentState = yield* SubscriptionRef.get(stateRef);
 
-    // Process event in a span
-    const shouldStop = yield* Effect.withSpan("effect-machine.event.process", {
+    // Check postpone rules before processing
+    if (hasPostponeRules && shouldPostpone(machine, currentState._tag, event._tag)) {
+      postponed.push(queued);
+      if (queued._tag === "call") {
+        const postponedResult: ProcessEventResult<S> = {
+          newState: currentState,
+          previousState: currentState,
+          transitioned: false,
+          lifecycleRan: false,
+          isFinal: false,
+          hasReply: false,
+          reply: undefined,
+          postponed: true,
+        };
+        yield* Deferred.succeed(queued.reply, postponedResult);
+      }
+      return { shouldStop: false, stateChanged: false };
+    }
+
+    const { shouldStop, result } = yield* Effect.withSpan("effect-machine.event.process", {
       attributes: {
         "effect_machine.actor.id": actorId,
         "effect_machine.state.current": currentState._tag,
@@ -762,15 +873,68 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
       ),
     );
 
+    // Settle reply based on request type
+    switch (queued._tag) {
+      case "call":
+        yield* Deferred.succeed(queued.reply, result);
+        break;
+      case "ask":
+        if (result.hasReply) {
+          yield* Deferred.succeed(queued.reply, result.reply);
+        } else {
+          yield* Deferred.fail(queued.reply, new NoReplyError({ actorId, eventTag: event._tag }));
+        }
+        break;
+    }
+
+    return { shouldStop, stateChanged: result.lifecycleRan };
+  });
+
+  while (true) {
+    const queued = yield* Queue.take(eventQueue);
+    const { shouldStop, stateChanged } = yield* processQueued(queued);
+
     if (shouldStop) {
-      // Close state scope and interrupt background effects when reaching final state
       yield* Ref.set(stoppedRef, true);
+      settlePostponedBuffer(postponed, pendingReplies, actorId);
+      yield* settlePendingReplies(pendingReplies, actorId);
       yield* Scope.close(stateScopeRef.current, Exit.void);
       yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
       return;
     }
+
+    // Drain postponed events with priority (before taking next from mailbox)
+    if (stateChanged && postponed.length > 0) {
+      const drained = postponed.splice(0);
+      for (const entry of drained) {
+        const drain = yield* processQueued(entry);
+        if (drain.shouldStop) {
+          yield* Ref.set(stoppedRef, true);
+          settlePostponedBuffer(postponed, pendingReplies, actorId);
+          yield* settlePendingReplies(pendingReplies, actorId);
+          yield* Scope.close(stateScopeRef.current, Exit.void);
+          yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
+          return;
+        }
+      }
+    }
   }
 });
+
+/**
+ * Settle all reply-bearing entries in the postpone buffer on shutdown.
+ * Call entries already had their Deferred settled with the postponed result
+ * (so their pendingReplies entry is already removed). Ask/send entries
+ * with Deferreds are settled via the pendingReplies registry.
+ */
+const settlePostponedBuffer = <E>(
+  postponed: QueuedEvent<E>[],
+  _pendingReplies: Set<Deferred.Deferred<unknown, unknown>>,
+  _actorId: string,
+): void => {
+  // Clear the buffer — remaining Deferreds are settled via pendingReplies
+  postponed.length = 0;
+};
 
 /**
  * Process a single event, returning true if the actor should stop.
@@ -845,12 +1009,13 @@ const processEvent = Effect.fn("effect-machine.actor.processEvent")(function* <
     self,
     stateScopeRef,
     system,
+    actorId,
     hooks,
   );
 
   if (!result.transitioned) {
     yield* Effect.annotateCurrentSpan("effect_machine.transition.matched", false);
-    return false;
+    return { shouldStop: false, result };
   }
 
   yield* Effect.annotateCurrentSpan("effect_machine.transition.matched", true);
@@ -873,11 +1038,11 @@ const processEvent = Effect.fn("effect-machine.actor.processEvent")(function* <
         finalState: result.newState,
         timestamp,
       }));
-      return true;
+      return { shouldStop: true, result };
     }
   }
 
-  return false;
+  return { shouldStop: false, result };
 });
 
 /**
@@ -925,7 +1090,7 @@ const runSpawnEffectsWithInspection = Effect.fn("effect-machine.actor.spawnEffec
             timestamp,
           }));
 
-  yield* runSpawnEffects(machine, state, event, self, stateScope, system, onError);
+  yield* runSpawnEffects(machine, state, event, self, stateScope, system, actorId, onError);
 });
 
 // ============================================================================
@@ -955,7 +1120,7 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
 
   const emitSystemEvent = (event: SystemEvent): Effect.Effect<void> =>
     Effect.sync(() => notifySystemListeners(eventListeners, event)).pipe(
-      Effect.andThen(PubSub.publish(eventPubSub, event)),
+      Effect.zipRight(PubSub.publish(eventPubSub, event)),
       Effect.catchAllCause(() => Effect.void),
       Effect.asVoid,
     );
@@ -967,7 +1132,7 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
       stops.push(actor.stop);
     });
     return Effect.all(stops, { concurrency: "unbounded" }).pipe(
-      Effect.andThen(PubSub.shutdown(eventPubSub)),
+      Effect.zipRight(PubSub.shutdown(eventPubSub)),
       Effect.asVoid,
     );
   });

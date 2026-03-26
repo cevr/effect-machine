@@ -55,18 +55,36 @@ export const runTransitionHandler = Effect.fn("effect-machine.runTransitionHandl
   event: E,
   self: MachineRef<E>,
   system: ActorSystem,
+  actorId: string,
 ) {
-  const ctx: MachineContext<S, E, MachineRef<E>> = { state, event, self, system };
+  const ctx: MachineContext<S, E, MachineRef<E>> = { actorId, state, event, self, system };
   const { guards, effects } = machine._slots;
 
   const handlerCtx: HandlerContext<S, E, GD, EFD> = { state, event, guards, effects };
-  const result = transition.handler(handlerCtx);
+  const raw = transition.handler(handlerCtx);
 
-  return isEffect(result)
-    ? yield* (result as Effect.Effect<S, never, R>).pipe(
+  const resolved = isEffect(raw)
+    ? yield* (raw as Effect.Effect<S | { state: S; reply: unknown }, never, R>).pipe(
         Effect.provideService(machine.Context, ctx),
       )
-    : result;
+    : raw;
+
+  // Detect { state, reply } tuple vs plain state
+  if (
+    resolved !== null &&
+    typeof resolved === "object" &&
+    "state" in resolved &&
+    "reply" in resolved &&
+    !("_tag" in resolved)
+  ) {
+    return {
+      newState: (resolved as { state: S; reply: unknown }).state,
+      hasReply: true,
+      reply: (resolved as { state: S; reply: unknown }).reply,
+    };
+  }
+
+  return { newState: resolved as S, hasReply: false, reply: undefined };
 });
 
 /**
@@ -92,6 +110,7 @@ export const executeTransition = Effect.fn("effect-machine.executeTransition")(f
   event: E,
   self: MachineRef<E>,
   system: ActorSystem,
+  actorId: string,
 ) {
   const transition = resolveTransition(machine, currentState, event);
 
@@ -100,22 +119,27 @@ export const executeTransition = Effect.fn("effect-machine.executeTransition")(f
       newState: currentState,
       transitioned: false,
       reenter: false,
+      hasReply: false,
+      reply: undefined,
     };
   }
 
-  const newState = yield* runTransitionHandler(
+  const { newState, hasReply, reply } = yield* runTransitionHandler(
     machine,
     transition,
     currentState,
     event,
     self,
     system,
+    actorId,
   );
 
   return {
     newState,
     transitioned: true,
     reenter: transition.reenter === true,
+    hasReply,
+    reply,
   };
 });
 
@@ -159,7 +183,35 @@ export interface ProcessEventResult<S> {
   readonly lifecycleRan: boolean;
   /** Whether new state is final */
   readonly isFinal: boolean;
+  /** Whether the handler provided a reply (structural, not value-based) */
+  readonly hasReply: boolean;
+  /** Domain reply value from handler (used by ask). Only meaningful when hasReply is true. */
+  readonly reply?: unknown;
+  /** Whether the event was postponed (buffered for retry after next state change) */
+  readonly postponed: boolean;
 }
+
+/**
+ * Check if an event should be postponed in the current state.
+ * @internal
+ */
+export const shouldPostpone = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+>(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  machine: Machine<S, E, R, any, any, any, any>,
+  stateTag: string,
+  eventTag: string,
+): boolean => {
+  for (const rule of machine.postponeRules) {
+    if (rule.stateTag === stateTag && rule.eventTag === eventTag) {
+      return true;
+    }
+  }
+  return false;
+};
 
 /**
  * Process a single event through the machine.
@@ -186,10 +238,11 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
   self: MachineRef<E>,
   stateScopeRef: { current: Scope.CloseableScope },
   system: ActorSystem,
+  actorId: string,
   hooks?: ProcessEventHooks<S, E>,
 ) {
   // Execute transition (defect-aware)
-  const result = yield* executeTransition(machine, currentState, event, self, system).pipe(
+  const result = yield* executeTransition(machine, currentState, event, self, system, actorId).pipe(
     Effect.catchAllCause((cause) => {
       if (Cause.isInterruptedOnly(cause)) {
         return Effect.interrupt;
@@ -214,6 +267,9 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
       transitioned: false,
       lifecycleRan: false,
       isFinal: false,
+      hasReply: false,
+      reply: undefined,
+      postponed: false,
     };
   }
 
@@ -247,6 +303,7 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
       self,
       stateScopeRef.current,
       system,
+      actorId,
       hooks?.onError,
     );
   }
@@ -257,6 +314,9 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
     transitioned: true,
     lifecycleRan: runLifecycle,
     isFinal: machine.finalStates.has(newState._tag),
+    hasReply: result.hasReply,
+    reply: result.reply,
+    postponed: false,
   };
 });
 
@@ -278,21 +338,25 @@ export const runSpawnEffects = Effect.fn("effect-machine.runSpawnEffects")(funct
   self: MachineRef<E>,
   stateScope: Scope.CloseableScope,
   system: ActorSystem,
+  actorId: string,
   onError?: (info: ProcessEventError<S, E>) => Effect.Effect<void>,
 ) {
   const spawnEffects = findSpawnEffects(machine, state._tag);
-  const ctx: MachineContext<S, E, MachineRef<E>> = { state, event, self, system };
+  const ctx: MachineContext<S, E, MachineRef<E>> = { actorId, state, event, self, system };
   const { effects: effectSlots } = machine._slots;
   const reportError = onError;
 
   for (const spawnEffect of spawnEffects) {
     // Fork the spawn effect into the state scope - interrupted when scope closes
     const effect = (
-      spawnEffect.handler({ state, event, self, effects: effectSlots, system }) as Effect.Effect<
-        void,
-        never,
-        R
-      >
+      spawnEffect.handler({
+        actorId,
+        state,
+        event,
+        self,
+        effects: effectSlots,
+        system,
+      }) as Effect.Effect<void, never, R>
     ).pipe(
       Effect.provideService(machine.Context, ctx),
       Effect.catchAllCause((cause) => {

@@ -42,7 +42,7 @@
  *
  * @module
  */
-import type { Schema, Schedule, Context } from "effect";
+import type { Schema, Schedule, Context, Duration } from "effect";
 import { Cause, Effect, Exit, Option, Scope } from "effect";
 
 import type { TransitionResult } from "./internal/utils.js";
@@ -54,7 +54,9 @@ import { persist as persistImpl } from "./persistence/persistent-machine.js";
 import { SlotProvisionError, ProvisionValidationError } from "./errors.js";
 import type { DuplicateActorError } from "./errors.js";
 import { invalidateIndex } from "./internal/transition.js";
+import { emitWithTimestamp } from "./internal/inspection.js";
 import type { ActorRef, ActorSystem } from "./actor.js";
+import { Inspector as InspectorTag } from "./inspection.js";
 import type {
   GuardsSchema,
   EffectsSchema,
@@ -77,6 +79,8 @@ import { MachineContextTag } from "./slot.js";
  */
 export interface MachineRef<Event> {
   readonly send: (event: Event) => Effect.Effect<void>;
+  /** Fire-and-forget alias for send (OTP gen_server:cast). */
+  readonly cast: (event: Event) => Effect.Effect<void>;
   readonly spawn: <S2 extends { readonly _tag: string }, E2 extends { readonly _tag: string }, R2>(
     id: string,
     machine: BuiltMachine<S2, E2, R2>,
@@ -97,6 +101,7 @@ export interface HandlerContext<State, Event, GD extends GuardsDef, ED extends E
  * Handler context passed to state effect handlers (onEnter, spawn, background)
  */
 export interface StateHandlerContext<State, Event, ED extends EffectsDef> {
+  readonly actorId: string;
   readonly state: State;
   readonly event: Event;
   readonly self: MachineRef<Event>;
@@ -154,6 +159,25 @@ export interface PersistOptions {
   readonly machineType?: string;
 }
 
+export interface TaskOptions<State, Event, ED extends EffectsDef, A, E1, ES, EF> {
+  readonly onSuccess: (value: A, ctx: StateHandlerContext<State, Event, ED>) => ES;
+  readonly onFailure?: (cause: Cause.Cause<E1>, ctx: StateHandlerContext<State, Event, ED>) => EF;
+  readonly name?: string;
+}
+
+/**
+ * Configuration for `.timeout()` — gen_statem-style state timeouts.
+ *
+ * Entering the state starts a timer. Leaving cancels it.
+ * `.reenter()` restarts the timer with fresh state values.
+ */
+export interface TimeoutConfig<State, Event> {
+  /** Duration before firing. Static or derived from current state. */
+  readonly duration: Duration.DurationInput | ((state: State) => Duration.DurationInput);
+  /** Event to send when the timer fires. Static or derived from current state. */
+  readonly event: Event | ((state: State) => Event);
+}
+
 // ============================================================================
 // Internal helpers
 // ============================================================================
@@ -161,6 +185,27 @@ export interface PersistOptions {
 type IsAny<T> = 0 extends 1 & T ? true : false;
 type IsUnknown<T> = unknown extends T ? ([T] extends [unknown] ? true : false) : false;
 type NormalizeR<T> = IsAny<T> extends true ? T : IsUnknown<T> extends true ? never : T;
+
+const emitTaskInspection = <S extends { readonly _tag: string }>(input: {
+  readonly actorId: string;
+  readonly state: S;
+  readonly taskName: string | undefined;
+  readonly phase: "start" | "success" | "failure" | "interrupt";
+  readonly error?: string;
+}) =>
+  Effect.flatMap(Effect.serviceOptional(InspectorTag).pipe(Effect.option), (inspector) =>
+    Option.isNone(inspector)
+      ? Effect.void
+      : emitWithTimestamp(inspector.value, (timestamp) => ({
+          type: "@machine.task" as const,
+          actorId: input.actorId,
+          state: input.state,
+          taskName: input.taskName,
+          phase: input.phase,
+          error: input.error,
+          timestamp,
+        })),
+  );
 
 // ============================================================================
 // MakeConfig
@@ -281,6 +326,10 @@ export class Machine<
   /** @internal */ readonly _spawnEffects: Array<SpawnEffect<State, Event, EFD, R>>;
   /** @internal */ readonly _backgroundEffects: Array<BackgroundEffect<State, Event, EFD, R>>;
   /** @internal */ readonly _finalStates: Set<string>;
+  /** @internal */ readonly _postponeRules: Array<{
+    readonly stateTag: string;
+    readonly eventTag: string;
+  }>;
   /** @internal */ readonly _guardsSchema?: GuardsSchema<GD>;
   /** @internal */ readonly _effectsSchema?: EffectsSchema<EFD>;
   /** @internal */ readonly _guardHandlers: Map<
@@ -323,6 +372,9 @@ export class Machine<
   get finalStates(): ReadonlySet<string> {
     return this._finalStates;
   }
+  get postponeRules(): ReadonlyArray<{ readonly stateTag: string; readonly eventTag: string }> {
+    return this._postponeRules;
+  }
   get guardsSchema(): GuardsSchema<GD> | undefined {
     return this._guardsSchema;
   }
@@ -343,6 +395,7 @@ export class Machine<
     this._spawnEffects = [];
     this._backgroundEffects = [];
     this._finalStates = new Set();
+    this._postponeRules = [];
     this._guardsSchema = guardsSchema;
     this._effectsSchema = effectsSchema;
     this._guardHandlers = new Map();
@@ -382,6 +435,62 @@ export class Machine<
   }
 
   // ---- on ----
+
+  from<NS extends VariantsUnion<_SD> & BrandedState, R1>(
+    state: TaggedOrConstructor<NS>,
+    build: (scope: TransitionScope<State, Event, R, _SD, _ED, GD, EFD, NS>) => R1,
+  ): Machine<State, Event, R, _SD, _ED, GD, EFD>;
+  from<NS extends ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>, R1>(
+    states: NS,
+    build: (
+      scope: TransitionScope<
+        State,
+        Event,
+        R,
+        _SD,
+        _ED,
+        GD,
+        EFD,
+        NS[number] extends TaggedOrConstructor<infer S extends VariantsUnion<_SD> & BrandedState>
+          ? S
+          : never
+      >,
+    ) => R1,
+  ): Machine<State, Event, R, _SD, _ED, GD, EFD>;
+  from(
+    stateOrStates:
+      | TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>
+      | ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>,
+    build: (
+      scope: TransitionScope<State, Event, R, _SD, _ED, GD, EFD, VariantsUnion<_SD> & BrandedState>,
+    ) => unknown,
+  ) {
+    const states = Array.isArray(stateOrStates) ? stateOrStates : [stateOrStates];
+    build(new TransitionScope(this, states));
+    return this;
+  }
+
+  /** @internal */
+  scopeTransition<
+    NS extends VariantsUnion<_SD> & BrandedState,
+    NE extends VariantsUnion<_ED> & BrandedEvent,
+    RS extends VariantsUnion<_SD> & BrandedState,
+  >(
+    states: ReadonlyArray<TaggedOrConstructor<NS>>,
+    event: TaggedOrConstructor<NE>,
+    handler: TransitionHandler<NS, NE, RS, GD, EFD, never>,
+    reenter: boolean,
+  ): Machine<State, Event, R, _SD, _ED, GD, EFD> {
+    for (const state of states) {
+      this.addTransition(
+        state,
+        event,
+        handler as TransitionHandler<NS, NE, BrandedState, GD, EFD, never>,
+        reenter,
+      );
+    }
+    return this;
+  }
 
   /** Register transition for a single state */
   on<
@@ -568,22 +677,27 @@ export class Machine<
     run: (
       ctx: StateHandlerContext<NS, VariantsUnion<_ED> & BrandedEvent, EFD>,
     ) => Effect.Effect<A, E1, Scope.Scope>,
-    options: {
-      readonly onSuccess: (
-        value: A,
-        ctx: StateHandlerContext<NS, VariantsUnion<_ED> & BrandedEvent, EFD>,
-      ) => ES;
-      readonly onFailure?: (
-        cause: Cause.Cause<E1>,
-        ctx: StateHandlerContext<NS, VariantsUnion<_ED> & BrandedEvent, EFD>,
-      ) => EF;
-    },
+    options: TaskOptions<NS, VariantsUnion<_ED> & BrandedEvent, EFD, A, E1, ES, EF>,
   ): Machine<State, Event, R, _SD, _ED, GD, EFD> {
     const handler = Effect.fn("effect-machine.task")(function* (
       ctx: StateHandlerContext<NS, VariantsUnion<_ED> & BrandedEvent, EFD>,
     ) {
+      yield* emitTaskInspection({
+        actorId: ctx.actorId,
+        state: ctx.state,
+        taskName: options.name,
+        phase: "start",
+      });
+
       const exit = yield* Effect.exit(run(ctx));
+
       if (Exit.isSuccess(exit)) {
+        yield* emitTaskInspection({
+          actorId: ctx.actorId,
+          state: ctx.state,
+          taskName: options.name,
+          phase: "success",
+        });
         yield* ctx.self.send(options.onSuccess(exit.value, ctx));
         yield* Effect.yieldNow();
         return;
@@ -591,8 +705,21 @@ export class Machine<
 
       const cause = exit.cause;
       if (Cause.isInterruptedOnly(cause)) {
+        yield* emitTaskInspection({
+          actorId: ctx.actorId,
+          state: ctx.state,
+          taskName: options.name,
+          phase: "interrupt",
+        });
         return;
       }
+      yield* emitTaskInspection({
+        actorId: ctx.actorId,
+        state: ctx.state,
+        taskName: options.name,
+        phase: "failure",
+        error: Cause.pretty(cause),
+      });
       if (options.onFailure !== undefined) {
         yield* ctx.self.send(options.onFailure(cause, ctx));
         yield* Effect.yieldNow();
@@ -602,6 +729,49 @@ export class Machine<
     });
 
     return this.spawn(state, handler);
+  }
+
+  // ---- timeout ----
+
+  /**
+   * State timeout — gen_statem's `state_timeout`.
+   *
+   * Entering the state starts a timer. Leaving cancels it (via state scope).
+   * `.reenter()` restarts the timer with fresh state values.
+   * Compiles to `.task()` internally — preserves `@machine.task` inspection events.
+   *
+   * @example
+   * ```ts
+   * machine
+   *   .timeout(State.Loading, {
+   *     duration: Duration.seconds(30),
+   *     event: Event.Timeout,
+   *   })
+   *   // Dynamic duration from state
+   *   .timeout(State.Retrying, {
+   *     duration: (state) => Duration.seconds(state.backoff),
+   *     event: Event.GiveUp,
+   *   })
+   * ```
+   */
+  timeout<NS extends VariantsUnion<_SD> & BrandedState>(
+    state: TaggedOrConstructor<NS>,
+    config: TimeoutConfig<NS, VariantsUnion<_ED> & BrandedEvent>,
+  ): Machine<State, Event, R, _SD, _ED, GD, EFD> {
+    const stateTag = getTag(state);
+    const resolveDuration =
+      typeof config.duration === "function"
+        ? (config.duration as (state: NS) => Duration.DurationInput)
+        : () => config.duration as Duration.DurationInput;
+    const resolveEvent =
+      typeof config.event === "function"
+        ? (config.event as (state: NS) => VariantsUnion<_ED> & BrandedEvent)
+        : () => config.event as VariantsUnion<_ED> & BrandedEvent;
+
+    return this.task(state, (ctx) => Effect.sleep(resolveDuration(ctx.state)), {
+      onSuccess: (_, ctx) => resolveEvent(ctx.state),
+      name: `$timeout:${stateTag}`,
+    });
   }
 
   // ---- background ----
@@ -633,6 +803,40 @@ export class Machine<
     (this._backgroundEffects as any[]).push({
       handler: handler as unknown as BackgroundEffect<State, Event, EFD, R>["handler"],
     });
+    return this;
+  }
+
+  // ---- postpone ----
+
+  /**
+   * Postpone events — gen_statem's event postpone.
+   *
+   * When a matching event arrives in the given state, it is buffered instead of
+   * processed. After the next state transition (tag change), all buffered events
+   * are drained through the loop in FIFO order.
+   *
+   * Reply-bearing events (from `call`/`ask`) in the postpone buffer are settled
+   * with `ActorStoppedError` on stop/interrupt/final-state.
+   *
+   * @example
+   * ```ts
+   * machine
+   *   .postpone(State.Connecting, Event.Data)           // single event
+   *   .postpone(State.Connecting, [Event.Data, Event.Cmd]) // multiple events
+   * ```
+   */
+  postpone<NS extends VariantsUnion<_SD> & BrandedState>(
+    state: TaggedOrConstructor<NS>,
+    events:
+      | TaggedOrConstructor<VariantsUnion<_ED> & BrandedEvent>
+      | ReadonlyArray<TaggedOrConstructor<VariantsUnion<_ED> & BrandedEvent>>,
+  ): Machine<State, Event, R, _SD, _ED, GD, EFD> {
+    const stateTag = getTag(state);
+    const eventList = Array.isArray(events) ? events : [events];
+    for (const ev of eventList) {
+      const eventTag = getTag(ev);
+      this._postponeRules.push({ stateTag, eventTag });
+    }
     return this;
   }
 
@@ -713,6 +917,8 @@ export class Machine<
       (result as any)._spawnEffects = [...this._spawnEffects];
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (result as any)._backgroundEffects = [...this._backgroundEffects];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (result as any)._postponeRules = [...this._postponeRules];
 
       // Register handlers from provided object
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -766,6 +972,41 @@ export class Machine<
       config.guards as GuardsSchema<GD> | undefined,
       config.effects as EffectsSchema<EFD> | undefined,
     );
+  }
+}
+
+class TransitionScope<
+  State,
+  Event,
+  R,
+  _SD extends Record<string, Schema.Struct.Fields>,
+  _ED extends Record<string, Schema.Struct.Fields>,
+  GD extends GuardsDef,
+  EFD extends EffectsDef,
+  SelectedState extends VariantsUnion<_SD> & BrandedState,
+> {
+  constructor(
+    private readonly machine: Machine<State, Event, R, _SD, _ED, GD, EFD>,
+    private readonly states: ReadonlyArray<TaggedOrConstructor<SelectedState>>,
+  ) {}
+
+  on<NE extends VariantsUnion<_ED> & BrandedEvent, RS extends VariantsUnion<_SD> & BrandedState>(
+    event: TaggedOrConstructor<NE>,
+    handler: TransitionHandler<SelectedState, NE, RS, GD, EFD, never>,
+  ): TransitionScope<State, Event, R, _SD, _ED, GD, EFD, SelectedState> {
+    this.machine.scopeTransition(this.states, event, handler, false);
+    return this;
+  }
+
+  reenter<
+    NE extends VariantsUnion<_ED> & BrandedEvent,
+    RS extends VariantsUnion<_SD> & BrandedState,
+  >(
+    event: TaggedOrConstructor<NE>,
+    handler: TransitionHandler<SelectedState, NE, RS, GD, EFD, never>,
+  ): TransitionScope<State, Event, R, _SD, _ED, GD, EFD, SelectedState> {
+    this.machine.scopeTransition(this.states, event, handler, true);
+    return this;
   }
 }
 

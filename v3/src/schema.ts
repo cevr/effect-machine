@@ -223,6 +223,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
         }
         if (partial !== undefined) {
           for (const [key, value] of Object.entries(partial)) {
+            if (key === "_tag") continue;
             result[key] = value;
           }
         }

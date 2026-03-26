@@ -7,7 +7,7 @@
   },
   "files": [
     "dist",
-    "dist-v3"
+    "v3/dist"
   ],
   "type": "module",
   "exports": {
@@ -25,14 +25,14 @@
     },
     "./v3": {
       "import": {
-        "types": "./dist-v3/index.d.ts",
-        "default": "./dist-v3/index.js"
+        "types": "./v3/dist/index.d.ts",
+        "default": "./v3/dist/index.js"
       }
     },
     "./v3/cluster": {
       "import": {
-        "types": "./dist-v3/cluster/index.d.ts",
-        "default": "./dist-v3/cluster/index.js"
+        "types": "./v3/dist/cluster/index.d.ts",
+        "default": "./v3/dist/cluster/index.js"
       }
     }
   },
@@ -41,17 +41,18 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "typecheck:v3": "tsc --noEmit -p tsconfig.v3.json",
+    "typecheck:v3": "tsc --noEmit -p v3/tsconfig.json",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "test": "bun test",
+    "test:v3": "bun test --tsconfig-override=v3/tsconfig.json v3/test/",
     "test:watch": "bun test --watch",
     "gate": "concurrently -n type,lint,fmt,test,build -c blue,yellow,magenta,green,cyan \"bun run typecheck\" \"bun run lint:fix\" \"bun run fmt\" \"bun run test\" \"bun run build\"",
     "prepare": "lefthook install || true && effect-language-service patch",
     "version": "changeset version",
-    "build": "tsdown && tsdown --config tsdown.v3.config.ts",
+    "build": "tsdown && tsdown --config v3/tsdown.config.ts",
     "release": "bun run build && changeset publish"
   },
   "dependencies": {
