@@ -78,136 +78,76 @@ import { createPersistentActor, restorePersistentActor } from "./persistence/per
 /**
  * Reference to a running actor.
  */
+/**
+ * Sync projection of ActorRef for non-Effect boundaries (React hooks, framework callbacks).
+ */
+export interface ActorRefSync<State extends { readonly _tag: string }, Event> {
+  readonly send: (event: Event) => void;
+  readonly stop: () => void;
+  readonly snapshot: () => State;
+  readonly matches: (tag: State["_tag"]) => boolean;
+  readonly can: (event: Event) => boolean;
+}
+
 export interface ActorRef<State extends { readonly _tag: string }, Event> {
-  /**
-   * Unique identifier for this actor
-   */
   readonly id: string;
 
-  /**
-   * Send an event to the actor
-   */
+  /** Send an event (fire-and-forget). */
   readonly send: (event: Event) => Effect.Effect<void>;
 
+  /** Fire-and-forget alias for send (OTP gen_server:cast). */
+  readonly cast: (event: Event) => Effect.Effect<void>;
+
   /**
-   * Observable state of the actor
+   * Serialized request-reply (OTP gen_server:call).
+   * Event is processed through the queue; caller gets ProcessEventResult back.
    */
+  readonly call: (event: Event) => Effect.Effect<ProcessEventResult<State>>;
+
+  /** Observable state. */
   readonly state: SubscriptionRef.SubscriptionRef<State>;
 
-  /**
-   * Stop the actor gracefully
-   */
+  /** Stop the actor gracefully. */
   readonly stop: Effect.Effect<void>;
 
-  /**
-   * Stop the actor (fire-and-forget).
-   * Signals graceful shutdown without waiting for completion.
-   * Use when stopping from sync contexts (e.g. framework cleanup hooks).
-   */
-  readonly stopSync: () => void;
-
-  /**
-   * Get current state snapshot (Effect)
-   */
+  /** Get current state snapshot. */
   readonly snapshot: Effect.Effect<State>;
 
-  /**
-   * Get current state snapshot (sync)
-   */
-  readonly snapshotSync: () => State;
-
-  /**
-   * Check if current state matches tag (Effect)
-   */
+  /** Check if current state matches tag. */
   readonly matches: (tag: State["_tag"]) => Effect.Effect<boolean>;
 
-  /**
-   * Check if current state matches tag (sync)
-   */
-  readonly matchesSync: (tag: State["_tag"]) => boolean;
-
-  /**
-   * Check if event can be handled in current state (Effect)
-   */
+  /** Check if event can be handled in current state. */
   readonly can: (event: Event) => Effect.Effect<boolean>;
 
-  /**
-   * Check if event can be handled in current state (sync)
-   */
-  readonly canSync: (event: Event) => boolean;
-
-  /**
-   * Stream of state changes
-   */
+  /** Stream of state changes. */
   readonly changes: Stream.Stream<State>;
 
-  /**
-   * Wait for a state that matches predicate or state variant (includes current snapshot).
-   * Accepts a predicate function or a state constructor/value (e.g. `State.Active`).
-   */
+  /** Wait for a state matching predicate or variant (includes current snapshot). */
   readonly waitFor: {
     (predicate: (state: State) => boolean): Effect.Effect<State>;
     (state: { readonly _tag: State["_tag"] }): Effect.Effect<State>;
   };
 
-  /**
-   * Wait for a final state (includes current snapshot)
-   */
+  /** Wait for a final state (includes current snapshot). */
   readonly awaitFinal: Effect.Effect<State>;
 
-  /**
-   * Send event and wait for predicate, state variant, or final state.
-   * Accepts a predicate function or a state constructor/value (e.g. `State.Active`).
-   */
+  /** Send event and wait for predicate, state variant, or final state. */
   readonly sendAndWait: {
     (event: Event, predicate: (state: State) => boolean): Effect.Effect<State>;
     (event: Event, state: { readonly _tag: State["_tag"] }): Effect.Effect<State>;
     (event: Event): Effect.Effect<State>;
   };
 
-  /**
-   * Send event synchronously (fire-and-forget).
-   * No-op on stopped actors. Use when you need to send from sync contexts
-   * (e.g. framework hooks, event handlers).
-   */
-  readonly sendSync: (event: Event) => void;
-
-  /**
-   * Send event and wait for the transition result (serialized request-reply).
-   * The event is processed through the queue (preserving serialization)
-   * but the caller gets back the ProcessEventResult.
-   *
-   * OTP gen_server:call equivalent — use when you need to know what happened.
-   */
-  readonly call: (event: Event) => Effect.Effect<ProcessEventResult<State>>;
-
-  /**
-   * Fire-and-forget alias for send (OTP gen_server:cast).
-   */
-  readonly cast: (event: Event) => Effect.Effect<void>;
-
-  /**
-   * Promise-based call — send event and get back the transition result.
-   * Use at non-Effect boundaries (React event handlers, framework hooks, tests).
-   */
-  readonly callPromise: (event: Event) => Promise<ProcessEventResult<State>>;
-
-  /**
-   * Subscribe to state changes (sync callback)
-   * Returns unsubscribe function
-   */
+  /** Subscribe to state changes (sync callback). Returns unsubscribe function. */
   readonly subscribe: (fn: (state: State) => void) => () => void;
 
-  /**
-   * The actor system this actor belongs to.
-   * Every actor always has a system — either inherited from context or implicitly created.
-   */
+  /** Sync helpers for non-Effect boundaries. */
+  readonly sync: ActorRefSync<State, Event>;
+
+  /** The actor system this actor belongs to. */
   readonly system: ActorSystem;
 
-  /**
-   * Child actors spawned via `self.spawn` in this actor's handlers.
-   * State-scoped children are auto-removed on state exit.
-   */
+  /** Child actors spawned via `self.spawn` in this actor's handlers. */
   readonly children: ReadonlyMap<string, ActorRef<AnyState, unknown>>;
 }
 
@@ -537,36 +477,37 @@ export const buildActorRefCore = <
   return {
     id,
     send,
+    cast: send,
+    call,
     state: stateRef,
     stop,
-    stopSync: () => Effect.runFork(stop),
     snapshot,
-    snapshotSync: () => Effect.runSync(SubscriptionRef.get(stateRef)),
     matches,
-    matchesSync: (tag) => Effect.runSync(SubscriptionRef.get(stateRef))._tag === tag,
     can,
-    canSync: (event) => {
-      const state = Effect.runSync(SubscriptionRef.get(stateRef));
-      return resolveTransition(machine, state, event) !== undefined;
-    },
     changes: SubscriptionRef.changes(stateRef),
     waitFor,
     awaitFinal,
     sendAndWait,
-    sendSync: (event) => {
-      const stopped = Effect.runSync(Ref.get(stoppedRef));
-      if (!stopped) {
-        Effect.runSync(Queue.offer(eventQueue, { event }));
-      }
-    },
-    call,
-    cast: send,
-    callPromise: (event) => Effect.runPromise(call(event)),
     subscribe: (fn) => {
       listeners.add(fn);
       return () => {
         listeners.delete(fn);
       };
+    },
+    sync: {
+      send: (event) => {
+        const stopped = Effect.runSync(Ref.get(stoppedRef));
+        if (!stopped) {
+          Effect.runSync(Queue.offer(eventQueue, { event }));
+        }
+      },
+      stop: () => Effect.runFork(stop),
+      snapshot: () => Effect.runSync(SubscriptionRef.get(stateRef)),
+      matches: (tag) => Effect.runSync(SubscriptionRef.get(stateRef))._tag === tag,
+      can: (event) => {
+        const state = Effect.runSync(SubscriptionRef.get(stateRef));
+        return resolveTransition(machine, state, event) !== undefined;
+      },
     },
     system,
     children: childrenMap,

@@ -227,7 +227,7 @@ describe("ActorSystem Observation", () => {
         const stoppedEvent = events.find((e) => e._tag === "ActorStopped");
         expect(stoppedEvent).toBeDefined();
         // Actor ref in event should still have readable state
-        const state = stoppedEvent!.actor.snapshotSync();
+        const state = stoppedEvent!.actor.sync.snapshot();
         expect(state._tag).toBe("Active");
       }).pipe(Effect.provide(ActorSystemDefault)),
     );

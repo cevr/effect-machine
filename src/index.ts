@@ -52,6 +52,7 @@ export type {
 // Actor types and system
 export type {
   ActorRef,
+  ActorRefSync,
   ActorSystem,
   ProcessEventResult,
   SystemEvent,

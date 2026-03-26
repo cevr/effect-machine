@@ -615,8 +615,8 @@ describe("Persistence", () => {
       expect(matchesIdle).toBe(true);
 
       // Sync methods
-      expect(actor.matchesSync("Idle")).toBe(true);
-      expect(actor.canSync(OrderEvent.Submit({ orderId: "test" }))).toBe(true);
+      expect(actor.sync.matches("Idle")).toBe(true);
+      expect(actor.sync.can(OrderEvent.Submit({ orderId: "test" }))).toBe(true);
 
       // Subscribe
       const states: string[] = [];

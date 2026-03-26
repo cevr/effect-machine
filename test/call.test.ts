@@ -167,13 +167,13 @@ describe("ActorRef.call", () => {
   );
 });
 
-describe("ActorRef.callPromise", () => {
-  it.scopedLive("returns ProcessEventResult as Promise", () =>
+describe("ActorRef.call (Promise-free)", () => {
+  it.scopedLive("call works with Machine.spawn (no system)", () =>
     Effect.gen(function* () {
       const machine = createMachine();
       const actor = yield* Machine.spawn(machine);
 
-      const result = yield* Effect.promise(() => actor.callPromise(TestEvent.Start({ value: 99 })));
+      const result = yield* actor.call(TestEvent.Start({ value: 99 }));
 
       expect(result.transitioned).toBe(true);
       expect(result.previousState._tag).toBe("Idle");
@@ -189,7 +189,7 @@ describe("ActorRef.callPromise", () => {
       const machine = createMachine();
       const actor = yield* Machine.spawn(machine);
 
-      const result = yield* Effect.promise(() => actor.callPromise(TestEvent.Unknown));
+      const result = yield* actor.call(TestEvent.Unknown);
 
       expect(result.transitioned).toBe(false);
       expect(result.newState._tag).toBe("Idle");
