@@ -585,7 +585,12 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   R,
   GD extends GuardsDef,
   EFD extends EffectsDef,
->(id: string, machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>) {
+>(
+  id: string,
+  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
+  options?: { initialState?: S },
+) {
+  const initial: S = options?.initialState ?? machine.initial;
   yield* Effect.annotateCurrentSpan("effect_machine.actor.id", id);
 
   // Resolve actor system: use existing from context, or create implicit one
@@ -640,24 +645,24 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   };
 
   // Annotate span with initial state
-  yield* Effect.annotateCurrentSpan("effect_machine.actor.initial_state", machine.initial._tag);
+  yield* Effect.annotateCurrentSpan("effect_machine.actor.initial_state", initial._tag);
 
   // Emit spawn event
   yield* emitWithTimestamp(inspectorValue, (timestamp) => ({
     type: "@machine.spawn",
     actorId: id,
-    initialState: machine.initial,
+    initialState: initial,
     timestamp,
   }));
 
   // Initialize state
-  const stateRef = yield* SubscriptionRef.make(machine.initial);
+  const stateRef = yield* SubscriptionRef.make(initial);
   const listeners: Listeners<S> = new Set();
 
   // Fork background effects (run for entire machine lifetime)
   const backgroundFibers: Fiber.Fiber<void, never>[] = [];
   const initEvent = { _tag: INTERNAL_INIT_EVENT } as E;
-  const ctx = { actorId: id, state: machine.initial, event: initEvent, self, system };
+  const ctx = { actorId: id, state: initial, event: initEvent, self, system };
   const { effects: effectSlots } = machine._slots;
 
   for (const bg of machine.backgroundEffects) {
@@ -665,7 +670,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       bg
         .handler({
           actorId: id,
-          state: machine.initial,
+          state: initial,
           event: initEvent,
           self,
           effects: effectSlots,
@@ -681,10 +686,12 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     current: yield* Scope.make(),
   };
 
-  // Run initial spawn effects
+  // Run spawn effects for the current state (whether fresh or hydrated).
+  // Spawn effects install live machinery (timers, scoped resources) that
+  // the state needs at runtime — they must re-run on hydration.
   yield* runSpawnEffectsWithInspection(
     machine,
-    machine.initial,
+    initial,
     initEvent,
     self,
     stateScopeRef.current,
@@ -694,14 +701,14 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   );
 
   // Check if initial state (after always) is final
-  if (machine.finalStates.has(machine.initial._tag)) {
+  if (machine.finalStates.has(initial._tag)) {
     // Close state scope and interrupt background effects
     yield* Scope.close(stateScopeRef.current, Exit.void);
     yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
     yield* emitWithTimestamp(inspectorValue, (timestamp) => ({
       type: "@machine.stop",
       actorId: id,
-      finalState: machine.initial,
+      finalState: initial,
       timestamp,
     }));
     yield* Ref.set(stoppedRef, true);

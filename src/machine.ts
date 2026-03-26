@@ -1060,9 +1060,12 @@ const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
->(built: BuiltMachine<S, E, R>, id?: string) {
-  const actorId = id ?? `actor-${Math.random().toString(36).slice(2)}`;
-  const actor = yield* createActor(actorId, built._inner);
+>(built: BuiltMachine<S, E, R>, idOrOptions?: string | { id?: string; hydrate?: S }) {
+  const opts = typeof idOrOptions === "string" ? { id: idOrOptions } : idOrOptions;
+  const actorId = opts?.id ?? `actor-${Math.random().toString(36).slice(2)}`;
+  const actor = yield* createActor(actorId, built._inner, {
+    initialState: opts?.hydrate,
+  });
 
   // If a scope exists in context, attach cleanup automatically
   const maybeScope = yield* Effect.serviceOption(Scope.Scope);
@@ -1073,16 +1076,23 @@ const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
   return actor;
 });
 
-export const spawn: {
-  <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
-    machine: BuiltMachine<S, E, R>,
-  ): Effect.Effect<ActorRef<S, E>, never, R>;
-
-  <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
-    machine: BuiltMachine<S, E, R>,
-    id: string,
-  ): Effect.Effect<ActorRef<S, E>, never, R>;
-} = spawnImpl;
+/**
+ * Spawn an actor from a built machine.
+ *
+ * Options:
+ * - `id` — custom actor ID (default: random)
+ * - `hydrate` — restore from a previously-saved state snapshot.
+ *   The actor starts in the hydrated state and re-runs spawn effects
+ *   for that state (timers, scoped resources, etc.). Transition history
+ *   is not replayed — only the current state's entry effects run.
+ *
+ * Persistence is composed in userland by observing `actor.changes`
+ * and saving snapshots to your own storage.
+ */
+export const spawn: <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
+  machine: BuiltMachine<S, E, R>,
+  idOrOptions?: string | { id?: string; hydrate?: S },
+) => Effect.Effect<ActorRef<S, E>, never, R> = spawnImpl;
 
 // Transition lookup (introspection)
 export { findTransitions } from "./internal/transition.js";

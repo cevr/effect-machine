@@ -351,6 +351,39 @@ describe("Machine.spawn", () => {
     }),
   );
 
+  it.scopedLive("spawns with hydrate — restores from saved state", () =>
+    Effect.gen(function* () {
+      const machine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle,
+      })
+        .on(TestState.Idle, TestEvent.Start, ({ event }) =>
+          TestState.Active({ value: event.value }),
+        )
+        .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
+        .final(TestState.Done)
+        .build();
+
+      // Hydrate from a previously-saved snapshot
+      const actor = yield* Machine.spawn(machine, {
+        id: "hydrated-actor",
+        hydrate: TestState.Active({ value: 42 }),
+      });
+
+      expect(actor.id).toBe("hydrated-actor");
+      const state = yield* actor.snapshot;
+      expect(state._tag).toBe("Active");
+      if (state._tag === "Active") {
+        expect(state.value).toBe(42);
+      }
+
+      // Can still process events from the hydrated state
+      const r = yield* actor.call(TestEvent.Stop);
+      expect(r.newState._tag).toBe("Done");
+    }),
+  );
+
   it.live("spawns without scope — caller manages lifetime via actor.stop", () =>
     Effect.gen(function* () {
       const machine = Machine.make({
