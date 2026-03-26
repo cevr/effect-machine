@@ -849,7 +849,7 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
         yield* Deferred.succeed(queued.reply, result);
         break;
       case "ask":
-        if (result.reply !== undefined) {
+        if (result.hasReply) {
           yield* Deferred.succeed(queued.reply, result.reply);
         } else {
           yield* Deferred.fail(queued.reply, new NoReplyError({ actorId, eventTag: event._tag }));

@@ -79,11 +79,12 @@ export const runTransitionHandler = Effect.fn("effect-machine.runTransitionHandl
   ) {
     return {
       newState: (resolved as { state: S; reply: unknown }).state,
+      hasReply: true,
       reply: (resolved as { state: S; reply: unknown }).reply,
     };
   }
 
-  return { newState: resolved as S, reply: undefined };
+  return { newState: resolved as S, hasReply: false, reply: undefined };
 });
 
 /**
@@ -118,11 +119,12 @@ export const executeTransition = Effect.fn("effect-machine.executeTransition")(f
       newState: currentState,
       transitioned: false,
       reenter: false,
+      hasReply: false,
       reply: undefined,
     };
   }
 
-  const { newState, reply } = yield* runTransitionHandler(
+  const { newState, hasReply, reply } = yield* runTransitionHandler(
     machine,
     transition,
     currentState,
@@ -136,6 +138,7 @@ export const executeTransition = Effect.fn("effect-machine.executeTransition")(f
     newState,
     transitioned: true,
     reenter: transition.reenter === true,
+    hasReply,
     reply,
   };
 });
@@ -180,7 +183,9 @@ export interface ProcessEventResult<S> {
   readonly lifecycleRan: boolean;
   /** Whether new state is final */
   readonly isFinal: boolean;
-  /** Domain reply value from handler (used by ask) */
+  /** Whether the handler provided a reply (structural, not value-based) */
+  readonly hasReply: boolean;
+  /** Domain reply value from handler (used by ask). Only meaningful when hasReply is true. */
   readonly reply?: unknown;
 }
 
@@ -238,6 +243,7 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
       transitioned: false,
       lifecycleRan: false,
       isFinal: false,
+      hasReply: false,
       reply: undefined,
     };
   }
@@ -283,6 +289,7 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
     transitioned: true,
     lifecycleRan: runLifecycle,
     isFinal: machine.finalStates.has(newState._tag),
+    hasReply: result.hasReply,
     reply: result.reply,
   };
 });

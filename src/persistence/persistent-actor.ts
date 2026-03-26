@@ -628,7 +628,7 @@ const persistentEventLoop = Effect.fn("effect-machine.persistentActor.eventLoop"
     if (queued._tag === "call") {
       yield* Deferred.succeed(queued.reply, result);
     } else if (queued._tag === "ask") {
-      if (result.reply !== undefined) {
+      if (result.hasReply) {
         yield* Deferred.succeed(queued.reply, result.reply);
       } else {
         yield* Deferred.fail(queued.reply, new NoReplyError({ actorId: id, eventTag: event._tag }));
