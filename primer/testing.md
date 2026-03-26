@@ -115,6 +115,61 @@ it.live("retry blocked after max", () =>
 );
 ```
 
+## Testing with call (request-reply)
+
+Use `actor.call()` for precise transition assertions in real actor tests:
+
+```ts
+it.scoped("call returns transition receipt", () =>
+  Effect.gen(function* () {
+    const actor = yield* Machine.spawn(machine);
+
+    const result = yield* actor.call(Event.Start);
+    expect(result.transitioned).toBe(true);
+    expect(result.newState._tag).toBe("Processing");
+    expect(result.previousState._tag).toBe("Idle");
+    expect(result.lifecycleRan).toBe(true);
+    expect(result.isFinal).toBe(false);
+    expect(result.postponed).toBe(false);
+  }),
+);
+```
+
+## Testing with ask (domain reply)
+
+```ts
+it.scoped("ask returns domain value", () =>
+  Effect.gen(function* () {
+    const actor = yield* Machine.spawn(machine);
+    yield* actor.call(Event.Activate);
+
+    const count = yield* actor.ask<number>(Event.GetCount);
+    expect(count).toBe(0);
+  }),
+);
+```
+
+## Testing Postpone
+
+```ts
+it.scoped("postponed events drain after state change", () =>
+  Effect.gen(function* () {
+    const actor = yield* Machine.spawn(machine);
+
+    // Event postponed in Connecting state
+    const result = yield* actor.call(Event.Data({ payload: "hello" }));
+    expect(result.postponed).toBe(true);
+
+    // State change triggers drain
+    yield* actor.call(Event.Connected);
+    yield* Effect.yieldNow();
+
+    // Data event now processed
+    expect(actor.sync.matches("Connected")).toBe(true);
+  }),
+);
+```
+
 ## Testing Spawn Effects
 
 Spawn effects require real actors. Use `TestClock` for time control:
@@ -135,14 +190,14 @@ it.scoped("timeout fires", () =>
     yield* yieldFibers;
 
     // State should be Waiting (timeout not fired yet)
-    expect(actor.matchesSync("Waiting")).toBe(true);
+    expect(actor.sync.matches("Waiting")).toBe(true);
 
     // Advance time past timeout
     yield* TestClock.adjust("30 seconds");
     yield* yieldFibers;
 
     // Now should be TimedOut
-    expect(actor.matchesSync("TimedOut")).toBe(true);
+    expect(actor.sync.matches("TimedOut")).toBe(true);
   }).pipe(Effect.provide(ActorSystemDefault)),
 );
 ```

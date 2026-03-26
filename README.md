@@ -74,8 +74,12 @@ const orderMachine = Machine.make({
 const program = Effect.gen(function* () {
   const actor = yield* Machine.spawn(orderMachine);
 
+  // fire-and-forget
   yield* actor.send(OrderEvent.Process);
-  yield* actor.send(OrderEvent.Ship({ trackingId: "TRACK-123" }));
+
+  // request-reply — get ProcessEventResult back
+  const result = yield* actor.call(OrderEvent.Ship({ trackingId: "TRACK-123" }));
+  console.log(result.transitioned); // true
 
   const state = yield* actor.waitFor(OrderState.Shipped);
   console.log(state); // Shipped { orderId: "order-1", trackingId: "TRACK-123" }
@@ -183,6 +187,53 @@ machine.task(State.Loading, ({ effects, state }) => effects.fetchData({ url: sta
 });
 ```
 
+### State Timeouts
+
+`.timeout()` — gen_statem-style state timeouts. Timer starts on state entry, cancels on exit:
+
+```ts
+machine
+  .timeout(State.Loading, {
+    duration: Duration.seconds(30),
+    event: Event.Timeout,
+  })
+  // Dynamic duration from state
+  .timeout(State.Retrying, {
+    duration: (state) => Duration.seconds(state.backoff),
+    event: Event.GiveUp,
+  });
+```
+
+`.reenter()` restarts the timer with fresh state values.
+
+### Event Postpone
+
+`.postpone()` — gen_statem-style event postpone. When a matching event arrives in the given state, it is buffered. After the next state transition (tag change), buffered events drain in FIFO order:
+
+```ts
+machine
+  .postpone(State.Connecting, Event.Data) // single event
+  .postpone(State.Connecting, [Event.Data, Event.Cmd]); // multiple events
+```
+
+Reply-bearing events (`call`/`ask`) in the postpone buffer are settled with `ActorStoppedError` on stop/interrupt/final-state.
+
+### ask / reply
+
+Handlers can return a domain reply via `{ state, reply }`:
+
+```ts
+.on(State.Active, Event.GetCount, ({ state }) => ({
+  state, // stay in same state
+  reply: state.count, // domain value returned to caller
+}))
+
+// Caller side:
+const count = yield* actor.ask<number>(Event.GetCount);
+```
+
+`ask` fails with `NoReplyError` if the handler doesn't provide a reply, and `ActorStoppedError` if the actor stops while the request is pending.
+
 ### Child Actors
 
 Spawn children from `.spawn()` handlers with `self.spawn`. Children are state-scoped — auto-stopped on state exit:
@@ -253,7 +304,7 @@ See the [primer](./primer/) for comprehensive documentation:
 | ----------- | ----------------------------------------- | ------------------------------ |
 | Overview    | [index.md](./primer/index.md)             | Navigation and quick reference |
 | Basics      | [basics.md](./primer/basics.md)           | Core concepts                  |
-| Handlers    | [handlers.md](./primer/handlers.md)       | Transitions and guards         |
+| Handlers    | [handlers.md](./primer/handlers.md)       | Transitions, guards, reply     |
 | Effects     | [effects.md](./primer/effects.md)         | spawn, background, timeouts    |
 | Testing     | [testing.md](./primer/testing.md)         | simulate, harness, assertions  |
 | Actors      | [actors.md](./primer/actors.md)           | ActorSystem, ActorRef          |
@@ -273,6 +324,8 @@ See the [primer](./primer/) for comprehensive documentation:
 | `.reenter(State.X, Event.Y, handler)`     | Force re-entry on same state                                |
 | `.spawn(State.X, handler)`                | State-scoped effect                                         |
 | `.task(State.X, run, { onSuccess })`      | State-scoped task                                           |
+| `.timeout(State.X, { duration, event })`  | State timeout (gen_statem)                                  |
+| `.postpone(State.X, Event.Y)`             | Postpone event in state (gen_statem)                        |
 | `.background(handler)`                    | Machine-lifetime effect                                     |
 | `.final(State.X)`                         | Mark final state                                            |
 | `.build({ slot: impl })`                  | Provide implementations, returns `BuiltMachine` (terminal)  |
@@ -308,20 +361,27 @@ See the [primer](./primer/) for comprehensive documentation:
 
 ### Actor
 
-| Method                           | Description                        |
-| -------------------------------- | ---------------------------------- |
-| `actor.send(event)`              | Queue event                        |
-| `actor.sendSync(event)`          | Fire-and-forget (sync, for UI)     |
-| `actor.snapshot`                 | Get current state                  |
-| `actor.matches(tag)`             | Check state tag                    |
-| `actor.can(event)`               | Can handle event?                  |
-| `actor.changes`                  | Stream of changes                  |
-| `actor.waitFor(State.X)`         | Wait for state (constructor or fn) |
-| `actor.awaitFinal`               | Wait final state                   |
-| `actor.sendAndWait(ev, State.X)` | Send + wait for state              |
-| `actor.subscribe(fn)`            | Sync callback                      |
-| `actor.system`                   | Access the actor's `ActorSystem`   |
-| `actor.children`                 | Child actors (`ReadonlyMap`)       |
+| Method                           | Description                                 |
+| -------------------------------- | ------------------------------------------- |
+| `actor.send(event)`              | Fire-and-forget (queue event)               |
+| `actor.cast(event)`              | Alias for send (OTP gen_server:cast)        |
+| `actor.call(event)`              | Request-reply, returns `ProcessEventResult` |
+| `actor.ask<R>(event)`            | Typed domain reply from handler             |
+| `actor.snapshot`                 | Get current state                           |
+| `actor.matches(tag)`             | Check state tag                             |
+| `actor.can(event)`               | Can handle event?                           |
+| `actor.changes`                  | Stream of changes                           |
+| `actor.waitFor(State.X)`         | Wait for state (constructor or fn)          |
+| `actor.awaitFinal`               | Wait final state                            |
+| `actor.sendAndWait(ev, State.X)` | Send + wait for state                       |
+| `actor.subscribe(fn)`            | Sync callback                               |
+| `actor.sync.send(event)`         | Sync fire-and-forget (for UI)               |
+| `actor.sync.stop()`              | Sync stop                                   |
+| `actor.sync.snapshot()`          | Sync get state                              |
+| `actor.sync.matches(tag)`        | Sync check state tag                        |
+| `actor.sync.can(event)`          | Sync can handle event?                      |
+| `actor.system`                   | Access the actor's `ActorSystem`            |
+| `actor.children`                 | Child actors (`ReadonlyMap`)                |
 
 ### ActorSystem
 

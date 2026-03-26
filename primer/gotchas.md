@@ -10,7 +10,7 @@ Common mistakes and how to avoid them.
 .on(State.X, Event.Y, () =>
   Effect.gen(function* () {
     if (bad) {
-      throw new Error("fail");  // ✗ Breaks Effect semantics
+      throw new Error("fail");  // Breaks Effect semantics
     }
   })
 )
@@ -22,7 +22,7 @@ Common mistakes and how to avoid them.
 .on(State.X, Event.Y, () =>
   Effect.gen(function* () {
     if (bad) {
-      return yield* Effect.fail(new MyError());  // ✓
+      return yield* Effect.fail(new MyError());
       // or: return yield* new MyTaggedError();
     }
   })
@@ -44,6 +44,13 @@ const state = yield * actor.snapshot; // May still be Idle!
 yield * actor.send(Event.Start);
 yield * Effect.yieldNow(); // Let event process
 const state = yield * actor.snapshot; // Now reflects Start
+```
+
+**Better**: Use `call` for synchronous receipt:
+
+```ts
+const result = yield * actor.call(Event.Start);
+// result.newState already reflects the transition
 ```
 
 **Alternative**: use `sendAndWait` / `waitFor`:
@@ -94,7 +101,7 @@ By default, transitioning to same state tag skips spawn/finalizers:
 
 `.on()` handlers run inline and block the event loop.
 
-**Use** `.task()` or `.spawn()` for long-running effects:
+**Use** `.task()`, `.timeout()`, or `.spawn()` for long-running effects:
 
 ```ts
 .on(State.Idle, Event.Start, () => State.Working)
@@ -144,10 +151,7 @@ it("timeout test", () =>
 it.scoped("timeout test", () =>
   Effect.gen(function* () {
     yield* TestClock.adjust("30 seconds");
-  }).pipe(
-    Effect.provide(ActorSystemDefault),
-    Effect.provide(TestContext.TestContext), // ✓
-  ),
+  }).pipe(Effect.provide(ActorSystemDefault), Effect.provide(TestContext.TestContext)),
 );
 ```
 
@@ -185,7 +189,7 @@ Effect.runPromise(
   Effect.scoped(
     Effect.gen(function* () {
       const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("test", machine); // ✓
+      const actor = yield* system.spawn("test", machine);
     }),
   ).pipe(Effect.provide(ActorSystemDefault)),
 );
@@ -214,14 +218,14 @@ Handlers cannot require arbitrary services - use slots:
 // Wrong - won't compile
 .on(State.X, Event.Y, () =>
   Effect.gen(function* () {
-    yield* MyService;  // ✗ R=never, can't require services
+    yield* MyService;  // R=never, can't require services
   })
 )
 
 // Right - use effect slots
 .on(State.X, Event.Y, ({ effects }) => effects.doWork())
 .build({
-  doWork: () => MyService.pipe(Effect.flatMap(...))  // ✓ build() can use services
+  doWork: () => MyService.pipe(Effect.flatMap(...))  // build() can use services
 })
 ```
 
@@ -229,13 +233,13 @@ Handlers cannot require arbitrary services - use slots:
 
 ```ts
 .spawn(State.Loading, () =>
-  Effect.addFinalizer(() => Effect.log("cleanup"))  // ✓ Scope allowed
+  Effect.addFinalizer(() => Effect.log("cleanup"))  // Scope allowed
 )
 ```
 
 ## Handler Must Return State
 
-Handlers must return state or Effect<State>:
+Handlers must return state, `{ state, reply }`, or Effect<State>:
 
 ```ts
 // Wrong - returns undefined
@@ -257,19 +261,19 @@ Empty state/event variants are values, not constructors:
 
 ```ts
 // Wrong
-State.Idle(); // ✗ Not callable
-Event.Cancel(); // ✗ Not callable
+State.Idle(); // Not callable
+Event.Cancel(); // Not callable
 
 // Right
-State.Idle; // ✓ Plain value
-Event.Cancel; // ✓ Plain value
+State.Idle; // Plain value
+Event.Cancel; // Plain value
 ```
 
 Non-empty variants are constructors:
 
 ```ts
-State.Loading({ url: "/api" }); // ✓ Constructor with args
-Event.Fetch({ url: "/api" }); // ✓ Constructor with args
+State.Loading({ url: "/api" }); // Constructor with args
+Event.Fetch({ url: "/api" }); // Constructor with args
 ```
 
 ## self.spawn Requires Effect.orDie
@@ -277,14 +281,14 @@ Event.Fetch({ url: "/api" }); // ✓ Constructor with args
 `self.spawn` returns `Effect<ActorRef, DuplicateActorError, R>`, but `.spawn()` handlers require error channel = `never`:
 
 ```ts
-// ✗ Won't compile — DuplicateActorError in error channel
+// Won't compile — DuplicateActorError in error channel
 .spawn(State.Active, ({ self }) =>
   Effect.gen(function* () {
     const child = yield* self.spawn("worker", workerMachine);
   })
 )
 
-// ✓ Wrap with Effect.orDie
+// Wrap with Effect.orDie
 .spawn(State.Active, ({ self }) =>
   Effect.gen(function* () {
     const child = yield* self.spawn("worker", workerMachine).pipe(Effect.orDie);
@@ -307,6 +311,41 @@ If duplicate IDs are expected, use `Effect.catchTag("DuplicateActorError", ...)`
 ```
 
 If you expect `.onAny()` to fire for a state that has a specific `.on()` for the same event, it won't.
+
+## call vs send Confusion
+
+`send`/`cast` are fire-and-forget — they return `void`. `call` is request-reply — it waits for the event to be processed and returns `ProcessEventResult`.
+
+```ts
+// send: don't need the result
+yield* actor.send(Event.Tick);
+
+// call: need transition receipt
+const result = yield* actor.call(Event.Process);
+if (result.isFinal) { ... }
+```
+
+Don't use `call` when you don't need the result — it waits for processing, adding unnecessary latency.
+
+## ask Without Reply
+
+`ask` fails with `NoReplyError` if the handler doesn't return `{ state, reply }`:
+
+```ts
+// Handler returns plain state (no reply)
+.on(State.Active, Event.Process, () => State.Processing)
+
+// This will fail with NoReplyError!
+const result = yield* actor.ask(Event.Process);
+```
+
+Only use `ask` with handlers that explicitly return `{ state, reply }`.
+
+## Postpone Gotchas
+
+- Postponed events only drain on state **tag change**, not same-state transitions
+- Reply-bearing events (`call`/`ask`) in the postpone buffer are settled with `ActorStoppedError` on stop
+- Don't postpone events that you also handle in the same state — the handler takes priority, postpone rules only apply when no transition matches
 
 ## See Also
 

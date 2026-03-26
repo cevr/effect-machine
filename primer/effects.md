@@ -69,9 +69,84 @@ Add cleanup logic that runs on state exit:
 
 Finalizer runs whether effect completes, fails, or is interrupted.
 
-## Timeouts via spawn
+## timeout: State Timeouts
 
-Common pattern - auto-timeout a state:
+`.timeout()` — gen_statem-style state timeouts. Timer starts on state entry, cancels on state exit.
+
+```ts
+machine
+  .timeout(State.Loading, {
+    duration: Duration.seconds(30),
+    event: Event.Timeout,
+  })
+  .on(State.Loading, Event.Timeout, () => State.TimedOut)
+  .final(State.TimedOut);
+```
+
+**Dynamic duration** from state data:
+
+```ts
+machine.timeout(State.Retrying, {
+  duration: (state) => Duration.seconds(state.backoff),
+  event: Event.GiveUp,
+});
+```
+
+**Dynamic event** from state data:
+
+```ts
+machine.timeout(State.Waiting, {
+  duration: Duration.seconds(10),
+  event: (state) => Event.Expired({ reason: state.reason }),
+});
+```
+
+**Key behaviors**:
+
+- Compiles to `.task()` internally — preserves `@machine.task` inspection events
+- `.reenter()` restarts the timer with fresh state values
+- Timer auto-cancelled if state exits before timeout fires
+
+## postpone: Event Postpone
+
+`.postpone()` — gen_statem-style event postpone. When a matching event arrives in the given state, it is buffered instead of processed. After the next state transition (tag change), all buffered events are drained in FIFO order.
+
+```ts
+machine
+  .postpone(State.Connecting, Event.Data) // single event
+  .postpone(State.Connecting, [Event.Data, Event.Cmd]); // multiple events
+```
+
+**Key behaviors**:
+
+- Events buffered in FIFO order
+- Drained after next state tag change (not same-state transitions)
+- Reply-bearing events (`call`/`ask`) in the buffer are settled with `ActorStoppedError` on stop/interrupt/final-state
+- `ProcessEventResult.postponed` is `true` for postponed events
+
+**Use case**: connection establishment patterns where data events arrive before the connection is ready:
+
+```ts
+const machine = Machine.make({
+  state: State({ Connecting: {}, Connected: {}, Closed: {} }),
+  event: Event({ Connected: {}, Data: { payload: Schema.String }, Close: {} }),
+  initial: State.Connecting,
+})
+  .on(State.Connecting, Event.Connected, () => State.Connected)
+  .on(State.Connected, Event.Data, ({ event }) => {
+    // Process data...
+    return State.Connected;
+  })
+  .on(State.Connected, Event.Close, () => State.Closed)
+  // Data events arriving while connecting are buffered, replayed after Connected
+  .postpone(State.Connecting, Event.Data)
+  .final(State.Closed)
+  .build();
+```
+
+## Timeouts via spawn (manual pattern)
+
+For more complex timeout logic, use `.spawn()` directly:
 
 ```ts
 const MyEffects = Slot.Effects({
@@ -180,7 +255,7 @@ Multiple effects can run in the same state:
 machine
   .spawn(State.Active, ({ effects }) => effects.pollStatus())
   .spawn(State.Active, ({ effects }) => effects.syncData())
-  .spawn(State.Active, ({ effects }) => effects.scheduleTimeout({ duration: "5 minutes" }));
+  .timeout(State.Active, { duration: Duration.minutes(5), event: Event.Timeout });
 ```
 
 All run concurrently, all cancelled on state exit.
@@ -223,12 +298,12 @@ it.scoped("timeout fires after duration", () =>
     yield* actor.send(Event.Start);
     yield* yieldFibers; // Let spawn effect start
 
-    expect(actor.matchesSync("Waiting")).toBe(true);
+    expect(actor.sync.matches("Waiting")).toBe(true);
 
     yield* TestClock.adjust("30 seconds");
     yield* yieldFibers;
 
-    expect(actor.matchesSync("TimedOut")).toBe(true);
+    expect(actor.sync.matches("TimedOut")).toBe(true);
   }).pipe(Effect.provide(ActorSystemDefault)),
 );
 ```

@@ -29,6 +29,8 @@ const machine = Machine.make({ state, event, initial })
   .on([State.Draft, State.Review], Event.Cancel, () => State.Cancelled)  // multi-state
   .onAny(Event.Reset, () => State.Idle)  // wildcard (any state)
   .spawn(State.Running, ({ effects }) => effects.poll())
+  .timeout(State.Loading, { duration: Duration.seconds(30), event: Event.Timeout })  // gen_statem
+  .postpone(State.Connecting, Event.Data)  // gen_statem
   .final(State.Done)
   .build({ poll: () => Effect.forever(...) });
 ```
@@ -128,14 +130,37 @@ machine
 ## ActorRef API
 
 ```ts
-actor.send(event); // Effect — queue event
-actor.sendSync(event); // Sync fire-and-forget (for UI hooks)
-actor.waitFor(State.Active); // Wait for state (accepts constructor or predicate)
-actor.sendAndWait(ev, State.X); // Send + wait for state
+actor.send(event); // Effect — fire-and-forget (queue event)
+actor.cast(event); // Effect — alias for send (OTP gen_server:cast)
+actor.call(event); // Effect — request-reply, returns ProcessEventResult
+actor.ask<R>(event); // Effect — typed domain reply from handler
+actor.waitFor(State.X); // Wait for state (accepts constructor or predicate)
+actor.sendAndWait(ev, X); // Send + wait for state
 actor.awaitFinal; // Wait for final state
 actor.subscribe(fn); // Sync callback, returns unsubscribe
 actor.system; // ActorSystem — access child actors via .get(id)
 actor.children; // ReadonlyMap<string, ActorRef> — child actors spawned via self.spawn
+
+// Sync helpers (for UI hooks, React, Solid)
+actor.sync.send(event); // Fire-and-forget
+actor.sync.stop(); // Stop actor
+actor.sync.snapshot(); // Get current state
+actor.sync.matches(tag); // Check state tag
+actor.sync.can(event); // Can handle event?
+```
+
+## ask / reply
+
+Handlers return `{ state, reply }` for domain replies:
+
+```ts
+.on(State.Active, Event.GetCount, ({ state }) => ({
+  state,
+  reply: state.count,
+}))
+
+// Caller:
+const count = yield* actor.ask<number>(Event.GetCount);
 ```
 
 ## System Observation
@@ -184,6 +209,7 @@ Handlers are strictly typed - `.build()` is the only way to add requirements:
 - Handlers cannot require arbitrary services - use slots + `build()`
 - Handlers cannot produce errors - error channel fixed to `never`
 - Handlers must return machine's state schema - wrong states rejected at compile time
+- Handlers can return `{ state, reply }` tuple for `ask()` domain replies
 
 ## Gotchas
 
@@ -196,6 +222,8 @@ Handlers are strictly typed - `.build()` is the only way to add requirements:
 - `.onAny()` only fires when no specific `.on()` matches
 - `.build()` is terminal — no `.on()`, `.final()` after it
 - `self.spawn` errors with `DuplicateActorError` — handlers require `never` error, so wrap with `Effect.orDie`
+- Sync helpers live on `actor.sync.*` (not top-level `sendSync`/`snapshotSync`)
+- Pending `call`/`ask` Deferreds settled with `ActorStoppedError` on stop
 
 ## Documentation
 

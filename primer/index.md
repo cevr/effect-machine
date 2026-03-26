@@ -26,15 +26,15 @@ What are you doing?
 
 ## Topic Index
 
-| Topic       | File             | When to Read                     |
-| ----------- | ---------------- | -------------------------------- |
-| Core        | `basics.md`      | First time, understanding API    |
-| Handlers    | `handlers.md`    | Transitions, guards, derive      |
-| Effects     | `effects.md`     | spawn, background, timeouts      |
-| Testing     | `testing.md`     | simulate, harness, assertions    |
-| Actors      | `actors.md`      | ActorSystem, ActorRef, lifecycle |
-| Persistence | `persistence.md` | Snapshots, event sourcing        |
-| Gotchas     | `gotchas.md`     | Common mistakes, debugging       |
+| Topic       | File             | When to Read                          |
+| ----------- | ---------------- | ------------------------------------- |
+| Core        | `basics.md`      | First time, understanding API         |
+| Handlers    | `handlers.md`    | Transitions, guards, reply            |
+| Effects     | `effects.md`     | spawn, background, timeouts, postpone |
+| Testing     | `testing.md`     | simulate, harness, assertions         |
+| Actors      | `actors.md`      | ActorSystem, ActorRef, lifecycle      |
+| Persistence | `persistence.md` | Snapshots, event sourcing             |
+| Gotchas     | `gotchas.md`     | Common mistakes, debugging            |
 
 ## Quick Example
 
@@ -99,7 +99,10 @@ const program = Effect.gen(function* () {
   const actor = yield* system.spawn("order-1", orderMachine);
 
   yield* actor.send(OrderEvent.Process);
-  yield* actor.send(OrderEvent.Ship({ trackingId: "TRACK-123" }));
+
+  // Request-reply — get transition receipt
+  const result = yield* actor.call(OrderEvent.Ship({ trackingId: "TRACK-123" }));
+  console.log(result.transitioned); // true
 
   const state = yield* actor.waitFor(OrderState.Shipped);
   console.log(state); // Shipped { orderId: "order-1", trackingId: "TRACK-123" }
@@ -110,16 +113,16 @@ Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))
 
 ## Core Concepts
 
-| Concept          | Description                                                                                                 |
-| ---------------- | ----------------------------------------------------------------------------------------------------------- |
-| **State**        | Schema-first tagged union. Empty = value (`State.Idle`), non-empty = constructor (`State.Loading({ url })`) |
-| **Event**        | Schema-first tagged union. Same pattern as State.                                                           |
-| **Machine**      | Fluent builder. `.on()` for transitions, `.onAny()` for wildcards, `.spawn()` for state-scoped effects.     |
-| **Slots**        | Parameterized guards/effects. Define with `Slot.Guards`/`Slot.Effects`, wire with `.build()`.               |
-| **BuiltMachine** | Result of `.build()` — ready to spawn. `Machine.spawn()` and `ActorSystem.spawn()` accept `BuiltMachine`.   |
-| **Actor**        | Running machine instance with send/stop/state. Spawned via `Machine.spawn()` or `ActorSystem.spawn()`.      |
-| **Child Actor**  | Actor spawned from a handler via `self.spawn(id, machine)`. State-scoped when in `.spawn()` handler.        |
-| **derive**       | Construct state from source — `State.X.derive(source, overrides)` picks overlapping fields.                 |
+| Concept          | Description                                                                                                     |
+| ---------------- | --------------------------------------------------------------------------------------------------------------- |
+| **State**        | Schema-first tagged union. Empty = value (`State.Idle`), non-empty = constructor (`State.Loading({ url })`)     |
+| **Event**        | Schema-first tagged union. Same pattern as State.                                                               |
+| **Machine**      | Fluent builder. `.on()` for transitions, `.onAny()` for wildcards, `.spawn()` for state-scoped effects.         |
+| **Slots**        | Parameterized guards/effects. Define with `Slot.Guards`/`Slot.Effects`, wire with `.build()`.                   |
+| **BuiltMachine** | Result of `.build()` — ready to spawn. `Machine.spawn()` and `ActorSystem.spawn()` accept `BuiltMachine`.       |
+| **Actor**        | Running machine instance with send/call/ask/stop/state. Spawned via `Machine.spawn()` or `ActorSystem.spawn()`. |
+| **Child Actor**  | Actor spawned from a handler via `self.spawn(id, machine)`. State-scoped when in `.spawn()` handler.            |
+| **derive**       | Construct state from source — `State.X.derive(source, overrides)` picks overlapping fields.                     |
 
 ## API Quick Reference
 
@@ -133,6 +136,8 @@ Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))
 | `.onAny(Event.X, handler)`                | Wildcard (specific .on() wins)                              |
 | `.reenter(State.X, Event.Y, handler)`     | Transition with forced re-entry                             |
 | `.spawn(State.X, handler)`                | State-scoped effect                                         |
+| `.timeout(State.X, { duration, event })`  | State timeout (gen_statem)                                  |
+| `.postpone(State.X, Event.Y)`             | Postpone event in state (gen_statem)                        |
 | `.background(handler)`                    | Machine-lifetime effect                                     |
 | `.final(State.X)`                         | Mark state as final                                         |
 | `.build({ slot: impl })`                  | Wire implementations, returns `BuiltMachine` (terminal)     |
@@ -149,22 +154,26 @@ Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))
 
 ### Actor
 
-| Method                           | Sync   | Description                        |
-| -------------------------------- | ------ | ---------------------------------- |
-| `actor.send(event)`              | No     | Send event                         |
-| `actor.sendSync(event)`          | Yes    | Fire-and-forget (for UI hooks)     |
-| `actor.snapshot`                 | No     | Get state                          |
-| `actor.snapshotSync()`           | Yes    | Get state                          |
-| `actor.matches(tag)`             | No     | Check state tag                    |
-| `actor.matchesSync(tag)`         | Yes    | Check state tag                    |
-| `actor.can(event)`               | No     | Can handle event?                  |
-| `actor.canSync(event)`           | Yes    | Can handle event?                  |
-| `actor.changes`                  | Stream | State changes                      |
-| `actor.system`                   | Sync   | Access the actor's `ActorSystem`   |
-| `actor.waitFor(State.X)`         | No     | Wait for state (constructor or fn) |
-| `actor.sendAndWait(ev, State.X)` | No     | Send + wait for state              |
-| `actor.subscribe(fn)`            | Yes    | Sync callback                      |
-| `actor.children`                 | Sync   | Child actors (`ReadonlyMap`)       |
+| Method                           | Sync   | Description                               |
+| -------------------------------- | ------ | ----------------------------------------- |
+| `actor.send(event)`              | No     | Fire-and-forget                           |
+| `actor.cast(event)`              | No     | Alias for send (OTP gen_server:cast)      |
+| `actor.call(event)`              | No     | Request-reply, returns ProcessEventResult |
+| `actor.ask<R>(event)`            | No     | Typed domain reply from handler           |
+| `actor.snapshot`                 | No     | Get state                                 |
+| `actor.matches(tag)`             | No     | Check state tag                           |
+| `actor.can(event)`               | No     | Can handle event?                         |
+| `actor.changes`                  | Stream | State changes                             |
+| `actor.system`                   | Sync   | Access the actor's `ActorSystem`          |
+| `actor.waitFor(State.X)`         | No     | Wait for state (constructor or fn)        |
+| `actor.sendAndWait(ev, State.X)` | No     | Send + wait for state                     |
+| `actor.subscribe(fn)`            | Yes    | Sync callback                             |
+| `actor.children`                 | Sync   | Child actors (`ReadonlyMap`)              |
+| `actor.sync.send(event)`         | Yes    | Sync fire-and-forget (for UI)             |
+| `actor.sync.stop()`              | Yes    | Sync stop                                 |
+| `actor.sync.snapshot()`          | Yes    | Sync get state                            |
+| `actor.sync.matches(tag)`        | Yes    | Sync check state tag                      |
+| `actor.sync.can(event)`          | Yes    | Sync can handle event?                    |
 
 ### ActorSystem Observation
 
@@ -179,5 +188,5 @@ Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))
 ## See Also
 
 - `basics.md` - Core concepts in depth
-- `handlers.md` - Transition handlers and guards
-- `effects.md` - spawn, background, timeouts
+- `handlers.md` - Transition handlers, guards, reply
+- `effects.md` - spawn, background, timeouts, postpone

@@ -36,18 +36,20 @@ const machine = Machine.make({
 
 ## Key Methods
 
-| Method                            | Purpose                                                     |
-| --------------------------------- | ----------------------------------------------------------- |
-| `.on(state, event, handler)`      | Add transition                                              |
-| `.on([stateA, stateB], event, h)` | Multi-state transition                                      |
-| `.onAny(event, handler)`          | Wildcard (any state, specific .on wins)                     |
-| `.reenter(state, event, handler)` | Force lifecycle on same-state                               |
-| `.spawn(state, handler)`          | State-scoped effect (auto-cancelled)                        |
-| `.background(handler)`            | Machine-lifetime effect                                     |
-| `.final(state)`                   | Mark final state                                            |
-| `.build({ slot: impl })`          | Wire implementations, returns `BuiltMachine` (terminal)     |
-| `.build()`                        | Finalize no-slot machine, returns `BuiltMachine` (terminal) |
-| `.persist(config)`                | Enable persistence                                          |
+| Method                                 | Purpose                                                     |
+| -------------------------------------- | ----------------------------------------------------------- |
+| `.on(state, event, handler)`           | Add transition                                              |
+| `.on([stateA, stateB], event, h)`      | Multi-state transition                                      |
+| `.onAny(event, handler)`               | Wildcard (any state, specific .on wins)                     |
+| `.reenter(state, event, handler)`      | Force lifecycle on same-state                               |
+| `.spawn(state, handler)`               | State-scoped effect (auto-cancelled)                        |
+| `.timeout(state, { duration, event })` | State timeout (gen_statem)                                  |
+| `.postpone(state, event/events)`       | Postpone event in state (gen_statem)                        |
+| `.background(handler)`                 | Machine-lifetime effect                                     |
+| `.final(state)`                        | Mark final state                                            |
+| `.build({ slot: impl })`               | Wire implementations, returns `BuiltMachine` (terminal)     |
+| `.build()`                             | Finalize no-slot machine, returns `BuiltMachine` (terminal) |
+| `.persist(config)`                     | Enable persistence                                          |
 
 ## State.derive()
 
@@ -113,19 +115,70 @@ Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))
 
 ## ActorRef API
 
-| Method                           | Description                        |
-| -------------------------------- | ---------------------------------- |
-| `actor.send(event)`              | Queue event (Effect)               |
-| `actor.sendSync(event)`          | Fire-and-forget (sync, for UI)     |
-| `actor.waitFor(State.X)`         | Wait for state (constructor or fn) |
-| `actor.sendAndWait(ev, State.X)` | Send + wait for state              |
-| `actor.awaitFinal`               | Wait for final state               |
-| `actor.snapshot`                 | Get current state                  |
-| `actor.snapshotSync()`           | Get current state (sync)           |
-| `actor.matches(tag)`             | Check state tag                    |
-| `actor.subscribe(fn)`            | Sync callback, returns unsubscribe |
-| `actor.system`                   | Access the actor's `ActorSystem`   |
-| `actor.children`                 | Child actors (`ReadonlyMap`)       |
+| Method                           | Description                                 |
+| -------------------------------- | ------------------------------------------- |
+| `actor.send(event)`              | Fire-and-forget (queue event)               |
+| `actor.cast(event)`              | Alias for send (OTP gen_server:cast)        |
+| `actor.call(event)`              | Request-reply, returns `ProcessEventResult` |
+| `actor.ask<R>(event)`            | Typed domain reply from handler             |
+| `actor.waitFor(State.X)`         | Wait for state (constructor or fn)          |
+| `actor.sendAndWait(ev, State.X)` | Send + wait for state                       |
+| `actor.awaitFinal`               | Wait for final state                        |
+| `actor.snapshot`                 | Get current state                           |
+| `actor.sync.send(event)`         | Sync fire-and-forget (for UI)               |
+| `actor.sync.stop()`              | Sync stop                                   |
+| `actor.sync.snapshot()`          | Sync get state                              |
+| `actor.sync.matches(tag)`        | Sync check state tag                        |
+| `actor.sync.can(event)`          | Sync can handle event?                      |
+| `actor.subscribe(fn)`            | Sync callback, returns unsubscribe          |
+| `actor.system`                   | Access the actor's `ActorSystem`            |
+| `actor.children`                 | Child actors (`ReadonlyMap`)                |
+
+## ask / reply
+
+Handlers return `{ state, reply }` for domain replies:
+
+```ts
+.on(State.Active, Event.GetCount, ({ state }) => ({
+  state,
+  reply: state.count,
+}))
+
+// Caller:
+const count = yield* actor.ask<number>(Event.GetCount);
+```
+
+Fails with `NoReplyError` if handler doesn't reply, `ActorStoppedError` on stop.
+
+## Timeout & Postpone
+
+```ts
+// State timeout — timer auto-cancelled on state exit
+machine.timeout(State.Loading, {
+  duration: Duration.seconds(30),
+  event: Event.Timeout,
+});
+
+// Event postpone — buffered, drained on next state change
+machine.postpone(State.Connecting, [Event.Data, Event.Cmd]);
+```
+
+## ProcessEventResult
+
+Returned by `actor.call(event)`:
+
+```ts
+interface ProcessEventResult<S> {
+  newState: S;
+  previousState: S;
+  transitioned: boolean;
+  lifecycleRan: boolean;
+  isFinal: boolean;
+  hasReply: boolean;
+  reply?: unknown;
+  postponed: boolean;
+}
+```
 
 ## System Observation
 
@@ -150,11 +203,11 @@ expect(result.finalState._tag).toBe("Done");
 // Assert path
 yield * assertPath(machine, events, ["Idle", "Loading", "Done"]);
 
-// Real actor (with spawn effects)
-const actor = yield * system.spawn("test", machine);
-yield * actor.send(Event.Start);
-yield * Effect.yieldNow();
-yield * TestClock.adjust("30 seconds"); // For timeouts
+// Real actor — call-based testing
+const actor = yield * Machine.spawn(machine);
+const result = yield * actor.call(Event.Start);
+expect(result.transitioned).toBe(true);
+expect(result.newState._tag).toBe("Loading");
 ```
 
 ## Critical Gotchas
@@ -166,6 +219,9 @@ yield * TestClock.adjust("30 seconds"); // For timeouts
 5. **Never throw in Effect.gen**: Use `yield* Effect.fail()`
 6. **`.onAny()` is fallback**: Specific `.on()` always takes priority
 7. **`.build()` is terminal**: No chaining `.on()`, `.final()` after it
+8. **call vs send**: `send`/`cast` = fire-and-forget, `call` = request-reply, `ask` = typed reply
+9. **Sync helpers**: Use `actor.sync.*` (not top-level `sendSync`/`snapshotSync`)
+10. **ActorStoppedError**: Pending `call`/`ask` Deferreds settled on stop
 
 ## Files
 

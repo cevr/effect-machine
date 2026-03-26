@@ -26,20 +26,65 @@ Handlers receive a context object:
 })
 ```
 
+## Handler Return Values
+
+Handlers can return:
+
+1. **State** — new state (plain or Effect):
+
+   ```ts
+   .on(State.X, Event.Y, () => State.Z)
+   ```
+
+2. **`{ state, reply }`** — state + domain reply (for `ask()`):
+   ```ts
+   .on(State.X, Event.GetValue, ({ state }) => ({
+     state,          // stay in same state (or transition)
+     reply: state.value,  // domain value returned to ask() caller
+   }))
+   ```
+
+## ask / reply
+
+When using `actor.ask<R>(event)`, the handler must return `{ state, reply }`:
+
+```ts
+.on(State.Active, Event.GetCount, ({ state }) => ({
+  state,
+  reply: state.count,
+}))
+
+.on(State.Active, Event.Increment, ({ state }) => ({
+  state: State.Active.derive(state, { count: state.count + 1 }),
+  reply: state.count + 1,  // return new count
+}))
+```
+
+**Caller side**:
+
+```ts
+const count = yield * actor.ask<number>(Event.GetCount);
+const newCount = yield * actor.ask<number>(Event.Increment);
+```
+
+- `ask` fails with `NoReplyError` if handler doesn't return a reply
+- `ask` fails with `ActorStoppedError` if actor stops while pending
+- `call` also sees the reply in `ProcessEventResult.hasReply` / `.reply`
+
 ## Handler Type Constraints
 
 Handlers are strictly typed at compile time:
 
 | Constraint             | Enforced | Notes                                |
 | ---------------------- | -------- | ------------------------------------ |
-| Requirements = `never` | ✓        | No arbitrary services in handlers    |
-| Errors = `never`       | ✓        | Handlers cannot fail                 |
-| Return state ∈ schema  | ✓        | Must return machine's state variants |
+| Requirements = `never` | yes      | No arbitrary services in handlers    |
+| Errors = `never`       | yes      | Handlers cannot fail                 |
+| Return state in schema | yes      | Must return machine's state variants |
 
 **Services must go through slots** - define with `Slot.Effects`, implement with `.build()`:
 
 ```ts
-// ✗ BAD - won't compile (MyService not in R=never)
+// BAD - won't compile (MyService not in R=never)
 .on(State.X, Event.Y, () =>
   Effect.gen(function* () {
     yield* MyService;  // Error: Type 'MyService' not assignable to 'never'
@@ -47,7 +92,7 @@ Handlers are strictly typed at compile time:
   })
 )
 
-// ✓ GOOD - use effect slots
+// GOOD - use effect slots
 .on(State.X, Event.Y, ({ effects }) => effects.doSomething())
 .build({
   doSomething: (_, { self }) => MyService.pipe(Effect.flatMap(...))
@@ -240,8 +285,8 @@ State is typed based on the source state:
 ```ts
 .on(State.Loading, Event.Tick, ({ state }) => {
   // TypeScript knows state is Loading
-  console.log(state.url);           // ✓ url exists on Loading
-  console.log(state.data);          // ✗ data doesn't exist on Loading
+  console.log(state.url);           // url exists on Loading
+  console.log(state.data);          // data doesn't exist on Loading
   return state;
 })
 ```
@@ -279,5 +324,5 @@ Use Effect error handling in async handlers:
 ## See Also
 
 - `basics.md` - Core concepts
-- `effects.md` - spawn and background effects
+- `effects.md` - spawn, background, timeouts, postpone
 - `gotchas.md` - Common mistakes

@@ -11,7 +11,7 @@ src/
 ├── actor.ts              # ActorRef + ActorSystem + event loop
 ├── testing.ts            # simulate, harness, assertions
 ├── inspection.ts         # Inspector service
-├── errors.ts             # TaggedError classes
+├── errors.ts             # TaggedError classes (ActorStoppedError, NoReplyError, etc.)
 ├── persistence/
 │   ├── adapter.ts        # PersistenceAdapter interface
 │   ├── persistent-machine.ts  # Machine.persist
@@ -22,12 +22,12 @@ src/
 │   ├── to-entity.ts      # toEntity - Entity from machine
 │   └── entity-machine.ts # EntityMachine.layer
 └── internal/
-    ├── transition.ts     # Transition execution + O(1) index + wildcard fallback
+    ├── transition.ts     # Transition execution + O(1) index + wildcard fallback + postpone check
     ├── brands.ts         # StateBrand/EventBrand types
     └── utils.ts          # isEffect, getTag, constants, stubSystem
 
 test/
-├── actor.test.ts         # ActorRef, ActorSystem, waitFor, sendSync, deadlock regression
+├── actor.test.ts         # ActorRef (call/send/ask, waitFor, sync helpers, deadlock regression)
 ├── actor-system-observation.test.ts  # System observation: subscribe, actors, events stream
 ├── child-actor.test.ts   # Child actors: self.spawn, lifecycle coupling, actor.children
 ├── machine.test.ts       # Machine builder, multi-state .on(), .onAny(), .build()
@@ -53,27 +53,31 @@ test/
 
 ## Key Files
 
-| File                     | Purpose                                                                                                  |
-| ------------------------ | -------------------------------------------------------------------------------------------------------- |
-| `machine.ts`             | Machine class, fluent builder, `Machine.spawn`, `.on()`/`.onAny()`/`.build()` → `BuiltMachine`           |
-| `schema.ts`              | `State`/`Event` factories, `derive()`, `$is`/`$match`                                                    |
-| `slot.ts`                | `Slot.Guards`/`Slot.Effects` - parameterized slots                                                       |
-| `actor.ts`               | ActorRef (`waitFor`, `sendSync`, `children`), ActorSystem (`events`, `actors`, `subscribe`), createActor |
-| `internal/transition.ts` | Transition execution, O(1) lookup index, wildcard `"*"` fallback                                         |
+| File                     | Purpose                                                                                                                   |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `machine.ts`             | Machine class, fluent builder, `Machine.spawn`, `.on()`/`.onAny()`/`.timeout()`/`.postpone()`/`.build()` → `BuiltMachine` |
+| `schema.ts`              | `State`/`Event` factories, `derive()`, `$is`/`$match`                                                                     |
+| `slot.ts`                | `Slot.Guards`/`Slot.Effects` - parameterized slots                                                                        |
+| `actor.ts`               | ActorRef (`call`/`send`/`cast`/`ask`, `sync.*`, `children`), ActorSystem (`events`, `actors`, `subscribe`), createActor   |
+| `errors.ts`              | `ActorStoppedError`, `NoReplyError`, `DuplicateActorError`, etc.                                                          |
+| `internal/transition.ts` | Transition execution, O(1) lookup index, wildcard `"*"` fallback, `shouldPostpone`, `ProcessEventResult`                  |
 
 ## Event Flow
 
 ```
-Event → resolveTransition → handler (guards/effects) → update state → spawn effects
-          ↓ no specific match
-        wildcard "*" fallback (.onAny transitions)
+Event → shouldPostpone? → resolveTransition → handler (guards/effects) → update state → spawn effects
+          ↓ postponed                ↓ no specific match
+        buffer for later           wildcard "*" fallback (.onAny transitions)
 ```
 
 - Handler receives `{ state, event, guards, effects, system }`
+- Handlers can return `{ state, reply }` tuple for `ask()` domain replies
 - `.spawn()`/`.background()` handlers also get `self` (with `self.spawn(id, machine)` for child actors)
 - Guards checked inside handler: `yield* guards.xxx(params)`
 - Same-state transitions skip spawn/finalizers by default
 - `.reenter()` forces lifecycle even for same state tag
+- `.timeout()` compiles to `.task()` internally
+- `.postpone()` buffers events, drained after next state tag change
 
 ## Machine Architecture
 
@@ -82,6 +86,7 @@ Mutable builder with immutable public views:
 ```ts
 // Internal mutable
 readonly _transitions: Array<Transition>;
+readonly _postponeRules: Array<{ stateTag: string; eventTag: string }>;
 
 // Public readonly
 get transitions(): ReadonlyArray<Transition>
@@ -100,8 +105,24 @@ get transitions(): ReadonlyArray<Transition>
 
 - `findTransitions(machine, stateTag, eventTag)` — specific match first, `"*"` wildcard fallback
 - `findSpawnEffects(machine, stateTag)`
+- `shouldPostpone(machine, stateTag, eventTag)` — checks postpone rules
 - `runTransitionHandler` - shared handler execution (used by actor, testing, persistence)
 - Index built on first access, cached per machine, invalidated on mutation
+
+## ProcessEventResult
+
+```ts
+interface ProcessEventResult<S> {
+  newState: S;
+  previousState: S;
+  transitioned: boolean;
+  lifecycleRan: boolean;
+  isFinal: boolean;
+  hasReply: boolean;
+  reply?: unknown;
+  postponed: boolean;
+}
+```
 
 ## State.derive()
 
@@ -120,6 +141,15 @@ get transitions(): ReadonlyArray<Transition>
 - Sync listener callback (no semaphore held) + `Deferred.await` for future changes
 - Re-checks after subscribing to close race window
 - Accepts state constructor (`State.Active`) or predicate function
+
+## Actor Mailbox
+
+`actor.ts` — discriminated `QueuedEvent` union:
+
+- `{ _tag: "send", event }` — fire-and-forget
+- `{ _tag: "call", event, reply: Deferred<ProcessEventResult> }` — request-reply
+- `{ _tag: "ask", event, reply: Deferred<unknown> }` — typed domain reply
+- On stop: all pending `call`/`ask` Deferreds settled with `ActorStoppedError`
 
 ## Actor Registry
 

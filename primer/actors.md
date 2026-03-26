@@ -29,27 +29,29 @@ Effect.runPromise(Effect.scoped(program).pipe(Effect.provide(ActorSystemDefault)
 
 ## ActorRef Methods
 
-| Method                     | Type              | Description                         |
-| -------------------------- | ----------------- | ----------------------------------- |
-| `send(event)`              | `Effect<void>`    | Queue event for processing          |
-| `sendSync(event)`          | `void`            | Fire-and-forget (sync, for UI)      |
-| `snapshot`                 | `Effect<State>`   | Get current state                   |
-| `snapshotSync()`           | `State`           | Get current state (sync)            |
-| `matches(tag)`             | `Effect<boolean>` | Check if in state                   |
-| `matchesSync(tag)`         | `boolean`         | Check if in state (sync)            |
-| `can(event)`               | `Effect<boolean>` | Can handle event in current state?  |
-| `canSync(event)`           | `boolean`         | Can handle event? (sync)            |
-| `changes`                  | `Stream<State>`   | Stream of state changes             |
-| `waitFor(State.X)`         | `Effect<State>`   | Wait for state (constructor or fn)  |
-| `awaitFinal`               | `Effect<State>`   | Wait for final state                |
-| `sendAndWait(ev, State.X)` | `Effect<State>`   | Send + wait for state               |
-| `sendAndWait(ev)`          | `Effect<State>`   | Send + wait for final state         |
-| `subscribe(fn)`            | `() => void`      | Sync callback, returns unsubscribe  |
-| `system`                   | `ActorSystem`     | Access the actor's system           |
-| `children`                 | `ReadonlyMap`     | Child actors spawned via self.spawn |
-| `stop`                     | `Effect<void>`    | Stop actor gracefully               |
+| Method                     | Type                                           | Description                          |
+| -------------------------- | ---------------------------------------------- | ------------------------------------ |
+| `send(event)`              | `Effect<void>`                                 | Fire-and-forget (queue event)        |
+| `cast(event)`              | `Effect<void>`                                 | Alias for send (OTP gen_server:cast) |
+| `call(event)`              | `Effect<ProcessEventResult>`                   | Request-reply (OTP gen_server:call)  |
+| `ask<R>(event)`            | `Effect<R, NoReplyError \| ActorStoppedError>` | Typed domain reply                   |
+| `snapshot`                 | `Effect<State>`                                | Get current state                    |
+| `matches(tag)`             | `Effect<boolean>`                              | Check if in state                    |
+| `can(event)`               | `Effect<boolean>`                              | Can handle event in current state?   |
+| `changes`                  | `Stream<State>`                                | Stream of state changes              |
+| `waitFor(State.X)`         | `Effect<State>`                                | Wait for state (constructor or fn)   |
+| `awaitFinal`               | `Effect<State>`                                | Wait for final state                 |
+| `sendAndWait(ev, State.X)` | `Effect<State>`                                | Send + wait for state                |
+| `sendAndWait(ev)`          | `Effect<State>`                                | Send + wait for final state          |
+| `subscribe(fn)`            | `() => void`                                   | Sync callback, returns unsubscribe   |
+| `sync`                     | `ActorRefSync`                                 | Sync helpers for UI boundaries       |
+| `system`                   | `ActorSystem`                                  | Access the actor's system            |
+| `children`                 | `ReadonlyMap`                                  | Child actors spawned via self.spawn  |
+| `stop`                     | `Effect<void>`                                 | Stop actor gracefully                |
 
 ## Sending Events
+
+### send / cast (fire-and-forget)
 
 Events are queued, not processed immediately:
 
@@ -65,15 +67,52 @@ yield * Effect.yieldNow();
 const state = yield * actor.snapshot;
 ```
 
-Sending after `stop` is a no-op (no error, no state change).
+`cast` is an alias for `send` (OTP gen_server:cast convention). Sending after `stop` is a no-op (no error, no state change).
 
-### sendSync (for UI integration)
+### call (request-reply)
 
-`sendSync` is a synchronous fire-and-forget send for framework hooks (React, Solid):
+`call` sends an event through the queue and returns a `ProcessEventResult` with transition details:
+
+```ts
+const result = yield * actor.call(Event.Process);
+console.log(result.transitioned); // true
+console.log(result.newState._tag); // "Processing"
+console.log(result.isFinal); // false
+console.log(result.postponed); // false
+```
+
+### ask (typed domain reply)
+
+`ask` sends an event and returns the domain value from the handler's `reply` field:
+
+```ts
+// Handler returns { state, reply }
+.on(State.Active, Event.GetCount, ({ state }) => ({
+  state,
+  reply: state.count,
+}))
+
+// Caller gets the typed reply
+const count = yield * actor.ask<number>(Event.GetCount);
+```
+
+Fails with `NoReplyError` if handler didn't provide a reply, `ActorStoppedError` if actor stops while pending.
+
+## Sync Helpers (for UI integration)
+
+All sync helpers live on `actor.sync`:
 
 ```ts
 // In a React onClick handler or Solid effect
-actor.sendSync(Event.Start({ url: "/api" }));
+actor.sync.send(Event.Start({ url: "/api" }));
+
+// Query state synchronously
+const state = actor.sync.snapshot();
+const isLoading = actor.sync.matches("Loading");
+const canProcess = actor.sync.can(Event.Process);
+
+// Stop synchronously
+actor.sync.stop();
 ```
 
 No-op on stopped actors.
@@ -114,9 +153,9 @@ const canProcess = yield * actor.can(Event.Process);
 **Sync (for UI integration)**:
 
 ```ts
-const state = actor.snapshotSync();
-const isLoading = actor.matchesSync("Loading");
-const canProcess = actor.canSync(Event.Process);
+const state = actor.sync.snapshot();
+const isLoading = actor.sync.matches("Loading");
+const canProcess = actor.sync.can(Event.Process);
 ```
 
 **Stream**:
@@ -211,9 +250,9 @@ const parent = yield * system.spawn("parent", parentMachine);
 
 1. **Spawn** - `system.spawn(id, machine)` or `Machine.spawn(machine)`
 2. **Initial state** - Background effects start, initial spawn effects run
-3. **Event processing** - Events processed in order
+3. **Event processing** - Events processed in order via mailbox
 4. **State transitions** - Spawn effects cancelled on exit (children too), new ones start on enter
-5. **Final state** - Actor stops, all effects interrupted, children stopped
+5. **Final state** - Actor stops, all effects interrupted, children stopped, pending call/ask settled with `ActorStoppedError`
 6. **Scope close** - Cleanup finalizers run, implicit system torn down if applicable
 
 ## Multiple Actors
