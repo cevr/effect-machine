@@ -42,7 +42,7 @@
  *
  * @module
  */
-import type { Schema, Schedule, ServiceMap } from "effect";
+import type { Schema, Schedule, ServiceMap, Duration } from "effect";
 import { Cause, Effect, Exit, Option, Scope } from "effect";
 
 import type { TransitionResult } from "./internal/utils.js";
@@ -163,6 +163,19 @@ export interface TaskOptions<State, Event, ED extends EffectsDef, A, E1, ES, EF>
   readonly onSuccess: (value: A, ctx: StateHandlerContext<State, Event, ED>) => ES;
   readonly onFailure?: (cause: Cause.Cause<E1>, ctx: StateHandlerContext<State, Event, ED>) => EF;
   readonly name?: string;
+}
+
+/**
+ * Configuration for `.timeout()` — gen_statem-style state timeouts.
+ *
+ * Entering the state starts a timer. Leaving cancels it.
+ * `.reenter()` restarts the timer with fresh state values.
+ */
+export interface TimeoutConfig<State, Event> {
+  /** Duration before firing. Static or derived from current state. */
+  readonly duration: Duration.Input | ((state: State) => Duration.Input);
+  /** Event to send when the timer fires. Static or derived from current state. */
+  readonly event: Event | ((state: State) => Event);
 }
 
 // ============================================================================
@@ -716,6 +729,49 @@ export class Machine<
     });
 
     return this.spawn(state, handler);
+  }
+
+  // ---- timeout ----
+
+  /**
+   * State timeout — gen_statem's `state_timeout`.
+   *
+   * Entering the state starts a timer. Leaving cancels it (via state scope).
+   * `.reenter()` restarts the timer with fresh state values.
+   * Compiles to `.task()` internally — preserves `@machine.task` inspection events.
+   *
+   * @example
+   * ```ts
+   * machine
+   *   .timeout(State.Loading, {
+   *     duration: Duration.seconds(30),
+   *     event: Event.Timeout,
+   *   })
+   *   // Dynamic duration from state
+   *   .timeout(State.Retrying, {
+   *     duration: (state) => Duration.seconds(state.backoff),
+   *     event: Event.GiveUp,
+   *   })
+   * ```
+   */
+  timeout<NS extends VariantsUnion<_SD> & BrandedState>(
+    state: TaggedOrConstructor<NS>,
+    config: TimeoutConfig<NS, VariantsUnion<_ED> & BrandedEvent>,
+  ): Machine<State, Event, R, _SD, _ED, GD, EFD> {
+    const stateTag = getTag(state);
+    const resolveDuration =
+      typeof config.duration === "function"
+        ? (config.duration as (state: NS) => Duration.Input)
+        : () => config.duration as Duration.Input;
+    const resolveEvent =
+      typeof config.event === "function"
+        ? (config.event as (state: NS) => VariantsUnion<_ED> & BrandedEvent)
+        : () => config.event as VariantsUnion<_ED> & BrandedEvent;
+
+    return this.task(state, (ctx) => Effect.sleep(resolveDuration(ctx.state)), {
+      onSuccess: (_, ctx) => resolveEvent(ctx.state),
+      name: `$timeout:${stateTag}`,
+    });
   }
 
   // ---- background ----
