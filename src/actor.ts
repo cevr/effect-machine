@@ -827,16 +827,16 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
   const postponed: QueuedEvent<E>[] = [];
   const hasPostponeRules = machine.postponeRules.length > 0;
 
-  while (true) {
-    const queued = yield* Queue.take(eventQueue);
+  // Process a single queued event: check postpone, run transition, settle reply
+  const processQueued = Effect.fn("effect-machine.actor.processQueued")(function* (
+    queued: QueuedEvent<E>,
+  ) {
     const event = queued.event;
-
     const currentState = yield* SubscriptionRef.get(stateRef);
 
     // Check postpone rules before processing
     if (hasPostponeRules && shouldPostpone(machine, currentState._tag, event._tag)) {
       postponed.push(queued);
-      // Settle call/ask with a postponed result
       if (queued._tag === "call") {
         const postponedResult: ProcessEventResult<S> = {
           newState: currentState,
@@ -850,8 +850,7 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
         };
         yield* Deferred.succeed(queued.reply, postponedResult);
       }
-      // ask/send: don't settle yet — they'll be settled when drained
-      continue;
+      return { shouldStop: false, stateChanged: false };
     }
 
     const { shouldStop, result } = yield* Effect.withSpan("effect-machine.event.process", {
@@ -889,9 +888,15 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
         break;
     }
 
+    return { shouldStop, stateChanged: result.lifecycleRan };
+  });
+
+  while (true) {
+    const queued = yield* Queue.take(eventQueue);
+    const { shouldStop, stateChanged } = yield* processQueued(queued);
+
     if (shouldStop) {
       yield* Ref.set(stoppedRef, true);
-      // Settle postponed buffer entries before shutdown
       settlePostponedBuffer(postponed, pendingReplies, actorId);
       yield* settlePendingReplies(pendingReplies, actorId);
       yield* Scope.close(stateScopeRef.current, Exit.void);
@@ -899,11 +904,19 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
       return;
     }
 
-    // After state tag change, drain postponed buffer back through the loop
-    if (result.lifecycleRan && postponed.length > 0) {
+    // Drain postponed events with priority (before taking next from mailbox)
+    if (stateChanged && postponed.length > 0) {
       const drained = postponed.splice(0);
       for (const entry of drained) {
-        yield* Queue.offer(eventQueue, entry);
+        const drain = yield* processQueued(entry);
+        if (drain.shouldStop) {
+          yield* Ref.set(stoppedRef, true);
+          settlePostponedBuffer(postponed, pendingReplies, actorId);
+          yield* settlePendingReplies(pendingReplies, actorId);
+          yield* Scope.close(stateScopeRef.current, Exit.void);
+          yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
+          return;
+        }
       }
     }
   }

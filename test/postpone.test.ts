@@ -180,6 +180,54 @@ describe(".postpone()", () => {
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
 
+  it.scopedLive("postponed events have priority over later mailbox arrivals", () =>
+    Effect.gen(function* () {
+      const order: string[] = [];
+
+      const PState = State({
+        Init: {},
+        Ready: {},
+      });
+      const PEvent = Event({
+        Go: {},
+        Data: { payload: Schema.String },
+        Ack: {},
+      });
+
+      const machine = Machine.make({
+        state: PState,
+        event: PEvent,
+        initial: PState.Init,
+      })
+        .on(PState.Init, PEvent.Go, () => PState.Ready)
+        .on(PState.Ready, PEvent.Data, ({ event }) => {
+          order.push(`data:${event.payload}`);
+          return PState.Ready;
+        })
+        .on(PState.Ready, PEvent.Ack, () => {
+          order.push("ack");
+          return PState.Ready;
+        })
+        .postpone(PState.Init, PEvent.Data)
+        .build();
+
+      const system = yield* ActorSystemService;
+      const actor = yield* system.spawn("test", machine);
+
+      // Data is postponed in Init state
+      yield* actor.send(PEvent.Data({ payload: "a" }));
+      yield* yieldFibers;
+
+      // Go transitions to Ready — Data should drain BEFORE Ack
+      yield* actor.send(PEvent.Go);
+      yield* actor.send(PEvent.Ack);
+      yield* yieldFibers;
+
+      // Postponed Data should run before Ack
+      expect(order).toEqual(["data:a", "ack"]);
+    }).pipe(Effect.provide(ActorSystemDefault)),
+  );
+
   it.scopedLive("postponed ask events settled on stop", () =>
     Effect.gen(function* () {
       const machine = Machine.make({

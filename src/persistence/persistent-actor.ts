@@ -599,12 +599,17 @@ const persistentEventLoop = Effect.fn("effect-machine.persistentActor.eventLoop"
             })),
         };
 
-  // Postpone buffer
+  // Postpone buffer + pending drain queue (processed with priority before mailbox)
   const postponed: QueuedEvent<E>[] = [];
+  const pendingDrain: QueuedEvent<E>[] = [];
   const hasPostponeRules = machine.postponeRules.length > 0;
 
   while (true) {
-    const queued = yield* Queue.take(eventQueue);
+    // Take from pending drain first (postponed events have priority), else mailbox
+    const queued =
+      pendingDrain.length > 0
+        ? (pendingDrain.shift() as QueuedEvent<E>)
+        : yield* Queue.take(eventQueue);
     const event = queued.event;
     const currentState = yield* SubscriptionRef.get(stateRef);
     const currentVersion = yield* Ref.get(versionRef);
@@ -714,12 +719,9 @@ const persistentEventLoop = Effect.fn("effect-machine.persistentActor.eventLoop"
       return;
     }
 
-    // Drain postponed events after state tag change
+    // Drain postponed events with priority (before taking next from mailbox)
     if (result.lifecycleRan && postponed.length > 0) {
-      const drained = postponed.splice(0);
-      for (const entry of drained) {
-        yield* Queue.offer(eventQueue, entry);
-      }
+      pendingDrain.push(...postponed.splice(0));
     }
   }
 });
