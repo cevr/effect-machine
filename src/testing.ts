@@ -100,12 +100,13 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
       break;
     }
 
-    // Drain postponed events after state tag change
-    if (currentState._tag !== prevTag && postponed.length > 0) {
+    // Drain postponed events after state tag change — loop until stable
+    let drainTag = prevTag;
+    while (currentState._tag !== drainTag && postponed.length > 0) {
+      drainTag = currentState._tag;
       const drained = postponed.splice(0);
       for (const postponedEvent of drained) {
         if (shouldPostpone(machine, currentState._tag, postponedEvent._tag)) {
-          // Still postponed in new state — re-buffer
           postponed.push(postponedEvent);
           continue;
         }
@@ -339,8 +340,11 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
       options.onTransition(currentState, event, newState);
     }
 
-    // Drain postponed after state tag change
-    if (newState._tag !== prevTag && postponed.length > 0) {
+    // Drain postponed after state tag change — loop until stable
+    let drainTag = prevTag;
+    let currentTag = newState._tag;
+    while (currentTag !== drainTag && postponed.length > 0) {
+      drainTag = currentTag;
       const drained = postponed.splice(0);
       for (const postponedEvent of drained) {
         const state = yield* SubscriptionRef.get(stateRef);
@@ -358,6 +362,7 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
         );
         if (drainResult.transitioned) {
           yield* SubscriptionRef.set(stateRef, drainResult.newState);
+          currentTag = drainResult.newState._tag;
           if (options?.onTransition !== undefined) {
             options.onTransition(state, postponedEvent, drainResult.newState);
           }
