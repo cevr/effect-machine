@@ -33,7 +33,16 @@ export type TaggedConstructor<T extends { readonly _tag: string }> = (args: Omit
 /**
  * Transition handler result - either a new state or Effect producing one
  */
-export type TransitionResult<State, R> = State | Effect.Effect<State, never, R>;
+/** Reply tuple returned from transition handlers for ask support */
+export interface TransitionReply<State> {
+  readonly state: State;
+  readonly reply: unknown;
+}
+
+export type TransitionResult<State, R> =
+  | State
+  | TransitionReply<State>
+  | Effect.Effect<State | TransitionReply<State>, never, R>;
 
 // ============================================================================
 // Constants

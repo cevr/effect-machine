@@ -48,13 +48,24 @@ export type {
 // QueuedEvent (internal wrapper for event queue)
 // ============================================================================
 
-/** Queued event with optional reply channel */
-export interface QueuedEvent<E> {
-  readonly event: E;
-  readonly reply?: Deferred.Deferred<ProcessEventResult<{ readonly _tag: string }>>;
-}
+/** Discriminated mailbox request */
+export type QueuedEvent<E> =
+  | { readonly _tag: "send"; readonly event: E }
+  | {
+      readonly _tag: "call";
+      readonly event: E;
+      readonly reply: Deferred.Deferred<
+        ProcessEventResult<{ readonly _tag: string }>,
+        ActorStoppedError
+      >;
+    }
+  | {
+      readonly _tag: "ask";
+      readonly event: E;
+      readonly reply: Deferred.Deferred<unknown, NoReplyError | ActorStoppedError>;
+    };
 import type { GuardsDef, EffectsDef } from "./slot.js";
-import { DuplicateActorError } from "./errors.js";
+import { DuplicateActorError, ActorStoppedError, NoReplyError } from "./errors.js";
 import { INTERNAL_INIT_EVENT } from "./internal/utils.js";
 import type {
   ActorMetadata,
@@ -103,6 +114,13 @@ export interface ActorRef<State extends { readonly _tag: string }, Event> {
    * Event is processed through the queue; caller gets ProcessEventResult back.
    */
   readonly call: (event: Event) => Effect.Effect<ProcessEventResult<State>>;
+
+  /**
+   * Typed request-reply. Event is processed through the queue; caller gets
+   * the domain value returned by the handler's `reply` field.
+   * Fails with NoReplyError if the handler doesn't provide a reply.
+   */
+  readonly ask: <R>(event: Event) => Effect.Effect<R, NoReplyError | ActorStoppedError>;
 
   /** Observable state. */
   readonly state: SubscriptionRef.SubscriptionRef<State>;
@@ -379,19 +397,19 @@ export const buildActorRefCore = <
   stop: Effect.Effect<void>,
   system: ActorSystem,
   childrenMap: ReadonlyMap<string, ActorRef<AnyState, unknown>>,
+  pendingReplies: Set<Deferred.Deferred<unknown, unknown>>,
 ): ActorRef<S, E> => {
   const send = Effect.fn("effect-machine.actor.send")(function* (event: E) {
     const stopped = yield* Ref.get(stoppedRef);
     if (stopped) {
       return;
     }
-    yield* Queue.offer(eventQueue, { event });
+    yield* Queue.offer(eventQueue, { _tag: "send", event });
   });
 
   const call = Effect.fn("effect-machine.actor.call")(function* (event: E) {
     const stopped = yield* Ref.get(stoppedRef);
     if (stopped) {
-      // Actor already stopped — return a no-op result with current state
       const currentState = yield* SubscriptionRef.get(stateRef);
       return {
         newState: currentState,
@@ -401,9 +419,43 @@ export const buildActorRefCore = <
         isFinal: machine.finalStates.has(currentState._tag),
       } as ProcessEventResult<S>;
     }
-    const reply = yield* Deferred.make<ProcessEventResult<{ readonly _tag: string }>>();
-    yield* Queue.offer(eventQueue, { event, reply });
-    return (yield* Deferred.await(reply)) as ProcessEventResult<S>;
+    const reply = yield* Deferred.make<
+      ProcessEventResult<{ readonly _tag: string }>,
+      ActorStoppedError
+    >();
+    pendingReplies.add(reply as Deferred.Deferred<unknown, unknown>);
+    yield* Queue.offer(eventQueue, { _tag: "call", event, reply });
+    return (yield* Deferred.await(reply).pipe(
+      Effect.ensuring(
+        Effect.sync(() => pendingReplies.delete(reply as Deferred.Deferred<unknown, unknown>)),
+      ),
+      Effect.catchTag("ActorStoppedError", () =>
+        SubscriptionRef.get(stateRef).pipe(
+          Effect.map((currentState) => ({
+            newState: currentState,
+            previousState: currentState,
+            transitioned: false,
+            lifecycleRan: false,
+            isFinal: machine.finalStates.has(currentState._tag),
+          })),
+        ),
+      ),
+    )) as ProcessEventResult<S>;
+  });
+
+  const ask = Effect.fn("effect-machine.actor.ask")(function* (event: E) {
+    const stopped = yield* Ref.get(stoppedRef);
+    if (stopped) {
+      return yield* new ActorStoppedError({ actorId: id });
+    }
+    const reply = yield* Deferred.make<unknown, NoReplyError | ActorStoppedError>();
+    pendingReplies.add(reply as Deferred.Deferred<unknown, unknown>);
+    yield* Queue.offer(eventQueue, { _tag: "ask", event, reply });
+    return yield* Deferred.await(reply).pipe(
+      Effect.ensuring(
+        Effect.sync(() => pendingReplies.delete(reply as Deferred.Deferred<unknown, unknown>)),
+      ),
+    );
   });
 
   const snapshot = SubscriptionRef.get(stateRef).pipe(
@@ -479,6 +531,7 @@ export const buildActorRefCore = <
     send,
     cast: send,
     call,
+    ask: ask as ActorRef<S, E>["ask"],
     state: stateRef,
     stop,
     snapshot,
@@ -498,7 +551,7 @@ export const buildActorRefCore = <
       send: (event) => {
         const stopped = Effect.runSync(Ref.get(stoppedRef));
         if (!stopped) {
-          Effect.runSync(Queue.offer(eventQueue, { event }));
+          Effect.runSync(Queue.offer(eventQueue, { _tag: "send", event }));
         }
       },
       stop: () => Effect.runFork(stop),
@@ -557,7 +610,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     if (stopped) {
       return;
     }
-    yield* Queue.offer(eventQueue, { event });
+    yield* Queue.offer(eventQueue, { _tag: "send", event });
   });
   const self: MachineRef<E> = {
     send: selfSend,
@@ -664,8 +717,12 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       stop,
       system,
       childrenMap,
+      new Set(),
     );
   }
+
+  // Pending reply tracking — registered before enqueue, settled on stop
+  const pendingReplies = new Set<Deferred.Deferred<unknown, unknown>>();
 
   // Start the event loop — use forkDaemon so the event loop fiber's lifetime
   // is detached from any parent scope/fiber. actor.stop handles cleanup.
@@ -682,6 +739,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       id,
       inspectorValue,
       system,
+      pendingReplies,
     ),
   );
 
@@ -695,6 +753,8 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     }));
     yield* Ref.set(stoppedRef, true);
     yield* Fiber.interrupt(loopFiber);
+    // Fail all pending call/ask Deferreds
+    yield* settlePendingReplies(pendingReplies, id);
     // Close state scope (interrupts spawn fibers)
     yield* Scope.close(stateScopeRef.current, Exit.void);
     // Interrupt background effects (in parallel)
@@ -715,8 +775,23 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     stop,
     system,
     childrenMap,
+    pendingReplies,
   );
 });
+
+/** Fail all pending call/ask Deferreds with ActorStoppedError. Safe to call multiple times. */
+export const settlePendingReplies = (
+  pendingReplies: Set<Deferred.Deferred<unknown, unknown>>,
+  actorId: string,
+) =>
+  Effect.sync(() => {
+    const error = new ActorStoppedError({ actorId });
+    for (const deferred of pendingReplies) {
+      // Deferred.fail returns false if already completed — safe to double-settle
+      Effect.runFork(Deferred.fail(deferred, error));
+    }
+    pendingReplies.clear();
+  });
 
 /**
  * Main event loop for the actor
@@ -739,15 +814,14 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
   actorId: string,
   inspector: Inspector<S, E> | undefined,
   system: ActorSystem,
+  pendingReplies: Set<Deferred.Deferred<unknown, unknown>>,
 ) {
   while (true) {
-    // Block waiting for next event - will fail with QueueShutdown when queue is shut down
     const queued = yield* Queue.take(eventQueue);
-    const { event, reply } = queued;
+    const event = queued.event;
 
     const currentState = yield* SubscriptionRef.get(stateRef);
 
-    // Process event in a span
     const { shouldStop, result } = yield* Effect.withSpan("effect-machine.event.process", {
       attributes: {
         "effect_machine.actor.id": actorId,
@@ -769,14 +843,24 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
       ),
     );
 
-    // Resolve call reply if present
-    if (reply !== undefined) {
-      yield* Deferred.succeed(reply, result);
+    // Settle reply based on request type
+    switch (queued._tag) {
+      case "call":
+        yield* Deferred.succeed(queued.reply, result);
+        break;
+      case "ask":
+        if (result.reply !== undefined) {
+          yield* Deferred.succeed(queued.reply, result.reply);
+        } else {
+          yield* Deferred.fail(queued.reply, new NoReplyError({ actorId, eventTag: event._tag }));
+        }
+        break;
     }
 
     if (shouldStop) {
-      // Close state scope and interrupt background effects when reaching final state
       yield* Ref.set(stoppedRef, true);
+      // Settle any pending queue entries before shutdown
+      yield* settlePendingReplies(pendingReplies, actorId);
       yield* Scope.close(stateScopeRef.current, Exit.void);
       yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
       return;

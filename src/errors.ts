@@ -62,3 +62,15 @@ export class ProvisionValidationError extends Schema.TaggedErrorClass<ProvisionV
 export class AssertionError extends Schema.TaggedErrorClass<AssertionError>()("AssertionError", {
   message: Schema.String,
 }) {}
+
+/** Actor was stopped while a call/ask was pending */
+export class ActorStoppedError extends Schema.TaggedErrorClass<ActorStoppedError>()(
+  "ActorStoppedError",
+  { actorId: Schema.String },
+) {}
+
+/** ask() was used but the transition handler did not call reply */
+export class NoReplyError extends Schema.TaggedErrorClass<NoReplyError>()("NoReplyError", {
+  actorId: Schema.String,
+  eventTag: Schema.String,
+}) {}

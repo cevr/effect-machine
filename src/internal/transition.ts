@@ -61,13 +61,29 @@ export const runTransitionHandler = Effect.fn("effect-machine.runTransitionHandl
   const { guards, effects } = machine._slots;
 
   const handlerCtx: HandlerContext<S, E, GD, EFD> = { state, event, guards, effects };
-  const result = transition.handler(handlerCtx);
+  const raw = transition.handler(handlerCtx);
 
-  return isEffect(result)
-    ? yield* (result as Effect.Effect<S, never, R>).pipe(
+  const resolved = isEffect(raw)
+    ? yield* (raw as Effect.Effect<S | { state: S; reply: unknown }, never, R>).pipe(
         Effect.provideService(machine.Context, ctx),
       )
-    : result;
+    : raw;
+
+  // Detect { state, reply } tuple vs plain state
+  if (
+    resolved !== null &&
+    typeof resolved === "object" &&
+    "state" in resolved &&
+    "reply" in resolved &&
+    !("_tag" in resolved)
+  ) {
+    return {
+      newState: (resolved as { state: S; reply: unknown }).state,
+      reply: (resolved as { state: S; reply: unknown }).reply,
+    };
+  }
+
+  return { newState: resolved as S, reply: undefined };
 });
 
 /**
@@ -102,10 +118,11 @@ export const executeTransition = Effect.fn("effect-machine.executeTransition")(f
       newState: currentState,
       transitioned: false,
       reenter: false,
+      reply: undefined,
     };
   }
 
-  const newState = yield* runTransitionHandler(
+  const { newState, reply } = yield* runTransitionHandler(
     machine,
     transition,
     currentState,
@@ -119,6 +136,7 @@ export const executeTransition = Effect.fn("effect-machine.executeTransition")(f
     newState,
     transitioned: true,
     reenter: transition.reenter === true,
+    reply,
   };
 });
 
@@ -162,6 +180,8 @@ export interface ProcessEventResult<S> {
   readonly lifecycleRan: boolean;
   /** Whether new state is final */
   readonly isFinal: boolean;
+  /** Domain reply value from handler (used by ask) */
+  readonly reply?: unknown;
 }
 
 /**
@@ -218,6 +238,7 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
       transitioned: false,
       lifecycleRan: false,
       isFinal: false,
+      reply: undefined,
     };
   }
 
@@ -262,6 +283,7 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
     transitioned: true,
     lifecycleRan: runLifecycle,
     isFinal: machine.finalStates.has(newState._tag),
+    reply: result.reply,
   };
 });
 

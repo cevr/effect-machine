@@ -19,11 +19,13 @@ export type {
 
 // Errors
 export {
+  ActorStoppedError,
   AssertionError,
   DuplicateActorError,
   InvalidSchemaError,
   MissingMatchHandlerError,
   MissingSchemaError,
+  NoReplyError,
   ProvisionValidationError,
   SlotProvisionError,
   UnprovidedSlotsError,
