@@ -326,6 +326,10 @@ export class Machine<
   /** @internal */ readonly _spawnEffects: Array<SpawnEffect<State, Event, EFD, R>>;
   /** @internal */ readonly _backgroundEffects: Array<BackgroundEffect<State, Event, EFD, R>>;
   /** @internal */ readonly _finalStates: Set<string>;
+  /** @internal */ readonly _postponeRules: Array<{
+    readonly stateTag: string;
+    readonly eventTag: string;
+  }>;
   /** @internal */ readonly _guardsSchema?: GuardsSchema<GD>;
   /** @internal */ readonly _effectsSchema?: EffectsSchema<EFD>;
   /** @internal */ readonly _guardHandlers: Map<
@@ -368,6 +372,9 @@ export class Machine<
   get finalStates(): ReadonlySet<string> {
     return this._finalStates;
   }
+  get postponeRules(): ReadonlyArray<{ readonly stateTag: string; readonly eventTag: string }> {
+    return this._postponeRules;
+  }
   get guardsSchema(): GuardsSchema<GD> | undefined {
     return this._guardsSchema;
   }
@@ -388,6 +395,7 @@ export class Machine<
     this._spawnEffects = [];
     this._backgroundEffects = [];
     this._finalStates = new Set();
+    this._postponeRules = [];
     this._guardsSchema = guardsSchema;
     this._effectsSchema = effectsSchema;
     this._guardHandlers = new Map();
@@ -806,6 +814,40 @@ export class Machine<
     return this;
   }
 
+  // ---- postpone ----
+
+  /**
+   * Postpone events — gen_statem's event postpone.
+   *
+   * When a matching event arrives in the given state, it is buffered instead of
+   * processed. After the next state transition (tag change), all buffered events
+   * are drained through the loop in FIFO order.
+   *
+   * Reply-bearing events (from `call`/`ask`) in the postpone buffer are settled
+   * with `ActorStoppedError` on stop/interrupt/final-state.
+   *
+   * @example
+   * ```ts
+   * machine
+   *   .postpone(State.Connecting, Event.Data)           // single event
+   *   .postpone(State.Connecting, [Event.Data, Event.Cmd]) // multiple events
+   * ```
+   */
+  postpone<NS extends VariantsUnion<_SD> & BrandedState>(
+    state: TaggedOrConstructor<NS>,
+    events:
+      | TaggedOrConstructor<VariantsUnion<_ED> & BrandedEvent>
+      | ReadonlyArray<TaggedOrConstructor<VariantsUnion<_ED> & BrandedEvent>>,
+  ): Machine<State, Event, R, _SD, _ED, GD, EFD> {
+    const stateTag = getTag(state);
+    const eventList = Array.isArray(events) ? events : [events];
+    for (const ev of eventList) {
+      const eventTag = getTag(ev);
+      this._postponeRules.push({ stateTag, eventTag });
+    }
+    return this;
+  }
+
   // ---- final ----
 
   final<NS extends VariantsUnion<_SD> & BrandedState>(
@@ -883,6 +925,8 @@ export class Machine<
       (result as any)._spawnEffects = [...this._spawnEffects];
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (result as any)._backgroundEffects = [...this._backgroundEffects];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (result as any)._postponeRules = [...this._postponeRules];
 
       // Register handlers from provided object
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

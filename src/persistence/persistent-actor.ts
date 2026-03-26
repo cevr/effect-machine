@@ -32,6 +32,7 @@ import {
   resolveTransition,
   runSpawnEffects,
   runTransitionHandler,
+  shouldPostpone,
 } from "../internal/transition.js";
 import type { ProcessEventError } from "../internal/transition.js";
 import type { GuardsDef, EffectsDef } from "../slot.js";
@@ -598,11 +599,33 @@ const persistentEventLoop = Effect.fn("effect-machine.persistentActor.eventLoop"
             })),
         };
 
+  // Postpone buffer
+  const postponed: QueuedEvent<E>[] = [];
+  const hasPostponeRules = machine.postponeRules.length > 0;
+
   while (true) {
     const queued = yield* Queue.take(eventQueue);
     const event = queued.event;
     const currentState = yield* SubscriptionRef.get(stateRef);
     const currentVersion = yield* Ref.get(versionRef);
+
+    // Check postpone rules before processing
+    if (hasPostponeRules && shouldPostpone(typedMachine, currentState._tag, event._tag)) {
+      postponed.push(queued);
+      if (queued._tag === "call") {
+        yield* Deferred.succeed(queued.reply, {
+          newState: currentState,
+          previousState: currentState,
+          transitioned: false,
+          lifecycleRan: false,
+          isFinal: false,
+          hasReply: false,
+          reply: undefined,
+          postponed: true,
+        });
+      }
+      continue;
+    }
 
     // Emit event received
     yield* emitWithTimestamp(inspector, (timestamp) => ({
@@ -682,12 +705,21 @@ const persistentEventLoop = Effect.fn("effect-machine.persistentActor.eventLoop"
         timestamp,
       }));
       yield* Ref.set(stoppedRef, true);
+      postponed.length = 0;
       yield* settlePendingReplies(pendingReplies, id);
       yield* Scope.close(stateScopeRef.current, Exit.void);
       yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
       yield* Fiber.interrupt(snapshotFiber);
       yield* Fiber.interrupt(persistenceFiber);
       return;
+    }
+
+    // Drain postponed events after state tag change
+    if (result.lifecycleRan && postponed.length > 0) {
+      const drained = postponed.splice(0);
+      for (const entry of drained) {
+        yield* Queue.offer(eventQueue, entry);
+      }
     }
   }
 });

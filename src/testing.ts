@@ -4,7 +4,7 @@ import type { Machine, MachineRef } from "./machine.js";
 import { BuiltMachine } from "./machine.js";
 import { AssertionError } from "./errors.js";
 import type { GuardsDef, EffectsDef } from "./slot.js";
-import { executeTransition } from "./internal/transition.js";
+import { executeTransition, shouldPostpone } from "./internal/transition.js";
 import { stubSystem } from "./internal/utils.js";
 
 /** Accept either Machine or BuiltMachine for testing utilities. */
@@ -68,8 +68,16 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
 
   let currentState = machine.initial;
   const states: S[] = [currentState];
+  const hasPostponeRules = machine.postponeRules.length > 0;
+  const postponed: E[] = [];
 
   for (const event of events) {
+    // Check postpone rules
+    if (hasPostponeRules && shouldPostpone(machine, currentState._tag, event._tag)) {
+      postponed.push(event);
+      continue;
+    }
+
     const result = yield* executeTransition(
       machine,
       currentState,
@@ -83,12 +91,40 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
       continue;
     }
 
+    const prevTag = currentState._tag;
     currentState = result.newState;
     states.push(currentState);
 
     // Stop if final state
     if (machine.finalStates.has(currentState._tag)) {
       break;
+    }
+
+    // Drain postponed events after state tag change
+    if (currentState._tag !== prevTag && postponed.length > 0) {
+      const drained = postponed.splice(0);
+      for (const postponedEvent of drained) {
+        if (shouldPostpone(machine, currentState._tag, postponedEvent._tag)) {
+          // Still postponed in new state — re-buffer
+          postponed.push(postponedEvent);
+          continue;
+        }
+        const drainResult = yield* executeTransition(
+          machine,
+          currentState,
+          postponedEvent,
+          dummySelf,
+          stubSystem,
+          "simulation",
+        );
+        if (drainResult.transitioned) {
+          currentState = drainResult.newState;
+          states.push(currentState);
+          if (machine.finalStates.has(currentState._tag)) {
+            break;
+          }
+        }
+      }
     }
   }
 
@@ -269,9 +305,17 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
   };
 
   const stateRef = yield* SubscriptionRef.make(machine.initial);
+  const hasPostponeRules = machine.postponeRules.length > 0;
+  const postponed: E[] = [];
 
   const send = Effect.fn("effect-machine.testHarness.send")(function* (event: E) {
     const currentState = yield* SubscriptionRef.get(stateRef);
+
+    // Check postpone rules
+    if (hasPostponeRules && shouldPostpone(machine, currentState._tag, event._tag)) {
+      postponed.push(event);
+      return currentState;
+    }
 
     const result = yield* executeTransition(
       machine,
@@ -286,12 +330,39 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
       return currentState;
     }
 
+    const prevTag = currentState._tag;
     const newState = result.newState;
     yield* SubscriptionRef.set(stateRef, newState);
 
     // Call transition observer
     if (options?.onTransition !== undefined) {
       options.onTransition(currentState, event, newState);
+    }
+
+    // Drain postponed after state tag change
+    if (newState._tag !== prevTag && postponed.length > 0) {
+      const drained = postponed.splice(0);
+      for (const postponedEvent of drained) {
+        const state = yield* SubscriptionRef.get(stateRef);
+        if (shouldPostpone(machine, state._tag, postponedEvent._tag)) {
+          postponed.push(postponedEvent);
+          continue;
+        }
+        const drainResult = yield* executeTransition(
+          machine,
+          state,
+          postponedEvent,
+          dummySelf,
+          stubSystem,
+          "test-harness",
+        );
+        if (drainResult.transitioned) {
+          yield* SubscriptionRef.set(stateRef, drainResult.newState);
+          if (options?.onTransition !== undefined) {
+            options.onTransition(state, postponedEvent, drainResult.newState);
+          }
+        }
+      }
     }
 
     return newState;

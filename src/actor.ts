@@ -28,7 +28,12 @@ import {
 import type { Machine, MachineRef, BuiltMachine } from "./machine.js";
 import type { Inspector } from "./inspection.js";
 import { Inspector as InspectorTag } from "./inspection.js";
-import { processEventCore, runSpawnEffects, resolveTransition } from "./internal/transition.js";
+import {
+  processEventCore,
+  runSpawnEffects,
+  resolveTransition,
+  shouldPostpone,
+} from "./internal/transition.js";
 import type {
   ProcessEventError,
   ProcessEventHooks,
@@ -794,7 +799,9 @@ export const settlePendingReplies = (
   });
 
 /**
- * Main event loop for the actor
+ * Main event loop for the actor.
+ * Includes postpone buffer — events matching postpone rules are buffered
+ * and drained after state tag changes (gen_statem semantics).
  */
 const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
   S extends { readonly _tag: string },
@@ -816,11 +823,36 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
   system: ActorSystem,
   pendingReplies: Set<Deferred.Deferred<unknown, unknown>>,
 ) {
+  // Postpone buffer — events deferred for retry after next state change
+  const postponed: QueuedEvent<E>[] = [];
+  const hasPostponeRules = machine.postponeRules.length > 0;
+
   while (true) {
     const queued = yield* Queue.take(eventQueue);
     const event = queued.event;
 
     const currentState = yield* SubscriptionRef.get(stateRef);
+
+    // Check postpone rules before processing
+    if (hasPostponeRules && shouldPostpone(machine, currentState._tag, event._tag)) {
+      postponed.push(queued);
+      // Settle call/ask with a postponed result
+      if (queued._tag === "call") {
+        const postponedResult: ProcessEventResult<S> = {
+          newState: currentState,
+          previousState: currentState,
+          transitioned: false,
+          lifecycleRan: false,
+          isFinal: false,
+          hasReply: false,
+          reply: undefined,
+          postponed: true,
+        };
+        yield* Deferred.succeed(queued.reply, postponedResult);
+      }
+      // ask/send: don't settle yet — they'll be settled when drained
+      continue;
+    }
 
     const { shouldStop, result } = yield* Effect.withSpan("effect-machine.event.process", {
       attributes: {
@@ -859,14 +891,38 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
 
     if (shouldStop) {
       yield* Ref.set(stoppedRef, true);
-      // Settle any pending queue entries before shutdown
+      // Settle postponed buffer entries before shutdown
+      settlePostponedBuffer(postponed, pendingReplies, actorId);
       yield* settlePendingReplies(pendingReplies, actorId);
       yield* Scope.close(stateScopeRef.current, Exit.void);
       yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
       return;
     }
+
+    // After state tag change, drain postponed buffer back through the loop
+    if (result.lifecycleRan && postponed.length > 0) {
+      const drained = postponed.splice(0);
+      for (const entry of drained) {
+        yield* Queue.offer(eventQueue, entry);
+      }
+    }
   }
 });
+
+/**
+ * Settle all reply-bearing entries in the postpone buffer on shutdown.
+ * Call entries already had their Deferred settled with the postponed result
+ * (so their pendingReplies entry is already removed). Ask/send entries
+ * with Deferreds are settled via the pendingReplies registry.
+ */
+const settlePostponedBuffer = <E>(
+  postponed: QueuedEvent<E>[],
+  _pendingReplies: Set<Deferred.Deferred<unknown, unknown>>,
+  _actorId: string,
+): void => {
+  // Clear the buffer — remaining Deferreds are settled via pendingReplies
+  postponed.length = 0;
+};
 
 /**
  * Process a single event, returning true if the actor should stop.

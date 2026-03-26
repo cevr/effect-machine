@@ -187,7 +187,31 @@ export interface ProcessEventResult<S> {
   readonly hasReply: boolean;
   /** Domain reply value from handler (used by ask). Only meaningful when hasReply is true. */
   readonly reply?: unknown;
+  /** Whether the event was postponed (buffered for retry after next state change) */
+  readonly postponed: boolean;
 }
+
+/**
+ * Check if an event should be postponed in the current state.
+ * @internal
+ */
+export const shouldPostpone = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+>(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  machine: Machine<S, E, R, any, any, any, any>,
+  stateTag: string,
+  eventTag: string,
+): boolean => {
+  for (const rule of machine.postponeRules) {
+    if (rule.stateTag === stateTag && rule.eventTag === eventTag) {
+      return true;
+    }
+  }
+  return false;
+};
 
 /**
  * Process a single event through the machine.
@@ -245,6 +269,7 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
       isFinal: false,
       hasReply: false,
       reply: undefined,
+      postponed: false,
     };
   }
 
@@ -291,6 +316,7 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
     isFinal: machine.finalStates.has(newState._tag),
     hasReply: result.hasReply,
     reply: result.reply,
+    postponed: false,
   };
 });
 
