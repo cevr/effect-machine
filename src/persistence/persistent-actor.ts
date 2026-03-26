@@ -169,8 +169,12 @@ const buildPersistentActorRef = <
   ) {
     const currentVersion = yield* Ref.get(versionRef);
     if (targetVersion <= currentVersion) {
+      const dummySend = Effect.fn("effect-machine.persistentActor.replay.send")(
+        (_event: E) => Effect.void,
+      );
       const dummySelf: MachineRef<E> = {
-        send: Effect.fn("effect-machine.persistentActor.replay.send")((_event: E) => Effect.void),
+        send: dummySend,
+        cast: dummySend,
         spawn: () => Effect.die("spawn not supported in replay"),
       };
 
@@ -276,14 +280,16 @@ export const createPersistentActor = Effect.fn("effect-machine.persistentActor.s
   const eventQueue = yield* Queue.unbounded<QueuedEvent<E>>();
   const stoppedRef = yield* Ref.make(false);
   const childrenMap = new Map<string, ActorRef<{ readonly _tag: string }, unknown>>();
+  const selfSend = Effect.fn("effect-machine.persistentActor.self.send")(function* (event: E) {
+    const stopped = yield* Ref.get(stoppedRef);
+    if (stopped) {
+      return;
+    }
+    yield* Queue.offer(eventQueue, { event });
+  });
   const self: MachineRef<E> = {
-    send: Effect.fn("effect-machine.persistentActor.self.send")(function* (event: E) {
-      const stopped = yield* Ref.get(stoppedRef);
-      if (stopped) {
-        return;
-      }
-      yield* Queue.offer(eventQueue, { event });
-    }),
+    send: selfSend,
+    cast: selfSend,
     spawn: (childId, childMachine) =>
       Effect.gen(function* () {
         const child = yield* system
@@ -601,7 +607,7 @@ const persistentEventLoop = Effect.fn("effect-machine.persistentActor.eventLoop"
       hooks,
     );
 
-    // Resolve dispatch reply if present
+    // Resolve call reply if present
     if (reply !== undefined) {
       yield* Deferred.succeed(reply, result);
     }

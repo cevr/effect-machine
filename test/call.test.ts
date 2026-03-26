@@ -34,17 +34,17 @@ const createMachine = () =>
     .build();
 
 // ============================================================================
-// dispatch Tests
+// call Tests
 // ============================================================================
 
-describe("ActorRef.dispatch", () => {
+describe("ActorRef.call", () => {
   it.scopedLive("returns ProcessEventResult for matching transition", () =>
     Effect.gen(function* () {
       const machine = createMachine();
       const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("dispatch-match", machine);
+      const actor = yield* system.spawn("call-match", machine);
 
-      const result = yield* actor.dispatch(TestEvent.Start({ value: 42 }));
+      const result = yield* actor.call(TestEvent.Start({ value: 42 }));
 
       expect(result.transitioned).toBe(true);
       expect(result.previousState._tag).toBe("Idle");
@@ -65,10 +65,10 @@ describe("ActorRef.dispatch", () => {
     Effect.gen(function* () {
       const machine = createMachine();
       const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("dispatch-no-match", machine);
+      const actor = yield* system.spawn("call-no-match", machine);
 
       // Idle state has no handler for Unknown event
-      const result = yield* actor.dispatch(TestEvent.Unknown);
+      const result = yield* actor.call(TestEvent.Unknown);
 
       expect(result.transitioned).toBe(false);
       expect(result.previousState._tag).toBe("Idle");
@@ -82,10 +82,10 @@ describe("ActorRef.dispatch", () => {
     Effect.gen(function* () {
       const machine = createMachine();
       const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("dispatch-final", machine);
+      const actor = yield* system.spawn("call-final", machine);
 
-      yield* actor.dispatch(TestEvent.Start({ value: 1 }));
-      const result = yield* actor.dispatch(TestEvent.Stop);
+      yield* actor.call(TestEvent.Start({ value: 1 }));
+      const result = yield* actor.call(TestEvent.Stop);
 
       expect(result.transitioned).toBe(true);
       expect(result.newState._tag).toBe("Done");
@@ -97,18 +97,18 @@ describe("ActorRef.dispatch", () => {
     Effect.gen(function* () {
       const machine = createMachine();
       const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("dispatch-serial", machine);
+      const actor = yield* system.spawn("call-serial", machine);
 
-      // Start, then update twice via dispatch
-      yield* actor.dispatch(TestEvent.Start({ value: 1 }));
+      // Start, then update twice via call
+      yield* actor.call(TestEvent.Start({ value: 1 }));
 
-      const r1 = yield* actor.dispatch(TestEvent.Update({ value: 10 }));
+      const r1 = yield* actor.call(TestEvent.Update({ value: 10 }));
       expect(r1.newState._tag).toBe("Active");
       if (r1.newState._tag === "Active") {
         expect(r1.newState.value).toBe(10);
       }
 
-      const r2 = yield* actor.dispatch(TestEvent.Update({ value: 20 }));
+      const r2 = yield* actor.call(TestEvent.Update({ value: 20 }));
       expect(r2.newState._tag).toBe("Active");
       if (r2.newState._tag === "Active") {
         expect(r2.newState.value).toBe(20);
@@ -120,12 +120,12 @@ describe("ActorRef.dispatch", () => {
     Effect.gen(function* () {
       const machine = createMachine();
       const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("dispatch-stopped", machine);
+      const actor = yield* system.spawn("call-stopped", machine);
 
-      yield* actor.dispatch(TestEvent.Start({ value: 1 }));
+      yield* actor.call(TestEvent.Start({ value: 1 }));
       yield* actor.stop;
 
-      const result = yield* actor.dispatch(TestEvent.Update({ value: 99 }));
+      const result = yield* actor.call(TestEvent.Update({ value: 99 }));
 
       expect(result.transitioned).toBe(false);
       expect(result.newState._tag).toBe("Active");
@@ -137,13 +137,13 @@ describe("ActorRef.dispatch", () => {
     Effect.gen(function* () {
       const machine = createMachine();
       const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("dispatch-interleave", machine);
+      const actor = yield* system.spawn("call-interleave", machine);
 
-      // Use send to start, then dispatch to update
+      // Use send to start, then call to update
       yield* actor.send(TestEvent.Start({ value: 1 }));
       yield* yieldFibers;
 
-      const result = yield* actor.dispatch(TestEvent.Update({ value: 55 }));
+      const result = yield* actor.call(TestEvent.Update({ value: 55 }));
       expect(result.transitioned).toBe(true);
       if (result.newState._tag === "Active") {
         expect(result.newState.value).toBe(55);
@@ -156,7 +156,7 @@ describe("ActorRef.dispatch", () => {
       const machine = createMachine();
       const actor = yield* Machine.spawn(machine);
 
-      const result = yield* actor.dispatch(TestEvent.Start({ value: 7 }));
+      const result = yield* actor.call(TestEvent.Start({ value: 7 }));
 
       expect(result.transitioned).toBe(true);
       expect(result.newState._tag).toBe("Active");
@@ -167,15 +167,13 @@ describe("ActorRef.dispatch", () => {
   );
 });
 
-describe("ActorRef.dispatchPromise", () => {
+describe("ActorRef.callPromise", () => {
   it.scopedLive("returns ProcessEventResult as Promise", () =>
     Effect.gen(function* () {
       const machine = createMachine();
       const actor = yield* Machine.spawn(machine);
 
-      const result = yield* Effect.promise(() =>
-        actor.dispatchPromise(TestEvent.Start({ value: 99 })),
-      );
+      const result = yield* Effect.promise(() => actor.callPromise(TestEvent.Start({ value: 99 })));
 
       expect(result.transitioned).toBe(true);
       expect(result.previousState._tag).toBe("Idle");
@@ -191,7 +189,7 @@ describe("ActorRef.dispatchPromise", () => {
       const machine = createMachine();
       const actor = yield* Machine.spawn(machine);
 
-      const result = yield* Effect.promise(() => actor.dispatchPromise(TestEvent.Unknown));
+      const result = yield* Effect.promise(() => actor.callPromise(TestEvent.Unknown));
 
       expect(result.transitioned).toBe(false);
       expect(result.newState._tag).toBe("Idle");

@@ -173,19 +173,24 @@ export interface ActorRef<State extends { readonly _tag: string }, Event> {
   readonly sendSync: (event: Event) => void;
 
   /**
-   * Send event and wait for the transition result (synchronous processing).
+   * Send event and wait for the transition result (serialized request-reply).
    * The event is processed through the queue (preserving serialization)
    * but the caller gets back the ProcessEventResult.
    *
    * OTP gen_server:call equivalent — use when you need to know what happened.
    */
-  readonly dispatch: (event: Event) => Effect.Effect<ProcessEventResult<State>>;
+  readonly call: (event: Event) => Effect.Effect<ProcessEventResult<State>>;
 
   /**
-   * Promise-based dispatch — send event and get back the transition result.
+   * Fire-and-forget alias for send (OTP gen_server:cast).
+   */
+  readonly cast: (event: Event) => Effect.Effect<void>;
+
+  /**
+   * Promise-based call — send event and get back the transition result.
    * Use at non-Effect boundaries (React event handlers, framework hooks, tests).
    */
-  readonly dispatchPromise: (event: Event) => Promise<ProcessEventResult<State>>;
+  readonly callPromise: (event: Event) => Promise<ProcessEventResult<State>>;
 
   /**
    * Subscribe to state changes (sync callback)
@@ -443,7 +448,7 @@ export const buildActorRefCore = <
     yield* Queue.offer(eventQueue, { event });
   });
 
-  const dispatch = Effect.fn("effect-machine.actor.dispatch")(function* (event: E) {
+  const call = Effect.fn("effect-machine.actor.call")(function* (event: E) {
     const stopped = yield* Ref.get(stoppedRef);
     if (stopped) {
       // Actor already stopped — return a no-op result with current state
@@ -554,8 +559,9 @@ export const buildActorRefCore = <
         Effect.runSync(Queue.offer(eventQueue, { event }));
       }
     },
-    dispatch,
-    dispatchPromise: (event) => Effect.runPromise(dispatch(event)),
+    call,
+    cast: send,
+    callPromise: (event) => Effect.runPromise(call(event)),
     subscribe: (fn) => {
       listeners.add(fn);
       return () => {
@@ -605,14 +611,16 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   const eventQueue = yield* Queue.unbounded<QueuedEvent<E>>();
   const stoppedRef = yield* Ref.make(false);
   const childrenMap = new Map<string, ActorRef<AnyState, unknown>>();
+  const selfSend = Effect.fn("effect-machine.actor.self.send")(function* (event: E) {
+    const stopped = yield* Ref.get(stoppedRef);
+    if (stopped) {
+      return;
+    }
+    yield* Queue.offer(eventQueue, { event });
+  });
   const self: MachineRef<E> = {
-    send: Effect.fn("effect-machine.actor.self.send")(function* (event: E) {
-      const stopped = yield* Ref.get(stoppedRef);
-      if (stopped) {
-        return;
-      }
-      yield* Queue.offer(eventQueue, { event });
-    }),
+    send: selfSend,
+    cast: selfSend,
     spawn: (childId, childMachine) =>
       Effect.gen(function* () {
         const child = yield* system
@@ -820,7 +828,7 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
       ),
     );
 
-    // Resolve dispatch reply if present
+    // Resolve call reply if present
     if (reply !== undefined) {
       yield* Deferred.succeed(reply, result);
     }

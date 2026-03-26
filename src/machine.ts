@@ -79,6 +79,8 @@ import { MachineContextTag } from "./slot.js";
  */
 export interface MachineRef<Event> {
   readonly send: (event: Event) => Effect.Effect<void>;
+  /** Fire-and-forget alias for send (OTP gen_server:cast). */
+  readonly cast: (event: Event) => Effect.Effect<void>;
   readonly spawn: <S2 extends { readonly _tag: string }, E2 extends { readonly _tag: string }, R2>(
     id: string,
     machine: BuiltMachine<S2, E2, R2>,

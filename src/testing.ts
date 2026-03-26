@@ -59,8 +59,10 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
   >;
 
   // Create a dummy self for slot accessors
+  const dummySend = Effect.fn("effect-machine.testing.simulate.send")((_event: E) => Effect.void);
   const dummySelf: MachineRef<E> = {
-    send: Effect.fn("effect-machine.testing.simulate.send")((_event: E) => Effect.void),
+    send: dummySend,
+    cast: dummySend,
     spawn: () => Effect.die("spawn not supported in simulation"),
   };
 
@@ -259,8 +261,10 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
   >;
 
   // Create a dummy self for slot accessors
+  const dummySend = Effect.fn("effect-machine.testing.harness.send")((_event: E) => Effect.void);
   const dummySelf: MachineRef<E> = {
-    send: Effect.fn("effect-machine.testing.harness.send")((_event: E) => Effect.void),
+    send: dummySend,
+    cast: dummySend,
     spawn: () => Effect.die("spawn not supported in test harness"),
   };
 
