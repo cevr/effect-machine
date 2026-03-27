@@ -72,20 +72,6 @@ export type QueuedEvent<E> =
 import type { GuardsDef, EffectsDef } from "./slot.js";
 import { DuplicateActorError, ActorStoppedError, NoReplyError } from "./errors.js";
 import { INTERNAL_INIT_EVENT } from "./internal/utils.js";
-import type {
-  ActorMetadata,
-  PersistenceError,
-  RestoreResult,
-  VersionConflictError,
-} from "./persistence/adapter.js";
-import {
-  PersistenceAdapterTag,
-  PersistenceError as PersistenceErrorClass,
-} from "./persistence/adapter.js";
-import type { PersistentMachine } from "./persistence/persistent-machine.js";
-import { isPersistentMachine } from "./persistence/persistent-machine.js";
-import type { PersistentActorRef } from "./persistence/persistent-actor.js";
-import { createPersistentActor, restorePersistentActor } from "./persistence/persistent-actor.js";
 
 // ============================================================================
 // ActorRef Interface
@@ -103,6 +89,16 @@ export interface ActorRefSync<State extends { readonly _tag: string }, Event> {
   readonly snapshot: () => State;
   readonly matches: (tag: State["_tag"]) => boolean;
   readonly can: (event: Event) => boolean;
+}
+
+/**
+ * Information about a successful transition.
+ * Emitted on the `transitions` stream after each accepted event.
+ */
+export interface TransitionInfo<State, Event> {
+  readonly fromState: State;
+  readonly toState: State;
+  readonly event: Event;
 }
 
 export interface ActorRef<State extends { readonly _tag: string }, Event> {
@@ -144,6 +140,15 @@ export interface ActorRef<State extends { readonly _tag: string }, Event> {
 
   /** Stream of state changes. */
   readonly changes: Stream.Stream<State>;
+
+  /**
+   * Stream of accepted transitions (edge stream).
+   *
+   * Emits `{ fromState, toState, event }` on every successful transition,
+   * including same-state reenters. PubSub-backed — late subscribers miss
+   * past edges. This is observational, not a durability guarantee.
+   */
+  readonly transitions: Stream.Stream<TransitionInfo<State, Event>>;
 
   /** Wait for a state matching predicate or variant (includes current snapshot). */
   readonly waitFor: {
@@ -212,63 +217,16 @@ export interface ActorSystem {
   /**
    * Spawn a new actor with the given machine.
    *
-   * For regular machines, returns ActorRef.
-   * For persistent machines (created with Machine.persist), returns PersistentActorRef.
-   *
-   * All effect slots must be provided via `.build()` before spawning.
-   *
    * @example
    * ```ts
-   * // Regular machine (built)
    * const built = machine.build({ fetchData: ... })
    * const actor = yield* system.spawn("my-actor", built);
-   *
-   * // Persistent machine (auto-detected)
-   * const persistentActor = yield* system.spawn("my-actor", persistentMachine);
-   * persistentActor.persist; // available
-   * persistentActor.version; // available
    * ```
    */
-  readonly spawn: {
-    // Regular machine overload (BuiltMachine)
-    <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
-      id: string,
-      machine: BuiltMachine<S, E, R>,
-    ): Effect.Effect<ActorRef<S, E>, DuplicateActorError, R>;
-
-    // Persistent machine overload
-    <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
-      id: string,
-      machine: PersistentMachine<S, E, R>,
-    ): Effect.Effect<
-      PersistentActorRef<S, E, R>,
-      PersistenceError | VersionConflictError | DuplicateActorError,
-      R | PersistenceAdapterTag
-    >;
-  };
-
-  /**
-   * Restore an actor from persistence.
-   * Returns None if no persisted state exists for the given ID.
-   *
-   * @example
-   * ```ts
-   * const maybeActor = yield* system.restore("order-1", persistentMachine);
-   * if (Option.isSome(maybeActor)) {
-   *   const actor = maybeActor.value;
-   *   const state = yield* actor.snapshot;
-   *   console.log(`Restored to state: ${state._tag}`);
-   * }
-   * ```
-   */
-  readonly restore: <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
+  readonly spawn: <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
     id: string,
-    machine: PersistentMachine<S, E, R>,
-  ) => Effect.Effect<
-    Option.Option<PersistentActorRef<S, E, R>>,
-    PersistenceError | DuplicateActorError,
-    R | PersistenceAdapterTag
-  >;
+    machine: BuiltMachine<S, E, R>,
+  ) => Effect.Effect<ActorRef<S, E>, DuplicateActorError, R>;
 
   /**
    * Get an existing actor by ID
@@ -297,64 +255,6 @@ export interface ActorSystem {
    * Returns an unsubscribe function.
    */
   readonly subscribe: (fn: SystemEventListener) => () => void;
-
-  /**
-   * List all persisted actor metadata.
-   * Returns empty array if adapter doesn't support registry.
-   *
-   * @example
-   * ```ts
-   * const actors = yield* system.listPersisted();
-   * for (const meta of actors) {
-   *   console.log(`${meta.id}: ${meta.stateTag} (v${meta.version})`);
-   * }
-   * ```
-   */
-  readonly listPersisted: () => Effect.Effect<
-    ReadonlyArray<ActorMetadata>,
-    PersistenceError,
-    PersistenceAdapterTag
-  >;
-
-  /**
-   * Restore multiple actors by ID.
-   * Returns both successfully restored actors and failures.
-   *
-   * @example
-   * ```ts
-   * const result = yield* system.restoreMany(["order-1", "order-2"], orderMachine);
-   * console.log(`Restored: ${result.restored.length}, Failed: ${result.failed.length}`);
-   * ```
-   */
-  readonly restoreMany: <
-    S extends { readonly _tag: string },
-    E extends { readonly _tag: string },
-    R,
-  >(
-    ids: ReadonlyArray<string>,
-    machine: PersistentMachine<S, E, R>,
-  ) => Effect.Effect<RestoreResult<S, E, R>, never, R | PersistenceAdapterTag>;
-
-  /**
-   * Restore all persisted actors for a machine type.
-   * Uses adapter registry if available, otherwise returns empty result.
-   *
-   * @example
-   * ```ts
-   * const result = yield* system.restoreAll(orderMachine, {
-   *   filter: (meta) => meta.stateTag !== "Done"
-   * });
-   * console.log(`Restored ${result.restored.length} active orders`);
-   * ```
-   */
-  readonly restoreAll: <
-    S extends { readonly _tag: string },
-    E extends { readonly _tag: string },
-    R,
-  >(
-    machine: PersistentMachine<S, E, R>,
-    options?: { filter?: (meta: ActorMetadata) => boolean },
-  ) => Effect.Effect<RestoreResult<S, E, R>, PersistenceError, R | PersistenceAdapterTag>;
 }
 
 /**
@@ -403,6 +303,7 @@ export const buildActorRefCore = <
   system: ActorSystem,
   childrenMap: ReadonlyMap<string, ActorRef<AnyState, unknown>>,
   pendingReplies: Set<Deferred.Deferred<unknown, unknown>>,
+  transitionsPubSub?: PubSub.PubSub<TransitionInfo<S, E>>,
 ): ActorRef<S, E> => {
   const send = Effect.fn("effect-machine.actor.send")(function* (event: E) {
     const stopped = yield* Ref.get(stoppedRef);
@@ -543,6 +444,8 @@ export const buildActorRefCore = <
     matches,
     can,
     changes: SubscriptionRef.changes(stateRef),
+    transitions:
+      transitionsPubSub !== undefined ? Stream.fromPubSub(transitionsPubSub) : Stream.empty,
     waitFor,
     awaitFinal,
     sendAndWait,
@@ -736,6 +639,9 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   // Pending reply tracking — registered before enqueue, settled on stop
   const pendingReplies = new Set<Deferred.Deferred<unknown, unknown>>();
 
+  // PubSub for transition observation (actor.transitions stream)
+  const transitionsPubSub = yield* PubSub.unbounded<TransitionInfo<S, E>>();
+
   // Start the event loop — use forkDaemon so the event loop fiber's lifetime
   // is detached from any parent scope/fiber. actor.stop handles cleanup.
   const loopFiber = yield* Effect.forkDetach(
@@ -752,6 +658,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       inspectorValue,
       system,
       pendingReplies,
+      transitionsPubSub,
     ),
   );
 
@@ -788,6 +695,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     system,
     childrenMap,
     pendingReplies,
+    transitionsPubSub,
   );
 });
 
@@ -829,6 +737,7 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
   inspector: Inspector<S, E> | undefined,
   system: ActorSystem,
   pendingReplies: Set<Deferred.Deferred<unknown, unknown>>,
+  transitionsPubSub: PubSub.PubSub<TransitionInfo<S, E>>,
 ) {
   // Postpone buffer — events deferred for retry after next state change
   const postponed: QueuedEvent<E>[] = [];
@@ -893,6 +802,15 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
           yield* Deferred.fail(queued.reply, new NoReplyError({ actorId, eventTag: event._tag }));
         }
         break;
+    }
+
+    // Publish transition info for observers (actor.transitions stream)
+    if (result.transitioned) {
+      yield* PubSub.publish(transitionsPubSub, {
+        fromState: result.previousState,
+        toState: result.newState,
+        event,
+      });
     }
 
     return { shouldStop, stateChanged: result.lifecycleRan };
@@ -1196,97 +1114,15 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     return yield* registerActor(id, actor);
   });
 
-  const spawnPersistent = Effect.fn("effect-machine.actorSystem.spawnPersistent")(function* <
-    S extends { readonly _tag: string },
-    E extends { readonly _tag: string },
-    R,
-  >(id: string, persistentMachine: PersistentMachine<S, E, R>) {
-    if (MutableHashMap.has(actorsMap, id)) {
-      return yield* new DuplicateActorError({ actorId: id });
-    }
-    const adapter = yield* PersistenceAdapterTag;
-
-    // Try to load existing snapshot
-    const maybeSnapshot = yield* adapter.loadSnapshot(
-      id,
-      persistentMachine.persistence.stateSchema,
-    );
-
-    // Load events after snapshot (or all events if no snapshot)
-    const events = yield* adapter.loadEvents(
-      id,
-      persistentMachine.persistence.eventSchema,
-      Option.isSome(maybeSnapshot) ? maybeSnapshot.value.version : undefined,
-    );
-
-    // Create and register the persistent actor
-    const actor = yield* createPersistentActor(id, persistentMachine, maybeSnapshot, events);
-    return yield* registerActor(id, actor);
-  });
-
-  const spawnImpl = Effect.fn("effect-machine.actorSystem.spawn")(function* <
-    S extends { readonly _tag: string },
-    E extends { readonly _tag: string },
-    R,
-  >(id: string, machine: BuiltMachine<S, E, R> | PersistentMachine<S, E, R>) {
-    if (isPersistentMachine(machine)) {
-      // TypeScript can't narrow union with invariant generic params
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return yield* spawnPersistent(id, machine as PersistentMachine<S, E, R>);
-    }
-    return yield* spawnRegular(id, machine as BuiltMachine<S, E, R>);
-  });
-
-  // Type-safe overloaded spawn implementation
-  function spawn<S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
+  const spawn = <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
     id: string,
     machine: BuiltMachine<S, E, R>,
-  ): Effect.Effect<ActorRef<S, E>, DuplicateActorError, R>;
-  function spawn<S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
-    id: string,
-    machine: PersistentMachine<S, E, R>,
-  ): Effect.Effect<
-    PersistentActorRef<S, E, R>,
-    PersistenceError | VersionConflictError | DuplicateActorError,
-    R | PersistenceAdapterTag
-  >;
-  function spawn<S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
-    id: string,
-    machine: BuiltMachine<S, E, R> | PersistentMachine<S, E, R>,
-  ):
-    | Effect.Effect<ActorRef<S, E>, DuplicateActorError, R>
-    | Effect.Effect<
-        PersistentActorRef<S, E, R>,
-        PersistenceError | VersionConflictError | DuplicateActorError,
-        R | PersistenceAdapterTag
-      > {
-    return withSpawnGate(spawnImpl(id, machine)) as
-      | Effect.Effect<ActorRef<S, E>, DuplicateActorError, R>
-      | Effect.Effect<
-          PersistentActorRef<S, E, R>,
-          PersistenceError | VersionConflictError | DuplicateActorError,
-          R | PersistenceAdapterTag
-        >;
-  }
-
-  const restoreImpl = Effect.fn("effect-machine.actorSystem.restore")(function* <
-    S extends { readonly _tag: string },
-    E extends { readonly _tag: string },
-    R,
-  >(id: string, persistentMachine: PersistentMachine<S, E, R>) {
-    // Try to restore from persistence
-    const maybeActor = yield* restorePersistentActor(id, persistentMachine);
-
-    if (Option.isSome(maybeActor)) {
-      yield* registerActor(id, maybeActor.value);
-    }
-
-    return maybeActor;
-  });
-  const restore = <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
-    id: string,
-    persistentMachine: PersistentMachine<S, E, R>,
-  ) => withSpawnGate(restoreImpl(id, persistentMachine));
+  ): Effect.Effect<ActorRef<S, E>, DuplicateActorError, R> =>
+    withSpawnGate(spawnRegular(id, machine)) as Effect.Effect<
+      ActorRef<S, E>,
+      DuplicateActorError,
+      R
+    >;
 
   const get = Effect.fn("effect-machine.actorSystem.get")(function* (id: string) {
     return yield* Effect.sync(() => MutableHashMap.get(actorsMap, id));
@@ -1306,90 +1142,8 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     return true;
   });
 
-  const listPersisted = Effect.fn("effect-machine.actorSystem.listPersisted")(function* () {
-    const adapter = yield* PersistenceAdapterTag;
-    if (adapter.listActors === undefined) {
-      return [];
-    }
-    return yield* adapter.listActors();
-  });
-
-  const restoreMany = Effect.fn("effect-machine.actorSystem.restoreMany")(function* <
-    S extends { readonly _tag: string },
-    E extends { readonly _tag: string },
-    R,
-  >(ids: ReadonlyArray<string>, persistentMachine: PersistentMachine<S, E, R>) {
-    const restored: PersistentActorRef<S, E, R>[] = [];
-    const failed: {
-      id: string;
-      error: PersistenceError | DuplicateActorError;
-    }[] = [];
-
-    for (const id of ids) {
-      // Skip if already running
-      if (MutableHashMap.has(actorsMap, id)) {
-        continue;
-      }
-
-      const result = yield* Effect.result(restore(id, persistentMachine));
-      if (result._tag === "Failure") {
-        failed.push({ id, error: result.failure });
-      } else if (Option.isSome(result.success)) {
-        restored.push(result.success.value);
-      } else {
-        // No persisted state for this ID
-        failed.push({
-          id,
-          error: new PersistenceErrorClass({
-            operation: "restore",
-            actorId: id,
-            message: "No persisted state found",
-          }),
-        });
-      }
-    }
-
-    return { restored, failed };
-  });
-
-  const restoreAll = Effect.fn("effect-machine.actorSystem.restoreAll")(function* <
-    S extends { readonly _tag: string },
-    E extends { readonly _tag: string },
-    R,
-  >(
-    persistentMachine: PersistentMachine<S, E, R>,
-    options?: { filter?: (meta: ActorMetadata) => boolean },
-  ) {
-    const adapter = yield* PersistenceAdapterTag;
-    if (adapter.listActors === undefined) {
-      return { restored: [], failed: [] };
-    }
-
-    // Require explicit machineType to prevent cross-machine restores
-    const machineType = persistentMachine.persistence.machineType;
-    if (machineType === undefined) {
-      return yield* new PersistenceErrorClass({
-        operation: "restoreAll",
-        actorId: "*",
-        message: "restoreAll requires explicit machineType in persistence config",
-      });
-    }
-
-    const allMetadata = yield* adapter.listActors();
-
-    // Filter by machineType and optional user filter
-    let filtered = allMetadata.filter((meta) => meta.machineType === machineType);
-    if (options?.filter !== undefined) {
-      filtered = filtered.filter(options.filter);
-    }
-
-    const ids = filtered.map((meta) => meta.id);
-    return yield* restoreMany(ids, persistentMachine);
-  });
-
   return ActorSystem.of({
     spawn,
-    restore,
     get,
     stop,
     events: Stream.fromPubSub(eventPubSub),
@@ -1406,9 +1160,6 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
         eventListeners.delete(fn);
       };
     },
-    listPersisted,
-    restoreMany,
-    restoreAll,
   });
 });
 

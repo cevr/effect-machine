@@ -42,18 +42,21 @@
  *
  * @module
  */
-import type { Schema, Schedule, ServiceMap, Duration } from "effect";
+import type { Schema, ServiceMap, Duration } from "effect";
 import { Cause, Effect, Exit, Option, Scope } from "effect";
 
 import type { TransitionResult } from "./internal/utils.js";
-import { getTag } from "./internal/utils.js";
+import { getTag, stubSystem } from "./internal/utils.js";
 import type { TaggedOrConstructor, BrandedState, BrandedEvent } from "./internal/brands.js";
 import type { MachineStateSchema, MachineEventSchema, VariantsUnion } from "./schema.js";
-import type { PersistentMachine, WithPersistenceConfig } from "./persistence/persistent-machine.js";
-import { persist as persistImpl } from "./persistence/persistent-machine.js";
 import { SlotProvisionError, ProvisionValidationError } from "./errors.js";
 import type { DuplicateActorError } from "./errors.js";
-import { invalidateIndex } from "./internal/transition.js";
+import {
+  invalidateIndex,
+  resolveTransition,
+  runTransitionHandler,
+  shouldPostpone,
+} from "./internal/transition.js";
 import { emitWithTimestamp } from "./internal/inspection.js";
 import type { ActorRef, ActorSystem } from "./actor.js";
 import { Inspector as InspectorTag } from "./inspection.js";
@@ -151,13 +154,6 @@ export interface BackgroundEffect<State, Event, ED extends EffectsDef, R> {
 // ============================================================================
 // Options types
 // ============================================================================
-
-/** Options for `persist` */
-export interface PersistOptions {
-  readonly snapshotSchedule: Schedule.Schedule<unknown, { readonly _tag: string }>;
-  readonly journalEvents: boolean;
-  readonly machineType?: string;
-}
 
 export interface TaskOptions<State, Event, ED extends EffectsDef, A, E1, ES, EF> {
   readonly onSuccess: (value: A, ctx: StateHandlerContext<State, Event, ED>) => ES;
@@ -287,12 +283,6 @@ export class BuiltMachine<State, Event, R = never> {
 
   get initial(): State {
     return this._inner.initial;
-  }
-
-  persist(
-    config: PersistOptions,
-  ): PersistentMachine<State & { readonly _tag: string }, Event & { readonly _tag: string }, R> {
-    return this._inner.persist(config);
   }
 }
 
@@ -948,21 +938,6 @@ export class Machine<
     return new BuiltMachine(this as any);
   }
 
-  // ---- persist (on Machine, for unbuilt usage in testing) ----
-
-  /** @internal Persist from raw Machine — prefer BuiltMachine.persist() */
-  persist(
-    config: PersistOptions,
-  ): PersistentMachine<State & { readonly _tag: string }, Event & { readonly _tag: string }, R> {
-    return persistImpl(config as WithPersistenceConfig)(
-      this as unknown as Machine<BrandedState, BrandedEvent, R>,
-    ) as unknown as PersistentMachine<
-      State & { readonly _tag: string },
-      Event & { readonly _tag: string },
-      R
-    >;
-  }
-
   // ---- Static factory ----
 
   static make<
@@ -1094,8 +1069,105 @@ export const spawn: <S extends { readonly _tag: string }, E extends { readonly _
   idOrOptions?: string | { id?: string; hydrate?: S },
 ) => Effect.Effect<ActorRef<S, E>, never, R> = spawnImpl;
 
+/**
+ * Replay events through a machine to compute the final state.
+ *
+ * Folds events through transition handlers — the same state computation
+ * that runs in a live actor, minus runtime side effects:
+ * - Transition handlers run (pure or effectful — they compute state)
+ * - `self.send`/`self.spawn` are no-ops (stubbed)
+ * - Spawn effects, background effects, and timeouts do NOT run
+ * - Postpone rules are respected (postponed events drain on state change)
+ * - Final states stop replay (remaining events ignored)
+ * - Unhandled events are silently skipped (matches live actor behavior)
+ *
+ * Use `from` to replay from a snapshot midpoint instead of the machine's initial state.
+ *
+ * @example
+ * ```ts
+ * // Restore from event log
+ * const state = yield* Machine.replay(machine, savedEvents);
+ * const actor = yield* Machine.spawn(machine, { hydrate: state });
+ *
+ * // Restore from snapshot + tail events
+ * const state = yield* Machine.replay(machine, tailEvents, { from: snapshot });
+ * const actor = yield* Machine.spawn(machine, { hydrate: state });
+ * ```
+ */
+const replayImpl = Effect.fn("effect-machine.replay")(function* <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+>(built: BuiltMachine<S, E, R>, events: ReadonlyArray<E>, options?: { from?: S }) {
+  const machine = built._inner;
+  let state: S = options?.from ?? machine.initial;
+
+  const hasPostponeRules = machine.postponeRules.length > 0;
+  const postponed: E[] = [];
+
+  const dummySend = Effect.fn("effect-machine.replay.send")((_event: E) => Effect.void);
+  const self: MachineRef<E> = {
+    send: dummySend,
+    cast: dummySend,
+    spawn: () => Effect.die("spawn not supported in replay"),
+  };
+
+  for (const event of events) {
+    // Final state stops replay
+    if (machine.finalStates.has(state._tag)) break;
+
+    // Check postpone rules
+    if (hasPostponeRules && shouldPostpone(machine, state._tag, event._tag)) {
+      postponed.push(event);
+      continue;
+    }
+
+    const transition = resolveTransition(machine, state, event);
+    if (transition !== undefined) {
+      const result = yield* runTransitionHandler(
+        machine,
+        transition,
+        state,
+        event,
+        self,
+        stubSystem,
+        "replay",
+      );
+      const previousTag = state._tag;
+      state = result.newState;
+
+      // Drain postponed events on state change (tag change or reenter)
+      const stateChanged = state._tag !== previousTag || transition.reenter === true;
+      if (stateChanged && postponed.length > 0) {
+        const buffered = postponed.splice(0);
+        for (const postponedEvent of buffered) {
+          if (machine.finalStates.has(state._tag)) break;
+          const pTransition = resolveTransition(machine, state, postponedEvent);
+          if (pTransition !== undefined) {
+            const pResult = yield* runTransitionHandler(
+              machine,
+              pTransition,
+              state,
+              postponedEvent,
+              self,
+              stubSystem,
+              "replay",
+            );
+            state = pResult.newState;
+          }
+        }
+      }
+    }
+  }
+
+  return state;
+});
+
+export const replay: <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
+  machine: BuiltMachine<S, E, R>,
+  events: ReadonlyArray<E>,
+  options?: { from?: S },
+) => Effect.Effect<S, never, R> = replayImpl;
+
 // Transition lookup (introspection)
 export { findTransitions } from "./internal/transition.js";
-
-// Persistence types
-export type { PersistenceConfig, PersistentMachine } from "./persistence/index.js";

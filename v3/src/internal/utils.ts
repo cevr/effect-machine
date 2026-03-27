@@ -101,7 +101,6 @@ export const isEffect = (value: unknown): value is Effect.Effect<unknown, unknow
  */
 export const stubSystem: ActorSystem = {
   spawn: () => E.die("spawn not supported in stub system"),
-  restore: () => E.die("restore not supported in stub system"),
   get: () => E.die("get not supported in stub system"),
   stop: () => E.die("stop not supported in stub system"),
   events: Stream.empty,
@@ -109,8 +108,4 @@ export const stubSystem: ActorSystem = {
     return new Map();
   },
   subscribe: () => () => {},
-  listPersisted: () => E.die("listPersisted not supported in stub system"),
-  restoreMany: () => E.die("restoreMany not supported in stub system"),
-  restoreAll: () => E.die("restoreAll not supported in stub system"),
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- structural stub, overloaded spawn signature doesn't match
-} as any;
+};

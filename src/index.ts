@@ -44,7 +44,6 @@ export type {
   Transition,
   SpawnEffect,
   BackgroundEffect,
-  PersistOptions,
   HandlerContext,
   StateHandlerContext,
   TaskOptions,
@@ -59,6 +58,7 @@ export type {
   ProcessEventResult,
   SystemEvent,
   SystemEventListener,
+  TransitionInfo,
 } from "./actor.js";
 export { ActorSystem as ActorSystemService, Default as ActorSystemDefault } from "./actor.js";
 
@@ -96,26 +96,3 @@ export {
   makeInspectorEffect,
   tracingInspector,
 } from "./inspection.js";
-
-// Persistence
-export type {
-  ActorMetadata,
-  PersistedEvent,
-  PersistenceAdapter,
-  PersistenceConfig,
-  PersistentActorRef,
-  PersistentMachine,
-  RestoreFailure,
-  RestoreResult,
-  Snapshot,
-} from "./persistence/index.js";
-export {
-  createPersistentActor,
-  InMemoryPersistenceAdapter,
-  isPersistentMachine,
-  makeInMemoryPersistenceAdapter,
-  PersistenceAdapterTag,
-  PersistenceError,
-  restorePersistentActor,
-  VersionConflictError,
-} from "./persistence/index.js";
