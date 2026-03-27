@@ -1,5 +1,31 @@
 # effect-machine
 
+## 0.12.0
+
+### Minor Changes
+
+- [`f26b21f`](https://github.com/cevr/effect-machine/commit/f26b21f3b3d47973f57bf7ab7aef3a97d96d7d5b) Thanks [@cevr](https://github.com/cevr)! - feat(cluster): entity persistence with snapshot and journal strategies
+
+  Add opt-in state persistence for entity-machines across deactivation/reactivation:
+  - **Snapshot strategy**: periodic background saves + deactivation finalizer. Simple, fast.
+  - **Journal strategy**: inline event append on each Send/Ask RPC, replay on reactivation. Full audit trail.
+  - **PersistenceAdapter** service tag with `saveSnapshot`, `loadSnapshot`, `appendEvents` (CAS), `loadEvents`
+  - **InMemoryPersistenceAdapter** for testing/development
+  - **PersistenceKey** = `{ entityType, entityId }` prevents cross-type collisions
+  - Journal append failures defect the entity (cluster retry restarts from last snapshot)
+  - Snapshot scheduler only in snapshot-only mode (prevents state/version tear in journal mode)
+  - v3 backport included
+
+  Also includes the cluster overhaul (runtime kernel, EntityActorRef, WatchState, self.reply, self.spawn).
+
+- [`33d8a87`](https://github.com/cevr/effect-machine/commit/33d8a87f13617c771fc5b96966435a63965cd258) Thanks [@cevr](https://github.com/cevr)! - feat: add typed reply schemas for ask()
+  - `Event.reply(fields, schema)` — declare reply-bearing events with schema validation
+  - `Machine.reply(state, value)` — branded helper replacing duck-typed `{ state, reply }`
+  - `actor.ask(event)` — infers return type from event's reply schema; non-reply events are type errors
+  - Runtime validation: reply values decoded through schema; decode failure = defect
+  - Entity-machine: `Ask` RPC propagates replies through cluster boundary
+  - Backported to v3
+
 ## 0.11.0
 
 ### Minor Changes
