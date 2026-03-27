@@ -232,8 +232,3 @@ expect(result.newState._tag).toBe("Loading");
 | `slot.ts`    | Slot.Guards/Slot.Effects |
 | `actor.ts`   | ActorSystem, event loop  |
 | `testing.ts` | simulate, harness        |
-
-## See Also
-
-- `primer/` - Full documentation
-- `CODEMAP.md` - Codebase structure

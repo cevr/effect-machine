@@ -236,6 +236,4 @@ Handlers are strictly typed - `.build()` is the only way to add requirements:
 
 ## Documentation
 
-- `CODEMAP.md` - codebase navigation
-- `primer/` - comprehensive usage guide
 - `SKILL.md` - AI agent quick reference
