@@ -206,8 +206,9 @@ export const EntityMachine = {
       // Return the queue-draining loop function
       return (mailbox: Queue.Dequeue<Envelope.Request<Rpcs>>, replier: Entity.Replier<Rpcs>) =>
         Effect.gen(function* () {
+          const hasPersistence = persistCtx.adapter !== undefined;
           const journalCtx =
-            persistCtx.adapter !== undefined && (persistence?.strategy ?? "snapshot") === "journal"
+            hasPersistence && (persistence?.strategy ?? "snapshot") === "journal"
               ? { adapter: persistCtx.adapter, key: persistCtx.key }
               : undefined;
 
@@ -223,9 +224,12 @@ export const EntityMachine = {
                 // sendWait fails on defect — orDie propagates to toLayerQueue infrastructure
                 yield* runtime.sendWait(event).pipe(Effect.orDie);
 
-                // Journal append — inline, before replying
                 if (journalCtx !== undefined) {
+                  // Journal append — inline, before replying. Defects entity on failure.
                   yield* persistEvent(journalCtx.adapter, journalCtx.key, versionRef, event);
+                } else if (hasPersistence) {
+                  // Snapshot-only: bump version for consistent snapshot versioning
+                  yield* Ref.update(versionRef, (v) => v + 1);
                 }
 
                 const state = yield* runtime.getState;
@@ -241,9 +245,10 @@ export const EntityMachine = {
                   .event;
                 const reply = yield* runtime.ask(event);
 
-                // Journal append — inline, before replying
                 if (journalCtx !== undefined) {
                   yield* persistEvent(journalCtx.adapter, journalCtx.key, versionRef, event);
+                } else if (hasPersistence) {
+                  yield* Ref.update(versionRef, (v) => v + 1);
                 }
 
                 yield* replier.succeed(
@@ -395,8 +400,12 @@ const hydratePersistence = <
 
 /**
  * Append a single event to the journal, incrementing version.
- * Best-effort: failures are logged but don't crash the entity.
- * The deactivation snapshot acts as a fallback recovery point.
+ *
+ * On failure: defects the entity activation. The cluster's defectRetryPolicy
+ * restarts the entity, which rehydrates from the last consistent snapshot +
+ * whatever events made it to the journal. This is correct because the in-memory
+ * state has already advanced — we can't un-ring that bell — so the activation
+ * is now unreliable and must restart.
  */
 const persistEvent = <E>(
   adapter: PersistenceAdapter,
@@ -415,6 +424,8 @@ const persistEvent = <E>(
     yield* adapter.appendEvents(key, [persisted], expectedVersion);
     yield* Ref.set(versionRef, newVersion);
   }).pipe(
-    Effect.tapError((error) => Effect.logWarning("Journal append failed", { key, error })),
-    Effect.catch(() => Effect.void),
+    Effect.tapError((error) =>
+      Effect.logWarning("Journal append failed, defecting entity", { key, error }),
+    ),
+    Effect.orDie,
   );

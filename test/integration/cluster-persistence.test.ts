@@ -9,7 +9,7 @@
  * across deactivation/reactivation cycles.
  */
 import { Entity, ShardingConfig } from "effect/unstable/cluster";
-import { Effect, Layer, Ref, Schema } from "effect";
+import { Effect, Layer, Option, Ref, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import { Machine, State, Event, ActorSystemDefault } from "../../src/index.js";
@@ -17,7 +17,10 @@ import {
   toEntity,
   EntityMachine,
   makeInMemoryPersistenceAdapter,
+  PersistenceAdapter,
 } from "../../src/cluster/index.js";
+import { PersistenceError } from "../../src/errors.js";
+import type { PersistenceAdapterInterface } from "../../src/cluster/index.js";
 
 // =============================================================================
 // Test machine: simple counter with same-tag transitions
@@ -369,6 +372,193 @@ describe("Entity Persistence", () => {
             const makeClient = yield* Entity.makeTestClient(entity, provideLayer);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const client = (yield* makeClient("js-1")) as any;
+            const state = yield* client.GetState();
+            expect(state._tag).toBe("Active");
+            expect((state as { count: number }).count).toBe(5);
+          }),
+        ).pipe(Effect.provide(TestShardingConfig));
+      }) as Effect.Effect<void>,
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // 8. Journal append failure defects the entity
+  // ---------------------------------------------------------------------------
+  test("journal: append failure defects entity (not silently swallowed)", async () => {
+    let appendCallCount = 0;
+
+    const failingAdapter: PersistenceAdapterInterface = {
+      saveSnapshot: () => Effect.void,
+      loadSnapshot: () => Effect.succeed(Option.none()),
+      appendEvents: () => {
+        appendCallCount++;
+        // Fail on 3rd append
+        if (appendCallCount >= 3) {
+          return Effect.fail(new PersistenceError({ message: "storage down" }));
+        }
+        return Effect.void;
+      },
+      loadEvents: () => Effect.succeed([]),
+    };
+
+    const failingAdapterLayer = Layer.succeed(PersistenceAdapter, failingAdapter);
+
+    const entity = toEntity(counterMachine, { type: "FailAppend" });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const entityLayer = EntityMachine.layer(entity, counterMachine as any, {
+      initializeState: () => CounterState.Active({ count: 0 }),
+      persistence: { strategy: "journal" },
+      // disableFatalDefects prevents the defect from crashing the test
+      disableFatalDefects: true,
+    });
+
+    // The 3rd Send should cause a defect (journal append fails → orDie)
+    // With disableFatalDefects, the entity absorbs it gracefully
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const makeClient = yield* Entity.makeTestClient(
+            entity,
+            entityLayer.pipe(Layer.provide(ActorSystemDefault), Layer.provide(failingAdapterLayer)),
+          );
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const client = (yield* makeClient("fail-1")) as any;
+
+          yield* client.Send({ event: CounterEvent.Increment });
+          yield* client.Send({ event: CounterEvent.Increment });
+          // 3rd send triggers append failure → entity defect
+          const thirdResult = yield* Effect.exit(client.Send({ event: CounterEvent.Increment }));
+          return thirdResult._tag;
+        }),
+      ).pipe(Effect.provide(TestShardingConfig)) as Effect.Effect<string>,
+    );
+
+    // The send should fail (defect propagates through RPC)
+    expect(result).toBe("Failure");
+    expect(appendCallCount).toBeGreaterThanOrEqual(3);
+  });
+
+  // ---------------------------------------------------------------------------
+  // 9. Reactivation after failed append recovers from snapshot
+  // ---------------------------------------------------------------------------
+  test("journal: reactivation after partial failure recovers from deactivation snapshot", async () => {
+    let appendCallCount = 0;
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const { adapter: realAdapter } = yield* makeInMemoryPersistenceAdapter;
+
+        // Wrap the real adapter to fail on 4th append
+        const wrappedAdapter: PersistenceAdapterInterface = {
+          saveSnapshot: (key, snapshot) => realAdapter.saveSnapshot(key, snapshot),
+          loadSnapshot: (key) => realAdapter.loadSnapshot(key),
+          appendEvents: (key, events, expectedVersion) => {
+            appendCallCount++;
+            if (appendCallCount >= 4) {
+              return Effect.fail(new PersistenceError({ message: "storage down" }));
+            }
+            return realAdapter.appendEvents(key, events, expectedVersion);
+          },
+          loadEvents: (key, afterVersion) => realAdapter.loadEvents(key, afterVersion),
+        };
+
+        const wrappedLayer = Layer.succeed(PersistenceAdapter, wrappedAdapter);
+
+        const entity = toEntity(counterMachine, { type: "RecoverSnap" });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const entityLayer = EntityMachine.layer(entity, counterMachine as any, {
+          initializeState: () => CounterState.Active({ count: 0 }),
+          persistence: { strategy: "journal" },
+          disableFatalDefects: true,
+        });
+
+        const provideLayer = entityLayer.pipe(
+          Layer.provide(ActorSystemDefault),
+          Layer.provide(wrappedLayer),
+        );
+
+        // First activation: 3 successful appends, 4th fails → entity defects
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const makeClient = yield* Entity.makeTestClient(entity, provideLayer);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const client = (yield* makeClient("recover-1")) as any;
+            yield* client.Send({ event: CounterEvent.Increment });
+            yield* client.Send({ event: CounterEvent.Increment });
+            yield* client.Send({ event: CounterEvent.Increment });
+            // 4th send defects — ignore the error
+            yield* Effect.exit(client.Send({ event: CounterEvent.Increment }));
+          }),
+        ).pipe(Effect.provide(TestShardingConfig));
+
+        // Deactivation finalizer should have saved a snapshot
+        // Journal has events 1-3 (4th append failed)
+        // Snapshot should have count=3 (or count=4 if the state advanced before defect)
+
+        // Second activation with working adapter — should recover
+        appendCallCount = 0; // reset so appends work again
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const makeClient = yield* Entity.makeTestClient(entity, provideLayer);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const client = (yield* makeClient("recover-1")) as any;
+            const state = yield* client.GetState();
+            expect(state._tag).toBe("Active");
+            // Should recover to at least count=3 (journal) or count=4 (snapshot from defected state)
+            expect((state as { count: number }).count).toBeGreaterThanOrEqual(3);
+          }),
+        ).pipe(Effect.provide(TestShardingConfig));
+      }) as Effect.Effect<void>,
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // 10. Snapshot-only: version is consistent across deactivation
+  // ---------------------------------------------------------------------------
+  test("snapshot: version is consistent after deactivation/reactivation", async () => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const { storeRef, layer: adapterLayer } = yield* makeInMemoryPersistenceAdapter;
+
+        const entity = toEntity(counterMachine, { type: "SnapVersion" });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const entityLayer = EntityMachine.layer(entity, counterMachine as any, {
+          initializeState: () => CounterState.Active({ count: 0 }),
+          persistence: { strategy: "snapshot" },
+        });
+
+        const provideLayer = entityLayer.pipe(
+          Layer.provide(ActorSystemDefault),
+          Layer.provide(adapterLayer),
+        );
+
+        // Activate, do 5 transitions, deactivate
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const makeClient = yield* Entity.makeTestClient(entity, provideLayer);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const client = (yield* makeClient("sv-1")) as any;
+            for (let i = 0; i < 5; i++) {
+              yield* client.Send({ event: CounterEvent.Increment });
+            }
+          }),
+        ).pipe(Effect.provide(TestShardingConfig));
+
+        // Check snapshot state and version are consistent
+        const store = yield* Ref.get(storeRef);
+        const entry = store.get("SnapVersion/sv-1");
+        expect(entry?.snapshot).toBeDefined();
+        const snap = entry?.snapshot;
+        expect((snap?.state as { count: number })?.count).toBe(5);
+        // Version should match (no tear)
+        expect(snap?.version).toBe(5);
+
+        // Reactivate and verify state
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const makeClient = yield* Entity.makeTestClient(entity, provideLayer);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const client = (yield* makeClient("sv-1")) as any;
             const state = yield* client.GetState();
             expect(state._tag).toBe("Active");
             expect((state as { count: number }).count).toBe(5);

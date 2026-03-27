@@ -174,8 +174,9 @@ export const EntityMachine = {
       }
 
       // Compute journal context for RPC handlers
+      const hasPersistence = persistCtx.adapter !== undefined;
       const journalCtx =
-        persistCtx.adapter !== undefined && (persistence?.strategy ?? "snapshot") === "journal"
+        hasPersistence && (persistence?.strategy ?? "snapshot") === "journal"
           ? { adapter: persistCtx.adapter, key: persistCtx.key }
           : undefined;
 
@@ -191,6 +192,8 @@ export const EntityMachine = {
                 versionRef,
                 envelope.payload.event,
               );
+            } else if (hasPersistence) {
+              yield* Ref.update(versionRef, (v) => v + 1);
             }
             return (yield* runtime.getState) as never;
           }),
@@ -205,6 +208,8 @@ export const EntityMachine = {
                 versionRef,
                 envelope.payload.event,
               );
+            } else if (hasPersistence) {
+              yield* Ref.update(versionRef, (v) => v + 1);
             }
             return reply as never;
           }),
@@ -330,8 +335,9 @@ const hydratePersistence = <
 
 /**
  * Append a single event to the journal, incrementing version.
- * Best-effort: failures are logged but don't crash the entity.
- * The deactivation snapshot acts as a fallback recovery point.
+ *
+ * On failure: defects the entity activation. The cluster's defectRetryPolicy
+ * restarts the entity from the last consistent snapshot.
  */
 const persistEvent = <E>(
   adapter: PersistenceAdapter,
@@ -350,6 +356,8 @@ const persistEvent = <E>(
     yield* adapter.appendEvents(key, [persisted], expectedVersion);
     yield* Ref.set(versionRef, newVersion);
   }).pipe(
-    Effect.tapError((error) => Effect.logWarning("Journal append failed", { key, error })),
-    Effect.catchAll(() => Effect.void),
+    Effect.tapError((error) =>
+      Effect.logWarning("Journal append failed, defecting entity", { key, error }),
+    ),
+    Effect.orDie,
   );
