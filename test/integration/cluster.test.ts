@@ -372,8 +372,7 @@ describe("EntityMachine.layer", () => {
   // ---------------------------------------------------------------------------
   test("basic send changes state via EntityMachine.layer", async () => {
     const entity = toEntity(orderMachine, { type: "OrderSend" });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- EntityMachine.layer type signature bug (Phase 4 fix)
-    const entityLayer = EntityMachine.layer(entity, orderMachine as any, {
+    const entityLayer = EntityMachine.layer(entity, orderMachine, {
       initializeState: (entityId) => OrderState.Pending({ orderId: entityId }),
     });
 
@@ -417,7 +416,7 @@ describe("EntityMachine.layer", () => {
       .on(AskState.Active, AskEvent.GetCount, ({ state }) => Machine.reply(state, state.count));
 
     const entity = toEntity(askMachine, { type: "AskReply" });
-    const entityLayer = EntityMachine.layer(entity, askMachine as any, {
+    const entityLayer = EntityMachine.layer(entity, askMachine, {
       initializeState: () => AskState.Active({ count: 42 }),
     });
 
@@ -461,7 +460,7 @@ describe("EntityMachine.layer", () => {
       .final(BgState.Done);
 
     const entity = toEntity(bgMachine, { type: "Background" });
-    const entityLayer = EntityMachine.layer(entity, bgMachine as any, {});
+    const entityLayer = EntityMachine.layer(entity, bgMachine, {});
 
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -487,7 +486,7 @@ describe("EntityMachine.layer", () => {
   // ---------------------------------------------------------------------------
   test("final state rejects further events", async () => {
     const entity = toEntity(orderMachine, { type: "OrderFinal" });
-    const entityLayer = EntityMachine.layer(entity, orderMachine as any, {
+    const entityLayer = EntityMachine.layer(entity, orderMachine, {
       initializeState: (entityId) => OrderState.Pending({ orderId: entityId }),
     });
 
@@ -544,7 +543,7 @@ describe("EntityMachine.layer", () => {
       .final(SpawnState.Done);
 
     const entity = toEntity(spawnMachine, { type: "SpawnEffect" });
-    const entityLayer = EntityMachine.layer(entity, spawnMachine as any, {});
+    const entityLayer = EntityMachine.layer(entity, spawnMachine, {});
 
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -596,7 +595,7 @@ describe("EntityMachine.layer", () => {
       .final(TimeoutState.TimedOut);
 
     const entity = toEntity(timeoutMachine, { type: "Timeout" });
-    const entityLayer = EntityMachine.layer(entity, timeoutMachine as any, {});
+    const entityLayer = EntityMachine.layer(entity, timeoutMachine, {});
 
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -646,7 +645,7 @@ describe("EntityMachine.layer", () => {
       .final(PostponeState.Done);
 
     const entity = toEntity(postponeMachine, { type: "Postpone" });
-    const entityLayer = EntityMachine.layer(entity, postponeMachine as any, {});
+    const entityLayer = EntityMachine.layer(entity, postponeMachine, {});
 
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -714,7 +713,7 @@ describe("EntityMachine.layer", () => {
       .final(TaskState.Failed);
 
     const entity = toEntity(taskMachine, { type: "Task" });
-    const entityLayer = EntityMachine.layer(entity, taskMachine as any, {});
+    const entityLayer = EntityMachine.layer(entity, taskMachine, {});
 
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -780,7 +779,7 @@ describe("EntityMachine.layer", () => {
       .final(RaceState.Done);
 
     const entity = toEntity(raceMachine, { type: "Race" });
-    const entityLayer = EntityMachine.layer(entity, raceMachine as any, {});
+    const entityLayer = EntityMachine.layer(entity, raceMachine, {});
 
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -857,7 +856,7 @@ describe("EntityMachine.layer", () => {
 
     const entity = toEntity(spawnChildMachine, { type: "SpawnChild" });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const entityLayer = EntityMachine.layer(entity, spawnChildMachine as any, {});
+    const entityLayer = EntityMachine.layer(entity, spawnChildMachine, {});
 
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -907,7 +906,7 @@ describe("EntityMachine.layer", () => {
 
     const entity = toEntity(watchMachine, { type: "Watch" });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const entityLayer = EntityMachine.layer(entity, watchMachine as any, {});
+    const entityLayer = EntityMachine.layer(entity, watchMachine, {});
 
     await Effect.runPromise(
       Effect.gen(function* () {
