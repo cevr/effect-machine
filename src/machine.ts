@@ -1136,24 +1136,33 @@ const replayImpl = Effect.fn("effect-machine.replay")(function* <
       const previousTag = state._tag;
       state = result.newState;
 
-      // Drain postponed events on state change (tag change or reenter)
+      // Drain postponed events on state change — loop until stable
       const stateChanged = state._tag !== previousTag || transition.reenter === true;
       if (stateChanged && postponed.length > 0) {
-        const buffered = postponed.splice(0);
-        for (const postponedEvent of buffered) {
+        let drainTag = previousTag;
+        while (state._tag !== drainTag && postponed.length > 0) {
           if (machine.finalStates.has(state._tag)) break;
-          const pTransition = resolveTransition(machine, state, postponedEvent);
-          if (pTransition !== undefined) {
-            const pResult = yield* runTransitionHandler(
-              machine,
-              pTransition,
-              state,
-              postponedEvent,
-              self,
-              stubSystem,
-              "replay",
-            );
-            state = pResult.newState;
+          drainTag = state._tag;
+          const drained = postponed.splice(0);
+          for (const postponedEvent of drained) {
+            if (machine.finalStates.has(state._tag)) break;
+            if (shouldPostpone(machine, state._tag, postponedEvent._tag)) {
+              postponed.push(postponedEvent);
+              continue;
+            }
+            const pTransition = resolveTransition(machine, state, postponedEvent);
+            if (pTransition !== undefined) {
+              const pResult = yield* runTransitionHandler(
+                machine,
+                pTransition,
+                state,
+                postponedEvent,
+                self,
+                stubSystem,
+                "replay",
+              );
+              state = pResult.newState;
+            }
           }
         }
       }

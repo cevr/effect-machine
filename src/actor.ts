@@ -41,7 +41,7 @@ import type {
 } from "./internal/transition.js";
 import { emitWithTimestamp } from "./internal/inspection.js";
 
-// Re-export for external use (cluster, persistence)
+// Re-export for external use (cluster)
 export { resolveTransition, runSpawnEffects, processEventCore } from "./internal/transition.js";
 export type {
   ProcessEventError,
@@ -283,7 +283,7 @@ export const notifyListeners = <S>(listeners: Listeners<S>, state: S): void => {
 };
 
 /**
- * Build core ActorRef methods shared between regular and persistent actors.
+ * Build core ActorRef methods.
  */
 export const buildActorRefCore = <
   S extends { readonly _tag: string },

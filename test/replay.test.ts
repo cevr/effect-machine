@@ -177,6 +177,44 @@ describe("Machine.replay postpone", () => {
       expect((state as { count: number }).count).toBe(2);
     }),
   );
+
+  it.live("multi-stage postpone drains until stable", () =>
+    Effect.gen(function* () {
+      const MSState = State({
+        A: {},
+        B: {},
+        C: {},
+        Done: {},
+      });
+      const MSEvent = Event({
+        GoB: {},
+        GoC: {},
+        Finish: {},
+      });
+
+      const machine = Machine.make({
+        state: MSState,
+        event: MSEvent,
+        initial: MSState.A,
+      })
+        .on(MSState.A, MSEvent.GoB, () => MSState.B)
+        .on(MSState.B, MSEvent.GoC, () => MSState.C)
+        .on(MSState.C, MSEvent.Finish, () => MSState.Done)
+        // Finish is postponed in A and B — only runnable in C
+        .postpone(MSState.A, MSEvent.Finish)
+        .postpone(MSState.B, MSEvent.Finish)
+        // GoC is postponed in A — only runnable in B
+        .postpone(MSState.A, MSEvent.GoC)
+        .final(MSState.Done)
+        .build();
+
+      // Finish postponed in A, GoC postponed in A.
+      // GoB moves to B → drains GoC (moves to C) → drains Finish (moves to Done)
+      const state = yield* Machine.replay(machine, [MSEvent.Finish, MSEvent.GoC, MSEvent.GoB]);
+
+      expect(state._tag).toBe("Done");
+    }),
+  );
 });
 
 // ============================================================================

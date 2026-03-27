@@ -38,7 +38,7 @@ export interface TransitionExecutionResult<S> {
  *
  * Used by:
  * - executeTransition (actor event loop, testing)
- * - persistent-actor replay (restore, replayTo)
+ * - Machine.replay (event sourcing restore)
  *
  * @internal
  */
