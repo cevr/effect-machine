@@ -119,7 +119,7 @@ Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))
 | `actor.send(event)`              | Fire-and-forget (queue event)               |
 | `actor.cast(event)`              | Alias for send (OTP gen_server:cast)        |
 | `actor.call(event)`              | Request-reply, returns `ProcessEventResult` |
-| `actor.ask<R>(event)`            | Typed domain reply from handler             |
+| `actor.ask(event)`               | Typed reply (event must have `Event.reply`) |
 | `actor.waitFor(State.X)`         | Wait for state (constructor or fn)          |
 | `actor.sendAndWait(ev, State.X)` | Send + wait for state                       |
 | `actor.awaitFinal`               | Wait for final state                        |
@@ -133,9 +133,25 @@ Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))
 | `actor.system`                   | Access the actor's `ActorSystem`            |
 | `actor.children`                 | Child actors (`ReadonlyMap`)                |
 
-## ask / reply (local actor)
+## ask / reply
 
-See "ask / reply (updated)" section below for the current API using `Event.reply()` and `Machine.reply()`.
+Events declare reply schemas via `Event.reply()`. Handlers use `Machine.reply()`:
+
+```ts
+const MyEvent = Event({
+  GetCount: Event.reply({}, Schema.Number),  // askable
+  Reset: {},                                  // not askable
+});
+
+.on(State.Active, Event.GetCount, ({ state }) =>
+  Machine.reply(state, state.count),
+)
+
+const count = yield* actor.ask(Event.GetCount);  // number — type inferred from schema
+// actor.ask(Event.Reset) — compile error (no reply schema)
+```
+
+Deferred replies via `Machine.deferReply()` — spawn handler settles later via `self.reply(value)`.
 
 Fails with `NoReplyError` if handler doesn't reply, `ActorStoppedError` on stop.
 
@@ -241,25 +257,6 @@ const OrderEntityLayer = EntityMachine.layer(OrderEntity, orderMachine, {
 - **journal**: inline event append on each RPC, replay on reactivation. Deactivation snapshot as fallback.
 
 **EntityMachineOptions:** `initializeState`, `hooks`, `maxIdleTime`, `mailboxCapacity`, `disableFatalDefects`, `defectRetryPolicy`, `persistence`
-
-## ask / reply (updated)
-
-Events declare reply schemas via `Event.reply()`. Handlers use `Machine.reply()`:
-
-```ts
-const MyEvent = Event({
-  GetCount: Event.reply({}, Schema.Number),
-  Reset: {},
-});
-
-.on(State.Active, Event.GetCount, ({ state }) =>
-  Machine.reply(state, state.count),
-)
-
-const count = yield* actor.ask(Event.GetCount);  // number
-```
-
-Deferred replies via `Machine.deferReply()` — spawn handler settles later via `self.reply(value)`.
 
 ## Files
 
