@@ -1,5 +1,5 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Effect, Schema } from "effect";
+import { Cause, Effect, Schema } from "effect";
 
 import { Machine, State, Event } from "../src/index.js";
 import { describe, expect, it } from "effect-bun-test";
@@ -13,8 +13,8 @@ const TestState = State({
 const TestEvent = Event({
   Start: {},
   Increment: {},
-  GetCount: {},
-  GetNothing: {},
+  GetCount: Event.reply({}, Schema.Number),
+  GetNothing: Event.reply({}, Schema.Undefined),
   Stop: {},
 });
 
@@ -28,16 +28,14 @@ const createMachine = () =>
     .on(TestState.Active, TestEvent.Increment, ({ state }) =>
       TestState.Active({ count: state.count + 1 }),
     )
-    // Handler that returns { state, reply } — domain reply for ask
-    .on(TestState.Active, TestEvent.GetCount, ({ state }) => ({
-      state: TestState.Active({ count: state.count }),
-      reply: state.count,
-    }))
-    // Handler that returns { state, reply: undefined } — explicit undefined reply
-    .on(TestState.Active, TestEvent.GetNothing, ({ state }) => ({
-      state: TestState.Active({ count: state.count }),
-      reply: undefined,
-    }))
+    // Handler that returns Machine.reply — typed domain reply for ask
+    .on(TestState.Active, TestEvent.GetCount, ({ state }) =>
+      Machine.reply(TestState.Active({ count: state.count }), state.count),
+    )
+    // Handler that returns Machine.reply with undefined — explicit undefined reply
+    .on(TestState.Active, TestEvent.GetNothing, ({ state }) =>
+      Machine.reply(TestState.Active({ count: state.count }), undefined),
+    )
     .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
     .final(TestState.Done)
     .build();
@@ -52,20 +50,18 @@ describe("ActorRef.ask", () => {
       yield* actor.call(TestEvent.Increment);
       yield* actor.call(TestEvent.Increment);
 
-      const count = yield* actor.ask<number>(TestEvent.GetCount);
+      const count = yield* actor.ask(TestEvent.GetCount);
       expect(count).toBe(2);
     }),
   );
 
-  it.scopedLive("fails with NoReplyError when handler does not reply", () =>
+  it.scopedLive("fails with NoReplyError when no handler matches", () =>
     Effect.gen(function* () {
       const machine = createMachine();
       const actor = yield* Machine.spawn(machine);
 
-      yield* actor.call(TestEvent.Start);
-
-      // Increment handler returns just a state (no reply field)
-      const result = yield* actor.ask(TestEvent.Increment).pipe(Effect.result);
+      // In Idle state — no handler for GetCount, so ask fails with NoReplyError
+      const result = yield* actor.ask(TestEvent.GetCount).pipe(Effect.result);
       expect(result._tag).toBe("Failure");
     }),
   );
@@ -77,7 +73,7 @@ describe("ActorRef.ask", () => {
 
       yield* actor.stop;
 
-      const result = yield* actor.ask(TestEvent.Start).pipe(Effect.result);
+      const result = yield* actor.ask(TestEvent.GetCount).pipe(Effect.result);
       expect(result._tag).toBe("Failure");
     }),
   );
@@ -108,11 +104,11 @@ describe("ActorRef.ask", () => {
       yield* actor.call(TestEvent.Start);
 
       yield* actor.call(TestEvent.Increment);
-      const count1 = yield* actor.ask<number>(TestEvent.GetCount);
+      const count1 = yield* actor.ask(TestEvent.GetCount);
       expect(count1).toBe(1);
 
       yield* actor.call(TestEvent.Increment);
-      const count2 = yield* actor.ask<number>(TestEvent.GetCount);
+      const count2 = yield* actor.ask(TestEvent.GetCount);
       expect(count2).toBe(2);
     }),
   );
@@ -124,8 +120,36 @@ describe("ActorRef.ask", () => {
 
       yield* actor.call(TestEvent.Start);
 
-      const result = yield* actor.ask<undefined>(TestEvent.GetNothing);
+      const result = yield* actor.ask(TestEvent.GetNothing);
       expect(result).toBeUndefined();
+    }),
+  );
+
+  it.scopedLive("reply schema mismatch is a defect (die)", () =>
+    Effect.gen(function* () {
+      // Build a machine where the handler lies about the reply type
+      const BadEvent = Event({
+        GetCount: Event.reply({}, Schema.Number),
+      });
+
+      const machine = Machine.make({
+        state: TestState,
+        event: BadEvent,
+        initial: TestState.Idle,
+      })
+        .on(TestState.Idle, BadEvent.GetCount, () =>
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional mismatch
+          Machine.reply(TestState.Idle, "not-a-number" as any),
+        )
+        .build();
+
+      const actor = yield* Machine.spawn(machine);
+      const exit = yield* actor.ask(BadEvent.GetCount).pipe(Effect.exit);
+      // Decode failure surfaces as a defect (die), not a checked error
+      expect(exit._tag).toBe("Failure");
+      if (exit._tag === "Failure") {
+        expect(Cause.hasDies(exit.cause)).toBe(true);
+      }
     }),
   );
 });

@@ -43,6 +43,23 @@ export type FullStateBrand<D extends Record<string, unknown>> = StateBrand & Sch
 export type FullEventBrand<D extends Record<string, unknown>> = EventBrand & SchemaIdBrand<D>;
 
 /**
+ * Brand that carries the reply type for an event variant.
+ * Present only on events defined with Event.reply().
+ */
+declare const ReplyTypeId: unique symbol;
+export type ReplyTypeId = typeof ReplyTypeId;
+// eslint-disable-next-line import/namespace
+export interface ReplyTypeBrand<R> extends Brand.Brand<ReplyTypeId> {
+  readonly _ReplyType: R;
+}
+
+/**
+ * Extract the reply type from a branded event value.
+ * Returns `never` if the event has no reply schema.
+ */
+export type ExtractReply<E> = E extends ReplyTypeBrand<infer R> ? R : never;
+
+/**
  * Value or constructor for a tagged type.
  * Accepts both plain values (empty structs) and constructor functions (non-empty structs).
  */

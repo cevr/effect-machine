@@ -36,8 +36,24 @@
  * @module
  */
 import { Schema } from "effect";
-import type { FullStateBrand, FullEventBrand } from "./internal/brands.js";
+import type { FullStateBrand, FullEventBrand, ReplyTypeBrand } from "./internal/brands.js";
 import { InvalidSchemaError, MissingMatchHandlerError } from "./errors.js";
+
+// ============================================================================
+// Reply Schema Symbol
+// ============================================================================
+
+const ReplySchemaSymbol: unique symbol = Symbol.for("effect-machine/ReplySchema");
+export type ReplySchemaSymbol = typeof ReplySchemaSymbol;
+
+/**
+ * Fields annotated with a reply schema.
+ * Structurally identical to Schema.Struct.Fields at runtime,
+ * but carries the reply schema type at compile time.
+ */
+export type ReplyFields<F extends Schema.Struct.Fields, RS extends Schema.Schema.Any> = F & {
+  readonly [ReplySchemaSymbol]: RS;
+};
 
 // ============================================================================
 // Type Helpers
@@ -59,24 +75,33 @@ type VariantSchemas<D extends Record<string, Schema.Struct.Fields>> = {
 
 /**
  * Build union type from variant schemas.
- * Used for constraining fluent method type params.
+ * Reply-bearing variants carry ReplyTypeBrand<R> for ask() inference.
  */
 export type VariantsUnion<D extends Record<string, Schema.Struct.Fields>> = {
-  [K in keyof D & string]: TaggedStructType<K, D[K]>;
+  [K in keyof D & string]: TaggedStructType<K, D[K]> &
+    (D[K] extends { readonly [ReplySchemaSymbol]: Schema.Schema<infer R, infer _I, infer _RR> }
+      ? ReplyTypeBrand<R>
+      : unknown);
 }[keyof D & string];
 
 /**
- * Check if fields are empty (no required properties)
+ * Check if fields are empty (no required string properties).
+ * Symbol keys (like ReplySchemaSymbol) are metadata, not payload fields.
  */
-type IsEmptyFields<Fields extends Schema.Struct.Fields> = keyof Fields extends never ? true : false;
+type IsEmptyFields<Fields extends Schema.Struct.Fields> = string & keyof Fields extends never
+  ? true
+  : false;
 
 /**
- * Constructor functions for each variant.
- * Empty structs: plain values with `_tag`: `State.Idle`
- * Non-empty structs require args: `State.Loading({ url })`
- *
- * Each variant also has a `derive` method for constructing from a source object.
+ * Resolve the reply brand for a variant's fields.
+ * If fields carry ReplySchemaSymbol, adds ReplyTypeBrand<R>.
  */
+type VariantReplyBrand<Fields extends Schema.Struct.Fields> = Fields extends {
+  readonly [ReplySchemaSymbol]: Schema.Schema<infer R, infer _I, infer _RR>;
+}
+  ? ReplyTypeBrand<R>
+  : unknown;
+
 /**
  * Constructor functions for each variant.
  * Empty structs: plain values with `_tag`: `State.Idle`
@@ -84,14 +109,18 @@ type IsEmptyFields<Fields extends Schema.Struct.Fields> = keyof Fields extends n
  *
  * Each variant also has a `derive` method for constructing from a source object.
  * The source type uses `object` to accept branded state types without index signature issues.
+ * Reply-bearing variants carry ReplyTypeBrand<R> for ask() type inference.
  */
 type VariantConstructors<D extends Record<string, Schema.Struct.Fields>, Brand> = {
   readonly [K in keyof D & string]: IsEmptyFields<D[K]> extends true
     ? TaggedStructType<K, D[K]> &
-        Brand & {
+        Brand &
+        VariantReplyBrand<D[K]> & {
           readonly derive: (source: object) => TaggedStructType<K, D[K]> & Brand;
         }
-    : ((args: Schema.Struct.Constructor<D[K]>) => TaggedStructType<K, D[K]> & Brand) & {
+    : ((
+        args: Schema.Struct.Constructor<D[K]>,
+      ) => TaggedStructType<K, D[K]> & Brand & VariantReplyBrand<D[K]>) & {
         readonly derive: (
           source: object,
           partial?: Partial<Schema.Struct.Constructor<D[K]>>,
@@ -120,6 +149,12 @@ interface MachineSchemaBase<D extends Record<string, Schema.Struct.Fields>, Bran
    * Per-variant schemas for fine-grained operations
    */
   readonly variants: VariantSchemas<D>;
+
+  /**
+   * Reply schemas per variant tag. Only populated for event schemas
+   * with variants defined via `Event.reply()`.
+   */
+  readonly _replySchemas: ReadonlyMap<string, Schema.Schema.Any>;
 
   /**
    * Type guard: `OrderState.$is("Pending")(value)`
@@ -189,6 +224,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
   variants: VariantSchemas<D>;
   constructors: Record<string, (args: Record<string, unknown>) => Record<string, unknown>>;
   _definition: D;
+  _replySchemas: Map<string, Schema.Schema.Any>;
   $is: <Tag extends string>(tag: Tag) => (u: unknown) => boolean;
   $match: (valueOrCases: unknown, maybeCases?: unknown) => unknown;
 } => {
@@ -198,10 +234,17 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
     string,
     (args: Record<string, unknown>) => Record<string, unknown>
   >;
+  const replySchemas = new Map<string, Schema.Schema.Any>();
 
   for (const tag of Object.keys(definition)) {
     const fields = definition[tag];
     if (fields === undefined) continue;
+
+    // Detect reply schema before passing to TaggedStruct
+    if (ReplySchemaSymbol in fields) {
+      const rs = (fields as Record<symbol, Schema.Schema.Any>)[ReplySchemaSymbol];
+      if (rs !== undefined) replySchemas.set(tag, rs);
+    }
 
     const variantSchema = Schema.TaggedStruct(tag, fields);
     variants[tag] = variantSchema;
@@ -284,6 +327,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
     variants: variants as unknown as VariantSchemas<D>,
     constructors,
     _definition: definition,
+    _replySchemas: replySchemas,
     $is,
     $match,
   };
@@ -294,11 +338,12 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
  * Builds the schema object with variants, constructors, $is, and $match.
  */
 const createMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(definition: D) => {
-  const { schema, variants, constructors, _definition, $is, $match } =
+  const { schema, variants, constructors, _definition, _replySchemas, $is, $match } =
     buildMachineSchema(definition);
   return Object.assign(Object.create(schema), {
     variants,
     _definition,
+    _replySchemas,
     $is,
     $match,
     ...constructors,
@@ -345,11 +390,15 @@ export const State = <const D extends Record<string, Schema.Struct.Fields>>(
  * accidental use of constructors from different event schemas
  * (unless they have identical definitions).
  *
+ * Use `Event.reply(fields, replySchema)` to define events that support
+ * typed `ask()` replies.
+ *
  * @example
  * ```ts
- * const OrderEvent = MachineSchema.Event({
+ * const OrderEvent = Event({
  *   Ship: { trackingId: Schema.String },
  *   Cancel: {},
+ *   GetTotal: Event.reply({}, Schema.Number),
  * })
  *
  * type OrderEvent = typeof OrderEvent.Type
@@ -358,6 +407,25 @@ export const State = <const D extends Record<string, Schema.Struct.Fields>>(
  * const e = OrderEvent.Ship({ trackingId: "abc" })
  * ```
  */
-export const Event = <const D extends Record<string, Schema.Struct.Fields>>(
+const EventImpl = <const D extends Record<string, Schema.Struct.Fields>>(
   definition: D,
 ): MachineEventSchema<D> => createMachineSchema(definition) as MachineEventSchema<D>;
+
+/**
+ * Annotate event fields with a reply schema.
+ * Events defined with `Event.reply(fields, replySchema)` enable typed `ask()`.
+ */
+const replyFieldsFn = <F extends Schema.Struct.Fields, RS extends Schema.Schema.Any>(
+  fields: F,
+  replySchema: RS,
+): ReplyFields<F, RS> => {
+  const annotated = { ...fields } as ReplyFields<F, RS>;
+  Object.defineProperty(annotated, ReplySchemaSymbol, {
+    value: replySchema,
+    enumerable: false,
+    writable: false,
+  });
+  return annotated;
+};
+
+export const Event = Object.assign(EventImpl, { reply: replyFieldsFn });

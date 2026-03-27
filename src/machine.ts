@@ -45,9 +45,14 @@
 import type { Schema, ServiceMap, Duration } from "effect";
 import { Cause, Effect, Exit, Option, Scope } from "effect";
 
-import type { TransitionResult } from "./internal/utils.js";
-import { getTag, stubSystem } from "./internal/utils.js";
-import type { TaggedOrConstructor, BrandedState, BrandedEvent } from "./internal/brands.js";
+import type { TransitionResult, ReplyResult } from "./internal/utils.js";
+import { getTag, stubSystem, makeReply } from "./internal/utils.js";
+import type {
+  TaggedOrConstructor,
+  BrandedState,
+  BrandedEvent,
+  ExtractReply,
+} from "./internal/brands.js";
 import type { MachineStateSchema, MachineEventSchema, VariantsUnion } from "./schema.js";
 import { SlotProvisionError, ProvisionValidationError } from "./errors.js";
 import type { DuplicateActorError } from "./errors.js";
@@ -113,11 +118,19 @@ export interface StateHandlerContext<State, Event, ED extends EffectsDef> {
 }
 
 /**
- * Transition handler function
+ * Transition handler function.
+ * When Reply is concrete (event has a reply schema), handler must return Machine.reply().
+ * When Reply is never, handler returns plain state.
  */
-export type TransitionHandler<S, E, NewState, GD extends GuardsDef, ED extends EffectsDef, R> = (
-  ctx: HandlerContext<S, E, GD, ED>,
-) => TransitionResult<NewState, R>;
+export type TransitionHandler<
+  S,
+  E,
+  NewState,
+  GD extends GuardsDef,
+  ED extends EffectsDef,
+  R,
+  Reply = never,
+> = (ctx: HandlerContext<S, E, GD, ED>) => TransitionResult<NewState, R, Reply>;
 
 /**
  * State effect handler function
@@ -336,6 +349,7 @@ export class Machine<
   };
   readonly stateSchema?: Schema.Schema<State>;
   readonly eventSchema?: Schema.Schema<Event>;
+  /** @internal */ readonly _replySchemas: ReadonlyMap<string, Schema.Decoder<unknown>>;
 
   /**
    * Context tag for accessing machine state/event/self in slot handlers.
@@ -371,6 +385,9 @@ export class Machine<
   get effectsSchema(): EffectsSchema<EFD> | undefined {
     return this._effectsSchema;
   }
+  get replySchemas(): ReadonlyMap<string, Schema.Decoder<unknown>> {
+    return this._replySchemas;
+  }
 
   /** @internal */
   constructor(
@@ -388,6 +405,8 @@ export class Machine<
     this._postponeRules = [];
     this._guardsSchema = guardsSchema;
     this._effectsSchema = effectsSchema;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    this._replySchemas = (eventSchema as any)?._replySchemas ?? new Map();
     this._guardHandlers = new Map();
     this._effectHandlers = new Map();
     this.stateSchema = stateSchema;
@@ -476,7 +495,7 @@ export class Machine<
   >(
     states: ReadonlyArray<TaggedOrConstructor<NS>>,
     event: TaggedOrConstructor<NE>,
-    handler: TransitionHandler<NS, NE, RS, GD, EFD, never>,
+    handler: TransitionHandler<NS, NE, RS, GD, EFD, never, ExtractReply<NE>>,
     reenter: boolean,
   ): Machine<State, Event, R, _SD, _ED, GD, EFD> {
     for (const state of states) {
@@ -498,7 +517,7 @@ export class Machine<
   >(
     state: TaggedOrConstructor<NS>,
     event: TaggedOrConstructor<NE>,
-    handler: TransitionHandler<NS, NE, RS, GD, EFD, never>,
+    handler: TransitionHandler<NS, NE, RS, GD, EFD, never, ExtractReply<NE>>,
   ): Machine<State, Event, R, _SD, _ED, GD, EFD>;
   /** Register transition for multiple states (handler receives union of state types) */
   on<
@@ -514,7 +533,8 @@ export class Machine<
       RS,
       GD,
       EFD,
-      never
+      never,
+      ExtractReply<NE>
     >,
   ): Machine<State, Event, R, _SD, _ED, GD, EFD>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -540,7 +560,7 @@ export class Machine<
   >(
     state: TaggedOrConstructor<NS>,
     event: TaggedOrConstructor<NE>,
-    handler: TransitionHandler<NS, NE, RS, GD, EFD, never>,
+    handler: TransitionHandler<NS, NE, RS, GD, EFD, never, ExtractReply<NE>>,
   ): Machine<State, Event, R, _SD, _ED, GD, EFD>;
   /** Multiple states */
   reenter<
@@ -556,7 +576,8 @@ export class Machine<
       RS,
       GD,
       EFD,
-      never
+      never,
+      ExtractReply<NE>
     >,
   ): Machine<State, Event, R, _SD, _ED, GD, EFD>;
   /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -917,6 +938,8 @@ export class Machine<
       (result as any)._backgroundEffects = [...this._backgroundEffects];
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (result as any)._postponeRules = [...this._postponeRules];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (result as any)._replySchemas = this._replySchemas;
 
       // Register handlers from provided object
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -975,7 +998,7 @@ class TransitionScope<
 
   on<NE extends VariantsUnion<_ED> & BrandedEvent, RS extends VariantsUnion<_SD> & BrandedState>(
     event: TaggedOrConstructor<NE>,
-    handler: TransitionHandler<SelectedState, NE, RS, GD, EFD, never>,
+    handler: TransitionHandler<SelectedState, NE, RS, GD, EFD, never, ExtractReply<NE>>,
   ): TransitionScope<State, Event, R, _SD, _ED, GD, EFD, SelectedState> {
     this.machine.scopeTransition(this.states, event, handler, false);
     return this;
@@ -986,7 +1009,7 @@ class TransitionScope<
     RS extends VariantsUnion<_SD> & BrandedState,
   >(
     event: TaggedOrConstructor<NE>,
-    handler: TransitionHandler<SelectedState, NE, RS, GD, EFD, never>,
+    handler: TransitionHandler<SelectedState, NE, RS, GD, EFD, never, ExtractReply<NE>>,
   ): TransitionScope<State, Event, R, _SD, _ED, GD, EFD, SelectedState> {
     this.machine.scopeTransition(this.states, event, handler, true);
     return this;
@@ -1180,3 +1203,7 @@ export const replay: <S extends { readonly _tag: string }, E extends { readonly 
 
 // Transition lookup (introspection)
 export { findTransitions } from "./internal/transition.js";
+
+// Reply helper
+export const reply = makeReply;
+export type { ReplyResult } from "./internal/utils.js";

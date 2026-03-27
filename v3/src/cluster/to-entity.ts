@@ -5,7 +5,7 @@
  */
 import { Entity } from "@effect/cluster";
 import { Rpc } from "@effect/rpc";
-import type { Schema } from "effect";
+import { Schema } from "effect";
 
 import type { Machine } from "../machine.js";
 import { MissingSchemaError } from "../errors.js";
@@ -23,7 +23,8 @@ export interface ToEntityOptions {
 /**
  * Default RPC protocol for entity machines.
  *
- * - `Send` - Send event to machine, returns new state
+ * - `Send` - Send event to machine (fire-and-forget), returns new state
+ * - `Ask` - Send event and get domain reply (typed via Event.reply() schemas)
  * - `GetState` - Get current state
  */
 export type EntityRpcs<
@@ -34,6 +35,13 @@ export type EntityRpcs<
     "Send",
     Schema.Struct<{ readonly event: EventSchema }>,
     StateSchema,
+    typeof Schema.Never,
+    never
+  >,
+  Rpc.Rpc<
+    "Ask",
+    Schema.Struct<{ readonly event: EventSchema }>,
+    typeof Schema.Unknown,
     typeof Schema.Never,
     never
   >,
@@ -91,6 +99,10 @@ export const toEntity = <
     Rpc.make("Send", {
       payload: { event: eventSchema },
       success: stateSchema,
+    }),
+    Rpc.make("Ask", {
+      payload: { event: eventSchema },
+      success: Schema.Unknown,
     }),
     Rpc.make("GetState", {
       success: stateSchema,

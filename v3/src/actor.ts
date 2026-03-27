@@ -20,12 +20,14 @@ import {
   Queue,
   Ref,
   Runtime,
+  Schema,
   Scope,
   Stream,
   SubscriptionRef,
 } from "effect";
 
 import type { Machine, MachineRef, BuiltMachine } from "./machine.js";
+import type { ReplyTypeBrand, ExtractReply } from "./internal/brands.js";
 import type { Inspector } from "./inspection.js";
 import { Inspector as InspectorTag } from "./inspection.js";
 import {
@@ -117,11 +119,13 @@ export interface ActorRef<State extends { readonly _tag: string }, Event> {
   readonly call: (event: Event) => Effect.Effect<ProcessEventResult<State>>;
 
   /**
-   * Typed request-reply. Event is processed through the queue; caller gets
-   * the domain value returned by the handler's `reply` field.
+   * Typed request-reply. Accepts only events with a reply schema
+   * (defined via `Event.reply()`). Return type is inferred from the schema.
    * Fails with NoReplyError if the handler doesn't provide a reply.
    */
-  readonly ask: <R>(event: Event) => Effect.Effect<R, NoReplyError | ActorStoppedError>;
+  readonly ask: <E extends Event & ReplyTypeBrand<unknown>>(
+    event: E,
+  ) => Effect.Effect<ExtractReply<E>, NoReplyError | ActorStoppedError>;
 
   /** Observable state. */
   readonly state: SubscriptionRef.SubscriptionRef<State>;
@@ -794,13 +798,33 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
       case "call":
         yield* Deferred.succeed(queued.reply, result);
         break;
-      case "ask":
+      case "ask": {
         if (result.hasReply) {
-          yield* Deferred.succeed(queued.reply, result.reply);
+          // Runtime validation: decode reply through event's reply schema
+          const replySchema = machine._replySchemas?.get(event._tag);
+          if (replySchema !== undefined) {
+            // Decode failure = defect (broken handler). Settle deferred before dying
+            // so the ask caller sees the error instead of hanging forever.
+            let decoded: unknown;
+            // @effect-diagnostics tryCatchInEffectGen:off
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema.Any has R=unknown, decodeUnknownSync needs R=never
+              decoded = Schema.decodeUnknownSync(replySchema as Schema.Schema<any, any, never>)(
+                result.reply,
+              );
+            } catch (decodeError) {
+              yield* Deferred.die(queued.reply, decodeError);
+              return yield* Effect.die(decodeError);
+            }
+            yield* Deferred.succeed(queued.reply, decoded);
+          } else {
+            yield* Deferred.succeed(queued.reply, result.reply);
+          }
         } else {
           yield* Deferred.fail(queued.reply, new NoReplyError({ actorId, eventTag: event._tag }));
         }
         break;
+      }
     }
 
     // Publish transition info for observers (actor.transitions stream)

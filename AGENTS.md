@@ -133,7 +133,7 @@ machine
 actor.send(event); // Effect — fire-and-forget (queue event)
 actor.cast(event); // Effect — alias for send (OTP gen_server:cast)
 actor.call(event); // Effect — request-reply, returns ProcessEventResult
-actor.ask<R>(event); // Effect — typed domain reply from handler
+actor.ask(event); // Effect — typed reply (event must have reply schema)
 actor.waitFor(State.X); // Wait for state (accepts constructor or predicate)
 actor.sendAndWait(ev, X); // Send + wait for state
 actor.awaitFinal; // Wait for final state
@@ -151,16 +151,22 @@ actor.sync.can(event); // Can handle event?
 
 ## ask / reply
 
-Handlers return `{ state, reply }` for domain replies:
+Events declare reply schemas via `Event.reply()`. Handlers use `Machine.reply()`:
 
 ```ts
-.on(State.Active, Event.GetCount, ({ state }) => ({
-  state,
-  reply: state.count,
-}))
+const MyEvent = Event({
+  GetCount: Event.reply({}, Schema.Number),  // askable
+  Reset: {},                                  // not askable
+});
 
-// Caller:
-const count = yield* actor.ask<number>(Event.GetCount);
+// Handler — must use Machine.reply() for reply-bearing events
+.on(State.Active, Event.GetCount, ({ state }) =>
+  Machine.reply(state, state.count),
+)
+
+// Caller — type inferred from schema, no generic needed
+const count = yield* actor.ask(Event.GetCount);  // number
+// actor.ask(Event.Reset) — type error (no reply schema)
 ```
 
 ## System Observation
@@ -209,7 +215,7 @@ Handlers are strictly typed - `.build()` is the only way to add requirements:
 - Handlers cannot require arbitrary services - use slots + `build()`
 - Handlers cannot produce errors - error channel fixed to `never`
 - Handlers must return machine's state schema - wrong states rejected at compile time
-- Handlers can return `{ state, reply }` tuple for `ask()` domain replies
+- Reply-bearing event handlers must use `Machine.reply(state, value)` for `ask()` domain replies
 
 ## Gotchas
 
@@ -224,6 +230,9 @@ Handlers are strictly typed - `.build()` is the only way to add requirements:
 - `self.spawn` errors with `DuplicateActorError` — handlers require `never` error, so wrap with `Effect.orDie`
 - Sync helpers live on `actor.sync.*` (not top-level `sendSync`/`snapshotSync`)
 - Pending `call`/`ask` Deferreds settled with `ActorStoppedError` on stop
+- `ask()` only accepts events with `Event.reply()` — non-reply events are a type error
+- `.onAny()` cannot provide replies — reply-bearing events should have specific `.on()` handlers
+- Reply decode failures (schema mismatch) are defects — handler bug, not business logic
 
 ## Documentation
 

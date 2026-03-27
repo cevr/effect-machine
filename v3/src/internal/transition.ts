@@ -14,7 +14,8 @@ import type { Machine, MachineRef, Transition, SpawnEffect, HandlerContext } fro
 import { BuiltMachine } from "../machine.js";
 import type { ActorSystem } from "../actor.js";
 import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
-import { isEffect, INTERNAL_ENTER_EVENT } from "./utils.js";
+import { isEffect, isReplyResult, INTERNAL_ENTER_EVENT } from "./utils.js";
+import type { ReplyResult } from "./utils.js";
 
 // ============================================================================
 // Transition Execution
@@ -64,24 +65,14 @@ export const runTransitionHandler = Effect.fn("effect-machine.runTransitionHandl
   const raw = transition.handler(handlerCtx);
 
   const resolved = isEffect(raw)
-    ? yield* (raw as Effect.Effect<S | { state: S; reply: unknown }, never, R>).pipe(
+    ? yield* (raw as Effect.Effect<S | ReplyResult<S, unknown>, never, R>).pipe(
         Effect.provideService(machine.Context, ctx),
       )
     : raw;
 
-  // Detect { state, reply } tuple vs plain state
-  if (
-    resolved !== null &&
-    typeof resolved === "object" &&
-    "state" in resolved &&
-    "reply" in resolved &&
-    !("_tag" in resolved)
-  ) {
-    return {
-      newState: (resolved as { state: S; reply: unknown }).state,
-      hasReply: true,
-      reply: (resolved as { state: S; reply: unknown }).reply,
-    };
+  // Detect branded ReplyResult (created via Machine.reply())
+  if (isReplyResult(resolved)) {
+    return { newState: resolved.state as S, hasReply: true, reply: resolved.reply };
   }
 
   return { newState: resolved as S, hasReply: false, reply: undefined };

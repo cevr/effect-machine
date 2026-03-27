@@ -86,5 +86,55 @@ const _test5 = Machine.make({
   // @ts-expect-error - spawn handler cannot require arbitrary services (MyService not Scope)
   .spawn(MyState.Loading, () => MyService);
 
+// ============================================================================
+// Reply Schema Type Constraints
+// ============================================================================
+
+const ReplyEvent = Event({
+  GetCount: Event.reply({}, Schema.Number),
+  GetName: Event.reply({}, Schema.String),
+  Fire: {},
+});
+
+const ReplyState = State({
+  Active: { count: Schema.Number },
+  Done: {},
+});
+
+// Test 6: Handler for reply-bearing event MUST return Machine.reply()
+const _test6 = Machine.make({
+  state: ReplyState,
+  event: ReplyEvent,
+  initial: ReplyState.Active({ count: 0 }),
+}).on(ReplyState.Active, ReplyEvent.GetCount, ({ state }) =>
+  Machine.reply(ReplyState.Active({ count: state.count }), state.count),
+);
+
+// Test 7: Handler for reply-bearing event CANNOT return plain state
+const _test7 = Machine.make({
+  state: ReplyState,
+  event: ReplyEvent,
+  initial: ReplyState.Active({ count: 0 }),
+  // @ts-expect-error - reply-bearing event requires Machine.reply(), not plain state
+}).on(ReplyState.Active, ReplyEvent.GetCount, () => ReplyState.Active({ count: 0 }));
+
+// Test 8: Handler for non-reply event CANNOT return Machine.reply()
+const _test8 = Machine.make({
+  state: ReplyState,
+  event: ReplyEvent,
+  initial: ReplyState.Active({ count: 0 }),
+  // @ts-expect-error - non-reply event handler cannot return Machine.reply()
+}).on(ReplyState.Active, ReplyEvent.Fire, () => Machine.reply(ReplyState.Done, 42));
+
+// Test 9: Machine.reply() type must match schema
+const _test9 = Machine.make({
+  state: ReplyState,
+  event: ReplyEvent,
+  initial: ReplyState.Active({ count: 0 }),
+  // @ts-expect-error - reply type string doesn't match Schema.Number
+}).on(ReplyState.Active, ReplyEvent.GetCount, ({ state }) =>
+  Machine.reply(ReplyState.Active({ count: state.count }), "not a number"),
+);
+
 // This file should compile with all @ts-expect-error comments being valid
 export {};

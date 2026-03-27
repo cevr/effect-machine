@@ -30,19 +30,46 @@ export type InstanceOf<C> = C extends (...args: unknown[]) => infer R ? R : neve
  */
 export type TaggedConstructor<T extends { readonly _tag: string }> = (args: Omit<T, "_tag">) => T;
 
+// ============================================================================
+// Reply Result (branded replacement for duck-typed { state, reply })
+// ============================================================================
+
+const ReplyResultSymbol: unique symbol = Symbol.for("effect-machine/ReplyResult");
+export type ReplyResultSymbol = typeof ReplyResultSymbol;
+
 /**
- * Transition handler result - either a new state or Effect producing one
+ * Branded reply result from a transition handler.
+ * Created via `Machine.reply(state, value)`.
  */
-/** Reply tuple returned from transition handlers for ask support */
-export interface TransitionReply<State> {
+export interface ReplyResult<State, Reply> {
   readonly state: State;
-  readonly reply: unknown;
+  readonly reply: Reply;
+  readonly [ReplyResultSymbol]: true;
 }
 
-export type TransitionResult<State, R> =
-  | State
-  | TransitionReply<State>
-  | Effect.Effect<State | TransitionReply<State>, never, R>;
+/**
+ * Create a reply result for ask-bearing event handlers.
+ */
+export const makeReply = <State, Reply>(state: State, reply: Reply): ReplyResult<State, Reply> => ({
+  state,
+  reply,
+  [ReplyResultSymbol]: true as const,
+});
+
+/**
+ * Type guard for ReplyResult (symbol-based, replaces duck-typing).
+ */
+export const isReplyResult = (value: unknown): value is ReplyResult<unknown, unknown> =>
+  value !== null && typeof value === "object" && ReplyResultSymbol in value;
+
+/**
+ * Transition handler result.
+ * - When Reply is `never`: handler returns plain State (no reply allowed)
+ * - When Reply is concrete: handler must return ReplyResult via Machine.reply()
+ */
+export type TransitionResult<State, R, Reply = never> = [Reply] extends [never]
+  ? State | Effect.Effect<State, never, R>
+  : ReplyResult<State, Reply> | Effect.Effect<ReplyResult<State, Reply>, never, R>;
 
 // ============================================================================
 // Constants

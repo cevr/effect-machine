@@ -228,7 +228,7 @@ describe(".postpone()", () => {
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
 
-  it.scopedLive("postponed ask events settled on stop", () =>
+  it.scopedLive("postponed call events settled on stop", () =>
     Effect.gen(function* () {
       const machine = Machine.make({
         state: ConnState,
@@ -242,9 +242,9 @@ describe(".postpone()", () => {
 
       const actor = yield* Machine.spawn(machine);
 
-      // ask will block until event is processed — but we stop before that
+      // call will block until event is processed — but we stop before that
       const fiber = yield* actor
-        .ask(ConnEvent.Data({ payload: "x" }))
+        .call(ConnEvent.Data({ payload: "x" }))
         .pipe(Effect.result, Effect.forkChild);
 
       yield* yieldFibers;
@@ -252,7 +252,9 @@ describe(".postpone()", () => {
       yield* yieldFibers;
 
       const result = yield* Fiber.join(fiber);
-      expect(result._tag).toBe("Failure");
+      // call on stopped actor returns a non-transitioned result (not a failure)
+      // since call catches ActorStoppedError and returns a default result
+      expect(result._tag).toBe("Success");
     }),
   );
 

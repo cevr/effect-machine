@@ -1,6 +1,6 @@
 ---
 name: effect-machine
-description: Type-safe state machines for Effect. Use when building state machines with effect-machine — defining states/events, transition handlers, spawn effects, timeouts, postpone, actors, testing, persistence composition. Triggers on effect-machine imports, Machine.make, Machine.spawn, Machine.replay, State/Event definitions, ActorRef usage.
+description: Type-safe state machines for Effect. Use when building state machines with effect-machine — defining states/events, transition handlers, spawn effects, timeouts, postpone, actors, typed ask/reply, testing, persistence composition. Triggers on effect-machine imports, Machine.make, Machine.spawn, Machine.replay, Machine.reply, Event.reply, State/Event definitions, ActorRef usage.
 ---
 
 ## Navigation
@@ -12,6 +12,7 @@ What are you building?
 ├─ Adding side effects              → §Effects
 ├─ Testing machines                 → §Testing
 ├─ Running actors                   → §Actors
+├─ Typed ask/reply                  → §Ask / Reply
 ├─ Persistence/restore              → §Persistence
 ├─ Timeouts / postpone              → §Timeouts, §Postpone
 └─ Slots (guards/effects)           → §Slots
@@ -33,6 +34,8 @@ const S = State({
 const E = Event({
   Start: { url: Schema.String },
   Done: { data: Schema.Unknown },
+  GetCount: Event.reply({}, Schema.Number), // reply-bearing event
+  GetInfo: Event.reply({ id: Schema.String }, Schema.String), // payload + reply
 });
 ```
 
@@ -80,8 +83,8 @@ const machine = Machine.make({ state: S, event: E, initial: S.Idle })
 // Effectful: return Effect<State>
 ({ state }) => Effect.gen(function* () { ... return S.Next({ ... }) })
 
-// With reply (for actor.ask):
-({ state }) => ({ state: S.Same.derive(state), reply: state.count })
+// With reply (for actor.ask — event must use Event.reply()):
+({ state }) => Machine.reply(S.Same.derive(state), state.count)
 ```
 
 ## Effects
@@ -148,6 +151,33 @@ const machine = Machine.make({
 
 `.build()` is terminal — returns `BuiltMachine`. All slots must be provided.
 
+## Ask / Reply
+
+Events declare reply schemas via `Event.reply(fields, schema)`. Handlers must use `Machine.reply()`:
+
+```ts
+const E = Event({
+  GetCount: Event.reply({}, Schema.Number), // askable
+  Reset: {}, // not askable
+});
+
+// Handler — Machine.reply() required for reply-bearing events
+machine.on(S.Active, E.GetCount, ({ state }) => Machine.reply(S.Active.derive(state), state.count));
+
+// Caller — return type inferred from schema
+const count = yield * actor.ask(E.GetCount); // number
+// actor.ask(E.Reset) — TYPE ERROR (no reply schema)
+```
+
+**Rules:**
+
+- `Event.reply({}, schema)` — empty payload + reply; `Event.reply({ id: Schema.String }, schema)` — payload + reply
+- Handler for reply-bearing event MUST return `Machine.reply(state, value)` — plain state return is a type error
+- Handler for non-reply event CANNOT return `Machine.reply()` — type error
+- `.onAny()` handlers cannot provide replies — use specific `.on()` for reply events
+- Reply decode mismatch (handler returns wrong type) = defect at runtime
+- Cluster: `Ask` RPC propagates replies through entity boundary
+
 ## Timeouts
 
 gen_statem-style. Timer starts on state entry, cancels on exit:
@@ -196,7 +226,7 @@ Auto-cleans up if `Scope` is present. Otherwise call `actor.stop` manually.
 | `send(event)`          | Fire-and-forget                                                     |
 | `cast(event)`          | Alias for send                                                      |
 | `call(event)`          | Request-reply → `ProcessEventResult`                                |
-| `ask<R>(event)`        | Typed domain reply                                                  |
+| `ask(event)`           | Typed reply (event must have `Event.reply()` schema)                |
 | `snapshot`             | Current state                                                       |
 | `changes`              | `Stream<State>` (SubscriptionRef-backed)                            |
 | `transitions`          | `Stream<{ fromState, toState, event }>` (PubSub-backed edge stream) |
@@ -288,4 +318,6 @@ Both `simulate` and `createTestHarness` accept `Machine` (unbuilt) or `BuiltMach
 - **Spawn effects re-run on hydrate** — `Machine.spawn({ hydrate })` re-runs spawn effects for the hydrated state (timers, scoped resources)
 - **`transitions` is observational** — PubSub-backed, late subscribers miss edges. Not a durability guarantee.
 - **Effectful handlers in replay** — replay runs handlers but stubs `self`/`system`. Side effects through `self.send` are no-ops.
+- **`ask()` requires reply schema** — only events with `Event.reply()` accepted; non-reply events are type errors
+- **Reply decode failure = defect** — if handler returns wrong type, actor dies (broken handler, not business logic)
 - **v3 compat** — import from `"effect-machine/v3"` for Effect v3 projects

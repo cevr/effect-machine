@@ -33,7 +33,7 @@ export {
 
 // Schema-first State/Event definitions
 export { State, Event } from "./schema.js";
-export type { MachineStateSchema, MachineEventSchema } from "./schema.js";
+export type { MachineStateSchema, MachineEventSchema, ReplyFields } from "./schema.js";
 
 // Core machine types (for advanced use)
 export type {
@@ -48,6 +48,7 @@ export type {
   StateHandlerContext,
   TaskOptions,
   ProvideHandlers,
+  ReplyResult,
 } from "./machine.js";
 
 // Actor types and system

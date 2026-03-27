@@ -5,11 +5,12 @@
  */
 import { Entity } from "effect/unstable/cluster";
 import type { Rpc } from "effect/unstable/rpc";
-import { Effect, type Layer, Option, Queue, Ref, Scope } from "effect";
+import { Effect, type Layer, Option, Queue, Ref, Schema, Scope } from "effect";
 
 import type { Machine, MachineRef } from "../machine.js";
 import type { ActorSystem, ProcessEventHooks } from "../actor.js";
 import { ActorSystem as ActorSystemTag, runSpawnEffects, processEventCore } from "../actor.js";
+import { NoReplyError } from "../errors.js";
 import type { GuardsDef, EffectsDef } from "../slot.js";
 
 /**
@@ -89,6 +90,55 @@ const processEvent = Effect.fn("effect-machine.cluster.processEvent")(function* 
   }
 
   return result.newState;
+});
+
+/**
+ * Process event and return the domain reply value.
+ * Used by the Ask RPC handler — fails with NoReplyError if handler doesn't reply.
+ */
+const processEventWithReply = Effect.fn("effect-machine.cluster.processEventWithReply")(function* <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+  GD extends GuardsDef = Record<string, never>,
+  EFD extends EffectsDef = Record<string, never>,
+>(
+  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
+  stateRef: Ref.Ref<S>,
+  event: E,
+  self: MachineRef<E>,
+  stateScopeRef: { current: Scope.Closeable },
+  system: ActorSystem,
+  entityId: string,
+  hooks?: ProcessEventHooks<S, E>,
+) {
+  const currentState = yield* Ref.get(stateRef);
+
+  const result = yield* processEventCore(
+    machine,
+    currentState,
+    event,
+    self,
+    stateScopeRef,
+    system,
+    entityId,
+    hooks,
+  );
+
+  if (result.transitioned) {
+    yield* Ref.set(stateRef, result.newState);
+  }
+
+  if (!result.hasReply) {
+    return yield* new NoReplyError({ actorId: entityId, eventTag: event._tag });
+  }
+
+  // Runtime validation via reply schema (same as local actor path)
+  const replySchema = machine._replySchemas?.get(event._tag);
+  if (replySchema !== undefined) {
+    return Schema.decodeUnknownSync(replySchema)(result.reply);
+  }
+  return result.reply;
 });
 
 /**
@@ -213,6 +263,18 @@ export const EntityMachine = {
             self,
             stateScopeRef,
             system,
+            options?.hooks,
+          ),
+
+        Ask: (envelope: { payload: { event: E } }) =>
+          processEventWithReply(
+            machine,
+            stateRef,
+            envelope.payload.event,
+            self,
+            stateScopeRef,
+            system,
+            entityId,
             options?.hooks,
           ),
 
