@@ -829,8 +829,10 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
       return;
     }
 
-    // Drain postponed events with priority (before taking next from mailbox)
-    if (stateChanged && postponed.length > 0) {
+    // Drain postponed events with priority — loop until stable
+    let drainTriggered = stateChanged;
+    while (drainTriggered && postponed.length > 0) {
+      drainTriggered = false;
       const drained = postponed.splice(0);
       for (const entry of drained) {
         const drain = yield* processQueued(entry);
@@ -841,6 +843,9 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
           yield* Scope.close(stateScopeRef.current, Exit.void);
           yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
           return;
+        }
+        if (drain.stateChanged) {
+          drainTriggered = true;
         }
       }
     }

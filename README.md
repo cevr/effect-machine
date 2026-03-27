@@ -208,7 +208,7 @@ machine
 
 ### Event Postpone
 
-`.postpone()` — gen_statem-style event postpone. When a matching event arrives in the given state, it is buffered. After the next state transition (tag change), buffered events drain in FIFO order:
+`.postpone()` — gen_statem-style event postpone. When a matching event arrives in the given state, it is buffered. After the next state transition (tag change), buffered events drain in FIFO order, looping until stable:
 
 ```ts
 machine
@@ -257,6 +257,31 @@ const child = yield * parent.system.get("worker-1"); // Option<ActorRef>
 
 Every actor always has a system — `Machine.spawn` creates an implicit one if no `ActorSystem` is in context.
 
+### Persistence
+
+Persistence is composed from primitives — no built-in adapter or framework:
+
+```ts
+// Snapshot persistence — observe state changes, save externally
+yield * actor.changes.pipe(Stream.runForEach((state) => saveSnapshot(actor.id, state)));
+
+// Event journal — observe transitions
+yield * actor.transitions.pipe(Stream.runForEach(({ event }) => appendEvent(actor.id, event)));
+
+// Restore from snapshot
+const savedState = yield * loadSnapshot(id);
+const actor = yield * Machine.spawn(machine, { hydrate: savedState });
+
+// Restore from event log
+const events = yield * loadEvents(id);
+const state = yield * Machine.replay(machine, events);
+const actor = yield * Machine.spawn(machine, { hydrate: state });
+
+// Restore from snapshot + tail events
+const state = yield * Machine.replay(machine, tailEvents, { from: snapshot });
+const actor = yield * Machine.spawn(machine, { hydrate: state });
+```
+
 ### System Observation
 
 React to actors joining and leaving the system:
@@ -296,21 +321,6 @@ expect(result.states.map((s) => s._tag)).toEqual(["Idle", "Loading", "Done"]);
 yield * assertPath(machine, events, ["Idle", "Loading", "Done"]);
 ```
 
-## Documentation
-
-See the [primer](./primer/) for comprehensive documentation:
-
-| Topic       | File                                      | Description                    |
-| ----------- | ----------------------------------------- | ------------------------------ |
-| Overview    | [index.md](./primer/index.md)             | Navigation and quick reference |
-| Basics      | [basics.md](./primer/basics.md)           | Core concepts                  |
-| Handlers    | [handlers.md](./primer/handlers.md)       | Transitions, guards, reply     |
-| Effects     | [effects.md](./primer/effects.md)         | spawn, background, timeouts    |
-| Testing     | [testing.md](./primer/testing.md)         | simulate, harness, assertions  |
-| Actors      | [actors.md](./primer/actors.md)           | ActorSystem, ActorRef          |
-| Persistence | [persistence.md](./primer/persistence.md) | Snapshots, event sourcing      |
-| Gotchas     | [gotchas.md](./primer/gotchas.md)         | Common mistakes                |
-
 ## API Quick Reference
 
 ### Building
@@ -330,58 +340,41 @@ See the [primer](./primer/) for comprehensive documentation:
 | `.final(State.X)`                         | Mark final state                                            |
 | `.build({ slot: impl })`                  | Provide implementations, returns `BuiltMachine` (terminal)  |
 | `.build()`                                | Finalize no-slot machine, returns `BuiltMachine` (terminal) |
-| `.persist(config)`                        | Enable persistence                                          |
-
-### State Constructors
-
-| Method                                 | Purpose                        |
-| -------------------------------------- | ------------------------------ |
-| `State.X.derive(source)`               | Pick target fields from source |
-| `State.X.derive(source, { field: v })` | Pick fields + apply overrides  |
-| `State.$is("X")(value)`                | Type guard                     |
-| `State.$match(value, { X: fn, ... })`  | Pattern matching               |
 
 ### Running
 
-| Method                       | Purpose                                                                                                 |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `Machine.spawn(machine)`     | Single actor, no registry. Caller manages lifetime via `actor.stop`. Auto-cleans up if `Scope` present. |
-| `Machine.spawn(machine, id)` | Same as above with custom ID                                                                            |
-| `system.spawn(id, machine)`  | Registry, lookup by ID, bulk ops, persistence. Cleans up on system teardown.                            |
-
-### Testing
-
-| Function                                   | Description                                                      |
-| ------------------------------------------ | ---------------------------------------------------------------- |
-| `simulate(machine, events)`                | Run events, get all states (accepts `Machine` or `BuiltMachine`) |
-| `createTestHarness(machine)`               | Step-by-step testing (accepts `Machine` or `BuiltMachine`)       |
-| `assertPath(machine, events, path)`        | Assert exact path                                                |
-| `assertReaches(machine, events, tag)`      | Assert final state                                               |
-| `assertNeverReaches(machine, events, tag)` | Assert state never visited                                       |
+| Method                                   | Purpose                                                                                                 |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `Machine.spawn(machine)`                 | Single actor, no registry. Caller manages lifetime via `actor.stop`. Auto-cleans up if `Scope` present. |
+| `Machine.spawn(machine, id)`             | Same as above with custom ID                                                                            |
+| `Machine.spawn(machine, { hydrate: s })` | Restore from saved state — re-runs spawn effects for that state                                         |
+| `Machine.replay(machine, events)`        | Fold events through handlers to compute state (for event sourcing restore)                              |
+| `system.spawn(id, machine)`              | Registry, lookup by ID, bulk ops. Cleans up on system teardown.                                         |
 
 ### Actor
 
-| Method                           | Description                                 |
-| -------------------------------- | ------------------------------------------- |
-| `actor.send(event)`              | Fire-and-forget (queue event)               |
-| `actor.cast(event)`              | Alias for send (OTP gen_server:cast)        |
-| `actor.call(event)`              | Request-reply, returns `ProcessEventResult` |
-| `actor.ask<R>(event)`            | Typed domain reply from handler             |
-| `actor.snapshot`                 | Get current state                           |
-| `actor.matches(tag)`             | Check state tag                             |
-| `actor.can(event)`               | Can handle event?                           |
-| `actor.changes`                  | Stream of changes                           |
-| `actor.waitFor(State.X)`         | Wait for state (constructor or fn)          |
-| `actor.awaitFinal`               | Wait final state                            |
-| `actor.sendAndWait(ev, State.X)` | Send + wait for state                       |
-| `actor.subscribe(fn)`            | Sync callback                               |
-| `actor.sync.send(event)`         | Sync fire-and-forget (for UI)               |
-| `actor.sync.stop()`              | Sync stop                                   |
-| `actor.sync.snapshot()`          | Sync get state                              |
-| `actor.sync.matches(tag)`        | Sync check state tag                        |
-| `actor.sync.can(event)`          | Sync can handle event?                      |
-| `actor.system`                   | Access the actor's `ActorSystem`            |
-| `actor.children`                 | Child actors (`ReadonlyMap`)                |
+| Method                           | Description                                     |
+| -------------------------------- | ----------------------------------------------- |
+| `actor.send(event)`              | Fire-and-forget (queue event)                   |
+| `actor.cast(event)`              | Alias for send (OTP gen_server:cast)            |
+| `actor.call(event)`              | Request-reply, returns `ProcessEventResult`     |
+| `actor.ask<R>(event)`            | Typed domain reply from handler                 |
+| `actor.snapshot`                 | Get current state                               |
+| `actor.matches(tag)`             | Check state tag                                 |
+| `actor.can(event)`               | Can handle event?                               |
+| `actor.changes`                  | Stream of state changes                         |
+| `actor.transitions`              | Stream of `{ fromState, toState, event }` edges |
+| `actor.waitFor(State.X)`         | Wait for state (constructor or fn)              |
+| `actor.awaitFinal`               | Wait final state                                |
+| `actor.sendAndWait(ev, State.X)` | Send + wait for state                           |
+| `actor.subscribe(fn)`            | Sync callback                                   |
+| `actor.sync.send(event)`         | Sync fire-and-forget (for UI)                   |
+| `actor.sync.stop()`              | Sync stop                                       |
+| `actor.sync.snapshot()`          | Sync get state                                  |
+| `actor.sync.matches(tag)`        | Sync check state tag                            |
+| `actor.sync.can(event)`          | Sync can handle event?                          |
+| `actor.system`                   | Access the actor's `ActorSystem`                |
+| `actor.children`                 | Child actors (`ReadonlyMap`)                    |
 
 ### ActorSystem
 
@@ -393,6 +386,16 @@ See the [primer](./primer/) for comprehensive documentation:
 | `system.actors`        | Sync snapshot of all actors (`ReadonlyMap`) |
 | `system.subscribe(fn)` | Sync callback for spawn/stop events         |
 | `system.events`        | Async `Stream<SystemEvent>` for spawn/stop  |
+
+### Testing
+
+| Function                                   | Description                                                      |
+| ------------------------------------------ | ---------------------------------------------------------------- |
+| `simulate(machine, events)`                | Run events, get all states (accepts `Machine` or `BuiltMachine`) |
+| `createTestHarness(machine)`               | Step-by-step testing (accepts `Machine` or `BuiltMachine`)       |
+| `assertPath(machine, events, path)`        | Assert exact path                                                |
+| `assertReaches(machine, events, tag)`      | Assert final state                                               |
+| `assertNeverReaches(machine, events, tag)` | Assert state never visited                                       |
 
 ## License
 

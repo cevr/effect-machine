@@ -255,4 +255,44 @@ describe(".postpone()", () => {
       expect(result._tag).toBe("Failure");
     }),
   );
+
+  it.live("multi-stage drain — cascading postponed events reach final state", () =>
+    Effect.gen(function* () {
+      const MSState = State({
+        A: {},
+        B: {},
+        C: {},
+        Done: {},
+      });
+      const MSEvent = Event({
+        GoB: {},
+        GoC: {},
+        Finish: {},
+      });
+
+      const machine = Machine.make({
+        state: MSState,
+        event: MSEvent,
+        initial: MSState.A,
+      })
+        .on(MSState.A, MSEvent.GoB, () => MSState.B)
+        .on(MSState.B, MSEvent.GoC, () => MSState.C)
+        .on(MSState.C, MSEvent.Finish, () => MSState.Done)
+        .postpone(MSState.A, MSEvent.Finish)
+        .postpone(MSState.B, MSEvent.Finish)
+        .postpone(MSState.A, MSEvent.GoC)
+        .final(MSState.Done)
+        .build();
+
+      const actor = yield* Machine.spawn(machine);
+
+      // Send events: Finish and GoC are postponed in A.
+      // GoB moves to B → drains GoC (→ C) → drains Finish (→ Done)
+      yield* actor.send(MSEvent.Finish);
+      yield* actor.send(MSEvent.GoC);
+      const result = yield* actor.sendAndWait(MSEvent.GoB);
+
+      expect(result._tag).toBe("Done");
+    }),
+  );
 });
