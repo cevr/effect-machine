@@ -74,3 +74,14 @@ export class NoReplyError extends Schema.TaggedError<NoReplyError>()("NoReplyErr
   actorId: Schema.String,
   eventTag: Schema.String,
 }) {}
+
+/** Persistence adapter operation failed */
+export class PersistenceError extends Schema.TaggedError<PersistenceError>()("PersistenceError", {
+  message: Schema.String,
+}) {}
+
+/** Optimistic locking failure — stored version doesn't match expected */
+export class VersionConflictError extends Schema.TaggedError<VersionConflictError>()(
+  "VersionConflictError",
+  { expected: Schema.Number, actual: Schema.Number },
+) {}

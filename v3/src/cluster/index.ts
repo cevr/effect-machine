@@ -42,3 +42,12 @@
 export { toEntity, type ToEntityOptions, type EntityRpcs } from "./to-entity.js";
 export { EntityMachine, type EntityMachineOptions } from "./entity-machine.js";
 export { type EntityActorRef, makeEntityActorRef } from "./entity-actor-ref.js";
+export {
+  type PersistenceKey,
+  type Snapshot,
+  type PersistedEvent,
+  type EntityPersistenceConfig,
+  type PersistenceAdapter as PersistenceAdapterInterface,
+  PersistenceAdapter,
+} from "./persistence.js";
+export { makeInMemoryPersistenceAdapter } from "./adapters/in-memory.js";
