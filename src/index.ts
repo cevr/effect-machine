@@ -49,6 +49,7 @@ export type {
   TaskOptions,
   ProvideHandlers,
   ReplyResult,
+  DeferReplyResult,
 } from "./machine.js";
 
 // Actor types and system

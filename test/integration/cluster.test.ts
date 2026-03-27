@@ -1,4 +1,7 @@
-// @effect-diagnostics strictEffectProvide:off - tests are entry points
+// @effect-diagnostics strictEffectProvide:off
+// @effect-diagnostics missingEffectContext:off
+// @effect-diagnostics missingEffectError:off
+// @effect-diagnostics anyUnknownInErrorContext:off
 /**
  * Cluster Integration Tests
  *
@@ -9,7 +12,7 @@
  */
 import { Entity, ShardingConfig } from "effect/unstable/cluster";
 import { Rpc } from "effect/unstable/rpc";
-import { Effect, Ref, Schema } from "effect";
+import { Duration, Effect, Fiber, Layer, Ref, Schema, Stream } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import {
@@ -21,7 +24,7 @@ import {
   Event,
   Slot,
 } from "../../src/index.js";
-import { toEntity } from "../../src/cluster/index.js";
+import { toEntity, EntityMachine } from "../../src/cluster/index.js";
 
 // =============================================================================
 // Schema-first definitions using MachineSchema
@@ -357,35 +360,595 @@ describe("Entity.makeTestClient with machine handler", () => {
 });
 
 // =============================================================================
-// Summary
+// EntityMachine.layer integration tests (Phase 1: red tests)
+//
+// These tests exercise EntityMachine.layer through Entity.makeTestClient.
+// They pin bugs in the current implementation before fixing them.
 // =============================================================================
-/**
- * ## MachineSchema - Single Source of Truth
- *
- * - Define state/event once with `State({...})` / `Event({...})`
- * - Get Schema + constructors + pattern matching in one definition
- * - No more duplication between State<T> and Schema definitions
- * - Works seamlessly with Machine.make, persistence, and cluster
- *
- * ## Key APIs
- *
- * - `State({...})` / `Event({...})` - schema-first definitions
- * - `typeof X.Type` - infer TypeScript type from schema
- * - `X.$is("Tag")` - type guard
- * - `X.$match(value, cases)` - pattern matching
- * - `Schema.encodeSync(X)` / `Schema.decodeUnknownSync(X)` - serialization
- *
- * ## Migration
- *
- * Old:
- * ```ts
- * type MyState = State<{ Idle: {}; Active: { count: number } }>;
- * const MyState = State<MyState>();
- * ```
- *
- * New:
- * ```ts
- * const MyState = State({ Idle: {}, Active: { count: Schema.Number } });
- * type MyState = typeof MyState.Type;
- * ```
- */
+
+describe("EntityMachine.layer", () => {
+  // ---------------------------------------------------------------------------
+  // Test 1: Basic send through EntityMachine.layer
+  // ---------------------------------------------------------------------------
+  test("basic send changes state via EntityMachine.layer", async () => {
+    const entity = toEntity(orderMachine, { type: "OrderSend" });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- EntityMachine.layer type signature bug (Phase 4 fix)
+    const entityLayer = EntityMachine.layer(entity, orderMachine as any, {
+      initializeState: (entityId) => OrderState.Pending({ orderId: entityId }),
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const makeClient = yield* Entity.makeTestClient(
+          entity,
+          entityLayer.pipe(Layer.provide(ActorSystemDefault)),
+        );
+        const client = yield* makeClient("order-1");
+
+        const state = yield* client.Send({ event: OrderEvent.Process });
+        expect(state._tag).toBe("Processing");
+      }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)) as Effect.Effect<void>,
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 2: Ask reply through EntityMachine.layer
+  // ---------------------------------------------------------------------------
+  test("ask returns typed reply via EntityMachine.layer", async () => {
+    const AskState = State({
+      Active: { count: Schema.Number },
+    });
+    type AskState = typeof AskState.Type;
+
+    const AskEvent = Event({
+      GetCount: Event.reply({}, Schema.Number),
+      Increment: {},
+    });
+    type AskEvent = typeof AskEvent.Type;
+
+    const askMachine = Machine.make({
+      state: AskState,
+      event: AskEvent,
+      initial: AskState.Active({ count: 0 }),
+    })
+      .on(AskState.Active, AskEvent.Increment, ({ state }) =>
+        AskState.Active({ count: state.count + 1 }),
+      )
+      .on(AskState.Active, AskEvent.GetCount, ({ state }) => Machine.reply(state, state.count));
+
+    const entity = toEntity(askMachine, { type: "AskReply" });
+    const entityLayer = EntityMachine.layer(entity, askMachine as any, {
+      initializeState: () => AskState.Active({ count: 42 }),
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const makeClient = yield* Entity.makeTestClient(
+          entity,
+          entityLayer.pipe(Layer.provide(ActorSystemDefault)),
+        );
+        const client = yield* makeClient("ask-1");
+
+        const reply = yield* client.Ask({ event: AskEvent.GetCount });
+        expect(reply).toBe(42);
+      }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)) as Effect.Effect<void>,
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 3: Background effects run
+  // BUG: entity-machine never iterates machine.backgroundEffects
+  // ---------------------------------------------------------------------------
+  test("background effects run in entity context", async () => {
+    const BgState = State({
+      Idle: {},
+      Done: { value: Schema.String },
+    });
+    type BgState = typeof BgState.Type;
+
+    const BgEvent = Event({
+      Complete: { value: Schema.String },
+    });
+    type BgEvent = typeof BgEvent.Type;
+
+    const bgMachine = Machine.make({
+      state: BgState,
+      event: BgEvent,
+      initial: BgState.Idle,
+    })
+      .on(BgState.Idle, BgEvent.Complete, ({ event }) => BgState.Done({ value: event.value }))
+      .background(({ self }) => self.send(BgEvent.Complete({ value: "from-background" })))
+      .final(BgState.Done);
+
+    const entity = toEntity(bgMachine, { type: "Background" });
+    const entityLayer = EntityMachine.layer(entity, bgMachine as any, {});
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const makeClient = yield* Entity.makeTestClient(
+          entity,
+          entityLayer.pipe(Layer.provide(ActorSystemDefault)),
+        );
+        const client = yield* makeClient("bg-1");
+
+        // Give background effect time to fire
+        yield* Effect.sleep("100 millis");
+
+        const state = yield* client.GetState();
+        expect(state._tag).toBe("Done");
+        expect((state as { value: string }).value).toBe("from-background");
+      }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)) as Effect.Effect<void>,
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 4: Final state stops accepting events
+  // BUG: isFinal computed but never checked, entity keeps accepting RPCs
+  // ---------------------------------------------------------------------------
+  test("final state rejects further events", async () => {
+    const entity = toEntity(orderMachine, { type: "OrderFinal" });
+    const entityLayer = EntityMachine.layer(entity, orderMachine as any, {
+      initializeState: (entityId) => OrderState.Pending({ orderId: entityId }),
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const makeClient = yield* Entity.makeTestClient(
+          entity,
+          entityLayer.pipe(Layer.provide(ActorSystemDefault)),
+        );
+        const client = yield* makeClient("final-1");
+
+        // Drive to final state
+        yield* client.Send({ event: OrderEvent.Process });
+        const shipped = yield* client.Send({ event: OrderEvent.Ship({ trackingId: "T-1" }) });
+        expect(shipped._tag).toBe("Shipped");
+
+        // After final, sending more events should not change state
+        // (at minimum, state should remain Shipped — not crash, not transition)
+        const afterFinal = yield* client.Send({ event: OrderEvent.Process });
+        expect(afterFinal._tag).toBe("Shipped");
+      }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)) as Effect.Effect<void>,
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 5: Spawn effects run on state entry
+  // ---------------------------------------------------------------------------
+  test("spawn effects run on state entry and self.send delivers", async () => {
+    const SpawnState = State({
+      Start: {},
+      Working: {},
+      Done: { result: Schema.String },
+    });
+    type SpawnState = typeof SpawnState.Type;
+
+    const SpawnEvent = Event({
+      Begin: {},
+      Finished: { result: Schema.String },
+    });
+    type SpawnEvent = typeof SpawnEvent.Type;
+
+    const spawnMachine = Machine.make({
+      state: SpawnState,
+      event: SpawnEvent,
+      initial: SpawnState.Start,
+    })
+      .on(SpawnState.Start, SpawnEvent.Begin, () => SpawnState.Working)
+      .on(SpawnState.Working, SpawnEvent.Finished, ({ event }) =>
+        SpawnState.Done({ result: event.result }),
+      )
+      .spawn(SpawnState.Working, ({ self }) =>
+        self.send(SpawnEvent.Finished({ result: "spawn-delivered" })),
+      )
+      .final(SpawnState.Done);
+
+    const entity = toEntity(spawnMachine, { type: "SpawnEffect" });
+    const entityLayer = EntityMachine.layer(entity, spawnMachine as any, {});
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const makeClient = yield* Entity.makeTestClient(
+          entity,
+          entityLayer.pipe(Layer.provide(ActorSystemDefault)),
+        );
+        const client = yield* makeClient("spawn-1");
+
+        yield* client.Send({ event: SpawnEvent.Begin });
+
+        // Give spawn effect time to fire and internal event to process
+        yield* Effect.sleep("100 millis");
+
+        const state = yield* client.GetState();
+        expect(state._tag).toBe("Done");
+        expect((state as { result: string }).result).toBe("spawn-delivered");
+      }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)) as Effect.Effect<void>,
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 6: Timeout fires
+  // ---------------------------------------------------------------------------
+  test("timeout fires event after duration", async () => {
+    const TimeoutState = State({
+      Waiting: {},
+      TimedOut: {},
+    });
+    type TimeoutState = typeof TimeoutState.Type;
+
+    const TimeoutEvent = Event({
+      Start: {},
+      Expired: {},
+    });
+    type TimeoutEvent = typeof TimeoutEvent.Type;
+
+    const timeoutMachine = Machine.make({
+      state: TimeoutState,
+      event: TimeoutEvent,
+      initial: TimeoutState.Waiting,
+    })
+      .on(TimeoutState.Waiting, TimeoutEvent.Start, () => TimeoutState.Waiting)
+      .on(TimeoutState.Waiting, TimeoutEvent.Expired, () => TimeoutState.TimedOut)
+      .timeout(TimeoutState.Waiting, {
+        duration: Duration.millis(50),
+        event: TimeoutEvent.Expired,
+      })
+      .final(TimeoutState.TimedOut);
+
+    const entity = toEntity(timeoutMachine, { type: "Timeout" });
+    const entityLayer = EntityMachine.layer(entity, timeoutMachine as any, {});
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const makeClient = yield* Entity.makeTestClient(
+          entity,
+          entityLayer.pipe(Layer.provide(ActorSystemDefault)),
+        );
+        const client = yield* makeClient("timeout-1");
+
+        // Wait for timeout to fire
+        yield* Effect.sleep("200 millis");
+
+        const state = yield* client.GetState();
+        expect(state._tag).toBe("TimedOut");
+      }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)) as Effect.Effect<void>,
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 7: Postpone semantics
+  // BUG: shouldPostpone imported but never called in entity-machine
+  // ---------------------------------------------------------------------------
+  test("postponed events drain after state change", async () => {
+    const PostponeState = State({
+      Connecting: {},
+      Connected: {},
+      Done: { data: Schema.String },
+    });
+    type PostponeState = typeof PostponeState.Type;
+
+    const PostponeEvent = Event({
+      Connect: {},
+      Data: { payload: Schema.String },
+    });
+    type PostponeEvent = typeof PostponeEvent.Type;
+
+    const postponeMachine = Machine.make({
+      state: PostponeState,
+      event: PostponeEvent,
+      initial: PostponeState.Connecting,
+    })
+      .on(PostponeState.Connecting, PostponeEvent.Connect, () => PostponeState.Connected)
+      .on(PostponeState.Connected, PostponeEvent.Data, ({ event }) =>
+        PostponeState.Done({ data: event.payload }),
+      )
+      .postpone(PostponeState.Connecting, PostponeEvent.Data)
+      .final(PostponeState.Done);
+
+    const entity = toEntity(postponeMachine, { type: "Postpone" });
+    const entityLayer = EntityMachine.layer(entity, postponeMachine as any, {});
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const makeClient = yield* Entity.makeTestClient(
+          entity,
+          entityLayer.pipe(Layer.provide(ActorSystemDefault)),
+        );
+        const client = yield* makeClient("postpone-1");
+
+        // Send Data while in Connecting — should be postponed
+        yield* client.Send({ event: PostponeEvent.Data({ payload: "hello" }) });
+
+        // State should still be Connecting (Data was postponed)
+        const beforeConnect = yield* client.GetState();
+        expect(beforeConnect._tag).toBe("Connecting");
+
+        // Connect — should transition, then drain postponed Data
+        yield* client.Send({ event: PostponeEvent.Connect });
+
+        // Give time for postpone drain
+        yield* Effect.sleep("100 millis");
+
+        const finalState = yield* client.GetState();
+        expect(finalState._tag).toBe("Done");
+        expect((finalState as { data: string }).data).toBe("hello");
+      }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)) as Effect.Effect<void>,
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 8: Task success/failure routing
+  // ---------------------------------------------------------------------------
+  test("task dispatches success event", async () => {
+    const TaskState = State({
+      Idle: {},
+      Running: {},
+      Done: { result: Schema.String },
+      Failed: { error: Schema.String },
+    });
+    type TaskState = typeof TaskState.Type;
+
+    const TaskEvent = Event({
+      Start: {},
+      TaskSucceeded: { result: Schema.String },
+      TaskFailed: { error: Schema.String },
+    });
+    type TaskEvent = typeof TaskEvent.Type;
+
+    const taskMachine = Machine.make({
+      state: TaskState,
+      event: TaskEvent,
+      initial: TaskState.Idle,
+    })
+      .on(TaskState.Idle, TaskEvent.Start, () => TaskState.Running)
+      .on(TaskState.Running, TaskEvent.TaskSucceeded, ({ event }) =>
+        TaskState.Done({ result: event.result }),
+      )
+      .on(TaskState.Running, TaskEvent.TaskFailed, ({ event }) =>
+        TaskState.Failed({ error: event.error }),
+      )
+      .task(TaskState.Running, () => Effect.succeed("task-result"), {
+        onSuccess: (result) => TaskEvent.TaskSucceeded({ result }),
+      })
+      .final(TaskState.Done)
+      .final(TaskState.Failed);
+
+    const entity = toEntity(taskMachine, { type: "Task" });
+    const entityLayer = EntityMachine.layer(entity, taskMachine as any, {});
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const makeClient = yield* Entity.makeTestClient(
+          entity,
+          entityLayer.pipe(Layer.provide(ActorSystemDefault)),
+        );
+        const client = yield* makeClient("task-1");
+
+        yield* client.Send({ event: TaskEvent.Start });
+
+        // Give task time to complete and route success event
+        yield* Effect.sleep("200 millis");
+
+        const state = yield* client.GetState();
+        expect(state._tag).toBe("Done");
+        expect((state as { result: string }).result).toBe("task-result");
+      }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)) as Effect.Effect<void>,
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 9: Split-mailbox — external + internal events both increment
+  // Architectural issue: external RPCs and internal self.send run on separate
+  // fibers/queues. Test verifies all events are counted. Will fail if internal
+  // events are silently dropped or if state updates are lost.
+  // ---------------------------------------------------------------------------
+  test("external sends and internal self.send both contribute to state", async () => {
+    const RaceState = State({
+      Active: { count: Schema.Number },
+      Done: { count: Schema.Number },
+    });
+    type RaceState = typeof RaceState.Type;
+
+    const RaceEvent = Event({
+      ExternalIncrement: {},
+      InternalIncrement: {},
+      Finish: {},
+    });
+    type RaceEvent = typeof RaceEvent.Type;
+
+    // Spawn effect fires internal increments continuously
+    const raceMachine = Machine.make({
+      state: RaceState,
+      event: RaceEvent,
+      initial: RaceState.Active({ count: 0 }),
+    })
+      .on(RaceState.Active, RaceEvent.ExternalIncrement, ({ state }) =>
+        RaceState.Active({ count: state.count + 1 }),
+      )
+      .on(RaceState.Active, RaceEvent.InternalIncrement, ({ state }) =>
+        RaceState.Active({ count: state.count + 1 }),
+      )
+      .on(RaceState.Active, RaceEvent.Finish, ({ state }) => RaceState.Done({ count: state.count }))
+      .spawn(RaceState.Active, ({ self }) =>
+        // Fire internal increments — each goes through a separate queue/fiber
+        Effect.gen(function* () {
+          for (let i = 0; i < 10; i++) {
+            yield* self.send(RaceEvent.InternalIncrement);
+          }
+        }),
+      )
+      .final(RaceState.Done);
+
+    const entity = toEntity(raceMachine, { type: "Race" });
+    const entityLayer = EntityMachine.layer(entity, raceMachine as any, {});
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const makeClient = yield* Entity.makeTestClient(
+          entity,
+          entityLayer.pipe(Layer.provide(ActorSystemDefault)),
+        );
+        const client = yield* makeClient("race-1");
+
+        // Fire external increments concurrently — each hits processEvent directly
+        // while internal ones are being processed by the queue fiber
+        yield* Effect.all(
+          Array.from({ length: 10 }, () => client.Send({ event: RaceEvent.ExternalIncrement })),
+          { concurrency: "unbounded" },
+        );
+
+        // Give internal events time to finish
+        yield* Effect.sleep("200 millis");
+
+        yield* client.Send({ event: RaceEvent.Finish });
+        const state = yield* client.GetState();
+        expect(state._tag).toBe("Done");
+
+        // If properly serialized: 10 external + 10 internal = 20
+        // With split-mailbox, external RPCs mutate stateRef directly while
+        // internal queue reads stale state — lost updates. Count will be < 20.
+        expect((state as { count: number }).count).toBe(20);
+      }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)) as Effect.Effect<void>,
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 10: self.spawn works in entity context (implicit ActorSystem)
+  // ---------------------------------------------------------------------------
+  test("self.spawn works without explicit ActorSystem", async () => {
+    const SpawnChildState = State({
+      Idle: {},
+      HasChild: { childSpawned: Schema.Boolean },
+    });
+    type SpawnChildState = typeof SpawnChildState.Type;
+
+    const SpawnChildEvent = Event({
+      Go: {},
+      ChildReady: {},
+    });
+    type SpawnChildEvent = typeof SpawnChildEvent.Type;
+
+    // Simple child machine
+    const childState = State({ Running: {} });
+    const childEvent = Event({ Ping: {} });
+    const childMachine = Machine.make({
+      state: childState,
+      event: childEvent,
+      initial: childState.Running,
+    }).build();
+
+    const spawnChildMachine = Machine.make({
+      state: SpawnChildState,
+      event: SpawnChildEvent,
+      initial: SpawnChildState.Idle,
+    })
+      .on(SpawnChildState.Idle, SpawnChildEvent.Go, () =>
+        SpawnChildState.HasChild({ childSpawned: false }),
+      )
+      .on(SpawnChildState.HasChild, SpawnChildEvent.ChildReady, () =>
+        SpawnChildState.HasChild({ childSpawned: true }),
+      )
+      .spawn(SpawnChildState.HasChild, ({ self }) =>
+        Effect.gen(function* () {
+          yield* self.spawn("child-1", childMachine).pipe(Effect.orDie);
+          yield* self.send(SpawnChildEvent.ChildReady);
+        }),
+      );
+
+    const entity = toEntity(spawnChildMachine, { type: "SpawnChild" });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const entityLayer = EntityMachine.layer(entity, spawnChildMachine as any, {});
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        // No ActorSystemDefault provided — implicit system should be created
+        const makeClient = yield* Entity.makeTestClient(entity, entityLayer);
+        const client = yield* makeClient("spawn-child-1");
+
+        yield* client.Send({ event: SpawnChildEvent.Go });
+        yield* Effect.sleep("100 millis");
+
+        const state = yield* client.GetState();
+        expect(state._tag).toBe("HasChild");
+        expect((state as { childSpawned: boolean }).childSpawned).toBe(true);
+      }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)) as Effect.Effect<void>,
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 11: WatchState streaming RPC delivers state changes
+  // Skipped: effect@4.0.0-beta.35 has a Queue bug in RpcServer streaming path
+  // (takeBetweenUnsafe: self.state._tag undefined). Handler is correctly wired
+  // — WatchState request arrives and replier.succeed(stream) is called — but
+  // the RPC infrastructure crashes consuming the stream.
+  // ---------------------------------------------------------------------------
+  test.skip("WatchState streams state changes", async () => {
+    const WatchState = State({
+      A: {},
+      B: {},
+      C: {},
+    });
+    type WatchState = typeof WatchState.Type;
+
+    const WatchEvent = Event({
+      GoB: {},
+      GoC: {},
+    });
+    type WatchEvent = typeof WatchEvent.Type;
+
+    const watchMachine = Machine.make({
+      state: WatchState,
+      event: WatchEvent,
+      initial: WatchState.A,
+    })
+      .on(WatchState.A, WatchEvent.GoB, () => WatchState.B)
+      .on(WatchState.B, WatchEvent.GoC, () => WatchState.C)
+      .final(WatchState.C);
+
+    const entity = toEntity(watchMachine, { type: "Watch" });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const entityLayer = EntityMachine.layer(entity, watchMachine as any, {});
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const makeClient = yield* Entity.makeTestClient(
+          entity,
+          entityLayer.pipe(Layer.provide(ActorSystemDefault)),
+        );
+        const client = yield* makeClient("watch-1");
+
+        // Collect state changes in background via WatchState streaming RPC
+        const collected: string[] = [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const watchStream = (client as any).WatchState() as Stream.Stream<WatchState>;
+
+        const collectFiber = yield* Effect.forkScoped(
+          watchStream.pipe(
+            Stream.take(2),
+            Stream.runForEach((s: WatchState) =>
+              Effect.sync(() => {
+                collected.push(s._tag);
+              }),
+            ),
+          ),
+        );
+
+        // Give stream subscription time to establish
+        yield* Effect.sleep("50 millis");
+
+        // Drive state changes
+        yield* client.Send({ event: WatchEvent.GoB });
+        yield* client.Send({ event: WatchEvent.GoC });
+
+        // Wait for stream to collect
+        yield* Effect.sleep("200 millis");
+        yield* Fiber.interrupt(collectFiber);
+
+        // Should have seen B and C state changes
+        expect(collected.length).toBeGreaterThanOrEqual(2);
+        expect(collected).toContain("B");
+        expect(collected).toContain("C");
+      }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)) as Effect.Effect<void>,
+    );
+  });
+});

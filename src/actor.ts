@@ -522,6 +522,10 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   const eventQueue = yield* Queue.unbounded<QueuedEvent<E>>();
   const stoppedRef = yield* Ref.make(false);
   const childrenMap = new Map<string, ActorRef<AnyState, unknown>>();
+  // Pending deferred reply — stored when handler returns Machine.deferReply()
+  const deferredReplyRef: {
+    current: Deferred.Deferred<unknown, NoReplyError | ActorStoppedError> | undefined;
+  } = { current: undefined };
   const selfSend = Effect.fn("effect-machine.actor.self.send")(function* (event: E) {
     const stopped = yield* Ref.get(stoppedRef);
     if (stopped) {
@@ -548,6 +552,16 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
           );
         }
         return child;
+      }),
+    reply: (value: unknown) =>
+      Effect.sync(() => {
+        const deferred = deferredReplyRef.current;
+        if (deferred !== undefined) {
+          deferredReplyRef.current = undefined;
+          Effect.runFork(Deferred.succeed(deferred, value));
+          return true;
+        }
+        return false;
       }),
   };
 
@@ -663,6 +677,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       system,
       pendingReplies,
       transitionsPubSub,
+      deferredReplyRef,
     ),
   );
 
@@ -742,6 +757,9 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
   system: ActorSystem,
   pendingReplies: Set<Deferred.Deferred<unknown, unknown>>,
   transitionsPubSub: PubSub.PubSub<TransitionInfo<S, E>>,
+  deferredReplyRef: {
+    current: Deferred.Deferred<unknown, NoReplyError | ActorStoppedError> | undefined;
+  },
 ) {
   // Postpone buffer — events deferred for retry after next state change
   const postponed: QueuedEvent<E>[] = [];
@@ -765,6 +783,7 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
           lifecycleRan: false,
           isFinal: false,
           hasReply: false,
+          deferReply: false,
           reply: undefined,
           postponed: true,
         };
@@ -818,6 +837,9 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
           } else {
             yield* Deferred.succeed(queued.reply, result.reply);
           }
+        } else if (result.deferReply) {
+          // Handler returned Machine.deferReply() — spawn handler will call self.reply()
+          deferredReplyRef.current = queued.reply;
         } else {
           yield* Deferred.fail(queued.reply, new NoReplyError({ actorId, eventTag: event._tag }));
         }
@@ -1188,6 +1210,12 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     },
   });
 });
+
+/**
+ * Create an ActorSystem instance. Must be run in a Scope.
+ * @internal — use Default layer for normal usage
+ */
+export const makeSystem = make;
 
 /**
  * Default ActorSystem layer

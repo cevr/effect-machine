@@ -64,6 +64,7 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
     send: dummySend,
     cast: dummySend,
     spawn: () => Effect.die("spawn not supported in simulation"),
+    reply: () => Effect.succeed(false),
   };
 
   let currentState = machine.initial;
@@ -303,6 +304,7 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
     send: dummySend,
     cast: dummySend,
     spawn: () => Effect.die("spawn not supported in test harness"),
+    reply: () => Effect.succeed(false),
   };
 
   const stateRef = yield* SubscriptionRef.make(machine.initial);

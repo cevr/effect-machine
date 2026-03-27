@@ -104,5 +104,9 @@ export const toEntity = <
     Rpc.make("GetState", {
       success: stateSchema,
     }),
+    Rpc.make("WatchState", {
+      success: stateSchema,
+      stream: true,
+    }),
   ]);
 };

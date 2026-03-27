@@ -1,17 +1,31 @@
+// @effect-diagnostics anyUnknownInErrorContext:off
 /**
  * EntityMachine adapter - wires a machine to a cluster Entity layer.
+ *
+ * Uses Entity.toLayerQueue for a single serialized mailbox per entity.
+ * All events (external RPCs + internal self.send) go through the
+ * runtime kernel's single queue — no split-mailbox race.
  *
  * @module
  */
 import { Entity } from "effect/unstable/cluster";
+import type { Envelope } from "effect/unstable/cluster";
 import type { Rpc } from "effect/unstable/rpc";
-import { Effect, type Layer, Option, Queue, Ref, Schema, Scope } from "effect";
+import {
+  type Duration,
+  Effect,
+  type Layer,
+  Option,
+  Queue,
+  type Schedule,
+  SubscriptionRef,
+} from "effect";
 
-import type { Machine, MachineRef } from "../machine.js";
-import type { ActorSystem, ProcessEventHooks } from "../actor.js";
-import { ActorSystem as ActorSystemTag, runSpawnEffects, processEventCore } from "../actor.js";
-import { NoReplyError } from "../errors.js";
-import type { GuardsDef, EffectsDef } from "../slot.js";
+import type { Machine } from "../machine.js";
+import type { ActorSystem } from "../actor.js";
+import { ActorSystem as ActorSystemTag, makeSystem } from "../actor.js";
+import type { ProcessEventHooks } from "../internal/transition.js";
+import { createRuntime } from "../internal/runtime.js";
 
 /**
  * Options for EntityMachine.layer
@@ -20,268 +34,174 @@ export interface EntityMachineOptions<S, E> {
   /**
    * Initialize state from entity ID.
    * Called once when entity is first activated.
-   *
-   * @example
-   * ```ts
-   * EntityMachine.layer(OrderEntity, orderMachine, {
-   *   initializeState: (entityId) => OrderState.Pending({ orderId: entityId }),
-   * })
-   * ```
    */
   readonly initializeState?: (entityId: string) => S;
 
   /**
    * Optional hooks for inspection/tracing.
-   * Called at specific points during event processing.
-   *
-   * @example
-   * ```ts
-   * EntityMachine.layer(OrderEntity, orderMachine, {
-   *   hooks: {
-   *     onTransition: (from, to, event) =>
-   *       Effect.log(`Transition: ${from._tag} -> ${to._tag}`),
-   *     onSpawnEffect: (state) =>
-   *       Effect.log(`Running spawn effects for ${state._tag}`),
-   *     onError: ({ phase, state }) =>
-   *       Effect.log(`Defect in ${phase} at ${state._tag}`),
-   *   },
-   * })
-   * ```
    */
   readonly hooks?: ProcessEventHooks<S, E>;
+
+  /**
+   * Maximum idle time before entity deactivation.
+   * Forwarded to Entity.toLayerQueue.
+   */
+  readonly maxIdleTime?: Duration.Input;
+
+  /**
+   * Mailbox capacity. Default: "unbounded".
+   * Forwarded to Entity.toLayerQueue.
+   */
+  readonly mailboxCapacity?: number | "unbounded";
+
+  /**
+   * Disable fatal defects (defects won't crash the entity activation).
+   * Forwarded to Entity.toLayerQueue.
+   */
+  readonly disableFatalDefects?: boolean;
+
+  /**
+   * Retry policy for defects (schedule for restarting after defect).
+   * Forwarded to Entity.toLayerQueue.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schedule type needs wide acceptance
+  readonly defectRetryPolicy?: Schedule.Schedule<any, unknown>;
 }
-
-/**
- * Process a single event through the machine using shared core.
- * Returns the new state after processing.
- */
-const processEvent = Effect.fn("effect-machine.cluster.processEvent")(function* <
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
-  R,
-  GD extends GuardsDef = Record<string, never>,
-  EFD extends EffectsDef = Record<string, never>,
->(
-  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
-  stateRef: Ref.Ref<S>,
-  event: E,
-  self: MachineRef<E>,
-  stateScopeRef: { current: Scope.Closeable },
-  system: ActorSystem,
-  hooks?: ProcessEventHooks<S, E>,
-) {
-  const currentState = yield* Ref.get(stateRef);
-
-  // Process event using shared core
-  const result = yield* processEventCore(
-    machine,
-    currentState,
-    event,
-    self,
-    stateScopeRef,
-    system,
-    "*",
-    hooks,
-  );
-
-  // Update state ref if transition occurred
-  if (result.transitioned) {
-    yield* Ref.set(stateRef, result.newState);
-  }
-
-  return result.newState;
-});
-
-/**
- * Process event and return the domain reply value.
- * Used by the Ask RPC handler — fails with NoReplyError if handler doesn't reply.
- */
-const processEventWithReply = Effect.fn("effect-machine.cluster.processEventWithReply")(function* <
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
-  R,
-  GD extends GuardsDef = Record<string, never>,
-  EFD extends EffectsDef = Record<string, never>,
->(
-  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
-  stateRef: Ref.Ref<S>,
-  event: E,
-  self: MachineRef<E>,
-  stateScopeRef: { current: Scope.Closeable },
-  system: ActorSystem,
-  entityId: string,
-  hooks?: ProcessEventHooks<S, E>,
-) {
-  const currentState = yield* Ref.get(stateRef);
-
-  const result = yield* processEventCore(
-    machine,
-    currentState,
-    event,
-    self,
-    stateScopeRef,
-    system,
-    entityId,
-    hooks,
-  );
-
-  if (result.transitioned) {
-    yield* Ref.set(stateRef, result.newState);
-  }
-
-  if (!result.hasReply) {
-    return yield* new NoReplyError({ actorId: entityId, eventTag: event._tag });
-  }
-
-  // Runtime validation via reply schema (same as local actor path)
-  const replySchema = machine._replySchemas?.get(event._tag);
-  if (replySchema !== undefined) {
-    return Schema.decodeUnknownSync(replySchema)(result.reply);
-  }
-  return result.reply;
-});
 
 /**
  * Create an Entity layer that wires a machine to handle RPC calls.
  *
- * The layer:
- * - Maintains state via Ref per entity instance
- * - Resolves transitions using the indexed lookup
- * - Evaluates guards in registration order
- * - Runs lifecycle effects (onEnter/spawn)
- * - Processes internal events from spawn effects
+ * Uses `Entity.toLayerQueue` for a single serialized mailbox per entity.
+ * The runtime kernel handles event processing, postpone, background effects,
+ * spawn effects, and final state detection.
  *
  * @example
  * ```ts
- * const OrderEntity = toEntity(orderMachine, {
- *   type: "Order",
- *   stateSchema: OrderState,
- *   eventSchema: OrderEvent,
- * })
+ * const OrderEntity = toEntity(orderMachine, { type: "Order" })
  *
  * const OrderEntityLayer = EntityMachine.layer(OrderEntity, orderMachine, {
  *   initializeState: (entityId) => OrderState.Pending({ orderId: entityId }),
  * })
- *
- * // Use in cluster
- * const program = Effect.gen(function* () {
- *   const client = yield* ShardingClient.client(OrderEntity)
- *   yield* client.Send("order-123", { event: OrderEvent.Ship({ trackingId: "abc" }) })
- * })
  * ```
  */
 export const EntityMachine = {
-  /**
-   * Create a layer that wires a machine to an Entity.
-   *
-   * @param entity - Entity created via toEntity()
-   * @param machine - Machine with all effects provided
-   * @param options - Optional configuration (state initializer, inspection hooks)
-   */
   layer: <
     S extends { readonly _tag: string },
     E extends { readonly _tag: string },
     R,
-    GD extends GuardsDef,
-    EFD extends EffectsDef,
     EntityType extends string,
     Rpcs extends Rpc.Any,
   >(
     entity: Entity.Entity<EntityType, Rpcs>,
-    machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Machine type params need wide acceptance
+    machine: Machine<S, E, R, any, any, any, any>,
     options?: EntityMachineOptions<S, E>,
   ): Layer.Layer<never, never, R> => {
-    const layer = Effect.fn("effect-machine.cluster.layer")(function* () {
-      // Get entity ID from context if available
+    // Build function receives (queue, replier) from Entity.toLayerQueue
+    const build = Effect.gen(function* () {
+      // Get entity ID from context (provided by Entity activation)
       const entityId = yield* Effect.serviceOption(Entity.CurrentAddress).pipe(
         Effect.map((opt) => (opt._tag === "Some" ? opt.value.entityId : "")),
       );
 
-      // Initialize state - use provided initializer or machine's initial state
-      const initialState =
+      // Override machine initial state if initializer provided
+      const machineWithState =
         options?.initializeState !== undefined
-          ? options.initializeState(entityId)
-          : machine.initial;
+          ? Object.create(machine, {
+              initial: { value: options.initializeState(entityId), enumerable: true },
+            })
+          : machine;
 
-      // Resolve actor system from context
+      // Resolve actor system from context, or create implicit one
+      // Implicit system scoped to entity activation — children torn down on deactivation
       const existingSystem = yield* Effect.serviceOption(ActorSystemTag);
-      if (Option.isNone(existingSystem)) {
-        return yield* Effect.die("EntityMachine requires ActorSystem in context");
-      }
-      const system: ActorSystem = existingSystem.value;
+      const system: ActorSystem = Option.isSome(existingSystem)
+        ? existingSystem.value
+        : yield* makeSystem();
 
-      // Create self reference for sending events back to machine
-      const internalQueue = yield* Queue.unbounded<E>();
-      const clusterSend = Effect.fn("effect-machine.cluster.self.send")(function* (event: E) {
-        yield* Queue.offer(internalQueue, event);
+      // Create runtime kernel — single queue, sequential processing
+      const runtime = yield* createRuntime(machineWithState, system, {
+        actorId: entityId,
+        hooks: options?.hooks,
       });
-      const self: MachineRef<E> = {
-        send: clusterSend,
-        cast: clusterSend,
-        spawn: (childId, childMachine) =>
-          system.spawn(childId, childMachine).pipe(Effect.provideService(ActorSystemTag, system)),
-      };
 
-      // Create state ref
-      const stateRef = yield* Ref.make<S>(initialState);
+      // Return the queue-draining loop function
+      return (mailbox: Queue.Dequeue<Envelope.Request<Rpcs>>, replier: Entity.Replier<Rpcs>) =>
+        Effect.gen(function* () {
+          // eslint-disable-next-line no-constant-condition
+          while (true) {
+            const request = yield* Queue.take(mailbox);
+            const tag = (request as { readonly tag: string }).tag;
 
-      // Create state scope for spawn effects
-      const stateScopeRef: { current: Scope.Closeable } = {
-        current: yield* Scope.make(),
-      };
-
-      // Use $init event for initial lifecycle
-      const initEvent = { _tag: "$init" } as E;
-
-      // Run initial spawn effects
-      yield* runSpawnEffects(
-        machine,
-        initialState,
-        initEvent,
-        self,
-        stateScopeRef.current,
-        system,
-        entityId,
-        options?.hooks?.onError,
-      );
-
-      // Process internal events in background
-      const runInternalEvent = Effect.fn("effect-machine.cluster.internalEvent")(function* () {
-        const event = yield* Queue.take(internalQueue);
-        yield* processEvent(machine, stateRef, event, self, stateScopeRef, system, options?.hooks);
-      });
-      yield* Effect.forkScoped(Effect.forever(runInternalEvent()));
-
-      // Return handlers matching the Entity's RPC protocol
-      // The actual types are inferred from the entity definition
-      return entity.of({
-        Send: (envelope: { payload: { event: E } }) =>
-          processEvent(
-            machine,
-            stateRef,
-            envelope.payload.event,
-            self,
-            stateScopeRef,
-            system,
-            options?.hooks,
-          ),
-
-        Ask: (envelope: { payload: { event: E } }) =>
-          processEventWithReply(
-            machine,
-            stateRef,
-            envelope.payload.event,
-            self,
-            stateScopeRef,
-            system,
-            entityId,
-            options?.hooks,
-          ),
-
-        GetState: () => Ref.get(stateRef),
-        // Entity.of expects handlers matching Rpcs type param - dynamic construction requires cast
-      } as unknown as Parameters<typeof entity.of>[0]);
+            switch (tag) {
+              case "Send": {
+                const event = (request as { readonly payload: { readonly event: E } }).payload
+                  .event;
+                // sendWait fails on defect — orDie propagates to toLayerQueue infrastructure
+                yield* runtime.sendWait(event).pipe(Effect.orDie);
+                const state = yield* runtime.getState;
+                yield* replier.succeed(
+                  request,
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- RPC success type
+                  state as any,
+                );
+                break;
+              }
+              case "Ask": {
+                const event = (request as { readonly payload: { readonly event: E } }).payload
+                  .event;
+                const reply = yield* runtime.ask(event);
+                yield* replier.succeed(
+                  request,
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- RPC success type
+                  reply as any,
+                );
+                break;
+              }
+              case "GetState": {
+                const state = yield* runtime.getState;
+                yield* replier.succeed(
+                  request,
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- RPC success type
+                  state as any,
+                );
+                break;
+              }
+              case "WatchState": {
+                // Streaming RPC — respond with SubscriptionRef.changes stream
+                yield* replier.succeed(
+                  request,
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- streaming RPC success type
+                  SubscriptionRef.changes(runtime.stateRef) as any,
+                );
+                break;
+              }
+              default:
+                break;
+            }
+          }
+        }) as Effect.Effect<never>;
     });
-    return entity.toLayer(layer()) as unknown as Layer.Layer<never, never, R>;
+
+    // Collect cluster options to forward
+    const clusterOptions: {
+      maxIdleTime?: Duration.Input;
+      mailboxCapacity?: number | "unbounded";
+      disableFatalDefects?: boolean;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      defectRetryPolicy?: Schedule.Schedule<any, unknown>;
+    } = {};
+    if (options?.maxIdleTime !== undefined) clusterOptions.maxIdleTime = options.maxIdleTime;
+    if (options?.mailboxCapacity !== undefined)
+      clusterOptions.mailboxCapacity = options.mailboxCapacity;
+    if (options?.disableFatalDefects !== undefined)
+      clusterOptions.disableFatalDefects = options.disableFatalDefects;
+    if (options?.defectRetryPolicy !== undefined)
+      clusterOptions.defectRetryPolicy = options.defectRetryPolicy;
+
+    return entity.toLayerQueue(
+      build,
+      Object.keys(clusterOptions).length > 0 ? clusterOptions : undefined,
+    ) as unknown as Layer.Layer<never, never, R>;
   },
 };

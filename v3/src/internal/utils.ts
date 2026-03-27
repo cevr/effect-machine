@@ -63,6 +63,38 @@ export const makeReply = <State, Reply>(state: State, reply: Reply): ReplyResult
 export const isReplyResult = (value: unknown): value is ReplyResult<unknown, unknown> =>
   value !== null && typeof value === "object" && ReplyResultSymbol in value;
 
+// ============================================================================
+// DeferReplyResult — signal that spawn handler will reply later
+// ============================================================================
+
+const DeferReplySymbol: unique symbol = Symbol.for("effect-machine/DeferReply");
+export type DeferReplySymbol = typeof DeferReplySymbol;
+
+/**
+ * Branded deferred reply result from a transition handler.
+ * Signals that the reply will be settled later by `self.reply()` in a spawn handler.
+ * Created via `Machine.deferReply(state)`.
+ */
+export interface DeferReplyResult<State> {
+  readonly state: State;
+  readonly [DeferReplySymbol]: true;
+}
+
+/**
+ * Create a deferred reply result. Handler returns this to signal
+ * "spawn handler will call self.reply(value) later".
+ */
+export const makeDeferReply = <State>(state: State): DeferReplyResult<State> => ({
+  state,
+  [DeferReplySymbol]: true as const,
+});
+
+/**
+ * Type guard for DeferReplyResult.
+ */
+export const isDeferReplyResult = (value: unknown): value is DeferReplyResult<unknown> =>
+  value !== null && typeof value === "object" && DeferReplySymbol in value;
+
 /**
  * Transition handler result.
  * - When Reply is `never`: handler returns plain State (no reply allowed)
@@ -70,7 +102,10 @@ export const isReplyResult = (value: unknown): value is ReplyResult<unknown, unk
  */
 export type TransitionResult<State, R, Reply = never> = [Reply] extends [never]
   ? State | Effect.Effect<State, never, R>
-  : ReplyResult<State, Reply> | Effect.Effect<ReplyResult<State, Reply>, never, R>;
+  :
+      | ReplyResult<State, Reply>
+      | DeferReplyResult<State>
+      | Effect.Effect<ReplyResult<State, Reply> | DeferReplyResult<State>, never, R>;
 
 // ============================================================================
 // Constants

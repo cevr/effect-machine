@@ -46,7 +46,7 @@ import type { Schema, ServiceMap, Duration } from "effect";
 import { Cause, Effect, Exit, Option, Scope } from "effect";
 
 import type { TransitionResult, ReplyResult } from "./internal/utils.js";
-import { getTag, stubSystem, makeReply } from "./internal/utils.js";
+import { getTag, stubSystem, makeReply, makeDeferReply } from "./internal/utils.js";
 import type {
   TaggedOrConstructor,
   BrandedState,
@@ -93,6 +93,12 @@ export interface MachineRef<Event> {
     id: string,
     machine: BuiltMachine<S2, E2, R2>,
   ) => Effect.Effect<ActorRef<S2, E2>, DuplicateActorError, R2>;
+  /**
+   * Settle a deferred reply from a spawn handler.
+   * Only usable when the transition handler returned `Machine.deferReply(state)`.
+   * Returns true if a pending reply was settled, false if none was pending.
+   */
+  readonly reply: (value: unknown) => Effect.Effect<boolean>;
 }
 
 /**
@@ -1133,6 +1139,7 @@ const replayImpl = Effect.fn("effect-machine.replay")(function* <
     send: dummySend,
     cast: dummySend,
     spawn: () => Effect.die("spawn not supported in replay"),
+    reply: () => Effect.succeed(false),
   };
 
   for (const event of events) {
@@ -1204,6 +1211,7 @@ export const replay: <S extends { readonly _tag: string }, E extends { readonly 
 // Transition lookup (introspection)
 export { findTransitions } from "./internal/transition.js";
 
-// Reply helper
+// Reply helpers
 export const reply = makeReply;
-export type { ReplyResult } from "./internal/utils.js";
+export const deferReply = makeDeferReply;
+export type { ReplyResult, DeferReplyResult } from "./internal/utils.js";

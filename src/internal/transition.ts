@@ -14,8 +14,8 @@ import type { Machine, MachineRef, Transition, SpawnEffect, HandlerContext } fro
 import { BuiltMachine } from "../machine.js";
 import type { ActorSystem } from "../actor.js";
 import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
-import { isEffect, isReplyResult, INTERNAL_ENTER_EVENT } from "./utils.js";
-import type { ReplyResult } from "./utils.js";
+import { isEffect, isReplyResult, isDeferReplyResult, INTERNAL_ENTER_EVENT } from "./utils.js";
+import type { ReplyResult, DeferReplyResult } from "./utils.js";
 
 // ============================================================================
 // Transition Execution
@@ -65,9 +65,9 @@ export const runTransitionHandler = Effect.fn("effect-machine.runTransitionHandl
   const raw = transition.handler(handlerCtx);
 
   const resolved = isEffect(raw)
-    ? yield* (raw as Effect.Effect<S | ReplyResult<S, unknown>, never, R>).pipe(
-        Effect.provideService(machine.Context, ctx),
-      )
+    ? yield* (
+        raw as Effect.Effect<S | ReplyResult<S, unknown> | DeferReplyResult<S>, never, R>
+      ).pipe(Effect.provideService(machine.Context, ctx))
     : raw;
 
   // Detect branded ReplyResult (created via Machine.reply())
@@ -75,11 +75,22 @@ export const runTransitionHandler = Effect.fn("effect-machine.runTransitionHandl
     return {
       newState: resolved.state as S,
       hasReply: true,
+      deferReply: false,
       reply: resolved.reply,
     };
   }
 
-  return { newState: resolved as S, hasReply: false, reply: undefined };
+  // Detect branded DeferReplyResult (created via Machine.deferReply())
+  if (isDeferReplyResult(resolved)) {
+    return {
+      newState: resolved.state as S,
+      hasReply: false,
+      deferReply: true,
+      reply: undefined,
+    };
+  }
+
+  return { newState: resolved as S, hasReply: false, deferReply: false, reply: undefined };
 });
 
 /**
@@ -115,11 +126,12 @@ export const executeTransition = Effect.fn("effect-machine.executeTransition")(f
       transitioned: false,
       reenter: false,
       hasReply: false,
+      deferReply: false,
       reply: undefined,
     };
   }
 
-  const { newState, hasReply, reply } = yield* runTransitionHandler(
+  const { newState, hasReply, deferReply, reply } = yield* runTransitionHandler(
     machine,
     transition,
     currentState,
@@ -134,6 +146,7 @@ export const executeTransition = Effect.fn("effect-machine.executeTransition")(f
     transitioned: true,
     reenter: transition.reenter === true,
     hasReply,
+    deferReply,
     reply,
   };
 });
@@ -180,6 +193,8 @@ export interface ProcessEventResult<S> {
   readonly isFinal: boolean;
   /** Whether the handler provided a reply (structural, not value-based) */
   readonly hasReply: boolean;
+  /** Whether the handler deferred the reply to a spawn handler (Machine.deferReply) */
+  readonly deferReply: boolean;
   /** Domain reply value from handler (used by ask). Only meaningful when hasReply is true. */
   readonly reply?: unknown;
   /** Whether the event was postponed (buffered for retry after next state change) */
@@ -263,6 +278,7 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
       lifecycleRan: false,
       isFinal: false,
       hasReply: false,
+      deferReply: false,
       reply: undefined,
       postponed: false,
     };
@@ -310,6 +326,7 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
     lifecycleRan: runLifecycle,
     isFinal: machine.finalStates.has(newState._tag),
     hasReply: result.hasReply,
+    deferReply: result.deferReply,
     reply: result.reply,
     postponed: false,
   };

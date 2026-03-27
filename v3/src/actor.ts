@@ -764,6 +764,7 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
           lifecycleRan: false,
           isFinal: false,
           hasReply: false,
+          deferReply: false,
           reply: undefined,
           postponed: true,
         };
