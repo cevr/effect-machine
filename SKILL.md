@@ -49,7 +49,6 @@ const machine = Machine.make({
 | `.final(state)`                        | Mark final state                                            |
 | `.build({ slot: impl })`               | Wire implementations, returns `BuiltMachine` (terminal)     |
 | `.build()`                             | Finalize no-slot machine, returns `BuiltMachine` (terminal) |
-| `.persist(config)`                     | Enable persistence                                          |
 
 ## State.derive()
 
@@ -134,19 +133,9 @@ Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))
 | `actor.system`                   | Access the actor's `ActorSystem`            |
 | `actor.children`                 | Child actors (`ReadonlyMap`)                |
 
-## ask / reply
+## ask / reply (local actor)
 
-Handlers return `{ state, reply }` for domain replies:
-
-```ts
-.on(State.Active, Event.GetCount, ({ state }) => ({
-  state,
-  reply: state.count,
-}))
-
-// Caller:
-const count = yield* actor.ask<number>(Event.GetCount);
-```
+See "ask / reply (updated)" section below for the current API using `Event.reply()` and `Machine.reply()`.
 
 Fails with `NoReplyError` if handler doesn't reply, `ActorStoppedError` on stop.
 
@@ -223,12 +212,67 @@ expect(result.newState._tag).toBe("Loading");
 9. **Sync helpers**: Use `actor.sync.*` (not top-level `sendSync`/`snapshotSync`)
 10. **ActorStoppedError**: Pending `call`/`ask` Deferreds settled on stop
 
+## Cluster / Entity Machines
+
+Wire machines to `@effect/cluster` for distributed actors:
+
+```ts
+import { toEntity, EntityMachine, PersistenceAdapter } from "effect-machine/cluster";
+
+const OrderEntity = toEntity(orderMachine, { type: "Order" });
+
+const OrderEntityLayer = EntityMachine.layer(OrderEntity, orderMachine, {
+  initializeState: (entityId) => OrderState.Pending({ orderId: entityId }),
+  persistence: { strategy: "journal" }, // or "snapshot" (default)
+});
+```
+
+| Export                                        | Purpose                                                             |
+| --------------------------------------------- | ------------------------------------------------------------------- |
+| `toEntity(machine, { type })`                 | Generate `Entity` definition with Send/Ask/GetState/WatchState RPCs |
+| `EntityMachine.layer(entity, machine, opts?)` | Wire machine to cluster Entity layer                                |
+| `makeEntityActorRef(client, id)`              | Typed client wrapper (send/ask/snapshot/watch/waitFor)              |
+| `PersistenceAdapter`                          | Service tag for storage backend                                     |
+| `makeInMemoryPersistenceAdapter`              | In-memory adapter for testing                                       |
+
+**Persistence strategies:**
+
+- **snapshot**: background scheduler + deactivation finalizer. No journal.
+- **journal**: inline event append on each RPC, replay on reactivation. Deactivation snapshot as fallback.
+
+**EntityMachineOptions:** `initializeState`, `hooks`, `maxIdleTime`, `mailboxCapacity`, `disableFatalDefects`, `defectRetryPolicy`, `persistence`
+
+## ask / reply (updated)
+
+Events declare reply schemas via `Event.reply()`. Handlers use `Machine.reply()`:
+
+```ts
+const MyEvent = Event({
+  GetCount: Event.reply({}, Schema.Number),
+  Reset: {},
+});
+
+.on(State.Active, Event.GetCount, ({ state }) =>
+  Machine.reply(state, state.count),
+)
+
+const count = yield* actor.ask(Event.GetCount);  // number
+```
+
+Deferred replies via `Machine.deferReply()` — spawn handler settles later via `self.reply(value)`.
+
 ## Files
 
-| File         | Purpose                  |
-| ------------ | ------------------------ |
-| `machine.ts` | Machine builder          |
-| `schema.ts`  | State/Event + derive     |
-| `slot.ts`    | Slot.Guards/Slot.Effects |
-| `actor.ts`   | ActorSystem, event loop  |
-| `testing.ts` | simulate, harness        |
+| File                            | Purpose                                |
+| ------------------------------- | -------------------------------------- |
+| `machine.ts`                    | Machine builder                        |
+| `schema.ts`                     | State/Event + derive                   |
+| `slot.ts`                       | Slot.Guards/Slot.Effects               |
+| `actor.ts`                      | ActorSystem, event loop                |
+| `testing.ts`                    | simulate, harness                      |
+| `internal/runtime.ts`           | Shared runtime kernel (entity-machine) |
+| `cluster/entity-machine.ts`     | Entity-machine adapter + persistence   |
+| `cluster/persistence.ts`        | Adapter interface, types, service tag  |
+| `cluster/adapters/in-memory.ts` | In-memory persistence adapter          |
+| `cluster/entity-actor-ref.ts`   | Typed entity client wrapper            |
+| `cluster/to-entity.ts`          | Entity definition generator            |
