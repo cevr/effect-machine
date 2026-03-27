@@ -234,6 +234,49 @@ Handlers are strictly typed - `.build()` is the only way to add requirements:
 - `.onAny()` cannot provide replies — reply-bearing events should have specific `.on()` handlers
 - Reply decode failures (schema mismatch) are defects — handler bug, not business logic
 
+## Cluster / Entity Machines
+
+Wire machines to `@effect/cluster` for distributed actors:
+
+```ts
+import { toEntity, EntityMachine } from "effect-machine/cluster";
+
+const OrderEntity = toEntity(orderMachine, { type: "Order" });
+const OrderEntityLayer = EntityMachine.layer(OrderEntity, orderMachine, {
+  initializeState: (entityId) => OrderState.Pending({ orderId: entityId }),
+  persistence: { strategy: "journal" },
+});
+```
+
+- `toEntity` generates Entity with Send/Ask/GetState/WatchState RPCs
+- `EntityMachine.layer` wires machine to cluster via shared runtime kernel (`src/internal/runtime.ts`)
+- Runtime kernel: single-queue event loop, postpone, background/spawn effects, final-state detection
+- `EntityActorRef`: typed client wrapper (send/ask/snapshot/watch/waitFor with snapshot-first semantics)
+- `self.spawn`: implicit `ActorSystem` created if none in context
+- `self.reply` / `Machine.deferReply()`: deferred replies from spawn handlers
+- WatchState: streaming RPC via `SubscriptionRef.changes` (skipped in tests — effect beta Queue bug)
+
+### Entity Persistence
+
+Opt-in via `EntityMachineOptions.persistence`:
+
+- **Snapshot strategy** (default): background `SubscriptionRef.changes` scheduler + deactivation finalizer
+- **Journal strategy**: inline event append on each Send/Ask RPC, replay on reactivation via `Machine.replay`
+- `PersistenceAdapter` service tag resolved from context (zero overhead when absent)
+- `PersistenceKey = { entityType, entityId }` prevents cross-type collisions
+- Journal append failures defect entity (`Effect.orDie`) — cluster retry restarts from snapshot
+- Snapshot scheduler only runs in snapshot-only mode (no state/version tear in journal mode)
+- Hydration: snapshot → journal replay → `initializeState` → `machine.initial`
+- `makeInMemoryPersistenceAdapter` for testing (CAS on appends, monotonic on snapshots)
+
+### Cluster Gotchas
+
+- Entity tests use `Entity.makeTestClient` + `ShardingConfig.layer` + `Effect.scoped`
+- `EntityMachine.layer` accepts raw `Machine`, not `BuiltMachine` — no cast needed
+- Entity RPCs use `.tag` field (not `._tag`) to distinguish request types
+- WatchState test skipped due to effect beta Queue bug in `takeBetweenUnsafe`
+- v3 backport: `entity.toLayer` (not `toLayerQueue`), `stubSystem` (not `makeSystem`), no snapshot scheduler
+
 ## Documentation
 
 - `SKILL.md` - AI agent quick reference
