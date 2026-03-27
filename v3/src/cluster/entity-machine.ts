@@ -328,7 +328,11 @@ const hydratePersistence = <
     return { adapter, key, hydratedState: undefined, initialVersion: 0 };
   });
 
-/** Append a single event to the journal, incrementing version. Errors logged, don't crash. */
+/**
+ * Append a single event to the journal, incrementing version.
+ * Best-effort: failures are logged but don't crash the entity.
+ * The deactivation snapshot acts as a fallback recovery point.
+ */
 const persistEvent = <E>(
   adapter: PersistenceAdapter,
   key: PersistenceKey,
@@ -345,4 +349,7 @@ const persistEvent = <E>(
     };
     yield* adapter.appendEvents(key, [persisted], expectedVersion);
     yield* Ref.set(versionRef, newVersion);
-  }).pipe(Effect.catchAll(() => Effect.void));
+  }).pipe(
+    Effect.tapError((error) => Effect.logWarning("Journal append failed", { key, error })),
+    Effect.catchAll(() => Effect.void),
+  );

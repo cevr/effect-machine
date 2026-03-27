@@ -162,29 +162,34 @@ export const EntityMachine = {
       });
 
       // ----------------------------------------------------------------
-      // Persistence: snapshot scheduler (background, best-effort)
+      // Persistence: snapshot scheduling
       // ----------------------------------------------------------------
       if (persistCtx.adapter !== undefined) {
         const { adapter: pAdapter, key } = persistCtx;
+        const strategy = persistence?.strategy ?? "snapshot";
         const schedule = persistence?.snapshotSchedule;
 
-        // Background snapshot fiber — scoped to entity activation
-        yield* SubscriptionRef.changes(runtime.stateRef).pipe(
-          schedule !== undefined ? Stream.schedule(schedule) : (s: Stream.Stream<S>) => s,
-          Stream.runForEach((state) =>
-            Effect.gen(function* () {
-              const version = yield* Ref.get(versionRef);
-              yield* pAdapter.saveSnapshot(key, {
-                state,
-                version,
-                timestamp: Date.now(),
-              } satisfies Snapshot<S>);
-            }).pipe(Effect.catch(() => Effect.void)),
-          ),
-          Effect.forkScoped,
-        );
+        if (strategy === "snapshot") {
+          // Snapshot-only mode: background scheduler is safe (no journal to tear against)
+          yield* SubscriptionRef.changes(runtime.stateRef).pipe(
+            schedule !== undefined ? Stream.schedule(schedule) : (s: Stream.Stream<S>) => s,
+            Stream.runForEach((state) =>
+              Effect.gen(function* () {
+                const version = yield* Ref.get(versionRef);
+                yield* pAdapter.saveSnapshot(key, {
+                  state,
+                  version,
+                  timestamp: Date.now(),
+                } satisfies Snapshot<S>);
+              }).pipe(Effect.catch(() => Effect.void)),
+            ),
+            Effect.forkScoped,
+          );
+        }
+        // Journal mode: no background scheduler — snapshot only on deactivation
+        // to avoid state/version tear between concurrent SubscriptionRef and versionRef reads
 
-        // Deactivation finalizer — save final snapshot
+        // Deactivation finalizer — save final snapshot (safe: runs after event loop stops)
         yield* Effect.addFinalizer(() =>
           Effect.gen(function* () {
             const state = yield* SubscriptionRef.get(runtime.stateRef);
@@ -388,7 +393,11 @@ const hydratePersistence = <
     return { adapter, key, hydratedState: undefined, initialVersion: 0 };
   });
 
-/** Append a single event to the journal, incrementing version. Errors logged, don't crash. */
+/**
+ * Append a single event to the journal, incrementing version.
+ * Best-effort: failures are logged but don't crash the entity.
+ * The deactivation snapshot acts as a fallback recovery point.
+ */
 const persistEvent = <E>(
   adapter: PersistenceAdapter,
   key: PersistenceKey,
@@ -405,4 +414,7 @@ const persistEvent = <E>(
     };
     yield* adapter.appendEvents(key, [persisted], expectedVersion);
     yield* Ref.set(versionRef, newVersion);
-  }).pipe(Effect.catch(() => Effect.void));
+  }).pipe(
+    Effect.tapError((error) => Effect.logWarning("Journal append failed", { key, error })),
+    Effect.catch(() => Effect.void),
+  );
