@@ -1,5 +1,5 @@
 ---
-"effect-machine": major
+"effect-machine": minor
 ---
 
 Delete monolithic persistence subsystem, add composable primitives.
