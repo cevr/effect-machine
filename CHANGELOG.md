@@ -1,5 +1,33 @@
 # effect-machine
 
+## 0.11.0
+
+### Minor Changes
+
+- [`6bdee0c`](https://github.com/cevr/effect-machine/commit/6bdee0c8ed38ea644f6197b6a26e729673f3ac36) Thanks [@cevr](https://github.com/cevr)! - Delete monolithic persistence subsystem, add composable primitives.
+
+  **Added:**
+  - `Machine.replay(built, events, { from? })` — fold events through transition handlers to compute state. Respects postpone rules and final-state cutoff. Runs effectful handlers with stubbed self/system.
+  - `actor.transitions` — PubSub-backed stream of `{ fromState, toState, event }` on every successful transition. Observational, not a durability guarantee.
+
+  **Removed:**
+  - `PersistenceAdapter`, `PersistenceAdapterTag`, `PersistenceError`, `VersionConflictError`
+  - `PersistentMachine`, `PersistentActorRef`, `PersistenceConfig`
+  - `createPersistentActor`, `restorePersistentActor`, `isPersistentMachine`
+  - `InMemoryPersistenceAdapter`, `makeInMemoryPersistenceAdapter`
+  - `Machine.persist()`, `BuiltMachine.persist()`
+  - `ActorSystem.restore`, `ActorSystem.restoreMany`, `ActorSystem.restoreAll`, `ActorSystem.listPersisted`
+
+  **Migration:** Compose persistence from primitives:
+  - Snapshot: `actor.changes` → save to your store
+  - Event journal: `actor.transitions` → append events
+  - Restore from snapshot: `Machine.spawn(machine, { hydrate: loadedState })`
+  - Restore from events: `Machine.replay(machine, events)` → `Machine.spawn(machine, { hydrate: state })`
+
+### Patch Changes
+
+- [`3ff2dfb`](https://github.com/cevr/effect-machine/commit/3ff2dfb421e17818fcadf1195e5e943d10ed9448) Thanks [@cevr](https://github.com/cevr)! - Fix multi-stage postpone drain in live actor event loop. Previously, postponed events were drained in a single pass — if a drained event caused a state change that made other postponed events runnable, they waited until the next mailbox event. Now loops until stable, matching simulate() and replay() behavior.
+
 ## 0.10.0
 
 ### Minor Changes
