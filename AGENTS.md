@@ -5,6 +5,7 @@ Type-safe state machines for Effect.
 ## Commands
 
 ```bash
+bun run gate          # typecheck + lint + test + build
 bun test              # Run tests
 bun run typecheck     # TypeScript check
 bun run lint          # oxlint
@@ -26,127 +27,117 @@ bun run fmt           # oxfmt
 ```ts
 const machine = Machine.make({ state, event, initial })
   .on(State.Idle, Event.Start, () => State.Running)
-  .on([State.Draft, State.Review], Event.Cancel, () => State.Cancelled)  // multi-state
-  .onAny(Event.Reset, () => State.Idle)  // wildcard (any state)
+  .on([State.Draft, State.Review], Event.Cancel, () => State.Cancelled) // multi-state
+  .onAny(Event.Reset, () => State.Idle) // wildcard (any state)
   .spawn(State.Running, ({ effects }) => effects.poll())
-  .timeout(State.Loading, { duration: Duration.seconds(30), event: Event.Timeout })  // gen_statem
-  .postpone(State.Connecting, Event.Data)  // gen_statem
-  .final(State.Done)
-  .build({ poll: () => Effect.forever(...) });
+  .timeout(State.Loading, { duration: Duration.seconds(30), event: Event.Timeout })
+  .postpone(State.Connecting, Event.Data)
+  .final(State.Done);
 ```
 
 - Builder methods mutate `this`, return `this`
-- `.build()` is terminal — returns `BuiltMachine`, no further chaining
-- No-slot machines: `.build()` with no args
+- Builder chain ends naturally — no terminal method needed
 - `.onAny()` fires when no specific `.on()` matches for that event
-
-## State.derive()
-
-Construct state from existing source — picks overlapping fields, applies overrides:
-
-```ts
-// Same-state: preserve other fields
-State.Active.derive(state, { count: state.count + 1 });
-
-// Cross-state: picks only target fields from source
-State.Shipped.derive(state, { trackingId: event.trackingId });
-
-// Empty variant: returns { _tag: "Idle" }
-State.Idle.derive(anyState);
-```
 
 ## Slots
 
-Guards and effects are parameterized slots:
+Guards and effects are parameterized slots. Handlers provided at spawn time:
 
 ```ts
 const MyGuards = Slot.Guards({ canRetry: { max: Schema.Number } });
 const MyEffects = Slot.Effects({ fetch: { url: Schema.String } });
 
-machine
-  .on(State.X, Event.Y, ({ guards, effects }) =>
+const machine = Machine.make({ state, event, guards: MyGuards, effects: MyEffects, initial }).on(
+  State.X,
+  Event.Y,
+  ({ guards, effects }) =>
     Effect.gen(function* () {
       if (yield* guards.canRetry({ max: 3 })) {
         yield* effects.fetch({ url: "/api" });
       }
       return State.Z;
     }),
-  )
-  .build({
-    canRetry: ({ max }, { state }) => state.attempts < max,
-    fetch: ({ url }, { self }) => Http.get(url).pipe(Effect.tap(() => self.send(Event.Done))),
+);
+
+// Provide slot implementations at spawn time
+const actor =
+  yield *
+  Machine.spawn(machine, {
+    slots: {
+      canRetry: ({ max }, { state }) => state.attempts < max,
+      fetch: ({ url }, { self }) => Http.get(url),
+    },
   });
 ```
 
 ## Running Machines
 
-**Simple (no registry):** caller manages lifetime via `actor.stop`. Auto-cleans up if `Scope` present.
+**Simple (no registry):**
 
 ```ts
 const actor = yield * Machine.spawn(machine);
 yield * actor.stop; // caller responsible
 
-// or inside a scope — auto-cleanup on scope close:
+// Scope-aware — auto-cleanup:
 yield *
   Effect.scoped(
     Effect.gen(function* () {
       const actor = yield* Machine.spawn(machine);
-      // actor.stop called automatically
+      // actor.stop called automatically when scope closes
     }),
   );
 ```
 
-**With registry/persistence:** actors clean up on system layer teardown.
+**With registry:**
 
 ```ts
 const system = yield * ActorSystemService;
 const actor = yield * system.spawn("my-id", machine);
 ```
 
-**Lifecycle:** `Machine.spawn` and `system.spawn` do NOT require `Scope.Scope` in `R`. Both detect scope via `Effect.serviceOption` — if present, attach finalizer; if absent, skip. Forgetting `actor.stop` without a scope = permanent fiber leak.
+**Lifecycle:** `Machine.spawn` and `system.spawn` detect scope via `Effect.serviceOption` — if present, attach finalizer; if absent, skip. Forgetting `actor.stop` without a scope = permanent fiber leak.
 
 ## Child Actors
 
 Spawn children from `.spawn()`/`.background()` handlers via `self.spawn(id, childMachine)`:
 
 ```ts
-machine
-  .spawn(State.Active, ({ self }) =>
-    Effect.gen(function* () {
-      const child = yield* self.spawn("worker-1", workerMachine);
-      yield* child.send(WorkerEvent.Start);
-      // child auto-stopped when parent exits Active state
-    }),
-  )
-  .build();
+machine.spawn(State.Active, ({ self }) =>
+  Effect.gen(function* () {
+    const child = yield* self.spawn("worker-1", workerMachine).pipe(Effect.orDie);
+    yield* child.send(WorkerEvent.Start);
+    // child auto-stopped when parent exits Active state
+  }),
+);
 ```
 
 - Children spawned in `.spawn()` handlers are **state-scoped** — auto-stopped on state exit
 - Children spawned in `.background()` handlers live for machine lifetime
-- `self.spawn` returns `Effect<ActorRef, DuplicateActorError, R>` — use `Effect.orDie` in handlers since error channel must be `never`
-- Every `ActorRef` has `actor.system` for external child access: `actor.system.get("worker-1")`
-- Every actor always has a system — `Machine.spawn` creates an implicit one if none in context
+- `self.spawn` returns `Effect<ActorRef, DuplicateActorError, R>` — use `Effect.orDie` in handlers
+- Every `ActorRef` has `actor.system` for child access: `actor.system.get("worker-1")`
 
 ## ActorRef API
 
 ```ts
-actor.send(event); // Effect — fire-and-forget (queue event)
-actor.cast(event); // Effect — alias for send (OTP gen_server:cast)
-actor.call(event); // Effect — request-reply, returns ProcessEventResult
-actor.ask(event); // Effect — typed reply (event must have reply schema)
-actor.waitFor(State.X); // Wait for state (accepts constructor or predicate)
-actor.sendAndWait(ev, X); // Send + wait for state
-actor.awaitFinal; // Wait for final state
-actor.subscribe(fn); // Sync callback, returns unsubscribe
-actor.system; // ActorSystem — access child actors via .get(id)
-actor.children; // ReadonlyMap<string, ActorRef> — child actors spawned via self.spawn
+actor.send(event); // fire-and-forget
+actor.cast(event); // alias for send
+actor.call(event); // request-reply, returns ProcessEventResult
+actor.ask(event); // typed reply (event must have Event.reply())
+actor.waitFor(State.X); // wait for state (constructor or predicate)
+actor.sendAndWait(ev, X); // send + wait for state
+actor.awaitFinal; // wait for final state
+actor.watch(other); // completes when other actor stops
+actor.drain; // process remaining queue, then stop
+actor.subscribe(fn); // sync callback, returns unsubscribe
+actor.system; // ActorSystem
+actor.children; // ReadonlyMap<string, ActorRef>
 
-// Sync helpers (for UI hooks, React, Solid)
-actor.sync.send(event); // Fire-and-forget
-actor.sync.stop(); // Stop actor
-actor.sync.snapshot(); // Get current state
-actor.sync.matches(tag); // Check state tag
-actor.sync.can(event); // Can handle event?
+// Sync helpers (for UI hooks)
+actor.sync.send(event);
+actor.sync.stop();
+actor.sync.snapshot();
+actor.sync.matches(tag);
+actor.sync.can(event);
 ```
 
 ## ask / reply
@@ -155,84 +146,42 @@ Events declare reply schemas via `Event.reply()`. Handlers use `Machine.reply()`
 
 ```ts
 const MyEvent = Event({
-  GetCount: Event.reply({}, Schema.Number),  // askable
-  Reset: {},                                  // not askable
+  GetCount: Event.reply({}, Schema.Number),
+  Reset: {},
 });
 
-// Handler — must use Machine.reply() for reply-bearing events
 .on(State.Active, Event.GetCount, ({ state }) =>
   Machine.reply(state, state.count),
 )
 
-// Caller — type inferred from schema, no generic needed
 const count = yield* actor.ask(Event.GetCount);  // number
-// actor.ask(Event.Reset) — type error (no reply schema)
 ```
-
-## System Observation
-
-Observe actors joining/leaving the system:
-
-```ts
-const system = yield * ActorSystemService;
-
-// Sync callback (like ActorRef.subscribe pattern)
-const unsub = system.subscribe((event) => {
-  // event: { _tag: "ActorSpawned" | "ActorStopped", id: string, actor: ActorRef }
-});
-
-// Sync snapshot of all registered actors
-const actors: ReadonlyMap<string, ActorRef> = system.actors;
-
-// Async stream (each subscriber gets own queue — late subscribers miss prior events)
-yield *
-  system.events.pipe(
-    Stream.tap((e) => Effect.log(e._tag, e.id)),
-    Stream.runDrain,
-  );
-```
-
-- `system.actors` returns a new Map on each access (snapshot, not live)
-- No events emitted during system teardown (PubSub is shutting down)
-- Works with both explicit (`ActorSystemDefault`) and implicit (`Machine.spawn`) systems
-
-## spawn vs on
-
-- `.on()` - transitions, guards/effects run inline
-- `.spawn()` - state-scoped effects, forked, auto-cancelled on exit
-- `.background()` - machine-lifetime effects
 
 ## Handler Type Constraints
 
-Handlers are strictly typed - `.build()` is the only way to add requirements:
+| Method                       | Allowed R | Why                                   |
+| ---------------------------- | --------- | ------------------------------------- |
+| `.on()` / `.reenter()`       | `never`   | Pure transitions, no services         |
+| `.spawn()` / `.background()` | `Scope`   | Finalizers allowed                    |
+| `spawn(..., { slots })`      | Any R     | Slot implementations can use services |
 
-| Method                       | Allowed R | Why                                        |
-| ---------------------------- | --------- | ------------------------------------------ |
-| `.on()` / `.reenter()`       | `never`   | Pure transitions, no services              |
-| `.spawn()` / `.background()` | `Scope`   | Finalizers allowed (`Effect.addFinalizer`) |
-| `.build()`                   | Any R     | Slot implementations can use services      |
-
-- Handlers cannot require arbitrary services - use slots + `build()`
-- Handlers cannot produce errors - error channel fixed to `never`
-- Handlers must return machine's state schema - wrong states rejected at compile time
-- Reply-bearing event handlers must use `Machine.reply(state, value)` for `ask()` domain replies
+- Handlers cannot require arbitrary services — use slots
+- Handlers cannot produce errors — error channel fixed to `never`
+- Handlers must return machine's state schema — wrong states rejected at compile time
 
 ## Gotchas
 
-- Never `throw` in Effect.gen - use `yield* Effect.fail()`
-- `yield* Effect.yieldNow()` after `send()` to let effects run
+- Never `throw` in Effect.gen — use `yield* Effect.fail()`
+- `yield* Effect.yieldNow` after `send()` to let effects run
 - `simulate()`/`createTestHarness()` don't run spawn effects
-- Same-state transitions skip spawn/finalizers - use `.reenter()` to force
-- TestClock needs `TestContext.TestContext` layer
+- Same-state transitions skip spawn/finalizers — use `.reenter()` to force
 - Empty structs: `State.Idle` not `State.Idle()`
 - `.onAny()` only fires when no specific `.on()` matches
-- `.build()` is terminal — no `.on()`, `.final()` after it
-- `self.spawn` errors with `DuplicateActorError` — handlers require `never` error, so wrap with `Effect.orDie`
-- Sync helpers live on `actor.sync.*` (not top-level `sendSync`/`snapshotSync`)
+- `self.spawn` errors with `DuplicateActorError` — wrap with `Effect.orDie`
+- Sync helpers live on `actor.sync.*`
 - Pending `call`/`ask` Deferreds settled with `ActorStoppedError` on stop
 - `ask()` only accepts events with `Event.reply()` — non-reply events are a type error
-- `.onAny()` cannot provide replies — reply-bearing events should have specific `.on()` handlers
-- Reply decode failures (schema mismatch) are defects — handler bug, not business logic
+- Reply decode failures (schema mismatch) are defects
 
 ## Cluster / Entity Machines
 
@@ -249,34 +198,26 @@ const OrderEntityLayer = EntityMachine.layer(OrderEntity, orderMachine, {
 ```
 
 - `toEntity` generates Entity with Send/Ask/GetState/WatchState RPCs
-- `EntityMachine.layer` wires machine to cluster via shared runtime kernel (`src/internal/runtime.ts`)
-- Runtime kernel: single-queue event loop, postpone, background/spawn effects, final-state detection
-- `EntityActorRef`: typed client wrapper (send/ask/snapshot/watch/waitFor with snapshot-first semantics)
-- `self.spawn`: implicit `ActorSystem` created if none in context
-- `self.reply` / `Machine.deferReply()`: deferred replies from spawn handlers
-- WatchState: streaming RPC via `SubscriptionRef.changes` (skipped in tests — effect beta Queue bug)
+- `EntityMachine.layer` wires machine to cluster via shared runtime kernel
+- `EntityActorRef`: typed client wrapper (send/ask/snapshot/watch/waitFor)
 
 ### Entity Persistence
 
 Opt-in via `EntityMachineOptions.persistence`:
 
-- **Snapshot strategy** (default): background `SubscriptionRef.changes` scheduler + deactivation finalizer
-- **Journal strategy**: inline event append on each Send/Ask RPC, replay on reactivation via `Machine.replay`
-- `PersistenceAdapter` service tag resolved from context (zero overhead when absent)
-- `PersistenceKey = { entityType, entityId }` prevents cross-type collisions
-- Journal append failures defect entity (`Effect.orDie`) — cluster retry restarts from snapshot
-- Snapshot scheduler only runs in snapshot-only mode (no state/version tear in journal mode)
+- **Snapshot strategy** (default): background scheduler + deactivation finalizer
+- **Journal strategy**: inline event append on each RPC, replay on reactivation
+- `PersistenceAdapter` service tag resolved from context
+- Journal append failures defect entity — cluster retry restarts from snapshot
 - Hydration: snapshot → journal replay → `initializeState` → `machine.initial`
-- `makeInMemoryPersistenceAdapter` for testing (CAS on appends, monotonic on snapshots)
 
 ### Cluster Gotchas
 
 - Entity tests use `Entity.makeTestClient` + `ShardingConfig.layer` + `Effect.scoped`
-- `EntityMachine.layer` accepts raw `Machine`, not `BuiltMachine` — no cast needed
+- `EntityMachine.layer` accepts raw `Machine`
 - Entity RPCs use `.tag` field (not `._tag`) to distinguish request types
-- WatchState test skipped due to effect beta Queue bug in `takeBetweenUnsafe`
-- v3 backport: `entity.toLayer` (not `toLayerQueue`), `stubSystem` (not `makeSystem`), no snapshot scheduler
+- WatchState test skipped due to effect beta Queue bug
 
 ## Documentation
 
-- `SKILL.md` - AI agent quick reference
+- `SKILL.md` — AI agent quick reference

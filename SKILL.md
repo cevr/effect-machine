@@ -36,19 +36,17 @@ const machine = Machine.make({
 
 ## Key Methods
 
-| Method                                 | Purpose                                                     |
-| -------------------------------------- | ----------------------------------------------------------- |
-| `.on(state, event, handler)`           | Add transition                                              |
-| `.on([stateA, stateB], event, h)`      | Multi-state transition                                      |
-| `.onAny(event, handler)`               | Wildcard (any state, specific .on wins)                     |
-| `.reenter(state, event, handler)`      | Force lifecycle on same-state                               |
-| `.spawn(state, handler)`               | State-scoped effect (auto-cancelled)                        |
-| `.timeout(state, { duration, event })` | State timeout (gen_statem)                                  |
-| `.postpone(state, event/events)`       | Postpone event in state (gen_statem)                        |
-| `.background(handler)`                 | Machine-lifetime effect                                     |
-| `.final(state)`                        | Mark final state                                            |
-| `.build({ slot: impl })`               | Wire implementations, returns `BuiltMachine` (terminal)     |
-| `.build()`                             | Finalize no-slot machine, returns `BuiltMachine` (terminal) |
+| Method                                 | Purpose                                 |
+| -------------------------------------- | --------------------------------------- |
+| `.on(state, event, handler)`           | Add transition                          |
+| `.on([stateA, stateB], event, h)`      | Multi-state transition                  |
+| `.onAny(event, handler)`               | Wildcard (any state, specific .on wins) |
+| `.reenter(state, event, handler)`      | Force lifecycle on same-state           |
+| `.spawn(state, handler)`               | State-scoped effect (auto-cancelled)    |
+| `.timeout(state, { duration, event })` | State timeout (gen_statem)              |
+| `.postpone(state, event/events)`       | Postpone event in state (gen_statem)    |
+| `.background(handler)`                 | Machine-lifetime effect                 |
+| `.final(state)`                        | Mark final state                        |
 
 ## State.derive()
 
@@ -71,18 +69,26 @@ State.Idle.derive(anyState); // → { _tag: "Idle" }
 const Guards = Slot.Guards({ canRetry: { max: Schema.Number } });
 const Effects = Slot.Effects({ fetch: { url: Schema.String } });
 
-machine
-  .on(State.X, Event.Y, ({ guards, effects }) =>
+const machine = Machine.make({ state, event, guards: Guards, effects: Effects, initial }).on(
+  State.X,
+  Event.Y,
+  ({ guards, effects }) =>
     Effect.gen(function* () {
       if (yield* guards.canRetry({ max: 3 })) {
         yield* effects.fetch({ url: "/api" });
       }
       return State.Z;
     }),
-  )
-  .build({
-    canRetry: ({ max }, { state }) => state.attempts < max,
-    fetch: ({ url }, { self }) => Http.get(url),
+);
+
+// Slot implementations provided at spawn time
+const actor =
+  yield *
+  Machine.spawn(machine, {
+    slots: {
+      canRetry: ({ max }, { state }) => state.attempts < max,
+      fetch: ({ url }, { self }) => Http.get(url),
+    },
   });
 ```
 
@@ -123,6 +129,8 @@ Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))
 | `actor.waitFor(State.X)`         | Wait for state (constructor or fn)          |
 | `actor.sendAndWait(ev, State.X)` | Send + wait for state                       |
 | `actor.awaitFinal`               | Wait for final state                        |
+| `actor.watch(other)`             | Completes when other actor stops            |
+| `actor.drain`                    | Process remaining queue, then stop          |
 | `actor.snapshot`                 | Get current state                           |
 | `actor.sync.send(event)`         | Sync fire-and-forget (for UI)               |
 | `actor.sync.stop()`              | Sync stop                                   |
@@ -218,12 +226,12 @@ expect(result.newState._tag).toBe("Loading");
 ## Critical Gotchas
 
 1. **Empty structs are values**: `State.Idle` not `State.Idle()`
-2. **yield after send**: `yield* Effect.yieldNow()` to process events
+2. **yield after send**: `yield* Effect.yieldNow` to process events
 3. **simulate skips spawn**: Use real actors for spawn effect tests
 4. **Same-state skips lifecycle**: Use `.reenter()` to force
 5. **Never throw in Effect.gen**: Use `yield* Effect.fail()`
 6. **`.onAny()` is fallback**: Specific `.on()` always takes priority
-7. **`.build()` is terminal**: No chaining `.on()`, `.final()` after it
+7. **Slots at spawn time**: `Machine.spawn(machine, { slots: { ... } })` — not on the builder
 8. **call vs send**: `send`/`cast` = fire-and-forget, `call` = request-reply, `ask` = typed reply
 9. **Sync helpers**: Use `actor.sync.*` (not top-level `sendSync`/`snapshotSync`)
 10. **ActorStoppedError**: Pending `call`/`ask` Deferreds settled on stop
