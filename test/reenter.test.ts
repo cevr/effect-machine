@@ -42,8 +42,7 @@ describe("Same-state Transitions", () => {
             effects.push("enter:Form");
             yield* Effect.addFinalizer(() => Effect.sync(() => effects.push("exit:Form")));
           }),
-        )
-        .build();
+        );
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("form", machine);
@@ -91,8 +90,7 @@ describe("Same-state Transitions", () => {
             effects.push("enter:Form");
             yield* Effect.addFinalizer(() => Effect.sync(() => effects.push("exit:Form")));
           }),
-        )
-        .build();
+        );
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("form", machine);
@@ -151,8 +149,7 @@ describe("Reenter Transitions", () => {
               ),
             );
           }),
-        )
-        .build();
+        );
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("poller", machine);
@@ -197,13 +194,14 @@ describe("Reenter Transitions", () => {
         )
         .task(PollState.Polling, ({ effects }) => effects.runPollingEffect(), {
           onSuccess: () => PollEvent.Poll,
-        })
-        .build({
-          runPollingEffect: () => Effect.sleep("5 seconds"),
         });
 
-      const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("poller", machine);
+      const actor = yield* Machine.spawn(machine, {
+        id: "poller",
+        slots: {
+          runPollingEffect: () => Effect.sleep("5 seconds"),
+        },
+      });
 
       // Advance 3 seconds
       yield* TestClock.adjust("3 seconds");

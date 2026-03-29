@@ -40,8 +40,7 @@ describe(".timeout()", () => {
           event: TimeoutEvent.Timeout,
         })
         .final(TimeoutState.TimedOut)
-        .final(TimeoutState.Done)
-        .build();
+        .final(TimeoutState.Done);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
@@ -69,8 +68,7 @@ describe(".timeout()", () => {
           event: TimeoutEvent.Timeout,
         })
         .final(TimeoutState.TimedOut)
-        .final(TimeoutState.Done)
-        .build();
+        .final(TimeoutState.Done);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
@@ -114,8 +112,7 @@ describe(".timeout()", () => {
           duration: Duration.seconds(3),
           event: CountEvent.Timeout,
         })
-        .final(CountState.TimedOut)
-        .build();
+        .final(CountState.TimedOut);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
@@ -161,8 +158,7 @@ describe(".timeout()", () => {
           duration: Duration.seconds(3),
           event: RetryEvent.Timeout,
         })
-        .final(RetryState.TimedOut)
-        .build();
+        .final(RetryState.TimedOut);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
@@ -210,8 +206,7 @@ describe(".timeout()", () => {
             Duration.millis(state.timeoutMs),
           event: DynEvent.Timeout,
         })
-        .final(DynState.TimedOut)
-        .build();
+        .final(DynState.TimedOut);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
@@ -251,8 +246,7 @@ describe(".timeout()", () => {
           event: (state) => (state.shouldTimeout ? EvEvent.Timeout : EvEvent.Complete),
         })
         .final(EvState.TimedOut)
-        .final(EvState.Done)
-        .build();
+        .final(EvState.Done);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
@@ -277,8 +271,7 @@ describe(".timeout()", () => {
           duration: Duration.seconds(1),
           event: TimeoutEvent.Timeout,
         })
-        .final(TimeoutState.TimedOut)
-        .build();
+        .final(TimeoutState.TimedOut);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);

@@ -43,7 +43,7 @@ export class SlotProvisionError extends Schema.TaggedErrorClass<SlotProvisionErr
   },
 ) {}
 
-/** Machine.build() validation failed - missing or extra handlers */
+/** Slot provision validation failed — missing or extra handlers */
 export class ProvisionValidationError extends Schema.TaggedErrorClass<ProvisionValidationError>()(
   "ProvisionValidationError",
   {

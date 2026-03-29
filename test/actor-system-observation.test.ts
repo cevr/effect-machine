@@ -27,8 +27,7 @@ const testMachine = Machine.make({
 })
   .on(TestState.Idle, TestEvent.Activate, () => TestState.Active)
   .on(TestState.Active, TestEvent.Finish, () => TestState.Done)
-  .final(TestState.Done)
-  .build();
+  .final(TestState.Done);
 
 // ============================================================================
 // Tests

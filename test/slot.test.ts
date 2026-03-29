@@ -28,21 +28,21 @@ describe("Parameterized Guards (via Slot.Guards)", () => {
           event: TestEvent,
           guards: TestGuards,
           initial: TestState.Ready({ canPrint: false }),
-        })
-          .on(TestState.Ready, TestEvent.Print, ({ state, guards }) =>
-            Effect.gen(function* () {
-              if (yield* guards.canPrint()) {
-                return TestState.Printing;
-              }
-              return state;
-            }),
-          )
-          .build({
-            // Handlers receive (params, ctx) - no circular reference
-            canPrint: (_params, { state }) => (state._tag === "Ready" ? state.canPrint : false),
-          });
+        }).on(TestState.Ready, TestEvent.Print, ({ state, guards }) =>
+          Effect.gen(function* () {
+            if (yield* guards.canPrint()) {
+              return TestState.Printing;
+            }
+            return state;
+          }),
+        );
 
-        const result = yield* simulate(machine, [TestEvent.Print]);
+        const result = yield* simulate(machine, [TestEvent.Print], {
+          slots: {
+            canPrint: (_params: {}, { state }: any) =>
+              state._tag === "Ready" ? state.canPrint : false,
+          },
+        });
         expect(result.finalState._tag).toBe("Ready");
       }),
     );
@@ -56,20 +56,21 @@ describe("Parameterized Guards (via Slot.Guards)", () => {
           event: TestEvent,
           guards: TestGuards,
           initial: TestState.Ready({ canPrint: true }),
-        })
-          .on(TestState.Ready, TestEvent.Print, ({ state, guards }) =>
-            Effect.gen(function* () {
-              if (yield* guards.canPrint()) {
-                return TestState.Printing;
-              }
-              return state;
-            }),
-          )
-          .build({
-            canPrint: (_params, { state }) => (state._tag === "Ready" ? state.canPrint : false),
-          });
+        }).on(TestState.Ready, TestEvent.Print, ({ state, guards }) =>
+          Effect.gen(function* () {
+            if (yield* guards.canPrint()) {
+              return TestState.Printing;
+            }
+            return state;
+          }),
+        );
 
-        const result = yield* simulate(machine, [TestEvent.Print]);
+        const result = yield* simulate(machine, [TestEvent.Print], {
+          slots: {
+            canPrint: (_params: {}, { state }: any) =>
+              state._tag === "Ready" ? state.canPrint : false,
+          },
+        });
         expect(result.finalState._tag).toBe("Printing");
       }),
     );
@@ -113,15 +114,17 @@ describe("Parameterized Guards with Parameters", () => {
             }),
           )
           .final(AuthState.Allowed)
-          .final(AuthState.Denied)
-          .build({
-            isAdmin: (_params, { state }) => state._tag === "Idle" && state.role === "admin",
-            isAdult: ({ minAge }, { state }) => state._tag === "Idle" && state.age >= minAge,
-            isModerator: (_params, { state }) =>
-              state._tag === "Idle" && state.role === "moderator",
-          });
+          .final(AuthState.Denied);
 
-        const result = yield* simulate(machine, [AuthEvent.Access]);
+        const authSlots = {
+          isAdmin: (_params: {}, { state }: any) => state._tag === "Idle" && state.role === "admin",
+          isAdult: ({ minAge }: any, { state }: any) =>
+            state._tag === "Idle" && state.age >= minAge,
+          isModerator: (_params: {}, { state }: any) =>
+            state._tag === "Idle" && state.role === "moderator",
+        };
+
+        const result = yield* simulate(machine, [AuthEvent.Access], { slots: authSlots });
         expect(result.finalState._tag).toBe("Allowed");
       }),
     );
@@ -149,15 +152,17 @@ describe("Parameterized Guards with Parameters", () => {
             }),
           )
           .final(AuthState.Allowed)
-          .final(AuthState.Denied)
-          .build({
-            isAdmin: (_params, { state }) => state._tag === "Idle" && state.role === "admin",
-            isAdult: ({ minAge }, { state }) => state._tag === "Idle" && state.age >= minAge,
-            isModerator: (_params, { state }) =>
-              state._tag === "Idle" && state.role === "moderator",
-          });
+          .final(AuthState.Denied);
 
-        const result = yield* simulate(machine, [AuthEvent.Access]);
+        const authSlots = {
+          isAdmin: (_params: {}, { state }: any) => state._tag === "Idle" && state.role === "admin",
+          isAdult: ({ minAge }: any, { state }: any) =>
+            state._tag === "Idle" && state.age >= minAge,
+          isModerator: (_params: {}, { state }: any) =>
+            state._tag === "Idle" && state.role === "moderator",
+        };
+
+        const result = yield* simulate(machine, [AuthEvent.Access], { slots: authSlots });
         expect(result.finalState._tag).toBe("Allowed");
       }),
     );
@@ -187,12 +192,14 @@ describe("Parameterized Guards with Parameters", () => {
             }),
           )
           .final(AuthState.Allowed)
-          .final(AuthState.Denied)
-          .build({
-            isGuest: (_params, { state }) => state._tag === "Idle" && state.role === "guest",
-          });
+          .final(AuthState.Denied);
 
-        const result = yield* simulate(machine, [AuthEvent.Access]);
+        const result = yield* simulate(machine, [AuthEvent.Access], {
+          slots: {
+            isGuest: (_params: {}, { state }: any) =>
+              state._tag === "Idle" && state.role === "guest",
+          },
+        });
         expect(result.finalState._tag).toBe("Allowed");
       }),
     );

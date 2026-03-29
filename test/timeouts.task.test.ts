@@ -2,14 +2,7 @@
 import { Duration, Effect, Schema, SubscriptionRef } from "effect";
 import { TestClock } from "effect/testing";
 
-import {
-  ActorSystemDefault,
-  ActorSystemService,
-  Event,
-  Machine,
-  Slot,
-  State,
-} from "../src/index.js";
+import { ActorSystemDefault, Event, Machine, Slot, State } from "../src/index.js";
 import { describe, expect, it, yieldFibers } from "effect-bun-test";
 
 describe("Timeout Transitions via Task", () => {
@@ -40,13 +33,14 @@ describe("Timeout Transitions via Task", () => {
         .task(NotifState.Showing, ({ effects }) => effects.scheduleAutoDismiss(), {
           onSuccess: () => NotifEvent.Dismiss,
         })
-        .final(NotifState.Dismissed)
-        .build({
-          scheduleAutoDismiss: () => Effect.sleep("3 seconds"),
-        });
+        .final(NotifState.Dismissed);
 
-      const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("notification", machine);
+      const actor = yield* Machine.spawn(machine, {
+        id: "notification",
+        slots: {
+          scheduleAutoDismiss: () => Effect.sleep("3 seconds"),
+        },
+      });
 
       // Initial state
       let current = yield* SubscriptionRef.get(actor.state);
@@ -76,13 +70,14 @@ describe("Timeout Transitions via Task", () => {
         .task(NotifState.Showing, ({ effects }) => effects.scheduleAutoDismiss(), {
           onSuccess: () => NotifEvent.Dismiss,
         })
-        .final(NotifState.Dismissed)
-        .build({
-          scheduleAutoDismiss: () => Effect.sleep("3 seconds"),
-        });
+        .final(NotifState.Dismissed);
 
-      const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("notification", machine);
+      const actor = yield* Machine.spawn(machine, {
+        id: "notification",
+        slots: {
+          scheduleAutoDismiss: () => Effect.sleep("3 seconds"),
+        },
+      });
 
       // Manual dismiss before timer
       yield* actor.send(NotifEvent.Dismiss);
@@ -128,16 +123,17 @@ describe("Dynamic Timeout Duration via Task", () => {
         .task(WaitState.Waiting, ({ effects }) => effects.scheduleTimeout(), {
           onSuccess: () => WaitEvent.Timeout,
         })
-        .final(WaitState.TimedOut)
-        .build({
-          scheduleTimeout: (_, { state }) => {
+        .final(WaitState.TimedOut);
+
+      const actor = yield* Machine.spawn(machine, {
+        id: "waiter",
+        slots: {
+          scheduleTimeout: (_: {}, { state }: any) => {
             const s = state as WaitState & { _tag: "Waiting" };
             return Effect.sleep(Duration.seconds(s.timeout));
           },
-        });
-
-      const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("waiter", machine);
+        },
+      });
 
       // Initial state
       let current = yield* SubscriptionRef.get(actor.state);
@@ -191,16 +187,17 @@ describe("Dynamic Timeout Duration via Task", () => {
         .task(RetryState.Retrying, ({ effects }) => effects.scheduleGiveUp(), {
           onSuccess: () => RetryEvent.GiveUp,
         })
-        .final(RetryState.Failed)
-        .build({
-          scheduleGiveUp: (_, { state }) => {
+        .final(RetryState.Failed);
+
+      const actor = yield* Machine.spawn(machine, {
+        id: "retry",
+        slots: {
+          scheduleGiveUp: (_: {}, { state }: any) => {
             const s = state as RetryState & { _tag: "Retrying" };
             return Effect.sleep(Duration.seconds(s.backoff));
           },
-        });
-
-      const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("retry", machine);
+        },
+      });
 
       // First attempt - 1 second backoff timer starts
       let current = yield* SubscriptionRef.get(actor.state);
@@ -243,13 +240,14 @@ describe("Dynamic Timeout Duration via Task", () => {
         .task(WaitState.Waiting, ({ effects }) => effects.scheduleTimeout(), {
           onSuccess: () => WaitEvent.Timeout,
         })
-        .final(WaitState.TimedOut)
-        .build({
-          scheduleTimeout: () => Effect.sleep("3 seconds"),
-        });
+        .final(WaitState.TimedOut);
 
-      const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("waiter", machine);
+      const actor = yield* Machine.spawn(machine, {
+        id: "waiter",
+        slots: {
+          scheduleTimeout: () => Effect.sleep("3 seconds"),
+        },
+      });
 
       yield* TestClock.adjust("3 seconds");
       yield* yieldFibers;

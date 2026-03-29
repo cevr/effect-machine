@@ -30,8 +30,7 @@ const createMachine = () =>
     .on(TestState.Idle, TestEvent.Start, ({ event }) => TestState.Active({ value: event.value }))
     .on(TestState.Active, TestEvent.Update, ({ event }) => TestState.Active({ value: event.value }))
     .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
-    .final(TestState.Done)
-    .build();
+    .final(TestState.Done);
 
 // ============================================================================
 // call Tests

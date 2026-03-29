@@ -74,22 +74,17 @@ describe("Transition Index", () => {
       event: TestEvent,
       guards: TestGuards,
       initial: TestState.Idle,
-    })
-      .on(TestState.Idle, TestEvent.Start, ({ event, guards }) =>
-        Effect.gen(function* () {
-          if (yield* guards.isSpecial()) {
-            return TestState.Loading({ id: event.id });
-          }
-          if (yield* guards.isNormal()) {
-            return TestState.Loading({ id: event.id });
-          }
+    }).on(TestState.Idle, TestEvent.Start, ({ event, guards }) =>
+      Effect.gen(function* () {
+        if (yield* guards.isSpecial()) {
           return TestState.Loading({ id: event.id });
-        }),
-      )
-      .build({
-        isSpecial: (_params, { event }) => (event as { id: string }).id === "special",
-        isNormal: (_params, { event }) => (event as { id: string }).id === "normal",
-      });
+        }
+        if (yield* guards.isNormal()) {
+          return TestState.Loading({ id: event.id });
+        }
+        return TestState.Loading({ id: event.id });
+      }),
+    );
 
     const transitions = Machine.findTransitions(machine, "Idle", "Start");
     // Now there's just one transition with guards inside the handler

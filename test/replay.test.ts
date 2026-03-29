@@ -38,8 +38,7 @@ const createMachine = () =>
       TestState.Active({ value: state.value + 1 }),
     )
     .on(TestState.Active, TestEvent.Finish, () => TestState.Done)
-    .final(TestState.Done)
-    .build();
+    .final(TestState.Done);
 
 // ============================================================================
 // Machine.replay
@@ -126,11 +125,9 @@ describe("Machine.replay", () => {
         state: EffState,
         event: EffEvent,
         initial: EffState.Initial,
-      })
-        .on(EffState.Initial, EffEvent.Compute, ({ event }) =>
-          Effect.succeed(EffState.Computed({ result: event.input * 2 })),
-        )
-        .build();
+      }).on(EffState.Initial, EffEvent.Compute, ({ event }) =>
+        Effect.succeed(EffState.Computed({ result: event.input * 2 })),
+      );
 
       const state = yield* Machine.replay(machine, [EffEvent.Compute({ input: 21 })]);
       expect(state._tag).toBe("Computed");
@@ -163,8 +160,7 @@ describe("Machine.replay postpone", () => {
       })
         .on(PState.Waiting, PEvent.Activate, () => PState.Ready({ count: 0 }))
         .on(PState.Ready, PEvent.Process, ({ state }) => PState.Ready({ count: state.count + 1 }))
-        .postpone(PState.Waiting, PEvent.Process)
-        .build();
+        .postpone(PState.Waiting, PEvent.Process);
 
       // Process is postponed in Waiting, then drained after Activate → Ready
       const state = yield* Machine.replay(machine, [
@@ -205,8 +201,7 @@ describe("Machine.replay postpone", () => {
         .postpone(MSState.B, MSEvent.Finish)
         // GoC is postponed in A — only runnable in B
         .postpone(MSState.A, MSEvent.GoC)
-        .final(MSState.Done)
-        .build();
+        .final(MSState.Done);
 
       // Finish postponed in A, GoC postponed in A.
       // GoB moves to B → drains GoC (moves to C) → drains Finish (moves to Done)

@@ -37,8 +37,7 @@ const createMachine = () =>
       Machine.reply(TestState.Active({ count: state.count }), undefined),
     )
     .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
-    .final(TestState.Done)
-    .build();
+    .final(TestState.Done);
 
 describe("ActorRef.ask", () => {
   it.scopedLive("returns domain reply value from handler", () =>
@@ -136,12 +135,10 @@ describe("ActorRef.ask", () => {
         state: TestState,
         event: BadEvent,
         initial: TestState.Idle,
-      })
-        .on(TestState.Idle, BadEvent.GetCount, () =>
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional mismatch
-          Machine.reply(TestState.Idle, "not-a-number" as any),
-        )
-        .build();
+      }).on(TestState.Idle, BadEvent.GetCount, () =>
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional mismatch
+        Machine.reply(TestState.Idle, "not-a-number" as any),
+      );
 
       const actor = yield* Machine.spawn(machine);
       const exit = yield* actor.ask(BadEvent.GetCount).pipe(Effect.exit);

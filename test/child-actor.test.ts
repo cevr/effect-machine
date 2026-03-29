@@ -46,8 +46,7 @@ const childMachine = Machine.make({
   initial: ChildState.Running,
 })
   .on(ChildState.Running, ChildEvent.Stop, () => ChildState.Stopped)
-  .final(ChildState.Stopped)
-  .build();
+  .final(ChildState.Stopped);
 
 // ============================================================================
 // Grandchild machine (for nesting tests)
@@ -68,8 +67,7 @@ const grandchildMachine = Machine.make({
   initial: GrandchildState.Alive,
 })
   .on(GrandchildState.Alive, GrandchildEvent.Kill, () => GrandchildState.Dead)
-  .final(GrandchildState.Dead)
-  .build();
+  .final(GrandchildState.Dead);
 
 // ============================================================================
 // Tests
@@ -89,8 +87,7 @@ describe("Child Actor Support", () => {
           .spawn(ParentState.Active, ({ self }) =>
             self.spawn("child-1", childMachine).pipe(Effect.asVoid, Effect.orDie),
           )
-          .final(ParentState.Done)
-          .build();
+          .final(ParentState.Done);
 
         const parent = yield* Machine.spawn(parentMachine);
         yield* parent.send(ParentEvent.Activate);
@@ -122,8 +119,7 @@ describe("Child Actor Support", () => {
           .spawn(ParentState.Active, ({ self }) =>
             self.spawn("child-1", childMachine).pipe(Effect.asVoid, Effect.orDie),
           )
-          .final(ParentState.Done)
-          .build();
+          .final(ParentState.Done);
 
         const parent = yield* Machine.spawn(parentMachine);
         yield* parent.send(ParentEvent.Activate);
@@ -162,8 +158,7 @@ describe("Child Actor Support", () => {
           .spawn(ParentState.Active, ({ self }) =>
             self.spawn("child-1", childMachine).pipe(Effect.asVoid, Effect.orDie),
           )
-          .final(ParentState.Done)
-          .build();
+          .final(ParentState.Done);
 
         const parent = yield* Machine.spawn(parentMachine);
         yield* parent.send(ParentEvent.Activate);
@@ -195,8 +190,7 @@ describe("Child Actor Support", () => {
               self.spawn("child-c", childMachine),
             ]).pipe(Effect.asVoid, Effect.orDie),
           )
-          .final(ParentState.Done)
-          .build();
+          .final(ParentState.Done);
 
         const parent = yield* Machine.spawn(parentMachine);
         yield* parent.send(ParentEvent.Activate);
@@ -229,8 +223,7 @@ describe("Child Actor Support", () => {
           initial: ParentState.Idle,
         })
           .on(ParentState.Idle, ParentEvent.Activate, () => ParentState.Active)
-          .final(ParentState.Done)
-          .build();
+          .final(ParentState.Done);
 
         const actor = yield* Machine.spawn(simpleMachine);
         // actor.system should exist (implicit system)
@@ -253,8 +246,7 @@ describe("Child Actor Support", () => {
           .spawn(ParentState.Active, ({ self }) =>
             self.spawn("worker", childMachine).pipe(Effect.asVoid, Effect.orDie),
           )
-          .final(ParentState.Done)
-          .build();
+          .final(ParentState.Done);
 
         const parent = yield* Machine.spawn(parentMachine);
         yield* parent.send(ParentEvent.Activate);
@@ -283,8 +275,7 @@ describe("Child Actor Support", () => {
           .spawn(ParentState.Active, ({ self }) =>
             self.spawn("child-via-self", childMachine).pipe(Effect.asVoid, Effect.orDie),
           )
-          .final(ParentState.Done)
-          .build();
+          .final(ParentState.Done);
 
         const parent = yield* system.spawn("parent", parentMachine);
         yield* parent.send(ParentEvent.Activate);
@@ -331,8 +322,7 @@ describe("Child Actor Support", () => {
           .spawn(ChildWithGrandchildState.Active, ({ self }) =>
             self.spawn("grandchild", grandchildMachine).pipe(Effect.asVoid, Effect.orDie),
           )
-          .final(ChildWithGrandchildState.Done)
-          .build();
+          .final(ChildWithGrandchildState.Done);
 
         const parentMachine = Machine.make({
           state: ParentState,
@@ -346,8 +336,7 @@ describe("Child Actor Support", () => {
               yield* child.send(ChildWithGrandchildEvent.Activate);
             }),
           )
-          .final(ParentState.Done)
-          .build();
+          .final(ParentState.Done);
 
         const system = yield* ActorSystemService;
         const parent = yield* system.spawn("parent", parentMachine);
@@ -383,13 +372,14 @@ describe("Child Actor Support", () => {
         })
           .on(ParentState.Idle, ParentEvent.Activate, () => ParentState.Active)
           .spawn(ParentState.Active, ({ effects }) => effects.spawnWorker())
-          .final(ParentState.Done)
-          .build({
-            spawnWorker: (_params, { self }) =>
-              self.spawn("slot-child", childMachine).pipe(Effect.asVoid, Effect.orDie),
-          });
+          .final(ParentState.Done);
 
-        const parent = yield* Machine.spawn(parentMachine);
+        const parent = yield* Machine.spawn(parentMachine, {
+          slots: {
+            spawnWorker: (_params: {}, { self }: any) =>
+              self.spawn("slot-child", childMachine).pipe(Effect.asVoid, Effect.orDie),
+          },
+        });
         yield* parent.send(ParentEvent.Activate);
         yield* Effect.yieldNow;
         yield* yieldFibers;
@@ -415,8 +405,7 @@ describe("Child Actor Support", () => {
           .spawn(ParentState.Active, ({ self }) =>
             self.spawn("child-1", childMachine).pipe(Effect.asVoid, Effect.orDie),
           )
-          .final(ParentState.Done)
-          .build();
+          .final(ParentState.Done);
 
         const parent = yield* Machine.spawn(parentMachine);
         expect(parent.children.size).toBe(0);
@@ -444,8 +433,7 @@ describe("Child Actor Support", () => {
           .spawn(ParentState.Active, ({ self }) =>
             self.spawn("child-1", childMachine).pipe(Effect.asVoid, Effect.orDie),
           )
-          .final(ParentState.Done)
-          .build();
+          .final(ParentState.Done);
 
         const parent = yield* Machine.spawn(parentMachine);
         yield* parent.send(ParentEvent.Activate);
@@ -481,8 +469,7 @@ describe("Child Actor Support", () => {
               self.spawn("worker-2", childMachine),
             ]).pipe(Effect.asVoid, Effect.orDie),
           )
-          .final(ParentState.Done)
-          .build();
+          .final(ParentState.Done);
 
         const parent = yield* Machine.spawn(parentMachine);
         yield* parent.send(ParentEvent.Activate);
@@ -509,8 +496,7 @@ describe("Child Actor Support", () => {
           .background(({ self }) =>
             self.spawn("bg-child", childMachine).pipe(Effect.asVoid, Effect.orDie),
           )
-          .final(ParentState.Done)
-          .build();
+          .final(ParentState.Done);
 
         const parent = yield* Machine.spawn(parentMachine);
         yield* Effect.yieldNow;
@@ -562,8 +548,7 @@ describe("Child Actor Support", () => {
           .spawn(ChildWithGrandchildState.Active, ({ self }) =>
             self.spawn("grandchild", grandchildMachine).pipe(Effect.asVoid, Effect.orDie),
           )
-          .final(ChildWithGrandchildState.Done)
-          .build();
+          .final(ChildWithGrandchildState.Done);
 
         const parentMachine = Machine.make({
           state: ParentState,
@@ -577,8 +562,7 @@ describe("Child Actor Support", () => {
               yield* child.send(ChildWithGrandchildEvent.Activate);
             }),
           )
-          .final(ParentState.Done)
-          .build();
+          .final(ParentState.Done);
 
         const system = yield* ActorSystemService;
         const parent = yield* system.spawn("parent", parentMachine);

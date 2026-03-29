@@ -34,10 +34,14 @@
  *   )
  *   .on(MyState.Running, MyEvent.Stop, () => MyState.Idle)
  *   .final(MyState.Idle)
- *   .build({
+ *
+ * // Spawn with slot implementations
+ * const actor = yield* Machine.spawn(machine, {
+ *   slots: {
  *     canStart: ({ threshold }) => Effect.succeed(threshold > 0),
  *     notify: ({ message }) => Effect.log(message),
- *   })
+ *   },
+ * })
  * ```
  *
  * @module
@@ -91,7 +95,8 @@ export interface MachineRef<Event> {
   readonly cast: (event: Event) => Effect.Effect<void>;
   readonly spawn: <S2 extends { readonly _tag: string }, E2 extends { readonly _tag: string }, R2>(
     id: string,
-    machine: BuiltMachine<S2, E2, R2>,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    machine: Machine<S2, E2, R2, any, any, any, any>,
   ) => Effect.Effect<ActorRef<S2, E2>, DuplicateActorError, R2>;
   /**
    * Settle a deferred reply from a spawn handler.
@@ -197,10 +202,6 @@ export interface TimeoutConfig<State, Event> {
 // Internal helpers
 // ============================================================================
 
-type IsAny<T> = 0 extends 1 & T ? true : false;
-type IsUnknown<T> = unknown extends T ? ([T] extends [unknown] ? true : false) : false;
-type NormalizeR<T> = IsAny<T> extends true ? T : IsUnknown<T> extends true ? never : T;
-
 const emitTaskInspection = <S extends { readonly _tag: string }>(input: {
   readonly actorId: string;
   readonly state: S;
@@ -273,34 +274,6 @@ export type ProvideHandlers<
   (HasEffectKeys<EFD> extends true
     ? SlotEffectHandlers<EFD, SlotContext<State, Event>, R>
     : object);
-
-/** Whether the machine has any guard or effect slots */
-type HasSlots<GD extends GuardsDef, EFD extends EffectsDef> =
-  HasGuardKeys<GD> extends true ? true : HasEffectKeys<EFD>;
-
-// ============================================================================
-// BuiltMachine (deprecated — kept for backward compatibility, will be removed)
-// ============================================================================
-
-/**
- * @deprecated Use `Machine.spawn(machine, { slots: { ... } })` instead of `machine.build({ ... })`.
- * Will be removed in 1.0.
- */
-export class BuiltMachine<State, Event, R = never> {
-  /** @internal */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly _inner: Machine<State, Event, R, any, any, any, any>;
-
-  /** @internal */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  constructor(machine: Machine<State, Event, R, any, any, any, any>) {
-    this._inner = machine;
-  }
-
-  get initial(): State {
-    return this._inner.initial;
-  }
-}
 
 // ============================================================================
 // materializeMachine — internal slot binding at execution boundaries
@@ -987,19 +960,6 @@ export class Machine<
 
   // ---- build ----
 
-  /**
-   * @deprecated Use `Machine.spawn(machine, { slots: { ... } })` instead.
-   * Kept for backward compatibility — will be removed in 1.0.
-   */
-  build<R2 = never>(
-    ...args: HasSlots<GD, EFD> extends true
-      ? [handlers: ProvideHandlers<State, Event, GD, EFD, R2>]
-      : [handlers?: ProvideHandlers<State, Event, GD, EFD, R2>]
-  ): BuiltMachine<State, Event, R | NormalizeR<R2>> {
-    const materialized = materializeMachine(this, args[0] as Record<string, unknown>);
-    return new BuiltMachine(materialized as unknown as Machine<State, Event, R | NormalizeR<R2>>);
-  }
-
   // ---- Static factory ----
 
   static make<
@@ -1069,7 +1029,7 @@ import { createActor } from "./actor.js";
 
 /**
  * Spawn an actor directly without ActorSystem ceremony.
- * Accepts only `BuiltMachine` (call `.build()` first).
+ * Accepts a `Machine` directly. For slotful machines, pass `{ slots }` in options.
  *
  * **Single actor, no registry.** Caller manages lifetime via `actor.stop`.
  * If a `Scope` exists in context, cleanup attaches automatically on scope close.
@@ -1093,29 +1053,22 @@ import { createActor } from "./actor.js";
  * }));
  * ```
  */
-/** @internal — unwrap BuiltMachine or raw Machine */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyMachine<S, E, R> = Machine<S, E, R, any, any, any, any>;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const unwrapMachine = <S, E, R>(
-  input: BuiltMachine<S, E, R> | AnyMachine<S, E, R>,
-): AnyMachine<S, E, R> => (input instanceof BuiltMachine ? input._inner : input);
 
 const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
 >(
-  input: BuiltMachine<S, E, R> | AnyMachine<S, E, R>,
+  machine: AnyMachine<S, E, R>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   idOrOptions?: string | { id?: string; hydrate?: S; slots?: Record<string, any> },
 ) {
   const opts = typeof idOrOptions === "string" ? { id: idOrOptions } : idOrOptions;
   const actorId = opts?.id ?? `actor-${Math.random().toString(36).slice(2)}`;
-  const raw = unwrapMachine(input);
-  // For raw machines: always materialize to validate slots. For BuiltMachine: already materialized.
-  const machine = input instanceof BuiltMachine ? raw : materializeMachine(raw, opts?.slots);
-  const actor = yield* createActor(actorId, machine as AnyMachine<S, E, never>, {
+  const materialized = materializeMachine(machine, opts?.slots);
+  const actor = yield* createActor(actorId, materialized as AnyMachine<S, E, never>, {
     initialState: opts?.hydrate,
   });
 
@@ -1131,7 +1084,6 @@ const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
 /**
  * Spawn an actor from a machine.
  *
- * Accepts either a raw `Machine` or a `BuiltMachine` (deprecated).
  * For machines with slots, pass implementations via `{ slots: { ... } }`.
  *
  * @example
@@ -1148,19 +1100,11 @@ const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
  * const actor = yield* Machine.spawn(machine, { hydrate: savedState });
  * ```
  */
-export const spawn: {
-  // New API: raw Machine + options with slots
-  <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
-    machine: AnyMachine<S, E, R>,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    options?: string | { id?: string; hydrate?: S; slots?: Record<string, any> },
-  ): Effect.Effect<ActorRef<S, E>, never, R>;
-  // Backward compat: BuiltMachine
-  <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
-    machine: BuiltMachine<S, E, R>,
-    idOrOptions?: string | { id?: string; hydrate?: S },
-  ): Effect.Effect<ActorRef<S, E>, never, R>;
-} = spawnImpl;
+export const spawn: <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
+  machine: AnyMachine<S, E, R>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  options?: string | { id?: string; hydrate?: S; slots?: Record<string, any> },
+) => Effect.Effect<ActorRef<S, E>, never, R> = spawnImpl;
 
 /**
  * Replay events through a machine to compute the final state.
@@ -1192,13 +1136,12 @@ const replayImpl = Effect.fn("effect-machine.replay")(function* <
   E extends { readonly _tag: string },
   R,
 >(
-  input: BuiltMachine<S, E, R> | AnyMachine<S, E, R>,
+  input: AnyMachine<S, E, R>,
   events: ReadonlyArray<E>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   options?: { from?: S; slots?: Record<string, any> },
 ) {
-  const raw = unwrapMachine(input);
-  const machine = input instanceof BuiltMachine ? raw : materializeMachine(raw, options?.slots);
+  const machine = materializeMachine(input, options?.slots);
   let state: S = options?.from ?? machine.initial;
 
   const hasPostponeRules = machine.postponeRules.length > 0;
@@ -1278,12 +1221,6 @@ export const replay: {
     events: ReadonlyArray<E>,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     options?: { from?: S; slots?: Record<string, any> },
-  ): Effect.Effect<S, never, R>;
-  /** @deprecated Use raw Machine instead of BuiltMachine */
-  <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
-    machine: BuiltMachine<S, E, R>,
-    events: ReadonlyArray<E>,
-    options?: { from?: S },
   ): Effect.Effect<S, never, R>;
 } = replayImpl;
 
