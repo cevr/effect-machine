@@ -1,20 +1,16 @@
 import { Effect, SubscriptionRef } from "effect";
 
 import type { Machine, MachineRef } from "./machine.js";
-import { validateSlots } from "./internal/slots.js";
+import { materializeMachine } from "./machine.js";
 import { AssertionError } from "./errors.js";
-import type { GuardsDef, EffectsDef } from "./slot.js";
+import type { SlotsDef } from "./slot.js";
 import { executeTransition, shouldPostpone } from "./internal/transition.js";
 import { stubSystem } from "./internal/utils.js";
-import { foldEvents } from "./internal/fold.js";
 
-type MachineInput<
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
-  R,
-  GD extends GuardsDef,
-  EFD extends EffectsDef,
-> = Machine<S, E, R, GD, EFD>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type MachineInput<S, E, R, SD extends SlotsDef = Record<string, never>> =
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  Machine<S, E, R, any, any, SD>;
 
 const makeDummySelf = <E>(label: string): MachineRef<E> => {
   const dummySend = Effect.fn(label)((_event: E) => Effect.void);
@@ -58,25 +54,88 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
-  GD extends GuardsDef = Record<string, never>,
-  EFD extends EffectsDef = Record<string, never>,
+  SD extends SlotsDef = Record<string, never>,
 >(
-  input: MachineInput<S, E, R, GD, EFD>,
+  input: MachineInput<S, E, R, SD>,
   events: ReadonlyArray<E>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   options?: { slots?: Record<string, any> },
 ) {
-  const slotHandlers = validateSlots(input, options?.slots);
+  const machine = materializeMachine(input, options?.slots) as Machine<
+    S,
+    E,
+    R,
+    Record<string, never>,
+    Record<string, never>,
+    SD
+  >;
+
   const dummySelf = makeDummySelf<E>("effect-machine.testing.simulate");
-  return yield* foldEvents(
-    input,
-    input.initial,
-    events,
-    dummySelf,
-    stubSystem,
-    "simulation",
-    slotHandlers,
-  );
+
+  let currentState = machine.initial;
+  const states: S[] = [currentState];
+  const hasPostponeRules = machine.postponeRules.length > 0;
+  const postponed: E[] = [];
+
+  for (const event of events) {
+    // Check postpone rules
+    if (hasPostponeRules && shouldPostpone(machine, currentState._tag, event._tag)) {
+      postponed.push(event);
+      continue;
+    }
+
+    const result = yield* executeTransition(
+      machine,
+      currentState,
+      event,
+      dummySelf,
+      stubSystem,
+      "simulation",
+    );
+
+    if (!result.transitioned) {
+      continue;
+    }
+
+    const prevTag = currentState._tag;
+    currentState = result.newState;
+    states.push(currentState);
+
+    // Stop if final state
+    if (machine.finalStates.has(currentState._tag)) {
+      break;
+    }
+
+    // Drain postponed events after state tag change — loop until stable
+    let drainTag = prevTag;
+    while (currentState._tag !== drainTag && postponed.length > 0) {
+      drainTag = currentState._tag;
+      const drained = postponed.splice(0);
+      for (const postponedEvent of drained) {
+        if (shouldPostpone(machine, currentState._tag, postponedEvent._tag)) {
+          postponed.push(postponedEvent);
+          continue;
+        }
+        const drainResult = yield* executeTransition(
+          machine,
+          currentState,
+          postponedEvent,
+          dummySelf,
+          stubSystem,
+          "simulation",
+        );
+        if (drainResult.transitioned) {
+          currentState = drainResult.newState;
+          states.push(currentState);
+          if (machine.finalStates.has(currentState._tag)) {
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  return { states, finalState: currentState };
 });
 
 // AssertionError is exported from errors.ts
@@ -89,10 +148,9 @@ export const assertReaches = Effect.fn("effect-machine.assertReaches")(function*
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
-  GD extends GuardsDef = Record<string, never>,
-  EFD extends EffectsDef = Record<string, never>,
+  SD extends SlotsDef = Record<string, never>,
 >(
-  input: MachineInput<S, E, R, GD, EFD>,
+  input: MachineInput<S, E, R, SD>,
   events: ReadonlyArray<E>,
   expectedTag: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -125,10 +183,9 @@ export const assertPath = Effect.fn("effect-machine.assertPath")(function* <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
-  GD extends GuardsDef = Record<string, never>,
-  EFD extends EffectsDef = Record<string, never>,
+  SD extends SlotsDef = Record<string, never>,
 >(
-  input: MachineInput<S, E, R, GD, EFD>,
+  input: MachineInput<S, E, R, SD>,
   events: ReadonlyArray<E>,
   expectedPath: ReadonlyArray<string>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -177,10 +234,9 @@ export const assertNeverReaches = Effect.fn("effect-machine.assertNeverReaches")
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
-  GD extends GuardsDef = Record<string, never>,
-  EFD extends EffectsDef = Record<string, never>,
+  SD extends SlotsDef = Record<string, never>,
 >(
-  input: MachineInput<S, E, R, GD, EFD>,
+  input: MachineInput<S, E, R, SD>,
   events: ReadonlyArray<E>,
   forbiddenTag: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -248,11 +304,16 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
-  GD extends GuardsDef = Record<string, never>,
-  EFD extends EffectsDef = Record<string, never>,
->(input: MachineInput<S, E, R, GD, EFD>, options?: TestHarnessOptions<S, E>) {
-  const slotHandlers = validateSlots(input, options?.slots);
-  const machine = input;
+  SD extends SlotsDef = Record<string, never>,
+>(input: MachineInput<S, E, R, SD>, options?: TestHarnessOptions<S, E>) {
+  const machine = materializeMachine(input, options?.slots) as Machine<
+    S,
+    E,
+    R,
+    Record<string, never>,
+    Record<string, never>,
+    SD
+  >;
 
   const dummySelf = makeDummySelf<E>("effect-machine.testing.harness");
 
@@ -276,7 +337,6 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
       dummySelf,
       stubSystem,
       "test-harness",
-      slotHandlers,
     );
 
     if (!result.transitioned) {
@@ -311,7 +371,6 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
           dummySelf,
           stubSystem,
           "test-harness",
-          slotHandlers,
         );
         if (drainResult.transitioned) {
           yield* SubscriptionRef.set(stateRef, drainResult.newState);

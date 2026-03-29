@@ -35,11 +35,10 @@ import type { Machine, MachineRef } from "../machine.js";
 import type { ActorSystem } from "../actor.js";
 import { ActorSystem as ActorSystemTag } from "../actor.js";
 import type { ProcessEventHooks, ProcessEventResult } from "./transition.js";
-import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
+import type { SlotsDef, MachineContext } from "../slot.js";
 import { processEventCore, runSpawnEffects, shouldPostpone } from "./transition.js";
 import { NoReplyError } from "../errors.js";
 import { INTERNAL_INIT_EVENT } from "./utils.js";
-import type { SlotHandlers } from "./slots.js";
 import { ActorExit, type DefectPhase } from "../supervision.js";
 
 // ============================================================================
@@ -174,8 +173,6 @@ export interface RuntimeConfig<S, E> {
   readonly skipFinalizer?: boolean;
   /** Prefix for child actor IDs in self.spawn. Entity-machine uses `${actorId}/`. Default: no prefix. */
   readonly childIdPrefix?: string;
-  /** Bound slot handlers from validateSlots. Threaded through MachineContext._slotHandlers. */
-  readonly slotHandlers?: SlotHandlers;
 }
 
 /** @internal */
@@ -204,9 +201,13 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
-  GD extends GuardsDef,
-  EFD extends EffectsDef,
->(machine: Machine<S, E, R, GD, EFD>, system: ActorSystem, config: RuntimeConfig<S, E>) {
+  SD extends SlotsDef,
+>(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- wide acceptance for Machine type params
+  machine: Machine<S, E, R, any, any, SD>,
+  system: ActorSystem,
+  config: RuntimeConfig<S, E>,
+) {
   const { actorId, hooks, lifecycle } = config;
 
   // Capture services for fire-and-forget Deferred settlement (runForkWith)
@@ -276,16 +277,14 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
   // Fork background effects under actorScope
   const backgroundFibers: Fiber.Fiber<void, never>[] = [];
   const initEvent = { _tag: INTERNAL_INIT_EVENT } as E;
-  const slotHandlers = config.slotHandlers;
   const ctx: MachineContext<S, E, MachineRef<E>> = {
     actorId,
     state: machine.initial,
     event: initEvent,
     self,
     system,
-    _slotHandlers: slotHandlers,
   };
-  const { effects: effectSlots } = machine._slots;
+  const slots = machine._slots;
 
   for (const bg of machine.backgroundEffects) {
     const fiber = yield* bg
@@ -294,7 +293,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
         state: machine.initial,
         event: initEvent,
         self,
-        effects: effectSlots,
+        slots,
         system,
       })
       .pipe(Effect.provideService(machine.Context, ctx), Effect.forkIn(actorScope));
@@ -332,7 +331,6 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
     actorId,
     hooks?.onError,
     initialSpawnDefectSignal,
-    slotHandlers,
   ).pipe(
     Effect.catchCause((cause) => {
       // Tag as initial-spawn defect, set exit, clean up, then propagate
@@ -396,7 +394,6 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
       lifecycle,
       config.wrapProcess,
       fork,
-      slotHandlers,
     ),
   );
   loopFiberRef.current = loopFiber;
@@ -517,10 +514,10 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
-  GD extends GuardsDef,
-  EFD extends EffectsDef,
+  SD extends SlotsDef,
 >(
-  machine: Machine<S, E, R, GD, EFD>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- wide acceptance
+  machine: Machine<S, E, R, any, any, SD>,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
   eventQueue: Queue.Queue<RuntimeQueuedEvent<E>>,
   stoppedRef: Ref.Ref<boolean>,
@@ -539,7 +536,6 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
   ) => Effect.Effect<ProcessQueuedResult<S>>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   fork?: (effect: Effect.Effect<any>) => Fiber.Fiber<any>,
-  slotHandlers?: SlotHandlers,
 ) {
   // Fire-and-forget fork with captured services
   const forkEffect = fork ?? Effect.runFork;
@@ -609,7 +605,6 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
       system,
       actorId,
       hooks,
-      slotHandlers,
     );
 
     // Update state if transitioned

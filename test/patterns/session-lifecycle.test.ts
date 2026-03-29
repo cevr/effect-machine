@@ -31,8 +31,8 @@ describe("Session Lifecycle Pattern", () => {
     Logout: {},
   });
 
-  const SessionEffects = Slot.Effects({
-    scheduleTimeout: {},
+  const SessionSlots = Slot.define({
+    scheduleTimeout: Slot.fn({}),
   });
 
   // Helper to compute initial state based on token
@@ -46,7 +46,7 @@ describe("Session Lifecycle Pattern", () => {
     return Machine.make({
       state: SessionState,
       event: SessionEvent,
-      effects: SessionEffects,
+      slots: SessionSlots,
       initial,
     })
       .on(SessionState.Guest, SessionEvent.Login, ({ event }) =>
@@ -62,7 +62,7 @@ describe("Session Lifecycle Pattern", () => {
           }),
       )
       .on(SessionState.Active, SessionEvent.SessionTimeout, () => SessionState.SessionExpired)
-      .task(SessionState.Active, ({ effects }) => effects.scheduleTimeout(), {
+      .task(SessionState.Active, ({ slots }) => slots.scheduleTimeout(), {
         onSuccess: () => SessionEvent.SessionTimeout,
       })
       .on(SessionState.Maintenance, SessionEvent.MaintenanceEnded, ({ state }) =>
@@ -139,7 +139,7 @@ describe("Session Lifecycle Pattern", () => {
       const activeMachine = Machine.make({
         state: SessionState,
         event: SessionEvent,
-        effects: SessionEffects,
+        slots: SessionSlots,
         initial: SessionState.Active({
           userId: "user-1",
           role: "user",
@@ -147,7 +147,7 @@ describe("Session Lifecycle Pattern", () => {
         }),
       })
         .on(SessionState.Active, SessionEvent.SessionTimeout, () => SessionState.SessionExpired)
-        .task(SessionState.Active, ({ effects }) => effects.scheduleTimeout(), {
+        .task(SessionState.Active, ({ slots }) => slots.scheduleTimeout(), {
           onSuccess: () => SessionEvent.SessionTimeout,
         })
         .final(SessionState.SessionExpired);
@@ -184,14 +184,14 @@ describe("Session Lifecycle Pattern", () => {
       const activeMachine = Machine.make({
         state: SessionState,
         event: SessionEvent,
-        effects: SessionEffects,
+        slots: SessionSlots,
         initial: SessionState.Active({
           userId: "user-1",
           role: "user",
           lastActivity: now,
         }),
       })
-        .task(SessionState.Active, ({ effects }) => effects.scheduleTimeout(), {
+        .task(SessionState.Active, ({ slots }) => slots.scheduleTimeout(), {
           onSuccess: () => SessionEvent.SessionTimeout,
         })
         .on(SessionState.Active, SessionEvent.SessionTimeout, () => SessionState.SessionExpired)

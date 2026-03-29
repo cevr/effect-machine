@@ -81,8 +81,8 @@ export const toEntity = <
   E extends { readonly _tag: string },
   R,
 >(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- wide acceptance for slot type params
-  machine: Machine<S, E, R, any, any>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
+  machine: Machine<S, E, R, any, any, any>,
   options: ToEntityOptions,
 ) => {
   const stateSchema = machine.stateSchema;

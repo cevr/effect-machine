@@ -65,31 +65,31 @@ describe("Menu Navigation Pattern", () => {
 
   const cart: string[] = [];
 
-  const MenuGuards = Slot.Guards({
-    canNavigateToPage: {},
-    canScrollToSection: {},
+  const MenuSlots = Slot.define({
+    canNavigateToPage: Slot.fn({}, Schema.Boolean),
+    canScrollToSection: Slot.fn({}, Schema.Boolean),
   });
 
   const menuMachine = Machine.make({
     state: MenuState,
     event: MenuEvent,
-    guards: MenuGuards,
+    slots: MenuSlots,
     initial: MenuState.Browsing({ pageId: "food", sectionIndex: 0, itemIndex: null }),
   })
     // Browsing handlers
     // Navigate to different page (reset section)
-    .on(MenuState.Browsing, MenuEvent.NavigateToPage, ({ state, event, guards }) =>
+    .on(MenuState.Browsing, MenuEvent.NavigateToPage, ({ state, event, slots }) =>
       Effect.gen(function* () {
-        if (yield* guards.canNavigateToPage()) {
+        if (yield* slots.canNavigateToPage()) {
           return MenuState.Browsing({ pageId: event.pageId, sectionIndex: 0, itemIndex: null });
         }
         return state;
       }),
     )
     // Scroll to section
-    .on(MenuState.Browsing, MenuEvent.ScrollToSection, ({ state, event, guards }) =>
+    .on(MenuState.Browsing, MenuEvent.ScrollToSection, ({ state, event, slots }) =>
       Effect.gen(function* () {
-        if (yield* guards.canScrollToSection()) {
+        if (yield* slots.canScrollToSection()) {
           return MenuState.Browsing({
             ...state,
             sectionIndex: event.sectionIndex,
@@ -134,17 +134,25 @@ describe("Menu Navigation Pattern", () => {
     .final(MenuState.Closed);
 
   const menuSlots = {
-    canNavigateToPage: (_params: {}, { state, event }: { state: MenuState; event: MenuEvent }) => {
-      const s = state as { pageId: string };
-      const e = event as { pageId: string };
-      return s.pageId !== e.pageId && pages.some((p) => p.id === e.pageId);
-    },
-    canScrollToSection: (_params: {}, { state, event }: { state: MenuState; event: MenuEvent }) => {
-      const s = state as { pageId: string };
-      const e = event as { sectionIndex: number };
-      const page = pages.find((p) => p.id === s.pageId);
-      return page !== undefined && e.sectionIndex >= 0 && e.sectionIndex < page.sections.length;
-    },
+    canNavigateToPage: () =>
+      Effect.gen(function* () {
+        const ctx = yield* menuMachine.Context;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const s = ctx.state as any;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const e = ctx.event as any;
+        return s.pageId !== e.pageId && pages.some((p: Page) => p.id === e.pageId);
+      }),
+    canScrollToSection: () =>
+      Effect.gen(function* () {
+        const ctx = yield* menuMachine.Context;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const s = ctx.state as any;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const e = ctx.event as any;
+        const page = pages.find((p: Page) => p.id === s.pageId);
+        return page !== undefined && e.sectionIndex >= 0 && e.sectionIndex < page.sections.length;
+      }),
   };
 
   test("page navigation with valid page", async () => {

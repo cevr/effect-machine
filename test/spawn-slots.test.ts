@@ -2,7 +2,7 @@
 import { Effect, Schema } from "effect";
 
 import { Machine, State, Event, Slot, simulate, createTestHarness } from "../src/index.js";
-import { validateSlots } from "../src/machine.js";
+import { materializeMachine } from "../src/machine.js";
 import { describe, expect, it, yieldFibers } from "effect-bun-test";
 import { test } from "bun:test";
 
@@ -24,12 +24,9 @@ const SimpleEvent = Event({
 });
 type SimpleEvent = typeof SimpleEvent.Type;
 
-const SlotGuards = Slot.Guards({
-  canStart: {},
-});
-
-const SlotEffects = Slot.Effects({
-  onStart: {},
+const TestSlots = Slot.define({
+  canStart: Slot.fn({}, Schema.Boolean),
+  onStart: Slot.fn({}),
 });
 
 const createSimpleMachine = () =>
@@ -51,14 +48,13 @@ const createSlotMachine = () =>
   Machine.make({
     state: SimpleState,
     event: SimpleEvent,
-    guards: SlotGuards,
-    effects: SlotEffects,
+    slots: TestSlots,
     initial: SimpleState.Idle,
   })
-    .on(SimpleState.Idle, SimpleEvent.Start, ({ event, guards, effects }) =>
+    .on(SimpleState.Idle, SimpleEvent.Start, ({ event, slots }) =>
       Effect.gen(function* () {
-        if (yield* guards.canStart()) {
-          yield* effects.onStart();
+        if (yield* slots.canStart()) {
+          yield* slots.onStart();
           return SimpleState.Active({ count: event.count });
         }
         return SimpleState.Idle;
@@ -126,24 +122,24 @@ describe("Machine.spawn with slots", () => {
 });
 
 // ============================================================================
-// validateSlots validation
+// materializeMachine validation
 // ============================================================================
 
-describe("validateSlots", () => {
+describe("materializeMachine", () => {
   test("throws ProvisionValidationError for slotful machine without handlers", () => {
     const machine = createSlotMachine();
-    expect(() => validateSlots(machine)).toThrow();
+    expect(() => materializeMachine(machine)).toThrow();
   });
 
   test("throws ProvisionValidationError for missing slot handlers", () => {
     const machine = createSlotMachine();
-    expect(() => validateSlots(machine, { canStart: () => true })).toThrow();
+    expect(() => materializeMachine(machine, { canStart: () => true })).toThrow();
   });
 
   test("throws ProvisionValidationError for extra slot handlers", () => {
     const machine = createSlotMachine();
     expect(() =>
-      validateSlots(machine, {
+      materializeMachine(machine, {
         canStart: () => true,
         onStart: () => Effect.void,
         extra: () => true,
@@ -151,45 +147,20 @@ describe("validateSlots", () => {
     ).toThrow();
   });
 
-  test("returns undefined for no-slot machine", () => {
+  test("returns machine as-is for no-slot machine", () => {
     const machine = createSimpleMachine();
-    const result = validateSlots(machine);
-    expect(result).toBeUndefined();
+    const result = materializeMachine(machine);
+    expect(result).toBe(machine);
   });
 
-  test("returns handler map for slotful machine with handlers", () => {
+  test("returns fresh copy for slotful machine with handlers", () => {
     const machine = createSlotMachine();
-    const result = validateSlots(machine, {
+    const result = materializeMachine(machine, {
       canStart: () => true,
       onStart: () => Effect.void,
     });
-    expect(result).toBeDefined();
-    expect(result?.guards.get("canStart")).toBeDefined();
-    expect(result?.effects.get("onStart")).toBeDefined();
-  });
-
-  test("separates guard and effect namespaces", () => {
-    // Guard and effect with the same name should not collide
-    const Guards = Slot.Guards({ check: {} });
-    const Effects = Slot.Effects({ check: {} });
-
-    const machine = Machine.make({
-      state: SimpleState,
-      event: SimpleEvent,
-      guards: Guards,
-      effects: Effects,
-      initial: SimpleState.Idle,
-    });
-
-    const guardFn = () => true;
-    const result = validateSlots(machine, {
-      check: guardFn, // same name for both guard and effect
-    });
-
-    expect(result).toBeDefined();
-    // Both should get the handler, but through separate maps
-    expect(result?.guards.get("check")).toBe(guardFn);
-    expect(result?.effects.get("check")).toBe(guardFn);
+    expect(result).not.toBe(machine);
+    expect(result.initial).toEqual(machine.initial);
   });
 });
 

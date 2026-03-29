@@ -4,6 +4,16 @@ export * as Machine from "./machine.js";
 // Slot module
 export { Slot } from "./slot.js";
 export type {
+  SlotsDef,
+  SlotsSchema,
+  SlotCalls,
+  SlotCall,
+  SlotFnDef,
+  SlotHandler,
+  ProvideSlots,
+  HasSlotKeys,
+  MachineContext,
+  // Deprecated aliases
   GuardsSchema,
   EffectsSchema,
   GuardsDef,
@@ -14,7 +24,6 @@ export type {
   EffectSlot as SlotEffectSlot,
   GuardHandlers,
   EffectHandlers as SlotEffectHandlers,
-  MachineContext,
 } from "./slot.js";
 
 // Errors
@@ -47,7 +56,6 @@ export type {
   HandlerContext,
   StateHandlerContext,
   TaskOptions,
-  ProvideHandlers,
   SlotContext,
   TimeoutConfig,
   ReplyResult,

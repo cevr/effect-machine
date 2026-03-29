@@ -64,22 +64,22 @@ describe("Transition Index", () => {
   test("findTransitions returns single transition (guards now in handler)", () => {
     // With the new API, guards are checked inside handlers
     // So multiple transitions for same state/event just means multiple registrations
-    const TestGuards = Slot.Guards({
-      isSpecial: {},
-      isNormal: {},
+    const TestSlots = Slot.define({
+      isSpecial: Slot.fn({}, Schema.Boolean),
+      isNormal: Slot.fn({}, Schema.Boolean),
     });
 
     const machine = Machine.make({
       state: TestState,
       event: TestEvent,
-      guards: TestGuards,
+      slots: TestSlots,
       initial: TestState.Idle,
-    }).on(TestState.Idle, TestEvent.Start, ({ event, guards }) =>
+    }).on(TestState.Idle, TestEvent.Start, ({ event, slots }) =>
       Effect.gen(function* () {
-        if (yield* guards.isSpecial()) {
+        if (yield* slots.isSpecial()) {
           return TestState.Loading({ id: event.id });
         }
-        if (yield* guards.isNormal()) {
+        if (yield* slots.isNormal()) {
           return TestState.Loading({ id: event.id });
         }
         return TestState.Loading({ id: event.id });

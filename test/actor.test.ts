@@ -20,7 +20,8 @@ import {
   Event,
   Slot,
 } from "../src/index.js";
-import { validateSlots } from "../src/internal/slots.js";
+import { materializeMachine } from "../src/machine.js";
+import { MachineContextTag } from "../src/slot.js";
 import { describe, expect, it, yieldFibers } from "effect-bun-test";
 
 // ============================================================================
@@ -43,30 +44,35 @@ const TestEvent = Event({
 });
 type TestEvent = typeof TestEvent.Type;
 
-const TestGuards = Slot.Guards({
-  isHighValue: {},
+const TestSlots = Slot.define({
+  isHighValue: Slot.fn({}, Schema.Boolean),
 });
 
 const testMachineSlots = {
-  isHighValue: (_params: void, ctx: { event: TestEvent }) =>
-    ctx.event._tag === "Update" && ctx.event.value > 100,
+  isHighValue: () =>
+    Effect.gen(function* () {
+      const ctx = yield* MachineContextTag;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const event = ctx.event as any;
+      return event._tag === "Update" && event.value > 100;
+    }),
 };
 
 const createTestMachine = () =>
   Machine.make({
     state: TestState,
     event: TestEvent,
-    guards: TestGuards,
+    slots: TestSlots,
     initial: TestState.Idle,
   })
     .on(TestState.Idle, TestEvent.Start, ({ event }) => TestState.Loading({ value: event.value }))
     .on(TestState.Loading, TestEvent.Complete, ({ state }) =>
       TestState.Active({ value: state.value }),
     )
-    .on(TestState.Active, TestEvent.Update, ({ event, guards }) =>
+    .on(TestState.Active, TestEvent.Update, ({ event, slots }) =>
       Effect.gen(function* () {
         // If high value (> 100), double it
-        if (yield* guards.isHighValue()) {
+        if (yield* slots.isHighValue()) {
           return TestState.Active({ value: event.value * 2 });
         }
         return TestState.Active({ value: event.value });
@@ -143,23 +149,25 @@ describe("ActorSystem", () => {
     Effect.gen(function* () {
       const SimpleState = State({ Idle: {} });
       const SimpleEvent = Event({ Ping: {} });
-      const TestEffects = Slot.Effects({ mark: {} });
+      const TestSlots2 = Slot.define({ mark: Slot.fn({}) });
 
       const counter = yield* Ref.make(0);
 
-      const machine = Machine.make({
-        state: SimpleState,
-        event: SimpleEvent,
-        effects: TestEffects,
-        initial: SimpleState.Idle,
-      }).background(({ effects }) => effects.mark());
-      const slots = { mark: () => Ref.update(counter, (n) => n + 1) };
+      const machine = materializeMachine(
+        Machine.make({
+          state: SimpleState,
+          event: SimpleEvent,
+          slots: TestSlots2,
+          initial: SimpleState.Idle,
+        }).background(({ slots }) => slots.mark()),
+        { mark: () => Ref.update(counter, (n) => n + 1) },
+      );
 
       const system = yield* ActorSystemService;
-      yield* system.spawn("dup-actor", machine, { slots });
+      yield* system.spawn("dup-actor", machine);
       yield* yieldFibers;
 
-      const result = yield* Effect.result(system.spawn("dup-actor", machine, { slots }));
+      const result = yield* Effect.result(system.spawn("dup-actor", machine));
       expect(result._tag).toBe("Failure");
       if (result._tag === "Failure") {
         expect(result.failure._tag).toBe("DuplicateActorError");
@@ -175,23 +183,25 @@ describe("ActorSystem", () => {
     Effect.gen(function* () {
       const SimpleState = State({ Idle: {} });
       const SimpleEvent = Event({ Ping: {} });
-      const TestEffects = Slot.Effects({ mark: {} });
+      const TestSlots3 = Slot.define({ mark: Slot.fn({}) });
 
       const counter = yield* Ref.make(0);
 
-      const machine = Machine.make({
-        state: SimpleState,
-        event: SimpleEvent,
-        effects: TestEffects,
-        initial: SimpleState.Idle,
-      }).background(({ effects }) => effects.mark());
-      const slots = { mark: () => Ref.update(counter, (n) => n + 1) };
+      const machine = materializeMachine(
+        Machine.make({
+          state: SimpleState,
+          event: SimpleEvent,
+          slots: TestSlots3,
+          initial: SimpleState.Idle,
+        }).background(({ slots }) => slots.mark()),
+        { mark: () => Ref.update(counter, (n) => n + 1) },
+      );
 
       const system = yield* ActorSystemService;
       const [resultA, resultB] = yield* Effect.all(
         [
-          Effect.result(system.spawn("concurrent-actor", machine, { slots })),
-          Effect.result(system.spawn("concurrent-actor", machine, { slots })),
+          Effect.result(system.spawn("concurrent-actor", machine)),
+          Effect.result(system.spawn("concurrent-actor", machine)),
         ],
         { concurrency: "unbounded" },
       );
@@ -208,21 +218,21 @@ describe("ActorSystem", () => {
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
 
-  it.live("validateSlots validates missing slot handlers", () =>
+  it.live("materializeMachine validates missing slot handlers", () =>
     Effect.sync(() => {
       const SimpleState = State({ Idle: {} });
       const SimpleEvent = Event({ Ping: {} });
-      const TestEffects = Slot.Effects({ mark: {} });
+      const TestSlots4 = Slot.define({ mark: Slot.fn({}) });
 
       const machine = Machine.make({
         state: SimpleState,
         event: SimpleEvent,
-        effects: TestEffects,
+        slots: TestSlots4,
         initial: SimpleState.Idle,
       });
 
-      // validateSlots without required handlers throws ProvisionValidationError
-      expect(() => validateSlots(machine, {})).toThrow();
+      // materializeMachine without required handlers throws ProvisionValidationError
+      expect(() => materializeMachine(machine, {})).toThrow();
     }),
   );
 
@@ -402,18 +412,18 @@ describe("Machine.spawn", () => {
     Effect.gen(function* () {
       const cleanedUp: string[] = [];
 
-      const TestEffects = Slot.Effects({ track: {} });
+      const TestSlots5 = Slot.define({ track: Slot.fn({}) });
 
       const machine = Machine.make({
         state: TestState,
         event: TestEvent,
-        effects: TestEffects,
+        slots: TestSlots5,
         initial: TestState.Idle,
       })
         .on(TestState.Idle, TestEvent.Start, ({ event }) =>
           TestState.Active({ value: event.value }),
         )
-        .spawn(TestState.Active, ({ effects }) => effects.track());
+        .spawn(TestState.Active, ({ slots }) => slots.track());
 
       // Run in inner scope
       yield* Effect.scoped(

@@ -39,7 +39,7 @@ export class SlotProvisionError extends Schema.TaggedErrorClass<SlotProvisionErr
   "SlotProvisionError",
   {
     slotName: Schema.String,
-    slotType: Schema.Literals(["guard", "effect"]),
+    slotType: Schema.Literals(["guard", "effect", "slot"]),
   },
 ) {}
 

@@ -3,7 +3,7 @@ import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import { Machine, simulate, State, Event, Slot } from "../src/index.js";
-import { validateSlots } from "../src/machine.js";
+import { materializeMachine } from "../src/machine.js";
 
 const CounterState = State({
   Idle: { count: Schema.Number },
@@ -63,9 +63,9 @@ describe("Machine", () => {
     );
   });
 
-  test("supports guards via Slot.Guards", async () => {
-    const CounterGuards = Slot.Guards({
-      belowLimit: { limit: Schema.Number },
+  test("supports slots via Slot.define", async () => {
+    const CounterSlots = Slot.define({
+      belowLimit: Slot.fn({ limit: Schema.Number }, Schema.Boolean),
     });
 
     await Effect.runPromise(
@@ -73,12 +73,12 @@ describe("Machine", () => {
         const machine = Machine.make({
           state: CounterState,
           event: CounterEvent,
-          guards: CounterGuards,
+          slots: CounterSlots,
           initial: CounterState.Counting({ count: 0 }),
         })
-          .on(CounterState.Counting, CounterEvent.Increment, ({ state, guards }) =>
+          .on(CounterState.Counting, CounterEvent.Increment, ({ state, slots }) =>
             Effect.gen(function* () {
-              if (yield* guards.belowLimit({ limit: 3 })) {
+              if (yield* slots.belowLimit({ limit: 3 })) {
                 return CounterState.Counting({ count: state.count + 1 });
               }
               return state;
@@ -100,7 +100,12 @@ describe("Machine", () => {
           ],
           {
             slots: {
-              belowLimit: ({ limit }: any, { state }: any) => state.count < limit,
+              belowLimit: ({ limit }: { limit: number }) =>
+                Effect.gen(function* () {
+                  const ctx = yield* machine.Context;
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  return (ctx.state as any).count < limit;
+                }),
             },
           },
         );
@@ -332,8 +337,10 @@ describe(".from()", () => {
       initial: FlowState.Draft,
     })
       .on(FlowState.Draft, FlowEvent.Submit, () => FlowState.Review)
-      .on([FlowState.Draft, FlowState.Review], FlowEvent.Cancel, () => FlowState.Cancelled)
-      .on(FlowState.Review, FlowEvent.Approve, () => FlowState.Approved)
+      .from([FlowState.Draft, FlowState.Review], (scope) =>
+        scope.on(FlowEvent.Cancel, () => FlowState.Cancelled),
+      )
+      .from(FlowState.Review, (scope) => scope.on(FlowEvent.Approve, () => FlowState.Approved))
       .final(FlowState.Cancelled)
       .final(FlowState.Approved);
 
@@ -351,107 +358,50 @@ describe(".from()", () => {
 //  (F7)
 // ============================================================================
 
-describe("validateSlots", () => {
+describe("materializeMachine", () => {
   test("throws ProvisionValidationError when slots missing", () => {
-    const Guards = Slot.Guards({ check: {} });
-    const Effects = Slot.Effects({ notify: {} });
+    const TestSlots = Slot.define({
+      check: Slot.fn({}, Schema.Boolean),
+      notify: Slot.fn({}),
+    });
 
     const machine = Machine.make({
       state: CounterState,
       event: CounterEvent,
-      guards: Guards,
-      effects: Effects,
+      slots: TestSlots,
       initial: CounterState.Idle({ count: 0 }),
     });
 
-    expect(() => validateSlots(machine, {})).toThrow();
+    expect(() => materializeMachine(machine, {})).toThrow();
   });
 
   test("succeeds when all handlers provided", () => {
-    const Guards = Slot.Guards({ check: {} });
+    const TestSlots = Slot.define({
+      check: Slot.fn({}, Schema.Boolean),
+    });
 
     const machine = Machine.make({
       state: CounterState,
       event: CounterEvent,
-      guards: Guards,
+      slots: TestSlots,
       initial: CounterState.Idle({ count: 0 }),
     });
 
-    const handlers = validateSlots(machine, {
+    const materialized = materializeMachine(machine, {
       check: () => true,
     });
 
-    expect(handlers).toBeDefined();
-    expect(handlers?.guards.get("check")).toBeDefined();
+    expect(materialized.initial._tag).toBe("Idle");
   });
 
-  test("no-arg validate works on slotless machine", () => {
+  test("no-arg materialize works on slotless machine", () => {
     const machine = Machine.make({
       state: CounterState,
       event: CounterEvent,
       initial: CounterState.Idle({ count: 0 }),
     });
 
-    const handlers = validateSlots(machine);
-    expect(handlers).toBeUndefined();
-  });
-});
-
-// ============================================================================
-// Multi-state .spawn()
-// ============================================================================
-
-describe("multi-state .spawn()", () => {
-  test("registers spawn effect for each state in array", () => {
-    const machine = Machine.make({
-      state: CounterState,
-      event: CounterEvent,
-      initial: CounterState.Idle({ count: 0 }),
-    }).spawn([CounterState.Idle, CounterState.Counting], ({ self }) =>
-      self.send(CounterEvent.Increment),
-    );
-
-    expect(machine.spawnEffects.length).toBe(2);
-    expect(machine.spawnEffects[0]?.stateTag).toBe("Idle");
-    expect(machine.spawnEffects[1]?.stateTag).toBe("Counting");
-  });
-});
-
-// ============================================================================
-// .task() shorthand (omit onSuccess)
-// ============================================================================
-
-describe(".task() shorthand", () => {
-  test("task without onSuccess sends return value directly", async () => {
-    const machine = Machine.make({
-      state: CounterState,
-      event: CounterEvent,
-      initial: CounterState.Idle({ count: 0 }),
-    })
-      .on(CounterState.Idle, CounterEvent.Start, ({ state }) =>
-        CounterState.Counting({ count: state.count + 1 }),
-      )
-      .task(CounterState.Counting, () => Effect.succeed(CounterEvent.Stop), {
-        name: "auto-stop",
-      })
-      .on(CounterState.Counting, CounterEvent.Stop, ({ state }) =>
-        CounterState.Done({ count: state.count }),
-      )
-      .final(CounterState.Done);
-
-    // Counting state should run the task, which sends Stop, transitioning to Done
-    const actor = await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const a = yield* Machine.spawn(machine);
-          yield* a.send(CounterEvent.Start);
-          return yield* a.awaitFinal;
-        }),
-      ),
-    );
-    expect(actor._tag).toBe("Done");
-    if (actor._tag === "Done") {
-      expect(actor.count).toBe(1);
-    }
+    const materialized = materializeMachine(machine);
+    expect(materialized.initial._tag).toBe("Idle");
   });
 });

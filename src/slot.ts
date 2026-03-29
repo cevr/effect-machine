@@ -1,29 +1,27 @@
 /**
- * Slot module - schema-based, parameterized guards and effects.
+ * Slot module — unified, schema-based parameterized slots.
  *
- * Guards and Effects are defined with schemas for their parameters,
- * and provided implementations receive typed parameters plus machine context.
+ * Replaces the split Guards/Effects API with a single `Slot.define` + `Slot.fn`.
+ * Each slot declares its parameter schema and (optional) return schema.
+ * Handlers receive only params — machine context is accessed via `yield* machine.Context`.
  *
  * @example
  * ```ts
  * import { Slot } from "effect-machine"
  * import { Schema } from "effect"
  *
- * const MyGuards = Slot.Guards({
- *   canRetry: { max: Schema.Number },
- *   isValid: {},  // no params
- * })
- *
- * const MyEffects = Slot.Effects({
- *   fetchData: { url: Schema.String },
- *   notify: { message: Schema.String },
+ * const MySlots = Slot.define({
+ *   canRetry: Slot.fn({ max: Schema.Number }, Schema.Boolean),
+ *   isValid: Slot.fn({}, Schema.Boolean),
+ *   fetchData: Slot.fn({ url: Schema.String }),
+ *   notify: Slot.fn({ message: Schema.String }),
  * })
  *
  * // Used in handlers:
- * .on(State.X, Event.Y, ({ guards, effects }) =>
+ * .on(State.X, Event.Y, ({ slots }) =>
  *   Effect.gen(function* () {
- *     if (yield* guards.canRetry({ max: 3 })) {
- *       yield* effects.fetchData({ url: "/api" })
+ *     if (yield* slots.canRetry({ max: 3 })) {
+ *       yield* slots.fetchData({ url: "/api" })
  *       return State.Next
  *     }
  *     return state
@@ -44,63 +42,141 @@ import type { ActorSystem } from "./actor.js";
 /** Schema fields definition (like Schema.Struct.Fields) */
 type Fields = Record<string, Schema.Top>;
 
-/** Extract the encoded type from schema fields (used for parameters) */
+/** Extract the type from schema fields (used for parameters) */
 type FieldsToParams<F extends Fields> = keyof F extends never
   ? void
   : Schema.Schema.Type<Schema.Struct<F>>;
 
 // ============================================================================
-// Slot Types
+// SlotFnDef — individual slot definition
 // ============================================================================
 
 /**
- * A guard slot - callable function that returns Effect<boolean>.
+ * Definition of a single slot function.
+ * Created via `Slot.fn(params, returnSchema?)`.
  */
-export interface GuardSlot<Name extends string, Params> {
-  readonly _tag: "GuardSlot";
-  readonly name: Name;
-  (params: Params): Effect.Effect<boolean>;
+export interface SlotFnDef<F extends Fields = Fields, Return = void> {
+  readonly _tag: "SlotFnDef";
+  readonly fields: F;
+  /** Return schema — Schema.Boolean for guards, undefined for void effects */
+  readonly returnSchema: Schema.Schema<Return> | undefined;
 }
 
 /**
- * An effect slot - callable function that returns Effect<void>.
+ * Define a single slot function with parameter schema and optional return schema.
+ *
+ * @example
+ * ```ts
+ * // Guard-like: returns boolean
+ * Slot.fn({ max: Schema.Number }, Schema.Boolean)
+ *
+ * // Effect-like: returns void (default)
+ * Slot.fn({ url: Schema.String })
+ *
+ * // No params, returns boolean
+ * Slot.fn({}, Schema.Boolean)
+ * ```
  */
-export interface EffectSlot<Name extends string, Params> {
-  readonly _tag: "EffectSlot";
+export const fn: {
+  <F extends Fields, Return>(fields: F, returnSchema: Schema.Schema<Return>): SlotFnDef<F, Return>;
+  <F extends Fields>(fields: F): SlotFnDef<F, void>;
+} = <F extends Fields, Return = void>(
+  fields: F,
+  returnSchema?: Schema.Schema<Return>,
+): SlotFnDef<F, Return> => ({
+  _tag: "SlotFnDef",
+  fields,
+  returnSchema: returnSchema as SlotFnDef<F, Return>["returnSchema"],
+});
+
+// ============================================================================
+// SlotsDef — definition record
+// ============================================================================
+
+/**
+ * Record of slot definitions. Keys are slot names, values are SlotFnDef.
+ */
+export type SlotsDef = Record<string, SlotFnDef<Fields, unknown>>;
+
+// ============================================================================
+// SlotsSchema — returned by Slot.define()
+// ============================================================================
+
+/**
+ * Slots schema — returned by `Slot.define()`. Passed to `Machine.make({ slots })`.
+ */
+export interface SlotsSchema<D extends SlotsDef> {
+  readonly _tag: "SlotsSchema";
+  readonly definitions: D;
+  /** Create callable slot proxies (used by Machine internally) */
+  readonly _createSlots: (
+    resolve: <N extends keyof D & string>(
+      name: N,
+      params: SlotParams<D[N]>,
+    ) => Effect.Effect<SlotReturn<D[N]>>,
+  ) => SlotCalls<D>;
+}
+
+// ============================================================================
+// SlotCalls — callable slot proxies available in handler context
+// ============================================================================
+
+/** Extract params type from a SlotFnDef */
+type SlotParams<D extends SlotFnDef<Fields, unknown>> =
+  D extends SlotFnDef<infer F, unknown> ? FieldsToParams<F> : never;
+
+/** Extract return type from a SlotFnDef */
+type SlotReturn<D extends SlotFnDef<Fields, unknown>> =
+  D extends SlotFnDef<Fields, infer R> ? R : never;
+
+/**
+ * A callable slot — function that takes params and returns Effect<Return>.
+ */
+export interface SlotCall<Name extends string, Params, Return> {
+  readonly _tag: "Slot";
   readonly name: Name;
-  (params: Params): Effect.Effect<void>;
+  (params: Params): Effect.Effect<Return>;
 }
 
 /**
- * Guard definition - name to schema fields mapping
+ * Convert slot definitions to callable slot proxies.
  */
-export type GuardsDef = Record<string, Fields>;
-
-/**
- * Effect definition - name to schema fields mapping
- */
-export type EffectsDef = Record<string, Fields>;
-
-/**
- * Convert guard definitions to callable guard slots
- */
-export type GuardSlots<D extends GuardsDef> = {
-  readonly [K in keyof D & string]: GuardSlot<K, FieldsToParams<D[K]>>;
+export type SlotCalls<D extends SlotsDef> = {
+  readonly [K in keyof D & string]: SlotCall<K, SlotParams<D[K]>, SlotReturn<D[K]>>;
 };
 
+// ============================================================================
+// SlotHandler / ProvideSlots — handler implementations at spawn time
+// ============================================================================
+
 /**
- * Convert effect definitions to callable effect slots
+ * Slot handler implementation.
+ * Receives only params — use `yield* machine.Context` for machine context.
  */
-export type EffectSlots<D extends EffectsDef> = {
-  readonly [K in keyof D & string]: EffectSlot<K, FieldsToParams<D[K]>>;
+export type SlotHandler<Params, Return, R = never> = (
+  params: Params,
+) => Return | Effect.Effect<Return, never, R>;
+
+/**
+ * Handler implementations for all slots in a definition.
+ */
+export type ProvideSlots<D extends SlotsDef, R = never> = {
+  readonly [K in keyof D & string]: SlotHandler<SlotParams<D[K]>, SlotReturn<D[K]>, R>;
 };
+
+/** Check if a SlotsDef has any actual keys */
+export type HasSlotKeys<SD extends SlotsDef> = [keyof SD] extends [never]
+  ? false
+  : SD extends Record<string, never>
+    ? false
+    : true;
 
 // ============================================================================
 // Machine Context Tag
 // ============================================================================
 
 /**
- * Type for machine context - state, event, and self reference.
+ * Type for machine context — state, event, and self reference.
  * Shared across all machines via MachineContextTag.
  */
 export interface MachineContext<State, Event, Self> {
@@ -109,13 +185,6 @@ export interface MachineContext<State, Event, Self> {
   readonly event: Event;
   readonly self: Self;
   readonly system: ActorSystem;
-  /** @internal Bound slot handler functions. Set at spawn time, read by slot closures. */
-  readonly _slotHandlers?: {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    readonly guards: ReadonlyMap<string, any>;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    readonly effects: ReadonlyMap<string, any>;
-  };
 }
 
 /**
@@ -129,163 +198,105 @@ export const MachineContextTag =
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 // ============================================================================
-// Handler Types (for provide)
+// Slot.define — factory
 // ============================================================================
 
 /**
- * Guard handler implementation.
- * Receives params and context, returns Effect<boolean>.
+ * Define a set of slots with parameter and return schemas.
+ *
+ * @example
+ * ```ts
+ * const MySlots = Slot.define({
+ *   canRetry: Slot.fn({ max: Schema.Number }, Schema.Boolean),
+ *   fetchData: Slot.fn({ url: Schema.String }),
+ *   notify: Slot.fn({ message: Schema.String }),
+ * })
+ * ```
  */
-export type GuardHandler<Params, Ctx, R = never> = (
-  params: Params,
-  ctx: Ctx,
-) => boolean | Effect.Effect<boolean, never, R>;
-
-/**
- * Effect handler implementation.
- * Receives params and context, returns Effect<void>.
- */
-export type EffectHandler<Params, Ctx, R = never> = (
-  params: Params,
-  ctx: Ctx,
-) => Effect.Effect<void, never, R>;
-
-/**
- * Handler types for all guards in a definition
- */
-export type GuardHandlers<D extends GuardsDef, MachineCtx, R = never> = {
-  readonly [K in keyof D & string]: GuardHandler<FieldsToParams<D[K]>, MachineCtx, R>;
-};
-
-/**
- * Handler types for all effects in a definition
- */
-export type EffectHandlers<D extends EffectsDef, MachineCtx, R = never> = {
-  readonly [K in keyof D & string]: EffectHandler<FieldsToParams<D[K]>, MachineCtx, R>;
-};
-
-// ============================================================================
-// Schema Types (for Machine.make)
-// ============================================================================
-
-/**
- * Guards schema - returned by Slot.Guards()
- */
-export interface GuardsSchema<D extends GuardsDef> {
-  readonly _tag: "GuardsSchema";
-  readonly definitions: D;
-  /** Create callable guard slots (used by Machine internally) */
-  readonly _createSlots: (
-    resolve: <N extends keyof D & string>(
-      name: N,
-      params: FieldsToParams<D[N]>,
-    ) => Effect.Effect<boolean>,
-  ) => GuardSlots<D>;
-}
-
-/**
- * Effects schema - returned by Slot.Effects()
- */
-export interface EffectsSchema<D extends EffectsDef> {
-  readonly _tag: "EffectsSchema";
-  readonly definitions: D;
-  /** Create callable effect slots (used by Machine internally) */
-  readonly _createSlots: (
-    resolve: <N extends keyof D & string>(
-      name: N,
-      params: FieldsToParams<D[N]>,
-    ) => Effect.Effect<void>,
-  ) => EffectSlots<D>;
-}
-
-// ============================================================================
-// Slot Factories
-// ============================================================================
-
-/**
- * Generic slot schema factory. Used internally by Guards() and Effects().
- * @internal
- */
-const createSlotSchema = <
-  Tag extends "GuardsSchema" | "EffectsSchema",
-  D extends Record<string, Fields>,
->(
-  tag: Tag,
-  slotTag: "GuardSlot" | "EffectSlot",
-  definitions: D,
-): {
-  readonly _tag: Tag;
-  readonly definitions: D;
-  readonly _createSlots: (
-    resolve: <N extends keyof D & string>(
-      name: N,
-      params: FieldsToParams<D[N]>,
-    ) => Effect.Effect<unknown>,
-  ) => Record<string, unknown>;
-} => ({
-  _tag: tag,
+export const define = <D extends SlotsDef>(definitions: D): SlotsSchema<D> => ({
+  _tag: "SlotsSchema",
   definitions,
   _createSlots: (resolve) => {
     const slots: Record<string, unknown> = {};
     for (const name of Object.keys(definitions)) {
-      const slot = (params: unknown) => resolve(name, params as FieldsToParams<D[typeof name]>);
-      Object.defineProperty(slot, "_tag", { value: slotTag, enumerable: true });
+      const slot = (params: unknown) => resolve(name, params as SlotParams<D[typeof name]>);
+      Object.defineProperty(slot, "_tag", { value: "Slot", enumerable: true });
       Object.defineProperty(slot, "name", { value: name, enumerable: true });
       slots[name] = slot;
     }
-    return slots;
+    return slots as SlotCalls<D>;
   },
 });
 
-/**
- * Create a guards schema with parameterized guard definitions.
- *
- * @example
- * ```ts
- * const MyGuards = Slot.Guards({
- *   canRetry: { max: Schema.Number },
- *   isValid: {},
- * })
- * ```
- */
-export const Guards = <D extends GuardsDef>(definitions: D): GuardsSchema<D> =>
-  createSlotSchema("GuardsSchema", "GuardSlot", definitions) as GuardsSchema<D>;
-
-/**
- * Create an effects schema with parameterized effect definitions.
- *
- * @example
- * ```ts
- * const MyEffects = Slot.Effects({
- *   fetchData: { url: Schema.String },
- *   notify: { message: Schema.String },
- * })
- * ```
- */
-export const Effects = <D extends EffectsDef>(definitions: D): EffectsSchema<D> =>
-  createSlotSchema("EffectsSchema", "EffectSlot", definitions) as EffectsSchema<D>;
-
 // ============================================================================
-// Type extraction helpers
+// Backward-compat aliases (deprecated)
 // ============================================================================
 
-/** Extract guard definition type from GuardsSchema */
-export type GuardsDefOf<G> = G extends GuardsSchema<infer D> ? D : never;
+/**
+ * @deprecated Use `SlotsDef` instead.
+ */
+export type GuardsDef = SlotsDef;
 
-/** Extract effect definition type from EffectsSchema */
-export type EffectsDefOf<E> = E extends EffectsSchema<infer D> ? D : never;
+/**
+ * @deprecated Use `SlotsDef` instead.
+ */
+export type EffectsDef = SlotsDef;
 
-/** Extract guard slots type from GuardsSchema */
-export type GuardSlotsOf<G> = G extends GuardsSchema<infer D> ? GuardSlots<D> : never;
+/**
+ * @deprecated Use `SlotsSchema` instead.
+ */
+export type GuardsSchema<D extends SlotsDef> = SlotsSchema<D>;
 
-/** Extract effect slots type from EffectsSchema */
-export type EffectSlotsOf<E> = E extends EffectsSchema<infer D> ? EffectSlots<D> : never;
+/**
+ * @deprecated Use `SlotsSchema` instead.
+ */
+export type EffectsSchema<D extends SlotsDef> = SlotsSchema<D>;
+
+/**
+ * @deprecated Use `SlotCalls` instead.
+ */
+export type GuardSlots<D extends SlotsDef> = SlotCalls<D>;
+
+/**
+ * @deprecated Use `SlotCalls` instead.
+ */
+export type EffectSlots<D extends SlotsDef> = SlotCalls<D>;
+
+/**
+ * @deprecated Use `SlotCall` instead.
+ */
+export type GuardSlot<Name extends string, Params> = SlotCall<Name, Params, boolean>;
+
+/**
+ * @deprecated Use `SlotCall` instead.
+ */
+export type EffectSlot<Name extends string, Params> = SlotCall<Name, Params, void>;
+
+/**
+ * @deprecated Use `SlotHandler` instead.
+ */
+export type GuardHandler<Params, _Ctx, R = never> = SlotHandler<Params, boolean, R>;
+
+/**
+ * @deprecated Use `SlotHandler` instead.
+ */
+export type EffectHandler<Params, _Ctx, R = never> = SlotHandler<Params, void, R>;
+
+/**
+ * @deprecated Use `ProvideSlots` instead.
+ */
+export type GuardHandlers<D extends SlotsDef, _MachineCtx, R = never> = ProvideSlots<D, R>;
+
+/**
+ * @deprecated Use `ProvideSlots` instead.
+ */
+export type EffectHandlers<D extends SlotsDef, _MachineCtx, R = never> = ProvideSlots<D, R>;
 
 // ============================================================================
 // Slot namespace export
 // ============================================================================
 
 export const Slot = {
-  Guards,
-  Effects,
+  fn,
+  define,
 } as const;

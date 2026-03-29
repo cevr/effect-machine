@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 
 import { Event, Machine, simulate, State, Slot } from "../src/index.js";
 
-describe("Parameterized Guards (via Slot.Guards)", () => {
+describe("Parameterized Slots (via Slot.define)", () => {
   const TestState = State({
     Ready: { canPrint: Schema.Boolean },
     Printing: {},
@@ -16,21 +16,21 @@ describe("Parameterized Guards (via Slot.Guards)", () => {
     Finish: {},
   });
 
-  const TestGuards = Slot.Guards({
-    canPrint: {},
+  const TestSlots = Slot.define({
+    canPrint: Slot.fn({}, Schema.Boolean),
   });
 
-  test("guard slot blocks transition when handler returns false", async () => {
+  test("slot blocks transition when handler returns false", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.make({
           state: TestState,
           event: TestEvent,
-          guards: TestGuards,
+          slots: TestSlots,
           initial: TestState.Ready({ canPrint: false }),
-        }).on(TestState.Ready, TestEvent.Print, ({ state, guards }) =>
+        }).on(TestState.Ready, TestEvent.Print, ({ state, slots }) =>
           Effect.gen(function* () {
-            if (yield* guards.canPrint()) {
+            if (yield* slots.canPrint()) {
               return TestState.Printing;
             }
             return state;
@@ -39,8 +39,7 @@ describe("Parameterized Guards (via Slot.Guards)", () => {
 
         const result = yield* simulate(machine, [TestEvent.Print], {
           slots: {
-            canPrint: (_params: {}, { state }: any) =>
-              state._tag === "Ready" ? state.canPrint : false,
+            canPrint: () => false,
           },
         });
         expect(result.finalState._tag).toBe("Ready");
@@ -48,17 +47,17 @@ describe("Parameterized Guards (via Slot.Guards)", () => {
     );
   });
 
-  test("guard slot allows transition when handler returns true", async () => {
+  test("slot allows transition when handler returns true", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.make({
           state: TestState,
           event: TestEvent,
-          guards: TestGuards,
+          slots: TestSlots,
           initial: TestState.Ready({ canPrint: true }),
-        }).on(TestState.Ready, TestEvent.Print, ({ state, guards }) =>
+        }).on(TestState.Ready, TestEvent.Print, ({ state, slots }) =>
           Effect.gen(function* () {
-            if (yield* guards.canPrint()) {
+            if (yield* slots.canPrint()) {
               return TestState.Printing;
             }
             return state;
@@ -67,8 +66,7 @@ describe("Parameterized Guards (via Slot.Guards)", () => {
 
         const result = yield* simulate(machine, [TestEvent.Print], {
           slots: {
-            canPrint: (_params: {}, { state }: any) =>
-              state._tag === "Ready" ? state.canPrint : false,
+            canPrint: () => true,
           },
         });
         expect(result.finalState._tag).toBe("Printing");
@@ -77,7 +75,7 @@ describe("Parameterized Guards (via Slot.Guards)", () => {
   });
 });
 
-describe("Parameterized Guards with Parameters", () => {
+describe("Parameterized Slots with Parameters", () => {
   const AuthState = State({
     Idle: { role: Schema.String, age: Schema.Number },
     Allowed: {},
@@ -88,25 +86,25 @@ describe("Parameterized Guards with Parameters", () => {
     Access: {},
   });
 
-  const AuthGuards = Slot.Guards({
-    isAdmin: {},
-    isAdult: { minAge: Schema.Number },
-    isModerator: {},
+  const AuthSlots = Slot.define({
+    isAdmin: Slot.fn({}, Schema.Boolean),
+    isAdult: Slot.fn({ minAge: Schema.Number }, Schema.Boolean),
+    isModerator: Slot.fn({}, Schema.Boolean),
   });
 
-  test("guard with parameters: isAdult({ minAge: 18 })", async () => {
+  test("slot with parameters: isAdult({ minAge: 18 })", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.make({
           state: AuthState,
           event: AuthEvent,
-          guards: AuthGuards,
+          slots: AuthSlots,
           initial: AuthState.Idle({ role: "admin", age: 25 }),
         })
-          .on(AuthState.Idle, AuthEvent.Access, ({ guards }) =>
+          .on(AuthState.Idle, AuthEvent.Access, ({ slots }) =>
             Effect.gen(function* () {
-              const isAdmin = yield* guards.isAdmin();
-              const isAdult = yield* guards.isAdult({ minAge: 18 });
+              const isAdmin = yield* slots.isAdmin();
+              const isAdult = yield* slots.isAdult({ minAge: 18 });
               if (isAdmin && isAdult) {
                 return AuthState.Allowed;
               }
@@ -117,11 +115,9 @@ describe("Parameterized Guards with Parameters", () => {
           .final(AuthState.Denied);
 
         const authSlots = {
-          isAdmin: (_params: {}, { state }: any) => state._tag === "Idle" && state.role === "admin",
-          isAdult: ({ minAge }: any, { state }: any) =>
-            state._tag === "Idle" && state.age >= minAge,
-          isModerator: (_params: {}, { state }: any) =>
-            state._tag === "Idle" && state.role === "moderator",
+          isAdmin: () => true,
+          isAdult: ({ minAge }: { minAge: number }) => minAge <= 25,
+          isModerator: () => false,
         };
 
         const result = yield* simulate(machine, [AuthEvent.Access], { slots: authSlots });
@@ -130,21 +126,21 @@ describe("Parameterized Guards with Parameters", () => {
     );
   });
 
-  test("combined guard logic with && / ||", async () => {
+  test("combined slot logic with && / ||", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const machine = Machine.make({
           state: AuthState,
           event: AuthEvent,
-          guards: AuthGuards,
+          slots: AuthSlots,
           initial: AuthState.Idle({ role: "moderator", age: 25 }),
         })
-          .on(AuthState.Idle, AuthEvent.Access, ({ guards }) =>
+          .on(AuthState.Idle, AuthEvent.Access, ({ slots }) =>
             Effect.gen(function* () {
               // (admin OR moderator) AND adult
-              const isAdmin = yield* guards.isAdmin();
-              const isMod = yield* guards.isModerator();
-              const isAdult = yield* guards.isAdult({ minAge: 18 });
+              const isAdmin = yield* slots.isAdmin();
+              const isMod = yield* slots.isModerator();
+              const isAdult = yield* slots.isAdult({ minAge: 18 });
               if ((isAdmin || isMod) && isAdult) {
                 return AuthState.Allowed;
               }
@@ -155,11 +151,9 @@ describe("Parameterized Guards with Parameters", () => {
           .final(AuthState.Denied);
 
         const authSlots = {
-          isAdmin: (_params: {}, { state }: any) => state._tag === "Idle" && state.role === "admin",
-          isAdult: ({ minAge }: any, { state }: any) =>
-            state._tag === "Idle" && state.age >= minAge,
-          isModerator: (_params: {}, { state }: any) =>
-            state._tag === "Idle" && state.role === "moderator",
+          isAdmin: () => false,
+          isAdult: ({ minAge }: { minAge: number }) => minAge <= 25,
+          isModerator: () => true,
         };
 
         const result = yield* simulate(machine, [AuthEvent.Access], { slots: authSlots });
@@ -169,8 +163,8 @@ describe("Parameterized Guards with Parameters", () => {
   });
 
   test("NOT logic with !", async () => {
-    const LockedGuards = Slot.Guards({
-      isGuest: {},
+    const LockedSlots = Slot.define({
+      isGuest: Slot.fn({}, Schema.Boolean),
     });
 
     await Effect.runPromise(
@@ -178,12 +172,12 @@ describe("Parameterized Guards with Parameters", () => {
         const machine = Machine.make({
           state: AuthState,
           event: AuthEvent,
-          guards: LockedGuards,
+          slots: LockedSlots,
           initial: AuthState.Idle({ role: "user", age: 20 }),
         })
-          .on(AuthState.Idle, AuthEvent.Access, ({ guards }) =>
+          .on(AuthState.Idle, AuthEvent.Access, ({ slots }) =>
             Effect.gen(function* () {
-              const isGuest = yield* guards.isGuest();
+              const isGuest = yield* slots.isGuest();
               // NOT guest = allowed
               if (!isGuest) {
                 return AuthState.Allowed;
@@ -196,8 +190,7 @@ describe("Parameterized Guards with Parameters", () => {
 
         const result = yield* simulate(machine, [AuthEvent.Access], {
           slots: {
-            isGuest: (_params: {}, { state }: any) =>
-              state._tag === "Idle" && state.role === "guest",
+            isGuest: () => false,
           },
         });
         expect(result.finalState._tag).toBe("Allowed");

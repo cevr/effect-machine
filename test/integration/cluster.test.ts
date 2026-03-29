@@ -238,19 +238,19 @@ describe("Entity.makeTestClient with machine handler", () => {
   });
   type CounterEvent = typeof CounterEvent.Type;
 
-  const CounterGuards = Slot.Guards({
-    underLimit: {},
+  const CounterSlots = Slot.define({
+    underLimit: Slot.fn({}, Schema.Boolean),
   });
 
   const counterMachine = Machine.make({
     state: CounterState,
     event: CounterEvent,
-    guards: CounterGuards,
+    slots: CounterSlots,
     initial: CounterState.Counting({ count: 0 }),
   })
-    .on(CounterState.Counting, CounterEvent.Increment, ({ state, guards }) =>
+    .on(CounterState.Counting, CounterEvent.Increment, ({ state, slots }) =>
       Effect.gen(function* () {
-        if (yield* guards.underLimit()) {
+        if (yield* slots.underLimit()) {
           return CounterState.Counting({ count: state.count + 1 });
         }
         return state;
@@ -301,8 +301,7 @@ describe("Entity.makeTestClient with machine handler", () => {
               const handlerResult = transition.handler({
                 state: currentState,
                 event,
-                guards: {} as any,
-                effects: {} as any,
+                slots: {} as any,
               });
               const newState = Effect.isEffect(handlerResult)
                 ? yield* handlerResult as Effect.Effect<OrderState>
@@ -351,8 +350,13 @@ describe("Entity.makeTestClient with machine handler", () => {
           ],
           {
             slots: {
-              underLimit: (_params: {}, { state }: any) =>
-                state._tag === "Counting" && state.count < 3,
+              underLimit: () =>
+                Effect.gen(function* () {
+                  const ctx = yield* counterMachine.Context;
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  const state = ctx.state as any;
+                  return state._tag === "Counting" && state.count < 3;
+                }),
             },
           },
         );
