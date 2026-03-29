@@ -13,6 +13,16 @@ type MachineInput<S, E, R, GD extends GuardsDef, EFD extends EffectsDef> =
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   Machine<S, E, R, any, any, GD, EFD> | BuiltMachine<S, E, R>;
 
+const makeDummySelf = <E>(label: string): MachineRef<E> => {
+  const dummySend = Effect.fn(label)((_event: E) => Effect.void);
+  return {
+    send: dummySend,
+    cast: dummySend,
+    spawn: () => Effect.die(`spawn not supported in ${label}`),
+    reply: () => Effect.succeed(false),
+  };
+};
+
 /**
  * Result of simulating events through a machine
  */
@@ -58,14 +68,7 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
     EFD
   >;
 
-  // Create a dummy self for slot accessors
-  const dummySend = Effect.fn("effect-machine.testing.simulate.send")((_event: E) => Effect.void);
-  const dummySelf: MachineRef<E> = {
-    send: dummySend,
-    cast: dummySend,
-    spawn: () => Effect.die("spawn not supported in simulation"),
-    reply: () => Effect.succeed(false),
-  };
+  const dummySelf = makeDummySelf<E>("effect-machine.testing.simulate");
 
   let currentState = machine.initial;
   const states: S[] = [currentState];
@@ -298,14 +301,7 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
     EFD
   >;
 
-  // Create a dummy self for slot accessors
-  const dummySend = Effect.fn("effect-machine.testing.harness.send")((_event: E) => Effect.void);
-  const dummySelf: MachineRef<E> = {
-    send: dummySend,
-    cast: dummySend,
-    spawn: () => Effect.die("spawn not supported in test harness"),
-    reply: () => Effect.succeed(false),
-  };
+  const dummySelf = makeDummySelf<E>("effect-machine.testing.harness");
 
   const stateRef = yield* SubscriptionRef.make(machine.initial);
   const hasPostponeRules = machine.postponeRules.length > 0;

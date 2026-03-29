@@ -28,6 +28,7 @@ import {
 
 import type { Machine, MachineRef, BuiltMachine } from "./machine.js";
 import type { ReplyTypeBrand, ExtractReply } from "./internal/brands.js";
+import type { GuardsDef, EffectsDef } from "./slot.js";
 import type { Inspector } from "./inspection.js";
 import { Inspector as InspectorTag } from "./inspection.js";
 import {
@@ -42,6 +43,8 @@ import type {
   ProcessEventResult,
 } from "./internal/transition.js";
 import { emitWithTimestamp } from "./internal/inspection.js";
+import { DuplicateActorError, ActorStoppedError, NoReplyError } from "./errors.js";
+import { INTERNAL_INIT_EVENT } from "./internal/utils.js";
 
 // Re-export for external use (cluster)
 export { resolveTransition, runSpawnEffects, processEventCore } from "./internal/transition.js";
@@ -71,17 +74,11 @@ export type QueuedEvent<E> =
       readonly event: E;
       readonly reply: Deferred.Deferred<unknown, NoReplyError | ActorStoppedError>;
     };
-import type { GuardsDef, EffectsDef } from "./slot.js";
-import { DuplicateActorError, ActorStoppedError, NoReplyError } from "./errors.js";
-import { INTERNAL_INIT_EVENT } from "./internal/utils.js";
 
 // ============================================================================
 // ActorRef Interface
 // ============================================================================
 
-/**
- * Reference to a running actor.
- */
 /**
  * Sync projection of ActorRef for non-Effect boundaries (React hooks, framework callbacks).
  */
@@ -865,7 +862,7 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
 
     if (shouldStop) {
       yield* Ref.set(stoppedRef, true);
-      settlePostponedBuffer(postponed, pendingReplies, actorId);
+      postponed.length = 0;
       yield* settlePendingReplies(pendingReplies, actorId);
       yield* Scope.close(stateScopeRef.current, Exit.void);
       yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
@@ -881,7 +878,7 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
         const drain = yield* processQueued(entry);
         if (drain.shouldStop) {
           yield* Ref.set(stoppedRef, true);
-          settlePostponedBuffer(postponed, pendingReplies, actorId);
+          postponed.length = 0;
           yield* settlePendingReplies(pendingReplies, actorId);
           yield* Scope.close(stateScopeRef.current, Exit.void);
           yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
@@ -894,21 +891,6 @@ const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
     }
   }
 });
-
-/**
- * Settle all reply-bearing entries in the postpone buffer on shutdown.
- * Call entries already had their Deferred settled with the postponed result
- * (so their pendingReplies entry is already removed). Ask/send entries
- * with Deferreds are settled via the pendingReplies registry.
- */
-const settlePostponedBuffer = <E>(
-  postponed: QueuedEvent<E>[],
-  _pendingReplies: Set<Deferred.Deferred<unknown, unknown>>,
-  _actorId: string,
-): void => {
-  // Clear the buffer — remaining Deferreds are settled via pendingReplies
-  postponed.length = 0;
-};
 
 /**
  * Process a single event, returning true if the actor should stop.

@@ -26,9 +26,10 @@ export {
   MissingMatchHandlerError,
   MissingSchemaError,
   NoReplyError,
+  PersistenceError,
   ProvisionValidationError,
   SlotProvisionError,
-  UnprovidedSlotsError,
+  VersionConflictError,
 } from "./errors.js";
 
 // Schema-first State/Event definitions
