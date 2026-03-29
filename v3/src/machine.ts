@@ -45,6 +45,8 @@
 import type { Schema, Context, Duration } from "effect";
 import { Cause, Effect, Exit, Option, Scope } from "effect";
 
+import type { Supervision } from "./supervision.js";
+
 import type { TransitionResult, ReplyResult } from "./internal/utils.js";
 import { getTag, stubSystem, makeReply } from "./internal/utils.js";
 import type {
@@ -1053,14 +1055,17 @@ const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
   R,
 >(
   machine: AnyMachine<S, E, R>,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  options?: string | { id?: string; hydrate?: S; slots?: Record<string, any> },
+  options?:
+    | string
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    | { id?: string; hydrate?: S; slots?: Record<string, any>; supervision?: Supervision.Policy },
 ) {
   const opts = typeof options === "string" ? { id: options } : options;
   const actorId = opts?.id ?? `actor-${Math.random().toString(36).slice(2)}`;
   const materialized = materializeMachine(machine, opts?.slots);
   const actor = yield* createActor(actorId, materialized as AnyMachine<S, E, never>, {
     initialState: opts?.hydrate,
+    supervision: opts?.supervision,
   });
 
   // If a scope exists in context, attach cleanup automatically
@@ -1082,8 +1087,10 @@ const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
  */
 export const spawn: <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
   machine: AnyMachine<S, E, R>,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  options?: string | { id?: string; hydrate?: S; slots?: Record<string, any> },
+  options?:
+    | string
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    | { id?: string; hydrate?: S; slots?: Record<string, any>; supervision?: Supervision.Policy },
 ) => Effect.Effect<ActorRef<S, E>, never, R> = spawnImpl;
 
 /**

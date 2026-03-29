@@ -43,7 +43,12 @@
           "unnecessaryEffectGen": "warning",
           "unnecessaryFailYieldableError": "warning",
           "unnecessaryPipe": "warning",
-          "unnecessaryPipeChain": "warning"
+          "unnecessaryPipeChain": "warning",
+          "globalConsoleInEffect": "warning",
+          "globalDateInEffect": "warning",
+          "globalFetchInEffect": "warning",
+          "globalRandomInEffect": "warning",
+          "globalTimersInEffect": "warning"
         },
         "keyPatterns": [
           {

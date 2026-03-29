@@ -65,6 +65,10 @@ export type {
 } from "./actor.js";
 export { ActorSystem as ActorSystemService, Default as ActorSystemDefault } from "./actor.js";
 
+// Supervision
+export { ActorExit, Supervision } from "./supervision.js";
+export type { DefectPhase, CellPhase } from "./supervision.js";
+
 // Testing utilities
 export {
   assertNeverReaches,

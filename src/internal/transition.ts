@@ -164,6 +164,8 @@ export interface ProcessEventHooks<S, E> {
   readonly onTransition?: (from: S, to: S, event: E) => Effect.Effect<void>;
   /** Called when a transition handler or spawn effect fails with a defect */
   readonly onError?: (info: ProcessEventError<S, E>) => Effect.Effect<void>;
+  /** Called when a forked spawn fiber defects — signals the runtime to set exitDeferred */
+  readonly onSpawnDefect?: (cause: Cause.Cause<unknown>) => Effect.Effect<void>;
 }
 
 /**
@@ -315,6 +317,7 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
       system,
       actorId,
       hooks?.onError,
+      hooks?.onSpawnDefect,
     );
   }
 
@@ -351,11 +354,13 @@ export const runSpawnEffects = Effect.fn("effect-machine.runSpawnEffects")(funct
   system: ActorSystem,
   actorId: string,
   onError?: (info: ProcessEventError<S, E>) => Effect.Effect<void>,
+  onSpawnDefect?: (cause: Cause.Cause<unknown>) => Effect.Effect<void>,
 ) {
   const spawnEffects = findSpawnEffects(machine, state._tag);
   const ctx: MachineContext<S, E, MachineRef<E>> = { actorId, state, event, self, system };
   const { effects: effectSlots } = machine._slots;
   const reportError = onError;
+  const defectSignal = onSpawnDefect;
 
   for (const spawnEffect of spawnEffects) {
     // Fork the spawn effect into the state scope - interrupted when scope closes
@@ -374,15 +379,16 @@ export const runSpawnEffects = Effect.fn("effect-machine.runSpawnEffects")(funct
         if (Cause.hasInterruptsOnly(cause)) {
           return Effect.interrupt;
         }
-        if (reportError === undefined) {
-          return Effect.failCause(cause).pipe(Effect.orDie);
-        }
-        return reportError({
-          phase: "spawn",
-          state,
-          event,
-          cause,
-        }).pipe(Effect.andThen(Effect.failCause(cause).pipe(Effect.orDie)));
+        const report =
+          reportError !== undefined
+            ? reportError({ phase: "spawn", state, event, cause })
+            : Effect.void;
+        // Signal spawn defect to runtime (if provided) so it can set exitDeferred
+        const signal = defectSignal !== undefined ? defectSignal(cause) : Effect.void;
+        return report.pipe(
+          Effect.andThen(signal),
+          Effect.andThen(Effect.failCause(cause).pipe(Effect.orDie)),
+        );
       }),
     );
 

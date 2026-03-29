@@ -9,7 +9,7 @@
  * across deactivation/reactivation cycles.
  */
 import { Entity, ShardingConfig } from "effect/unstable/cluster";
-import { Effect, Layer, Option, Ref, Schema } from "effect";
+import { Clock, Effect, Layer, Option, Ref, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import { Machine, State, Event, ActorSystemDefault } from "../../src/index.js";
@@ -353,10 +353,11 @@ describe("Entity Persistence", () => {
         const store = yield* Ref.get(storeRef);
         const entry = store.get("JournalSnap/js-1");
         if (entry !== undefined) {
+          const now = yield* Clock.currentTimeMillis;
           entry.snapshot = {
             state: CounterState.Active({ count: 3 }),
             version: 3,
-            timestamp: Date.now(),
+            timestamp: now,
           };
         }
 

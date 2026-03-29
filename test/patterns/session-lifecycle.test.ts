@@ -1,5 +1,5 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Effect, Schema, SubscriptionRef } from "effect";
+import { Clock, Effect, Schema, SubscriptionRef } from "effect";
 import { TestClock } from "effect/testing";
 
 import { ActorSystemDefault, assertPath, Event, Machine, Slot, State } from "../../src/index.js";
@@ -135,6 +135,7 @@ describe("Session Lifecycle Pattern", () => {
 
   it.scoped("session timeout after inactivity", () =>
     Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
       const activeMachine = Machine.make({
         state: SessionState,
         event: SessionEvent,
@@ -142,7 +143,7 @@ describe("Session Lifecycle Pattern", () => {
         initial: SessionState.Active({
           userId: "user-1",
           role: "user",
-          lastActivity: Date.now(),
+          lastActivity: now,
         }),
       })
         .on(SessionState.Active, SessionEvent.SessionTimeout, () => SessionState.SessionExpired)
@@ -179,6 +180,7 @@ describe("Session Lifecycle Pattern", () => {
 
   it.scoped("activity with reenter resets timeout", () =>
     Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
       const activeMachine = Machine.make({
         state: SessionState,
         event: SessionEvent,
@@ -186,7 +188,7 @@ describe("Session Lifecycle Pattern", () => {
         initial: SessionState.Active({
           userId: "user-1",
           role: "user",
-          lastActivity: Date.now(),
+          lastActivity: now,
         }),
       })
         .task(SessionState.Active, ({ effects }) => effects.scheduleTimeout(), {

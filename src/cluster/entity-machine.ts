@@ -15,6 +15,7 @@ import { Entity } from "effect/unstable/cluster";
 import type { Envelope } from "effect/unstable/cluster";
 import type { Rpc } from "effect/unstable/rpc";
 import {
+  Clock,
   type Duration,
   Effect,
   type Layer,
@@ -30,7 +31,7 @@ import { type Machine, replay } from "../machine.js";
 import type { ActorSystem } from "../actor.js";
 import { ActorSystem as ActorSystemTag, makeSystem } from "../actor.js";
 import type { ProcessEventHooks } from "../internal/transition.js";
-import { createRuntime } from "../internal/runtime.js";
+import { createRuntime, type RuntimeQueuedEvent } from "../internal/runtime.js";
 import type {
   EntityPersistenceConfig,
   PersistenceKey,
@@ -155,11 +156,18 @@ export const EntityMachine = {
       // Version tracking
       const versionRef = yield* Ref.make(persistCtx.initialVersion);
 
+      // Cell-owned resources — stable identity for this entity activation
+      const computedInitial = initialState ?? machine.initial;
+      const stateRef = yield* SubscriptionRef.make(computedInitial);
+      const stoppedRef = yield* Ref.make(false);
+      const eventQueue = yield* Queue.unbounded<RuntimeQueuedEvent<E>>();
+
       // Create runtime kernel — single queue, sequential processing
       const runtime = yield* createRuntime(machineWithState, system, {
         actorId: entityId,
         hooks: options?.hooks,
         childIdPrefix: `${entityId}/`,
+        cellResources: { stateRef, stoppedRef, eventQueue },
       });
 
       // ----------------------------------------------------------------
@@ -177,10 +185,11 @@ export const EntityMachine = {
             Stream.runForEach((state) =>
               Effect.gen(function* () {
                 const version = yield* Ref.get(versionRef);
+                const now = yield* Clock.currentTimeMillis;
                 yield* pAdapter.saveSnapshot(key, {
                   state,
                   version,
-                  timestamp: Date.now(),
+                  timestamp: now,
                 } satisfies Snapshot<S>);
               }).pipe(Effect.catch(() => Effect.void)),
             ),
@@ -195,10 +204,11 @@ export const EntityMachine = {
           Effect.gen(function* () {
             const state = yield* SubscriptionRef.get(runtime.stateRef);
             const version = yield* Ref.get(versionRef);
+            const now = yield* Clock.currentTimeMillis;
             yield* pAdapter.saveSnapshot(key, {
               state,
               version,
-              timestamp: Date.now(),
+              timestamp: now,
             } satisfies Snapshot<S>);
           }).pipe(Effect.catch(() => Effect.void)),
         );
@@ -416,10 +426,11 @@ const persistEvent = <E>(
   Effect.gen(function* () {
     const expectedVersion = yield* Ref.get(versionRef);
     const newVersion = expectedVersion + 1;
+    const now = yield* Clock.currentTimeMillis;
     const persisted: PersistedEvent<unknown> = {
       event,
       version: newVersion,
-      timestamp: Date.now(),
+      timestamp: now,
     };
     yield* adapter.appendEvents(key, [persisted], expectedVersion);
     yield* Ref.set(versionRef, newVersion);
