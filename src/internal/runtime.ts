@@ -16,7 +16,18 @@
  *
  * @internal
  */
-import { Deferred, Effect, Exit, Fiber, Queue, Ref, Schema, Scope, SubscriptionRef } from "effect";
+import {
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Option,
+  Queue,
+  Ref,
+  Schema,
+  Scope,
+  SubscriptionRef,
+} from "effect";
 
 import type { Machine, MachineRef } from "../machine.js";
 import type { ActorSystem } from "../actor.js";
@@ -517,8 +528,13 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
     yield* Ref.set(stoppedRef, true);
     if (lifecycle?.onShutdown !== undefined) yield* lifecycle.onShutdown();
     settlePostponed(postponed, actorId);
-    // Drain remaining events from queue and settle their Deferreds
-    const remaining = yield* Queue.takeAll(eventQueue);
+    // Drain remaining events non-blocking (Queue.takeAll blocks in v4)
+    const remaining: RuntimeQueuedEvent<E>[] = [];
+    let next = yield* Queue.poll(eventQueue);
+    while (Option.isSome(next)) {
+      remaining.push(next.value);
+      next = yield* Queue.poll(eventQueue);
+    }
     for (const entry of remaining) {
       if (entry._tag === "sendWait") {
         Effect.runFork(Deferred.succeed(entry.done, undefined));

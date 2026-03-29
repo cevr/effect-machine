@@ -477,10 +477,8 @@ export const buildActorRefCore = <
     drain: Effect.gen(function* () {
       const stopped = yield* Ref.get(stoppedRef);
       if (stopped) return;
-      // Enqueue a drain sentinel — the runtime processes all queued events before it,
-      // then runs shutdown. This guarantees no in-flight work when stop happens.
       const done = yield* Deferred.make<void, never>();
-      yield* Queue.offer(eventQueue, { _tag: "drain", done });
+      yield* Queue.offer(eventQueue, { _tag: "drain" as const, done });
       yield* Deferred.await(done);
     }).pipe(Effect.asVoid) as Effect.Effect<void>,
     sync: {
