@@ -563,6 +563,9 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
         }) as typeof machine)
       : machine;
 
+  // Track whether @machine.stop has been emitted (onFinal sets this to prevent double-emit in onShutdown)
+  let stopEmitted = false;
+
   // Mutable ref for runtime.stateRef — needed because onShutdown closure
   // must reference the stateRef that createRuntime creates
   const runtimeRef: { stateRef: SubscriptionRef.SubscriptionRef<S> | undefined } = {
@@ -609,16 +612,19 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       onFinal:
         inspectorValue !== undefined
           ? (state: S) =>
-              emitWithTimestamp(inspectorValue, (timestamp) => ({
-                type: "@machine.stop",
-                actorId: id,
-                finalState: state,
-                timestamp,
-              }))
+              Effect.gen(function* () {
+                stopEmitted = true;
+                yield* emitWithTimestamp(inspectorValue, (timestamp) => ({
+                  type: "@machine.stop",
+                  actorId: id,
+                  finalState: state,
+                  timestamp,
+                }));
+              })
           : undefined,
       onShutdown: () =>
         Effect.gen(function* () {
-          if (runtimeRef.stateRef !== undefined) {
+          if (!stopEmitted && runtimeRef.stateRef !== undefined) {
             const finalState = yield* SubscriptionRef.get(runtimeRef.stateRef);
             yield* emitWithTimestamp(inspectorValue, (timestamp) => ({
               type: "@machine.stop",

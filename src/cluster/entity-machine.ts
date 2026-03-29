@@ -159,6 +159,7 @@ export const EntityMachine = {
       const runtime = yield* createRuntime(machineWithState, system, {
         actorId: entityId,
         hooks: options?.hooks,
+        childIdPrefix: `${entityId}/`,
       });
 
       // ----------------------------------------------------------------

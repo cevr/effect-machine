@@ -121,6 +121,8 @@ export interface RuntimeConfig<S, E> {
   readonly onChildSpawned?: (childId: string, child: unknown) => Effect.Effect<void>;
   /** Skip registering stop as scope finalizer — actor manages its own lifecycle */
   readonly skipFinalizer?: boolean;
+  /** Prefix for child actor IDs in self.spawn. Entity-machine uses `${actorId}/`. Default: no prefix. */
+  readonly childIdPrefix?: string;
 }
 
 /** @internal */
@@ -176,8 +178,11 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
       yield* Queue.offer(eventQueue, { _tag: "send", event });
     }
   });
+  const childPrefix = config.childIdPrefix ?? "";
   const defaultSpawn: MachineRef<E>["spawn"] = (childId, childMachine) =>
-    system.spawn(childId, childMachine).pipe(Effect.provideService(ActorSystemTag, system));
+    system
+      .spawn(`${childPrefix}${childId}`, childMachine)
+      .pipe(Effect.provideService(ActorSystemTag, system));
   const onChildSpawned = config.onChildSpawned;
   const self: MachineRef<E> = {
     send: selfSend,
@@ -551,7 +556,7 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
 
     const { shouldStop, stateChanged } = yield* wrapped.pipe(
       Effect.catchCause((cause) => {
-        // On defect, settle the current event's Deferred with failure so caller sees the error
+        // On defect: settle the current event's Deferred, run shutdown cleanup, then die
         if (queued._tag === "sendWait") {
           Effect.runFork(Deferred.failCause(queued.done, cause));
         } else if (queued._tag === "ask") {
@@ -559,7 +564,7 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
         } else if (queued._tag === "call") {
           Effect.runFork(Deferred.failCause(queued.reply, cause));
         }
-        return Effect.failCause(cause);
+        return shutdown.pipe(Effect.andThen(Effect.failCause(cause)));
       }),
     );
 
