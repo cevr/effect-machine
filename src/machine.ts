@@ -61,12 +61,8 @@ import type {
 import type { MachineStateSchema, MachineEventSchema } from "./schema.js";
 import { SlotProvisionError } from "./errors.js";
 import type { DuplicateActorError } from "./errors.js";
-import {
-  invalidateIndex,
-  resolveTransition,
-  runTransitionHandler,
-  shouldPostpone,
-} from "./internal/transition.js";
+import { invalidateIndex } from "./internal/transition.js";
+import { foldEvents } from "./internal/fold.js";
 import { emitWithTimestamp } from "./internal/inspection.js";
 import type { ActorRef, ActorSystem } from "./actor.js";
 import { Inspector as InspectorTag } from "./inspection.js";
@@ -908,11 +904,7 @@ const replayImpl = Effect.fn("effect-machine.replay")(function* <
   options?: { from?: S; slots?: Record<string, any> },
 ) {
   const slotHandlers = validateSlots(input, options?.slots);
-  const machine = input;
-  let state: S = options?.from ?? machine.initial;
-
-  const hasPostponeRules = machine.postponeRules.length > 0;
-  const postponed: E[] = [];
+  const initialState = options?.from ?? input.initial;
 
   const dummySend = Effect.fn("effect-machine.replay.send")((_event: E) => Effect.void);
   const self: MachineRef<E> = {
@@ -922,66 +914,16 @@ const replayImpl = Effect.fn("effect-machine.replay")(function* <
     reply: () => Effect.succeed(false),
   };
 
-  for (const event of events) {
-    // Final state stops replay
-    if (machine.finalStates.has(state._tag)) break;
-
-    // Check postpone rules
-    if (hasPostponeRules && shouldPostpone(machine, state._tag, event._tag)) {
-      postponed.push(event);
-      continue;
-    }
-
-    const transition = resolveTransition(machine, state, event);
-    if (transition !== undefined) {
-      const result = yield* runTransitionHandler(
-        machine,
-        transition,
-        state,
-        event,
-        self,
-        stubSystem,
-        "replay",
-        slotHandlers,
-      );
-      const previousTag = state._tag;
-      state = result.newState;
-
-      // Drain postponed events on state change — loop until stable
-      const stateChanged = state._tag !== previousTag || transition.reenter === true;
-      if (stateChanged && postponed.length > 0) {
-        let drainTag = previousTag;
-        while (state._tag !== drainTag && postponed.length > 0) {
-          if (machine.finalStates.has(state._tag)) break;
-          drainTag = state._tag;
-          const drained = postponed.splice(0);
-          for (const postponedEvent of drained) {
-            if (machine.finalStates.has(state._tag)) break;
-            if (shouldPostpone(machine, state._tag, postponedEvent._tag)) {
-              postponed.push(postponedEvent);
-              continue;
-            }
-            const pTransition = resolveTransition(machine, state, postponedEvent);
-            if (pTransition !== undefined) {
-              const pResult = yield* runTransitionHandler(
-                machine,
-                pTransition,
-                state,
-                postponedEvent,
-                self,
-                stubSystem,
-                "replay",
-                slotHandlers,
-              );
-              state = pResult.newState;
-            }
-          }
-        }
-      }
-    }
-  }
-
-  return state;
+  const { finalState } = yield* foldEvents(
+    input,
+    initialState,
+    events,
+    self,
+    stubSystem,
+    "replay",
+    slotHandlers,
+  );
+  return finalState;
 });
 
 export const replay: {

@@ -6,6 +6,7 @@ import { AssertionError } from "./errors.js";
 import type { GuardsDef, EffectsDef } from "./slot.js";
 import { executeTransition, shouldPostpone } from "./internal/transition.js";
 import { stubSystem } from "./internal/utils.js";
+import { foldEvents } from "./internal/fold.js";
 
 type MachineInput<
   S extends { readonly _tag: string },
@@ -66,76 +67,16 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
   options?: { slots?: Record<string, any> },
 ) {
   const slotHandlers = validateSlots(input, options?.slots);
-  const machine = input;
-
   const dummySelf = makeDummySelf<E>("effect-machine.testing.simulate");
-
-  let currentState = machine.initial;
-  const states: S[] = [currentState];
-  const hasPostponeRules = machine.postponeRules.length > 0;
-  const postponed: E[] = [];
-
-  for (const event of events) {
-    // Check postpone rules
-    if (hasPostponeRules && shouldPostpone(machine, currentState._tag, event._tag)) {
-      postponed.push(event);
-      continue;
-    }
-
-    const result = yield* executeTransition(
-      machine,
-      currentState,
-      event,
-      dummySelf,
-      stubSystem,
-      "simulation",
-      slotHandlers,
-    );
-
-    if (!result.transitioned) {
-      continue;
-    }
-
-    const prevTag = currentState._tag;
-    currentState = result.newState;
-    states.push(currentState);
-
-    // Stop if final state
-    if (machine.finalStates.has(currentState._tag)) {
-      break;
-    }
-
-    // Drain postponed events after state tag change — loop until stable
-    let drainTag = prevTag;
-    while (currentState._tag !== drainTag && postponed.length > 0) {
-      drainTag = currentState._tag;
-      const drained = postponed.splice(0);
-      for (const postponedEvent of drained) {
-        if (shouldPostpone(machine, currentState._tag, postponedEvent._tag)) {
-          postponed.push(postponedEvent);
-          continue;
-        }
-        const drainResult = yield* executeTransition(
-          machine,
-          currentState,
-          postponedEvent,
-          dummySelf,
-          stubSystem,
-          "simulation",
-          slotHandlers,
-        );
-        if (drainResult.transitioned) {
-          currentState = drainResult.newState;
-          states.push(currentState);
-          if (machine.finalStates.has(currentState._tag)) {
-            break;
-          }
-        }
-      }
-    }
-  }
-
-  return { states, finalState: currentState };
+  return yield* foldEvents(
+    input,
+    input.initial,
+    events,
+    dummySelf,
+    stubSystem,
+    "simulation",
+    slotHandlers,
+  );
 });
 
 // AssertionError is exported from errors.ts
