@@ -286,7 +286,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
   // Build union schema from all variants
   const variantArray = Object.values(variants);
   if (variantArray.length === 0) {
-    throw new InvalidSchemaError({});
+    throw new InvalidSchemaError({ message: "Schema must have at least one variant" });
   }
 
   // Schema.Union requires at least 2 members, handle single variant case

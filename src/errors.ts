@@ -25,7 +25,7 @@ export class MissingSchemaError extends Schema.TaggedErrorClass<MissingSchemaErr
 /** State/Event schema has no variants */
 export class InvalidSchemaError extends Schema.TaggedErrorClass<InvalidSchemaError>()(
   "InvalidSchemaError",
-  {},
+  { message: Schema.String },
 ) {}
 
 /** $match called with missing handler for tag */

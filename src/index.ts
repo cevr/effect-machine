@@ -49,6 +49,8 @@ export type {
   StateHandlerContext,
   TaskOptions,
   ProvideHandlers,
+  SlotContext,
+  TimeoutConfig,
   ReplyResult,
   DeferReplyResult,
 } from "./machine.js";
