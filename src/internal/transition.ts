@@ -15,6 +15,7 @@ import type { ActorSystem } from "../actor.js";
 import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
 import { isEffect, isReplyResult, isDeferReplyResult, INTERNAL_ENTER_EVENT } from "./utils.js";
 import type { ReplyResult, DeferReplyResult } from "./utils.js";
+import type { SlotHandlers } from "./slots.js";
 
 // ============================================================================
 // Transition Execution
@@ -56,8 +57,7 @@ export const runTransitionHandler = Effect.fn("effect-machine.runTransitionHandl
   self: MachineRef<E>,
   system: ActorSystem,
   actorId: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  slotHandlers?: ReadonlyMap<string, any>,
+  slotHandlers?: SlotHandlers,
 ) {
   const ctx: MachineContext<S, E, MachineRef<E>> = {
     actorId,
@@ -125,8 +125,7 @@ export const executeTransition = Effect.fn("effect-machine.executeTransition")(f
   self: MachineRef<E>,
   system: ActorSystem,
   actorId: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  slotHandlers?: ReadonlyMap<string, any>,
+  slotHandlers?: SlotHandlers,
 ) {
   const transition = resolveTransition(machine, currentState, event);
 
@@ -263,8 +262,7 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
   system: ActorSystem,
   actorId: string,
   hooks?: ProcessEventHooks<S, E>,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  slotHandlers?: ReadonlyMap<string, any>,
+  slotHandlers?: SlotHandlers,
 ) {
   // Execute transition (defect-aware)
   const result = yield* executeTransition(
@@ -378,8 +376,7 @@ export const runSpawnEffects = Effect.fn("effect-machine.runSpawnEffects")(funct
   actorId: string,
   onError?: (info: ProcessEventError<S, E>) => Effect.Effect<void>,
   onSpawnDefect?: (cause: Cause.Cause<unknown>) => Effect.Effect<void>,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  slotHandlers?: ReadonlyMap<string, any>,
+  slotHandlers?: SlotHandlers,
 ) {
   const spawnEffects = findSpawnEffects(machine, state._tag);
   const ctx: MachineContext<S, E, MachineRef<E>> = {

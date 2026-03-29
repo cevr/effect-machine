@@ -48,8 +48,8 @@ const TestGuards = Slot.Guards({
 });
 
 const testMachineSlots = {
-  isHighValue: (_params: {}, { event }: { event: TestEvent }) =>
-    event._tag === "Update" && event.value > 100,
+  isHighValue: (_params: void, ctx: { event: TestEvent }) =>
+    ctx.event._tag === "Update" && ctx.event.value > 100,
 };
 
 const createTestMachine = () =>

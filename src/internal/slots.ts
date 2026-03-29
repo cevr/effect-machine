@@ -6,11 +6,23 @@
 import { ProvisionValidationError } from "../errors.js";
 
 /**
- * Validate slot handlers and return a handler map.
+ * Validated slot handlers, separated by type to prevent namespace collisions.
+ * Guards and effects may share names — this structure keeps them distinct.
+ * @internal
+ */
+export interface SlotHandlers {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly guards: ReadonlyMap<string, any>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly effects: ReadonlyMap<string, any>;
+}
+
+/**
+ * Validate slot handlers and return separated guard/effect maps.
  * If no handlers provided and machine has no slots, returns undefined.
  * Validates that all required slots are provided and no extra slots are given.
  *
- * The returned Map is threaded through MachineContext._slotHandlers at runtime.
+ * The returned SlotHandlers is threaded through MachineContext._slotHandlers at runtime.
  * The machine itself is never copied or mutated.
  *
  * @internal — used by spawn, replay, simulate, test harness, entity-machine
@@ -22,8 +34,7 @@ export const validateSlots = (
   },
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   handlers?: Record<string, any>,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-): ReadonlyMap<string, any> | undefined => {
+): SlotHandlers | undefined => {
   if (handlers === undefined) {
     const hasGuards =
       machine._guardsSchema !== undefined &&
@@ -44,6 +55,7 @@ export const validateSlots = (
     return undefined;
   }
 
+  // Collect all required slot names
   const requiredSlots = new Set<string>();
   if (machine._guardsSchema !== undefined) {
     for (const name of Object.keys(machine._guardsSchema.definitions)) {
@@ -56,6 +68,7 @@ export const validateSlots = (
     }
   }
 
+  // Single-pass validation
   const providedSlots = new Set(Object.keys(handlers));
   const missing: string[] = [];
   const extra: string[] = [];
@@ -75,10 +88,22 @@ export const validateSlots = (
     throw new ProvisionValidationError({ missing, extra });
   }
 
+  // Build separate guard and effect maps to prevent namespace collisions
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const handlerMap = new Map<string, any>();
-  for (const [name, handler] of Object.entries(handlers)) {
-    handlerMap.set(name, handler);
+  const guardMap = new Map<string, any>();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const effectMap = new Map<string, any>();
+
+  if (machine._guardsSchema !== undefined) {
+    for (const name of Object.keys(machine._guardsSchema.definitions)) {
+      guardMap.set(name, handlers[name]);
+    }
   }
-  return handlerMap;
+  if (machine._effectsSchema !== undefined) {
+    for (const name of Object.keys(machine._effectsSchema.definitions)) {
+      effectMap.set(name, handlers[name]);
+    }
+  }
+
+  return { guards: guardMap, effects: effectMap };
 };

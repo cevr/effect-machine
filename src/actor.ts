@@ -27,7 +27,7 @@ import {
 } from "effect";
 
 import type { Machine } from "./machine.js";
-import { validateSlots } from "./internal/slots.js";
+import { validateSlots, type SlotHandlers } from "./internal/slots.js";
 import type { ActorExit, Supervision } from "./supervision.js";
 import type { ReplyTypeBrand, ExtractReply } from "./internal/brands.js";
 import type { GuardsDef, EffectsDef } from "./slot.js";
@@ -670,8 +670,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     /** @internal Called by system after each restart — emits ActorRestarted system event */
     onRestart?: (generation: number, exit: ActorExit<unknown>) => Effect.Effect<void>;
     /** @internal Bound slot handlers from validateSlots */
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    slotHandlers?: ReadonlyMap<string, any>;
+    slotHandlers?: SlotHandlers;
   },
 ) {
   const initial: S = options?.initialState ?? machine.initial;
@@ -1030,8 +1029,7 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     machine: Machine<S, E, R, any, any>,
     spawnOptions?: {
       readonly supervision?: Supervision.Policy;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      readonly slotHandlers?: ReadonlyMap<string, any>;
+      readonly slotHandlers?: SlotHandlers;
     },
   ) {
     if (MutableHashMap.has(actorsMap, id)) {

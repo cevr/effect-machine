@@ -39,6 +39,7 @@ import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
 import { processEventCore, runSpawnEffects, shouldPostpone } from "./transition.js";
 import { NoReplyError } from "../errors.js";
 import { INTERNAL_INIT_EVENT } from "./utils.js";
+import type { SlotHandlers } from "./slots.js";
 import { ActorExit, type DefectPhase } from "../supervision.js";
 
 // ============================================================================
@@ -174,8 +175,7 @@ export interface RuntimeConfig<S, E> {
   /** Prefix for child actor IDs in self.spawn. Entity-machine uses `${actorId}/`. Default: no prefix. */
   readonly childIdPrefix?: string;
   /** Bound slot handlers from validateSlots. Threaded through MachineContext._slotHandlers. */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly slotHandlers?: ReadonlyMap<string, any>;
+  readonly slotHandlers?: SlotHandlers;
 }
 
 /** @internal */
@@ -539,8 +539,7 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
   ) => Effect.Effect<ProcessQueuedResult<S>>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   fork?: (effect: Effect.Effect<any>) => Fiber.Fiber<any>,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  slotHandlers?: ReadonlyMap<string, any>,
+  slotHandlers?: SlotHandlers,
 ) {
   // Fire-and-forget fork with captured services
   const forkEffect = fork ?? Effect.runFork;

@@ -12,6 +12,7 @@ import type { Machine, MachineRef } from "../machine.js";
 import type { GuardsDef, EffectsDef } from "../slot.js";
 import { executeTransition, shouldPostpone } from "./transition.js";
 import type { ActorSystem } from "../actor.js";
+import type { SlotHandlers } from "./slots.js";
 
 /**
  * Fold events through a machine's transition handlers.
@@ -41,8 +42,7 @@ export const foldEvents = Effect.fn("effect-machine.foldEvents")(function* <
   self: MachineRef<E>,
   system: ActorSystem,
   actorId: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  slotHandlers?: ReadonlyMap<string, any>,
+  slotHandlers?: SlotHandlers,
 ) {
   let currentState = initialState;
   const states: S[] = [currentState];

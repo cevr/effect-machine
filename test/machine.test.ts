@@ -382,7 +382,7 @@ describe("validateSlots", () => {
     });
 
     expect(handlers).toBeDefined();
-    expect(handlers?.get("check")).toBeDefined();
+    expect(handlers?.guards.get("check")).toBeDefined();
   });
 
   test("no-arg validate works on slotless machine", () => {
@@ -394,5 +394,64 @@ describe("validateSlots", () => {
 
     const handlers = validateSlots(machine);
     expect(handlers).toBeUndefined();
+  });
+});
+
+// ============================================================================
+// Multi-state .spawn()
+// ============================================================================
+
+describe("multi-state .spawn()", () => {
+  test("registers spawn effect for each state in array", () => {
+    const machine = Machine.make({
+      state: CounterState,
+      event: CounterEvent,
+      initial: CounterState.Idle({ count: 0 }),
+    }).spawn([CounterState.Idle, CounterState.Counting], ({ self }) =>
+      self.send(CounterEvent.Increment),
+    );
+
+    expect(machine.spawnEffects.length).toBe(2);
+    expect(machine.spawnEffects[0]?.stateTag).toBe("Idle");
+    expect(machine.spawnEffects[1]?.stateTag).toBe("Counting");
+  });
+});
+
+// ============================================================================
+// .task() shorthand (omit onSuccess)
+// ============================================================================
+
+describe(".task() shorthand", () => {
+  test("task without onSuccess sends return value directly", async () => {
+    const machine = Machine.make({
+      state: CounterState,
+      event: CounterEvent,
+      initial: CounterState.Idle({ count: 0 }),
+    })
+      .on(CounterState.Idle, CounterEvent.Start, ({ state }) =>
+        CounterState.Counting({ count: state.count + 1 }),
+      )
+      .task(CounterState.Counting, () => Effect.succeed(CounterEvent.Stop), {
+        name: "auto-stop",
+      })
+      .on(CounterState.Counting, CounterEvent.Stop, ({ state }) =>
+        CounterState.Done({ count: state.count }),
+      )
+      .final(CounterState.Done);
+
+    // Counting state should run the task, which sends Stop, transitioning to Done
+    const actor = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const a = yield* Machine.spawn(machine);
+          yield* a.send(CounterEvent.Start);
+          return yield* a.awaitFinal;
+        }),
+      ),
+    );
+    expect(actor._tag).toBe("Done");
+    if (actor._tag === "Done") {
+      expect(actor.count).toBe(1);
+    }
   });
 });

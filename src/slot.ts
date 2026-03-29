@@ -110,8 +110,12 @@ export interface MachineContext<State, Event, Self> {
   readonly self: Self;
   readonly system: ActorSystem;
   /** @internal Bound slot handler functions. Set at spawn time, read by slot closures. */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly _slotHandlers?: ReadonlyMap<string, any>;
+  readonly _slotHandlers?: {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    readonly guards: ReadonlyMap<string, any>;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    readonly effects: ReadonlyMap<string, any>;
+  };
 }
 
 /**

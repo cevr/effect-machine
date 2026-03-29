@@ -164,8 +164,32 @@ describe("validateSlots", () => {
       onStart: () => Effect.void,
     });
     expect(result).toBeDefined();
-    expect(result?.get("canStart")).toBeDefined();
-    expect(result?.get("onStart")).toBeDefined();
+    expect(result?.guards.get("canStart")).toBeDefined();
+    expect(result?.effects.get("onStart")).toBeDefined();
+  });
+
+  test("separates guard and effect namespaces", () => {
+    // Guard and effect with the same name should not collide
+    const Guards = Slot.Guards({ check: {} });
+    const Effects = Slot.Effects({ check: {} });
+
+    const machine = Machine.make({
+      state: SimpleState,
+      event: SimpleEvent,
+      guards: Guards,
+      effects: Effects,
+      initial: SimpleState.Idle,
+    });
+
+    const guardFn = () => true;
+    const result = validateSlots(machine, {
+      check: guardFn, // same name for both guard and effect
+    });
+
+    expect(result).toBeDefined();
+    // Both should get the handler, but through separate maps
+    expect(result?.guards.get("check")).toBe(guardFn);
+    expect(result?.effects.get("check")).toBe(guardFn);
   });
 });
 

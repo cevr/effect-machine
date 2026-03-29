@@ -382,7 +382,7 @@ export class Machine<
                 return Effect.die("MachineContext not available");
               }
               const ctx = maybeCtx.value;
-              const handler = ctx._slotHandlers?.get(name);
+              const handler = ctx._slotHandlers?.guards.get(name);
               if (handler === undefined) {
                 return Effect.die(new SlotProvisionError({ slotName: name, slotType: "guard" }));
               }
@@ -401,7 +401,7 @@ export class Machine<
                 return Effect.die("MachineContext not available");
               }
               const ctx = maybeCtx.value;
-              const handler = ctx._slotHandlers?.get(name);
+              const handler = ctx._slotHandlers?.effects.get(name);
               if (handler === undefined) {
                 return Effect.die(new SlotProvisionError({ slotName: name, slotType: "effect" }));
               }
