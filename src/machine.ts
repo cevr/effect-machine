@@ -91,7 +91,8 @@ export interface MachineRef<Event> {
   readonly cast: (event: Event) => Effect.Effect<void>;
   readonly spawn: <S2 extends { readonly _tag: string }, E2 extends { readonly _tag: string }, R2>(
     id: string,
-    machine: BuiltMachine<S2, E2, R2>,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    machine: BuiltMachine<S2, E2, R2> | Machine<S2, E2, R2, any, any, any, any>,
   ) => Effect.Effect<ActorRef<S2, E2>, DuplicateActorError, R2>;
   /**
    * Settle a deferred reply from a spawn handler.
@@ -279,15 +280,12 @@ type HasSlots<GD extends GuardsDef, EFD extends EffectsDef> =
   HasGuardKeys<GD> extends true ? true : HasEffectKeys<EFD>;
 
 // ============================================================================
-// BuiltMachine
+// BuiltMachine (deprecated — kept for backward compatibility, will be removed)
 // ============================================================================
 
 /**
- * A finalized machine ready for spawning.
- *
- * Created by calling `.build()` on a `Machine`. This is the only type
- * accepted by `Machine.spawn` and `ActorSystem.spawn` (regular overload).
- * Testing utilities (`simulate`, `createTestHarness`, etc.) still accept `Machine`.
+ * @deprecated Use `Machine.spawn(machine, { slots: { ... } })` instead of `machine.build({ ... })`.
+ * Will be removed in 1.0.
  */
 export class BuiltMachine<State, Event, R = never> {
   /** @internal */
@@ -304,6 +302,102 @@ export class BuiltMachine<State, Event, R = never> {
     return this._inner.initial;
   }
 }
+
+// ============================================================================
+// materializeMachine — internal slot binding at execution boundaries
+// ============================================================================
+
+/**
+ * Bind slot handlers to a machine, returning a fresh copy with handlers installed.
+ * If no handlers provided and machine has no slots, returns the machine as-is.
+ * Validates that all required slots are provided and no extra slots are given.
+ *
+ * @internal — used by spawn, replay, simulate, test harness, entity-machine
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const materializeMachine = <S, E, R, GD extends GuardsDef, EFD extends EffectsDef>(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  machine: Machine<S, E, R, any, any, GD, EFD>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  handlers?: Record<string, any>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+): Machine<S, E, never, any, any, GD, EFD> => {
+  if (handlers === undefined) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return machine as any;
+  }
+
+  // Collect all required slot names
+  const requiredSlots = new Set<string>();
+  if (machine._guardsSchema !== undefined) {
+    for (const name of Object.keys(machine._guardsSchema.definitions)) {
+      requiredSlots.add(name);
+    }
+  }
+  if (machine._effectsSchema !== undefined) {
+    for (const name of Object.keys(machine._effectsSchema.definitions)) {
+      requiredSlots.add(name);
+    }
+  }
+
+  // Single-pass validation
+  const providedSlots = new Set(Object.keys(handlers));
+  const missing: string[] = [];
+  const extra: string[] = [];
+
+  for (const name of requiredSlots) {
+    if (!providedSlots.has(name)) {
+      missing.push(name);
+    }
+  }
+  for (const name of providedSlots) {
+    if (!requiredSlots.has(name)) {
+      extra.push(name);
+    }
+  }
+
+  if (missing.length > 0 || extra.length > 0) {
+    throw new ProvisionValidationError({ missing, extra });
+  }
+
+  // Create fresh copy to avoid mutation bleed between actors
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const result = new Machine<S, E, never, any, any, GD, EFD>(
+    machine.initial,
+    machine.stateSchema,
+    machine.eventSchema,
+    machine._guardsSchema,
+    machine._effectsSchema,
+  );
+
+  // Copy arrays/sets
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (result as any)._transitions = [...machine._transitions];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (result as any)._finalStates = new Set(machine._finalStates);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (result as any)._spawnEffects = [...machine._spawnEffects];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (result as any)._backgroundEffects = [...machine._backgroundEffects];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (result as any)._postponeRules = [...machine._postponeRules];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (result as any)._replySchemas = machine._replySchemas;
+
+  // Register handlers
+  if (machine._guardsSchema !== undefined) {
+    for (const name of Object.keys(machine._guardsSchema.definitions)) {
+      result._guardHandlers.set(name, handlers[name]);
+    }
+  }
+  if (machine._effectsSchema !== undefined) {
+    for (const name of Object.keys(machine._effectsSchema.definitions)) {
+      result._effectHandlers.set(name, handlers[name]);
+    }
+  }
+
+  return result;
+};
 
 // ============================================================================
 // Machine class
@@ -878,93 +972,16 @@ export class Machine<
   // ---- build ----
 
   /**
-   * Finalize the machine. Returns a `BuiltMachine` — the only type accepted by `Machine.spawn`.
-   *
-   * - Machines with slots: pass implementations as the first argument.
-   * - Machines without slots: call with no arguments.
+   * @deprecated Use `Machine.spawn(machine, { slots: { ... } })` instead.
+   * Kept for backward compatibility — will be removed in 1.0.
    */
   build<R2 = never>(
     ...args: HasSlots<GD, EFD> extends true
       ? [handlers: ProvideHandlers<State, Event, GD, EFD, R2>]
       : [handlers?: ProvideHandlers<State, Event, GD, EFD, R2>]
   ): BuiltMachine<State, Event, R | NormalizeR<R2>> {
-    const handlers = args[0];
-    if (handlers !== undefined) {
-      // Collect all required slot names in a single pass
-      const requiredSlots = new Set<string>();
-      if (this._guardsSchema !== undefined) {
-        for (const name of Object.keys(this._guardsSchema.definitions)) {
-          requiredSlots.add(name);
-        }
-      }
-      if (this._effectsSchema !== undefined) {
-        for (const name of Object.keys(this._effectsSchema.definitions)) {
-          requiredSlots.add(name);
-        }
-      }
-
-      // Single-pass validation: collect all missing and extra handlers
-      const providedSlots = new Set(Object.keys(handlers));
-      const missing: string[] = [];
-      const extra: string[] = [];
-
-      for (const name of requiredSlots) {
-        if (!providedSlots.has(name)) {
-          missing.push(name);
-        }
-      }
-      for (const name of providedSlots) {
-        if (!requiredSlots.has(name)) {
-          extra.push(name);
-        }
-      }
-
-      // Report all validation errors at once
-      if (missing.length > 0 || extra.length > 0) {
-        throw new ProvisionValidationError({ missing, extra });
-      }
-
-      // Create new machine to preserve original for reuse with different providers
-      const result = new Machine<State, Event, R | R2, _SD, _ED, GD, EFD>(
-        this.initial,
-        this.stateSchema as Schema.Schema<State>,
-        this.eventSchema as Schema.Schema<Event>,
-        this._guardsSchema,
-        this._effectsSchema,
-      );
-
-      // Copy arrays/sets to avoid mutation bleed
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (result as any)._transitions = [...this._transitions];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (result as any)._finalStates = new Set(this._finalStates);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (result as any)._spawnEffects = [...this._spawnEffects];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (result as any)._backgroundEffects = [...this._backgroundEffects];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (result as any)._postponeRules = [...this._postponeRules];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (result as any)._replySchemas = this._replySchemas;
-
-      // Register handlers from provided object
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const anyHandlers = handlers as Record<string, any>;
-      if (this._guardsSchema !== undefined) {
-        for (const name of Object.keys(this._guardsSchema.definitions)) {
-          result._guardHandlers.set(name, anyHandlers[name]);
-        }
-      }
-      if (this._effectsSchema !== undefined) {
-        for (const name of Object.keys(this._effectsSchema.definitions)) {
-          result._effectHandlers.set(name, anyHandlers[name]);
-        }
-      }
-
-      return new BuiltMachine(result as unknown as Machine<State, Event, R | NormalizeR<R2>>);
-    }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return new BuiltMachine(this as any);
+    const materialized = materializeMachine(this, args[0] as Record<string, unknown>);
+    return new BuiltMachine(materialized as unknown as Machine<State, Event, R | NormalizeR<R2>>);
   }
 
   // ---- Static factory ----
@@ -1060,14 +1077,28 @@ import { createActor } from "./actor.js";
  * }));
  * ```
  */
+/** @internal — unwrap BuiltMachine or raw Machine */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyMachine<S, E, R> = Machine<S, E, R, any, any, any, any>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const unwrapMachine = <S, E, R>(
+  input: BuiltMachine<S, E, R> | AnyMachine<S, E, R>,
+): AnyMachine<S, E, R> => (input instanceof BuiltMachine ? input._inner : input);
+
 const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
->(built: BuiltMachine<S, E, R>, idOrOptions?: string | { id?: string; hydrate?: S }) {
+>(
+  input: BuiltMachine<S, E, R> | AnyMachine<S, E, R>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  idOrOptions?: string | { id?: string; hydrate?: S; slots?: Record<string, any> },
+) {
   const opts = typeof idOrOptions === "string" ? { id: idOrOptions } : idOrOptions;
   const actorId = opts?.id ?? `actor-${Math.random().toString(36).slice(2)}`;
-  const actor = yield* createActor(actorId, built._inner, {
+  const raw = unwrapMachine(input);
+  const machine = opts?.slots !== undefined ? materializeMachine(raw, opts.slots) : raw;
+  const actor = yield* createActor(actorId, machine as AnyMachine<S, E, never>, {
     initialState: opts?.hydrate,
   });
 
@@ -1081,22 +1112,38 @@ const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
 });
 
 /**
- * Spawn an actor from a built machine.
+ * Spawn an actor from a machine.
  *
- * Options:
- * - `id` — custom actor ID (default: random)
- * - `hydrate` — restore from a previously-saved state snapshot.
- *   The actor starts in the hydrated state and re-runs spawn effects
- *   for that state (timers, scoped resources, etc.). Transition history
- *   is not replayed — only the current state's entry effects run.
+ * Accepts either a raw `Machine` or a `BuiltMachine` (deprecated).
+ * For machines with slots, pass implementations via `{ slots: { ... } }`.
  *
- * Persistence is composed in userland by observing `actor.changes`
- * and saving snapshots to your own storage.
+ * @example
+ * ```ts
+ * // No slots
+ * const actor = yield* Machine.spawn(machine);
+ *
+ * // With slots
+ * const actor = yield* Machine.spawn(machine, {
+ *   slots: { canRetry: ({ max }, { state }) => state.attempts < max },
+ * });
+ *
+ * // With hydration
+ * const actor = yield* Machine.spawn(machine, { hydrate: savedState });
+ * ```
  */
-export const spawn: <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
-  machine: BuiltMachine<S, E, R>,
-  idOrOptions?: string | { id?: string; hydrate?: S },
-) => Effect.Effect<ActorRef<S, E>, never, R> = spawnImpl;
+export const spawn: {
+  // New API: raw Machine + options with slots
+  <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
+    machine: AnyMachine<S, E, R>,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    options?: string | { id?: string; hydrate?: S; slots?: Record<string, any> },
+  ): Effect.Effect<ActorRef<S, E>, never, R>;
+  // Backward compat: BuiltMachine
+  <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
+    machine: BuiltMachine<S, E, R>,
+    idOrOptions?: string | { id?: string; hydrate?: S },
+  ): Effect.Effect<ActorRef<S, E>, never, R>;
+} = spawnImpl;
 
 /**
  * Replay events through a machine to compute the final state.
@@ -1127,8 +1174,14 @@ const replayImpl = Effect.fn("effect-machine.replay")(function* <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
->(built: BuiltMachine<S, E, R>, events: ReadonlyArray<E>, options?: { from?: S }) {
-  const machine = built._inner;
+>(
+  input: BuiltMachine<S, E, R> | AnyMachine<S, E, R>,
+  events: ReadonlyArray<E>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  options?: { from?: S; slots?: Record<string, any> },
+) {
+  const raw = unwrapMachine(input);
+  const machine = options?.slots !== undefined ? materializeMachine(raw, options.slots) : raw;
   let state: S = options?.from ?? machine.initial;
 
   const hasPostponeRules = machine.postponeRules.length > 0;
@@ -1202,11 +1255,20 @@ const replayImpl = Effect.fn("effect-machine.replay")(function* <
   return state;
 });
 
-export const replay: <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
-  machine: BuiltMachine<S, E, R>,
-  events: ReadonlyArray<E>,
-  options?: { from?: S },
-) => Effect.Effect<S, never, R> = replayImpl;
+export const replay: {
+  <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
+    machine: AnyMachine<S, E, R>,
+    events: ReadonlyArray<E>,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    options?: { from?: S; slots?: Record<string, any> },
+  ): Effect.Effect<S, never, R>;
+  /** @deprecated Use raw Machine instead of BuiltMachine */
+  <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
+    machine: BuiltMachine<S, E, R>,
+    events: ReadonlyArray<E>,
+    options?: { from?: S },
+  ): Effect.Effect<S, never, R>;
+} = replayImpl;
 
 // Transition lookup (introspection)
 export { findTransitions } from "./internal/transition.js";

@@ -1,13 +1,13 @@
 import { Effect, SubscriptionRef } from "effect";
 
 import type { Machine, MachineRef } from "./machine.js";
-import { BuiltMachine } from "./machine.js";
+import { BuiltMachine, materializeMachine } from "./machine.js";
 import { AssertionError } from "./errors.js";
 import type { GuardsDef, EffectsDef } from "./slot.js";
 import { executeTransition, shouldPostpone } from "./internal/transition.js";
 import { stubSystem } from "./internal/utils.js";
 
-/** Accept either Machine or BuiltMachine for testing utilities. */
+/** Accept Machine, BuiltMachine, or Machine + slots for testing utilities. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type MachineInput<S, E, R, GD extends GuardsDef, EFD extends EffectsDef> =
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -57,8 +57,13 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
   R,
   GD extends GuardsDef = Record<string, never>,
   EFD extends EffectsDef = Record<string, never>,
->(input: MachineInput<S, E, R, GD, EFD>, events: ReadonlyArray<E>) {
-  const machine = (input instanceof BuiltMachine ? input._inner : input) as Machine<
+>(
+  input: MachineInput<S, E, R, GD, EFD>,
+  events: ReadonlyArray<E>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  options?: { slots?: Record<string, any> },
+) {
+  const raw = (input instanceof BuiltMachine ? input._inner : input) as Machine<
     S,
     E,
     R,
@@ -67,6 +72,7 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
     GD,
     EFD
   >;
+  const machine = options?.slots !== undefined ? materializeMachine(raw, options.slots) : raw;
 
   const dummySelf = makeDummySelf<E>("effect-machine.testing.simulate");
 
@@ -261,6 +267,9 @@ export interface TestHarnessOptions<S, E> {
    * Useful for logging or spying on transitions.
    */
   readonly onTransition?: (from: S, event: E, to: S) => void;
+  /** Slot handler implementations for machines with guards/effects. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly slots?: Record<string, any>;
 }
 
 /**
@@ -291,7 +300,7 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
   GD extends GuardsDef = Record<string, never>,
   EFD extends EffectsDef = Record<string, never>,
 >(input: MachineInput<S, E, R, GD, EFD>, options?: TestHarnessOptions<S, E>) {
-  const machine = (input instanceof BuiltMachine ? input._inner : input) as Machine<
+  const raw = (input instanceof BuiltMachine ? input._inner : input) as Machine<
     S,
     E,
     R,
@@ -300,6 +309,7 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
     GD,
     EFD
   >;
+  const machine = options?.slots !== undefined ? materializeMachine(raw, options.slots) : raw;
 
   const dummySelf = makeDummySelf<E>("effect-machine.testing.harness");
 

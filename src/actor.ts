@@ -24,7 +24,8 @@ import {
   SubscriptionRef,
 } from "effect";
 
-import type { Machine, BuiltMachine } from "./machine.js";
+import type { Machine } from "./machine.js";
+import { BuiltMachine } from "./machine.js";
 import type { ReplyTypeBrand, ExtractReply } from "./internal/brands.js";
 import type { GuardsDef, EffectsDef } from "./slot.js";
 import type { Inspector } from "./inspection.js";
@@ -202,7 +203,8 @@ export interface ActorSystem {
    */
   readonly spawn: <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
     id: string,
-    machine: BuiltMachine<S, E, R>,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    machine: BuiltMachine<S, E, R> | Machine<S, E, R, any, any, any, any>,
   ) => Effect.Effect<ActorRef<S, E>, DuplicateActorError, R>;
 
   /**
@@ -802,18 +804,20 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     S extends { readonly _tag: string },
     E extends { readonly _tag: string },
     R,
-  >(id: string, built: BuiltMachine<S, E, R>) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  >(id: string, input: BuiltMachine<S, E, R> | Machine<S, E, R, any, any, any, any>) {
     if (MutableHashMap.has(actorsMap, id)) {
       return yield* new DuplicateActorError({ actorId: id });
     }
-    // Create and register the actor
-    const actor = yield* createActor(id, built._inner);
+    const machine = input instanceof BuiltMachine ? input._inner : input;
+    const actor = yield* createActor(id, machine);
     return yield* registerActor(id, actor);
   });
 
   const spawn = <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
     id: string,
-    machine: BuiltMachine<S, E, R>,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    machine: BuiltMachine<S, E, R> | Machine<S, E, R, any, any, any, any>,
   ): Effect.Effect<ActorRef<S, E>, DuplicateActorError, R> =>
     withSpawnGate(spawnRegular(id, machine)) as Effect.Effect<
       ActorRef<S, E>,

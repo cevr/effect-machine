@@ -26,7 +26,7 @@ import {
   SubscriptionRef,
 } from "effect";
 
-import { BuiltMachine, type Machine, replay } from "../machine.js";
+import { type Machine, replay } from "../machine.js";
 import type { ActorSystem } from "../actor.js";
 import { ActorSystem as ActorSystemTag, makeSystem } from "../actor.js";
 import type { ProcessEventHooks } from "../internal/transition.js";
@@ -371,8 +371,7 @@ const hydratePersistence = <
 
       if (events.length > 0) {
         const eventValues = events.map((e: PersistedEvent<E>) => e.event);
-        const built = new BuiltMachine(machine);
-        const hydratedState = yield* replay(built, eventValues, { from: baseState });
+        const hydratedState = yield* replay(machine, eventValues, { from: baseState });
         const lastEvent = events[events.length - 1];
         const initialVersion = lastEvent !== undefined ? lastEvent.version : snapshotVersion;
         return { adapter, key, hydratedState, initialVersion };
