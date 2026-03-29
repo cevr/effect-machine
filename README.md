@@ -39,14 +39,14 @@ const CheckoutEvent = Event({
   Cancel: {},
 });
 
-const CheckoutEffects = Slot.Effects({
-  chargeCard: { cartId: Schema.String, totalCents: Schema.Number },
+const CheckoutSlots = Slot.define({
+  chargeCard: Slot.fn({ cartId: Schema.String, totalCents: Schema.Number }),
 });
 
 const checkoutMachine = Machine.make({
   state: CheckoutState,
   event: CheckoutEvent,
-  effects: CheckoutEffects,
+  slots: CheckoutSlots,
   initial: CheckoutState.ReviewingCart({ cartId: "cart_123", totalCents: 4200 }),
 })
   .on(CheckoutState.ReviewingCart, CheckoutEvent.Submit, ({ state }) =>
@@ -61,8 +61,8 @@ const checkoutMachine = Machine.make({
   .onAny(CheckoutEvent.Cancel, ({ state }) =>
     CheckoutState.Failed.derive(state, { reason: "cancelled" }),
   )
-  .spawn(CheckoutState.ChargingCard, ({ effects, state }) =>
-    effects.chargeCard({ cartId: state.cartId, totalCents: state.totalCents }),
+  .spawn(CheckoutState.ChargingCard, ({ slots, state }) =>
+    slots.chargeCard({ cartId: state.cartId, totalCents: state.totalCents }),
   )
   .final(CheckoutState.Confirmed)
   .final(CheckoutState.Failed);
@@ -86,10 +86,11 @@ const actor =
   yield *
   Machine.spawn(checkoutMachine, {
     slots: {
-      chargeCard: ({ cartId, totalCents }, { self }) =>
+      chargeCard: ({ cartId, totalCents }) =>
         Effect.gen(function* () {
+          const ctx = yield* checkoutMachine.Context;
           const result = yield* PaymentService.charge(cartId, totalCents);
-          yield* self.send(
+          yield* ctx.self.send(
             result.ok
               ? CheckoutEvent.Charged({ receiptId: result.receiptId })
               : CheckoutEvent.Declined({ reason: result.error }),
@@ -114,8 +115,12 @@ The same machine can run with different slot implementations in tests, local app
 const program = Effect.gen(function* () {
   const actor = yield* Machine.spawn(checkoutMachine, {
     slots: {
-      chargeCard: ({ cartId }, { self }) =>
-        self.send(CheckoutEvent.Charged({ receiptId: `rcpt_${cartId}` })),
+      chargeCard: ({ cartId }) =>
+        checkoutMachine.Context.pipe(
+          Effect.flatMap((ctx) =>
+            ctx.self.send(CheckoutEvent.Charged({ receiptId: `rcpt_${cartId}` })),
+          ),
+        ),
     },
   });
 

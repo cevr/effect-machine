@@ -3,7 +3,7 @@ import { Effect, SubscriptionRef } from "effect";
 import type { Machine, MachineRef } from "./machine.js";
 import { materializeMachine } from "./machine.js";
 import { AssertionError } from "./errors.js";
-import type { SlotsDef } from "./slot.js";
+import type { SlotsDef, ProvideSlots } from "./slot.js";
 import { executeTransition, shouldPostpone } from "./internal/transition.js";
 import { stubSystem } from "./internal/utils.js";
 
@@ -33,7 +33,7 @@ export interface SimulationResult<S> {
 /**
  * Simulate a sequence of events through a machine without running an actor.
  * Useful for testing state transitions in isolation.
- * Does not run onEnter/spawn/background effects, but does run guard/effect slots
+ * Does not run onEnter/spawn/background effects, but does run slots
  * within transition handlers.
  *
  * @example
@@ -59,7 +59,7 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
   input: MachineInput<S, E, R, SD>,
   events: ReadonlyArray<E>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  options?: { slots?: Record<string, any> },
+  options?: { slots?: ProvideSlots<SD, any> },
 ) {
   const machine = materializeMachine(input, options?.slots) as Machine<
     S,
@@ -154,7 +154,7 @@ export const assertReaches = Effect.fn("effect-machine.assertReaches")(function*
   events: ReadonlyArray<E>,
   expectedTag: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  options?: { slots?: Record<string, any> },
+  options?: { slots?: ProvideSlots<SD, any> },
 ) {
   const result = yield* simulate(input, events, options);
   if (result.finalState._tag !== expectedTag) {
@@ -189,7 +189,7 @@ export const assertPath = Effect.fn("effect-machine.assertPath")(function* <
   events: ReadonlyArray<E>,
   expectedPath: ReadonlyArray<string>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  options?: { slots?: Record<string, any> },
+  options?: { slots?: ProvideSlots<SD, any> },
 ) {
   const result = yield* simulate(input, events, options);
   const actualPath = result.states.map((s) => s._tag);
@@ -240,7 +240,7 @@ export const assertNeverReaches = Effect.fn("effect-machine.assertNeverReaches")
   events: ReadonlyArray<E>,
   forbiddenTag: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  options?: { slots?: Record<string, any> },
+  options?: { slots?: ProvideSlots<SD, any> },
 ) {
   const result = yield* simulate(input, events, options);
 
@@ -268,20 +268,20 @@ export interface TestHarness<S, E, R> {
 /**
  * Options for creating a test harness
  */
-export interface TestHarnessOptions<S, E> {
+export interface TestHarnessOptions<S, E, SD extends SlotsDef = Record<string, never>> {
   /**
    * Called after each transition with the previous state, event, and new state.
    * Useful for logging or spying on transitions.
    */
   readonly onTransition?: (from: S, event: E, to: S) => void;
-  /** Slot handler implementations for machines with guards/effects. */
+  /** Slot handler implementations. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly slots?: Record<string, any>;
+  readonly slots?: ProvideSlots<SD, any>;
 }
 
 /**
  * Create a test harness for step-by-step testing.
- * Does not run onEnter/spawn/background effects, but does run guard/effect slots
+ * Does not run onEnter/spawn/background effects, but does run slots
  * within transition handlers.
  *
  * @example Basic usage
@@ -305,7 +305,7 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
   E extends { readonly _tag: string },
   R,
   SD extends SlotsDef = Record<string, never>,
->(input: MachineInput<S, E, R, SD>, options?: TestHarnessOptions<S, E>) {
+>(input: MachineInput<S, E, R, SD>, options?: TestHarnessOptions<S, E, SD>) {
   const machine = materializeMachine(input, options?.slots) as Machine<
     S,
     E,

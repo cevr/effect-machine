@@ -10,20 +10,12 @@ export type {
   SlotCall,
   SlotFnDef,
   SlotHandler,
+  SlotRequest,
+  SlotResult,
+  SlotInvocation,
   ProvideSlots,
   HasSlotKeys,
   MachineContext,
-  // Deprecated aliases
-  GuardsSchema,
-  EffectsSchema,
-  GuardsDef,
-  EffectsDef,
-  GuardSlots,
-  EffectSlots,
-  GuardSlot,
-  EffectSlot as SlotEffectSlot,
-  GuardHandlers,
-  EffectHandlers as SlotEffectHandlers,
 } from "./slot.js";
 
 // Errors
@@ -37,6 +29,7 @@ export {
   NoReplyError,
   PersistenceError,
   ProvisionValidationError,
+  SlotCodecError,
   SlotProvisionError,
   VersionConflictError,
 } from "./errors.js";
@@ -56,7 +49,6 @@ export type {
   HandlerContext,
   StateHandlerContext,
   TaskOptions,
-  SlotContext,
   TimeoutConfig,
   ReplyResult,
   DeferReplyResult,

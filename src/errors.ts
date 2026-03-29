@@ -39,7 +39,7 @@ export class SlotProvisionError extends Schema.TaggedErrorClass<SlotProvisionErr
   "SlotProvisionError",
   {
     slotName: Schema.String,
-    slotType: Schema.Literals(["guard", "effect", "slot"]),
+    slotType: Schema.Literal("slot"),
   },
 ) {}
 
@@ -74,6 +74,13 @@ export class PersistenceError extends Schema.TaggedErrorClass<PersistenceError>(
   "PersistenceError",
   { message: Schema.String },
 ) {}
+
+/** Slot input/output schema validation failed */
+export class SlotCodecError extends Schema.TaggedErrorClass<SlotCodecError>()("SlotCodecError", {
+  slotName: Schema.String,
+  phase: Schema.Literals(["input", "output"]),
+  message: Schema.String,
+}) {}
 
 /** Optimistic locking failure — stored version doesn't match expected */
 export class VersionConflictError extends Schema.TaggedErrorClass<VersionConflictError>()(

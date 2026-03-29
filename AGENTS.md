@@ -29,7 +29,7 @@ const machine = Machine.make({ state, event, initial })
   .on(State.Idle, Event.Start, () => State.Running)
   .on([State.Draft, State.Review], Event.Cancel, () => State.Cancelled) // multi-state
   .onAny(Event.Reset, () => State.Idle) // wildcard (any state)
-  .spawn(State.Running, ({ effects }) => effects.poll())
+  .spawn(State.Running, ({ slots }) => slots.poll())
   .timeout(State.Loading, { duration: Duration.seconds(30), event: Event.Timeout })
   .postpone(State.Connecting, Event.Data)
   .final(State.Done);
@@ -41,33 +41,42 @@ const machine = Machine.make({ state, event, initial })
 
 ## Slots
 
-Guards and effects are parameterized slots. Handlers provided at spawn time:
+Unified parameterized slots via `Slot.define` + `Slot.fn`. Handlers take only params (no ctx parameter):
 
 ```ts
-const MyGuards = Slot.Guards({ canRetry: { max: Schema.Number } });
-const MyEffects = Slot.Effects({ fetch: { url: Schema.String } });
+const MySlots = Slot.define({
+  canRetry: Slot.fn({ max: Schema.Number }, Schema.Boolean),
+  fetch: Slot.fn({ url: Schema.String }),
+});
 
-const machine = Machine.make({ state, event, guards: MyGuards, effects: MyEffects, initial }).on(
+const machine = Machine.make({ state, event, slots: MySlots, initial }).on(
   State.X,
   Event.Y,
-  ({ guards, effects }) =>
+  ({ slots }) =>
     Effect.gen(function* () {
-      if (yield* guards.canRetry({ max: 3 })) {
-        yield* effects.fetch({ url: "/api" });
+      if (yield* slots.canRetry({ max: 3 })) {
+        yield* slots.fetch({ url: "/api" });
       }
       return State.Z;
     }),
 );
 
-// Provide slot implementations at spawn time
+// Provide slot implementations at spawn time — handlers take only params
 const actor =
   yield *
   Machine.spawn(machine, {
     slots: {
-      canRetry: ({ max }, { state }) => state.attempts < max,
-      fetch: ({ url }, { self }) => Http.get(url),
+      canRetry: ({ max }) => attempts < max,
+      fetch: ({ url }) => Http.get(url),
     },
   });
+
+// When a handler needs machine state, access via service
+Machine.spawn(machine, {
+  slots: {
+    canRetry: ({ max }) => machine.Context.pipe(Effect.map((ctx) => ctx.state.attempts < max)),
+  },
+});
 ```
 
 ## Running Machines

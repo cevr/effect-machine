@@ -63,31 +63,33 @@ State.Shipped.derive(processingState, { trackingId: "TRACK-123" });
 State.Idle.derive(anyState); // → { _tag: "Idle" }
 ```
 
-## Slots (Guards/Effects)
+## Slots
 
 ```ts
-const Guards = Slot.Guards({ canRetry: { max: Schema.Number } });
-const Effects = Slot.Effects({ fetch: { url: Schema.String } });
+const MySlots = Slot.define({
+  canRetry: Slot.fn({ max: Schema.Number }, Schema.Boolean),
+  fetch: Slot.fn({ url: Schema.String }),
+});
 
-const machine = Machine.make({ state, event, guards: Guards, effects: Effects, initial }).on(
+const machine = Machine.make({ state, event, slots: MySlots, initial }).on(
   State.X,
   Event.Y,
-  ({ guards, effects }) =>
+  ({ slots }) =>
     Effect.gen(function* () {
-      if (yield* guards.canRetry({ max: 3 })) {
-        yield* effects.fetch({ url: "/api" });
+      if (yield* slots.canRetry({ max: 3 })) {
+        yield* slots.fetch({ url: "/api" });
       }
       return State.Z;
     }),
 );
 
-// Slot implementations provided at spawn time
+// Slot implementations provided at spawn time — handlers take only params
 const actor =
   yield *
   Machine.spawn(machine, {
     slots: {
-      canRetry: ({ max }, { state }) => state.attempts < max,
-      fetch: ({ url }, { self }) => Http.get(url),
+      canRetry: ({ max }) => attempts < max,
+      fetch: ({ url }) => Http.get(url),
     },
   });
 ```
@@ -272,7 +274,7 @@ const OrderEntityLayer = EntityMachine.layer(OrderEntity, orderMachine, {
 | ------------------------------- | -------------------------------------- |
 | `machine.ts`                    | Machine builder                        |
 | `schema.ts`                     | State/Event + derive                   |
-| `slot.ts`                       | Slot.Guards/Slot.Effects               |
+| `slot.ts`                       | Slot.define/Slot.fn                    |
 | `actor.ts`                      | ActorSystem, event loop                |
 | `testing.ts`                    | simulate, harness                      |
 | `internal/runtime.ts`           | Shared runtime kernel (entity-machine) |

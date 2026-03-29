@@ -23,7 +23,6 @@ import {
   Effect,
   Exit,
   Fiber,
-  Option,
   Queue,
   Ref,
   Schema,
@@ -678,13 +677,8 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
       yield* Ref.set(stoppedRef, true);
       if (lifecycle?.onShutdown !== undefined) yield* lifecycle.onShutdown();
       settlePostponed(postponed, actorId, forkEffect);
-      // Drain remaining events non-blocking (Queue.takeAll blocks in v4)
-      const remaining: RuntimeQueuedEvent<E>[] = [];
-      let next = yield* Queue.poll(eventQueue);
-      while (Option.isSome(next)) {
-        remaining.push(next.value);
-        next = yield* Queue.poll(eventQueue);
-      }
+      // Drain remaining events non-blocking
+      const remaining = yield* Queue.clear(eventQueue);
       for (const entry of remaining) {
         if (entry._tag === "sendWait") {
           forkEffect(Deferred.succeed(entry.done, undefined));

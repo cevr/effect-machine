@@ -31,8 +31,8 @@
  *
  * @module
  */
-import { ServiceMap } from "effect";
-import type { Effect, Schema } from "effect";
+import { Schema, ServiceMap } from "effect";
+import type { Effect } from "effect";
 import type { ActorSystem } from "./actor.js";
 
 // ============================================================================
@@ -54,12 +54,19 @@ type FieldsToParams<F extends Fields> = keyof F extends never
 /**
  * Definition of a single slot function.
  * Created via `Slot.fn(params, returnSchema?)`.
+ *
+ * Carries both type-level information and materialized schemas
+ * for runtime validation and serialization.
  */
 export interface SlotFnDef<F extends Fields = Fields, Return = void> {
   readonly _tag: "SlotFnDef";
   readonly fields: F;
-  /** Return schema — Schema.Boolean for guards, undefined for void effects */
+  /** Return schema — undefined means void */
   readonly returnSchema: Schema.Schema<Return> | undefined;
+  /** Materialized input schema (Schema.Struct of fields, or Schema.Void for empty) */
+  readonly inputSchema: Schema.Codec<FieldsToParams<F>>;
+  /** Materialized output schema (returnSchema or Schema.Void) */
+  readonly outputSchema: Schema.Codec<Return>;
 }
 
 /**
@@ -83,11 +90,20 @@ export const fn: {
 } = <F extends Fields, Return = void>(
   fields: F,
   returnSchema?: Schema.Schema<Return>,
-): SlotFnDef<F, Return> => ({
-  _tag: "SlotFnDef",
-  fields,
-  returnSchema: returnSchema as SlotFnDef<F, Return>["returnSchema"],
-});
+): SlotFnDef<F, Return> => {
+  const hasFields = Object.keys(fields).length > 0;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const inputSchema = hasFields ? Schema.Struct(fields) : (Schema.Void as any);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const outputSchema = returnSchema ?? (Schema.Void as any);
+  return {
+    _tag: "SlotFnDef",
+    fields,
+    returnSchema: returnSchema as SlotFnDef<F, Return>["returnSchema"],
+    inputSchema,
+    outputSchema,
+  };
+};
 
 // ============================================================================
 // SlotsDef — definition record
@@ -108,6 +124,12 @@ export type SlotsDef = Record<string, SlotFnDef<Fields, unknown>>;
 export interface SlotsSchema<D extends SlotsDef> {
   readonly _tag: "SlotsSchema";
   readonly definitions: D;
+  /** Schema for slot requests `{ _tag: "SlotRequest", name, params }`. For RPC request payloads. */
+  readonly requestSchema: Schema.Codec<SlotRequest<D>>;
+  /** Schema for slot results `{ _tag: "SlotResult", name, result }`. For RPC response payloads. */
+  readonly resultSchema: Schema.Codec<SlotResult<D>>;
+  /** Schema for slot invocations `{ _tag: "SlotInvocation", name, params, result }`. For persistence/logging. */
+  readonly invocationSchema: Schema.Codec<SlotInvocation<D>>;
   /** Create callable slot proxies (used by Machine internally) */
   readonly _createSlots: (
     resolve: <N extends keyof D & string>(
@@ -116,6 +138,43 @@ export interface SlotsSchema<D extends SlotsDef> {
     ) => Effect.Effect<SlotReturn<D[N]>>,
   ) => SlotCalls<D>;
 }
+
+/**
+ * A serialized slot request — captures name and params (no result).
+ * Used for RPC request payloads.
+ */
+export type SlotRequest<D extends SlotsDef> = {
+  readonly [K in keyof D & string]: {
+    readonly _tag: "SlotRequest";
+    readonly name: K;
+    readonly params: SlotParams<D[K]>;
+  };
+}[keyof D & string];
+
+/**
+ * A serialized slot result — captures name and result (no params).
+ * Used for RPC response payloads.
+ */
+export type SlotResult<D extends SlotsDef> = {
+  readonly [K in keyof D & string]: {
+    readonly _tag: "SlotResult";
+    readonly name: K;
+    readonly result: SlotReturn<D[K]>;
+  };
+}[keyof D & string];
+
+/**
+ * A serialized slot invocation — captures name, params, and result.
+ * Used for persistence, logging, and audit trails.
+ */
+export type SlotInvocation<D extends SlotsDef> = {
+  readonly [K in keyof D & string]: {
+    readonly _tag: "SlotInvocation";
+    readonly name: K;
+    readonly params: SlotParams<D[K]>;
+    readonly result: SlotReturn<D[K]>;
+  };
+}[keyof D & string];
 
 // ============================================================================
 // SlotCalls — callable slot proxies available in handler context
@@ -213,84 +272,57 @@ export const MachineContextTag =
  * })
  * ```
  */
-export const define = <D extends SlotsDef>(definitions: D): SlotsSchema<D> => ({
-  _tag: "SlotsSchema",
-  definitions,
-  _createSlots: (resolve) => {
-    const slots: Record<string, unknown> = {};
-    for (const name of Object.keys(definitions)) {
-      const slot = (params: unknown) => resolve(name, params as SlotParams<D[typeof name]>);
-      Object.defineProperty(slot, "_tag", { value: "Slot", enumerable: true });
-      Object.defineProperty(slot, "name", { value: name, enumerable: true });
-      slots[name] = slot;
-    }
-    return slots as SlotCalls<D>;
-  },
-});
+export const define = <D extends SlotsDef>(definitions: D): SlotsSchema<D> => {
+  // Build per-slot invocation schemas, then union them
+  const names = Object.keys(definitions);
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const requestSchemas: Array<Schema.Schema<any>> = [];
+  const resultSchemas: Array<Schema.Schema<any>> = [];
+  const invocationSchemas: Array<Schema.Schema<any>> = [];
+  for (const name of names) {
+    const def = definitions[name];
+    if (def === undefined) continue;
+    requestSchemas.push(
+      Schema.TaggedStruct("SlotRequest", { name: Schema.Literal(name), params: def.inputSchema }),
+    );
+    resultSchemas.push(
+      Schema.TaggedStruct("SlotResult", { name: Schema.Literal(name), result: def.outputSchema }),
+    );
+    invocationSchemas.push(
+      Schema.TaggedStruct("SlotInvocation", {
+        name: Schema.Literal(name),
+        params: def.inputSchema,
+        result: def.outputSchema,
+      }),
+    );
+  }
 
-// ============================================================================
-// Backward-compat aliases (deprecated)
-// ============================================================================
+  const buildUnion = <T>(schemas: Array<Schema.Schema<any>>): Schema.Codec<T> =>
+    schemas.length === 0 ? (Schema.Never as any) : (Schema.Union(schemas as any) as any);
 
-/**
- * @deprecated Use `SlotsDef` instead.
- */
-export type GuardsDef = SlotsDef;
+  const requestSchema = buildUnion<SlotRequest<D>>(requestSchemas);
+  const resultSchema = buildUnion<SlotResult<D>>(resultSchemas);
+  const invocationSchema = buildUnion<SlotInvocation<D>>(invocationSchemas);
+  /* eslint-enable @typescript-eslint/no-explicit-any */
 
-/**
- * @deprecated Use `SlotsDef` instead.
- */
-export type EffectsDef = SlotsDef;
-
-/**
- * @deprecated Use `SlotsSchema` instead.
- */
-export type GuardsSchema<D extends SlotsDef> = SlotsSchema<D>;
-
-/**
- * @deprecated Use `SlotsSchema` instead.
- */
-export type EffectsSchema<D extends SlotsDef> = SlotsSchema<D>;
-
-/**
- * @deprecated Use `SlotCalls` instead.
- */
-export type GuardSlots<D extends SlotsDef> = SlotCalls<D>;
-
-/**
- * @deprecated Use `SlotCalls` instead.
- */
-export type EffectSlots<D extends SlotsDef> = SlotCalls<D>;
-
-/**
- * @deprecated Use `SlotCall` instead.
- */
-export type GuardSlot<Name extends string, Params> = SlotCall<Name, Params, boolean>;
-
-/**
- * @deprecated Use `SlotCall` instead.
- */
-export type EffectSlot<Name extends string, Params> = SlotCall<Name, Params, void>;
-
-/**
- * @deprecated Use `SlotHandler` instead.
- */
-export type GuardHandler<Params, _Ctx, R = never> = SlotHandler<Params, boolean, R>;
-
-/**
- * @deprecated Use `SlotHandler` instead.
- */
-export type EffectHandler<Params, _Ctx, R = never> = SlotHandler<Params, void, R>;
-
-/**
- * @deprecated Use `ProvideSlots` instead.
- */
-export type GuardHandlers<D extends SlotsDef, _MachineCtx, R = never> = ProvideSlots<D, R>;
-
-/**
- * @deprecated Use `ProvideSlots` instead.
- */
-export type EffectHandlers<D extends SlotsDef, _MachineCtx, R = never> = ProvideSlots<D, R>;
+  return {
+    _tag: "SlotsSchema",
+    definitions,
+    requestSchema,
+    resultSchema,
+    invocationSchema,
+    _createSlots: (resolve) => {
+      const slots: Record<string, unknown> = {};
+      for (const name of names) {
+        const slot = (params: unknown) => resolve(name, params as SlotParams<D[typeof name]>);
+        Object.defineProperty(slot, "_tag", { value: "Slot", enumerable: true });
+        Object.defineProperty(slot, "name", { value: name, enumerable: true });
+        slots[name] = slot;
+      }
+      return slots as SlotCalls<D>;
+    },
+  };
+};
 
 // ============================================================================
 // Slot namespace export

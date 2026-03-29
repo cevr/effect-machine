@@ -121,35 +121,42 @@ machine.background(({ self }) =>
 
 ## Slots
 
-Guards and effects as injectable dependencies:
+Unified parameterized slots via `Slot.define` + `Slot.fn`. Handlers take only params:
 
 ```ts
 import { Slot } from "effect-machine";
 
-const Guards = Slot.Guards({ canRetry: { max: Schema.Number } });
-const Effects = Slot.Effects({ notify: { msg: Schema.String } });
+const MySlots = Slot.define({
+  canRetry: Slot.fn({ max: Schema.Number }, Schema.Boolean),
+  notify: Slot.fn({ msg: Schema.String }),
+});
 
 const machine = Machine.make({
   state: S,
   event: E,
-  guards: Guards,
-  effects: Effects,
+  slots: MySlots,
   initial: S.Idle,
 })
-  .on(S.Error, E.Retry, ({ guards, state }) =>
+  .on(S.Error, E.Retry, ({ slots, state }) =>
     Effect.gen(function* () {
-      if (yield* guards.canRetry({ max: 3 })) return S.Loading.derive(state);
+      if (yield* slots.canRetry({ max: 3 })) return S.Loading.derive(state);
       return S.Failed;
     }),
   )
-  .spawn(S.Done, ({ effects, state }) => effects.notify({ msg: `Done: ${state.id}` }))
-  .build({
-    canRetry: ({ max }, { state }) => state.attempts < max,
-    notify: ({ msg }) => Effect.log(msg),
+  .spawn(S.Done, ({ slots, state }) => slots.notify({ msg: `Done: ${state.id}` }));
+
+// Provide at spawn time — handlers take only params
+const actor =
+  yield *
+  Machine.spawn(machine, {
+    slots: {
+      canRetry: ({ max }) => attempts < max,
+      notify: ({ msg }) => Effect.log(msg),
+    },
   });
 ```
 
-`.build()` is terminal — returns `BuiltMachine`. All slots must be provided.
+Slots are accepted everywhere: `Machine.spawn`, `Machine.replay`, `simulate`, `createTestHarness`.
 
 ## Ask / Reply
 
@@ -260,14 +267,22 @@ machine.spawn(S.Active, ({ self }) =>
 
 ## Persistence
 
-Composed from primitives — no built-in adapter:
+Local persistence via `Machine.spawn`:
 
 ```ts
-// Snapshot: observe state changes
-yield * actor.changes.pipe(Stream.runForEach((state) => saveSnapshot(id, state)));
+const actor =
+  yield *
+  Machine.spawn(machine, {
+    persist: {
+      load: () => storage.get("state"), // Effect<Option<S>>
+      save: (state) => storage.set("state", state),
+    },
+  });
+// load() called at spawn and on supervision restart
+// save() called after each state transition
 
-// Event journal: observe transitions
-yield * actor.transitions.pipe(Stream.runForEach(({ event }) => appendEvent(id, event)));
+// Or observe state changes manually:
+yield * actor.changes.pipe(Stream.runForEach((state) => saveSnapshot(id, state)));
 
 // Restore from snapshot
 const actor = yield * Machine.spawn(machine, { hydrate: loadedState });
@@ -309,11 +324,11 @@ yield * harness.send(E.Start);
 expect(harness.state._tag).toBe("Loading");
 ```
 
-Both `simulate` and `createTestHarness` accept `Machine` (unbuilt) or `BuiltMachine`.
+Both `simulate` and `createTestHarness` accept `Machine` directly.
 
 ## Gotchas
 
-- **`.build()` is terminal** — no more `.on()` after build. Build last.
+- **Slots are provided at spawn time** — `Machine.spawn(machine, { slots: { ... } })`
 - **Empty state = value, non-empty = constructor** — `S.Idle` vs `S.Loading({ url })`
 - **Spawn effects re-run on hydrate** — `Machine.spawn({ hydrate })` re-runs spawn effects for the hydrated state (timers, scoped resources)
 - **`transitions` is observational** — PubSub-backed, late subscribers miss edges. Not a durability guarantee.
