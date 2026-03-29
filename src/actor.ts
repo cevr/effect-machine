@@ -11,14 +11,12 @@ import {
   Deferred,
   Effect,
   Exit,
-  Fiber,
   Layer,
   MutableHashMap,
   Option,
   PubSub,
   Queue,
   Ref,
-  Schema,
   Scope,
   Semaphore,
   ServiceMap,
@@ -26,25 +24,17 @@ import {
   SubscriptionRef,
 } from "effect";
 
-import type { Machine, MachineRef, BuiltMachine } from "./machine.js";
+import type { Machine, BuiltMachine } from "./machine.js";
 import type { ReplyTypeBrand, ExtractReply } from "./internal/brands.js";
 import type { GuardsDef, EffectsDef } from "./slot.js";
 import type { Inspector } from "./inspection.js";
 import { Inspector as InspectorTag } from "./inspection.js";
-import {
-  processEventCore,
-  runSpawnEffects,
-  resolveTransition,
-  shouldPostpone,
-} from "./internal/transition.js";
-import type {
-  ProcessEventError,
-  ProcessEventHooks,
-  ProcessEventResult,
-} from "./internal/transition.js";
+import { resolveTransition } from "./internal/transition.js";
+import type { ProcessEventHooks, ProcessEventResult } from "./internal/transition.js";
 import { emitWithTimestamp } from "./internal/inspection.js";
-import { DuplicateActorError, ActorStoppedError, NoReplyError } from "./errors.js";
-import { INTERNAL_INIT_EVENT } from "./internal/utils.js";
+import type { NoReplyError } from "./errors.js";
+import { DuplicateActorError, ActorStoppedError } from "./errors.js";
+import { createRuntime, type RuntimeQueuedEvent, type RuntimeHandle } from "./internal/runtime.js";
 
 // Re-export for external use (cluster)
 export { resolveTransition, runSpawnEffects, processEventCore } from "./internal/transition.js";
@@ -55,25 +45,11 @@ export type {
 } from "./internal/transition.js";
 
 // ============================================================================
-// QueuedEvent (internal wrapper for event queue)
+// QueuedEvent — re-export from runtime kernel
 // ============================================================================
 
-/** Discriminated mailbox request */
-export type QueuedEvent<E> =
-  | { readonly _tag: "send"; readonly event: E }
-  | {
-      readonly _tag: "call";
-      readonly event: E;
-      readonly reply: Deferred.Deferred<
-        ProcessEventResult<{ readonly _tag: string }>,
-        ActorStoppedError
-      >;
-    }
-  | {
-      readonly _tag: "ask";
-      readonly event: E;
-      readonly reply: Deferred.Deferred<unknown, NoReplyError | ActorStoppedError>;
-    };
+/** Discriminated mailbox request — alias for RuntimeQueuedEvent */
+export type QueuedEvent<E> = RuntimeQueuedEvent<E>;
 
 // ============================================================================
 // ActorRef Interface
@@ -331,7 +307,11 @@ export const buildActorRefCore = <
       ActorStoppedError
     >();
     pendingReplies.add(reply as Deferred.Deferred<unknown, unknown>);
-    yield* Queue.offer(eventQueue, { _tag: "call", event, reply });
+    yield* Queue.offer(eventQueue, {
+      _tag: "call",
+      event,
+      reply: reply as Deferred.Deferred<ProcessEventResult<{ readonly _tag: string }>, unknown>,
+    });
     return (yield* Deferred.await(reply).pipe(
       Effect.ensuring(
         Effect.sync(() => pendingReplies.delete(reply as Deferred.Deferred<unknown, unknown>)),
@@ -357,7 +337,11 @@ export const buildActorRefCore = <
     }
     const reply = yield* Deferred.make<unknown, NoReplyError | ActorStoppedError>();
     pendingReplies.add(reply as Deferred.Deferred<unknown, unknown>);
-    yield* Queue.offer(eventQueue, { _tag: "ask", event, reply });
+    yield* Queue.offer(eventQueue, {
+      _tag: "ask",
+      event,
+      reply: reply as Deferred.Deferred<unknown, NoReplyError>,
+    });
     return yield* Deferred.await(reply).pipe(
       Effect.ensuring(
         Effect.sync(() => pendingReplies.delete(reply as Deferred.Deferred<unknown, unknown>)),
@@ -477,11 +461,49 @@ export const buildActorRefCore = <
 };
 
 // ============================================================================
-// Actor Creation and Event Loop
+// Actor Creation — delegates to runtime kernel with actor-specific hooks
 // ============================================================================
 
+/** Build ProcessEventHooks from an inspector */
+const buildInspectionHooks = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+>(
+  actorId: string,
+  inspector: Inspector<S, E>,
+): ProcessEventHooks<S, E> => ({
+  onSpawnEffect: (state) =>
+    emitWithTimestamp(inspector, (timestamp) => ({
+      type: "@machine.effect",
+      actorId,
+      effectType: "spawn",
+      state,
+      timestamp,
+    })),
+  onTransition: (from, to, ev) =>
+    emitWithTimestamp(inspector, (timestamp) => ({
+      type: "@machine.transition",
+      actorId,
+      fromState: from,
+      toState: to,
+      event: ev,
+      timestamp,
+    })),
+  onError: (info) =>
+    emitWithTimestamp(inspector, (timestamp) => ({
+      type: "@machine.error",
+      actorId,
+      phase: info.phase,
+      state: info.state,
+      event: info.event,
+      error: Cause.pretty(info.cause),
+      timestamp,
+    })),
+});
+
 /**
- * Create and start an actor for a machine
+ * Create and start an actor for a machine.
+ * Delegates to the shared runtime kernel with actor-specific lifecycle hooks.
  */
 export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   S extends { readonly _tag: string },
@@ -496,6 +518,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
 ) {
   const initial: S = options?.initialState ?? machine.initial;
   yield* Effect.annotateCurrentSpan("effect_machine.actor.id", id);
+  yield* Effect.annotateCurrentSpan("effect_machine.actor.initial_state", initial._tag);
 
   // Resolve actor system: use existing from context, or create implicit one
   const existingSystem = yield* Effect.serviceOption(ActorSystem);
@@ -515,29 +538,125 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     | Inspector<S, E>
     | undefined;
 
-  // Create self reference for sending events
-  const eventQueue = yield* Queue.unbounded<QueuedEvent<E>>();
-  const stoppedRef = yield* Ref.make(false);
+  // Actor-specific state
   const childrenMap = new Map<string, ActorRef<AnyState, unknown>>();
-  // Pending deferred reply — stored when handler returns Machine.deferReply()
-  const deferredReplyRef: {
-    current: Deferred.Deferred<unknown, NoReplyError | ActorStoppedError> | undefined;
-  } = { current: undefined };
-  const selfSend = Effect.fn("effect-machine.actor.self.send")(function* (event: E) {
-    const stopped = yield* Ref.get(stoppedRef);
-    if (stopped) {
-      return;
-    }
-    yield* Queue.offer(eventQueue, { _tag: "send", event });
-  });
-  const self: MachineRef<E> = {
-    send: selfSend,
-    cast: selfSend,
-    spawn: (childId, childMachine) =>
+  const pendingReplies = new Set<Deferred.Deferred<unknown, unknown>>();
+  const listeners: Listeners<S> = new Set();
+  const transitionsPubSub = yield* PubSub.unbounded<TransitionInfo<S, E>>();
+
+  // Emit @machine.spawn inspection event
+  yield* emitWithTimestamp(inspectorValue, (timestamp) => ({
+    type: "@machine.spawn",
+    actorId: id,
+    initialState: initial,
+    timestamp,
+  }));
+
+  // Build hooks from inspector
+  const hooks = inspectorValue !== undefined ? buildInspectionHooks(id, inspectorValue) : undefined;
+
+  // Use initial state override if provided
+  const machineWithState =
+    initial !== machine.initial
+      ? (Object.create(machine, {
+          initial: { value: initial, enumerable: true },
+        }) as typeof machine)
+      : machine;
+
+  // Mutable ref for runtime.stateRef — needed because onShutdown closure
+  // must reference the stateRef that createRuntime creates
+  const runtimeRef: { stateRef: SubscriptionRef.SubscriptionRef<S> | undefined } = {
+    stateRef: undefined,
+  };
+
+  // Create runtime with actor lifecycle hooks (skipFinalizer: true removes Scope requirement)
+  const runtime = yield* createRuntime(machineWithState, system, {
+    actorId: id,
+    hooks,
+    skipFinalizer: true,
+    lifecycle: {
+      onEvent:
+        inspectorValue !== undefined
+          ? (state: S, event: E) =>
+              emitWithTimestamp(inspectorValue, (timestamp) => ({
+                type: "@machine.event",
+                actorId: id,
+                state,
+                event,
+                timestamp,
+              }))
+          : undefined,
+      onStateChange: (result, _event) =>
+        Effect.gen(function* () {
+          notifyListeners(listeners, result.newState);
+          yield* Effect.annotateCurrentSpan("effect_machine.transition.matched", true);
+          if (result.lifecycleRan) {
+            yield* Effect.annotateCurrentSpan(
+              "effect_machine.state.from",
+              result.previousState._tag,
+            );
+            yield* Effect.annotateCurrentSpan("effect_machine.state.to", result.newState._tag);
+          }
+        }),
+      onProcessed: (result, event) =>
+        result.transitioned
+          ? PubSub.publish(transitionsPubSub, {
+              fromState: result.previousState,
+              toState: result.newState,
+              event,
+            }).pipe(Effect.asVoid)
+          : Effect.void,
+      onFinal:
+        inspectorValue !== undefined
+          ? (state: S) =>
+              emitWithTimestamp(inspectorValue, (timestamp) => ({
+                type: "@machine.stop",
+                actorId: id,
+                finalState: state,
+                timestamp,
+              }))
+          : undefined,
+      onShutdown: () =>
+        Effect.gen(function* () {
+          if (runtimeRef.stateRef !== undefined) {
+            const finalState = yield* SubscriptionRef.get(runtimeRef.stateRef);
+            yield* emitWithTimestamp(inspectorValue, (timestamp) => ({
+              type: "@machine.stop",
+              actorId: id,
+              finalState,
+              timestamp,
+            }));
+          }
+          yield* settlePendingReplies(pendingReplies, id);
+        }),
+      onInitialSpawnEffects:
+        inspectorValue !== undefined
+          ? (state: S) =>
+              emitWithTimestamp(inspectorValue, (timestamp) => ({
+                type: "@machine.effect",
+                actorId: id,
+                effectType: "spawn",
+                state,
+                timestamp,
+              }))
+          : undefined,
+    },
+    wrapProcess: (state, event, inner) =>
+      Effect.withSpan("effect-machine.event.process", {
+        attributes: {
+          "effect_machine.actor.id": id,
+          "effect_machine.state.current": state._tag,
+          "effect_machine.event.type": event._tag,
+        },
+      })(
+        inner.pipe(
+          Effect.tap((r) =>
+            Effect.annotateCurrentSpan("effect_machine.transition.matched", r.result.transitioned),
+          ),
+        ),
+      ),
+    onChildSpawned: (childId, child) =>
       Effect.gen(function* () {
-        const child = yield* system
-          .spawn(childId, childMachine)
-          .pipe(Effect.provideService(ActorSystem, system));
         childrenMap.set(childId, child as unknown as ActorRef<AnyState, unknown>);
         const maybeScope = yield* Effect.serviceOption(Scope.Scope);
         if (Option.isSome(maybeScope)) {
@@ -548,153 +667,15 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
             }),
           );
         }
-        return child;
       }),
-    reply: (value: unknown) =>
-      Effect.sync(() => {
-        const deferred = deferredReplyRef.current;
-        if (deferred !== undefined) {
-          deferredReplyRef.current = undefined;
-          Effect.runFork(Deferred.succeed(deferred, value));
-          return true;
-        }
-        return false;
-      }),
-  };
+  }) as Effect.Effect<RuntimeHandle<S, E>>;
 
-  // Annotate span with initial state
-  yield* Effect.annotateCurrentSpan("effect_machine.actor.initial_state", initial._tag);
+  // Wire the mutable ref now that runtime is created
+  runtimeRef.stateRef = runtime.stateRef;
 
-  // Emit spawn event
-  yield* emitWithTimestamp(inspectorValue, (timestamp) => ({
-    type: "@machine.spawn",
-    actorId: id,
-    initialState: initial,
-    timestamp,
-  }));
-
-  // Initialize state
-  const stateRef = yield* SubscriptionRef.make(initial);
-  const listeners: Listeners<S> = new Set();
-
-  // Fork background effects (run for entire machine lifetime)
-  const backgroundFibers: Fiber.Fiber<void, never>[] = [];
-  const initEvent = { _tag: INTERNAL_INIT_EVENT } as E;
-  const ctx = { actorId: id, state: initial, event: initEvent, self, system };
-  const { effects: effectSlots } = machine._slots;
-
-  for (const bg of machine.backgroundEffects) {
-    const fiber = yield* Effect.forkDetach(
-      bg
-        .handler({
-          actorId: id,
-          state: initial,
-          event: initEvent,
-          self,
-          effects: effectSlots,
-          system,
-        })
-        .pipe(Effect.provideService(machine.Context, ctx)),
-    );
-    backgroundFibers.push(fiber);
-  }
-
-  // Create state scope for initial state's spawn effects
-  const stateScopeRef: { current: Scope.Closeable } = {
-    current: yield* Scope.make(),
-  };
-
-  // Run spawn effects for the current state (whether fresh or hydrated).
-  // Spawn effects install live machinery (timers, scoped resources) that
-  // the state needs at runtime — they must re-run on hydration.
-  yield* runSpawnEffectsWithInspection(
-    machine,
-    initial,
-    initEvent,
-    self,
-    stateScopeRef.current,
-    id,
-    inspectorValue,
-    system,
-  );
-
-  // Check if initial state (after always) is final
-  if (machine.finalStates.has(initial._tag)) {
-    // Close state scope and interrupt background effects
-    yield* Scope.close(stateScopeRef.current, Exit.void);
-    yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
-    yield* emitWithTimestamp(inspectorValue, (timestamp) => ({
-      type: "@machine.stop",
-      actorId: id,
-      finalState: initial,
-      timestamp,
-    }));
-    yield* Ref.set(stoppedRef, true);
-    if (implicitSystemScope !== undefined) {
-      yield* Scope.close(implicitSystemScope, Exit.void);
-    }
-    const stop = Ref.set(stoppedRef, true).pipe(
-      Effect.withSpan("effect-machine.actor.stop"),
-      Effect.asVoid,
-    );
-    return buildActorRefCore(
-      id,
-      machine,
-      stateRef,
-      eventQueue,
-      stoppedRef,
-      listeners,
-      stop,
-      system,
-      childrenMap,
-      new Set(),
-    );
-  }
-
-  // Pending reply tracking — registered before enqueue, settled on stop
-  const pendingReplies = new Set<Deferred.Deferred<unknown, unknown>>();
-
-  // PubSub for transition observation (actor.transitions stream)
-  const transitionsPubSub = yield* PubSub.unbounded<TransitionInfo<S, E>>();
-
-  // Start the event loop — use forkDaemon so the event loop fiber's lifetime
-  // is detached from any parent scope/fiber. actor.stop handles cleanup.
-  const loopFiber = yield* Effect.forkDetach(
-    eventLoop(
-      machine,
-      stateRef,
-      eventQueue,
-      stoppedRef,
-      self,
-      listeners,
-      backgroundFibers,
-      stateScopeRef,
-      id,
-      inspectorValue,
-      system,
-      pendingReplies,
-      transitionsPubSub,
-      deferredReplyRef,
-    ),
-  );
-
+  // Build actor stop — wraps runtime.stop with implicit system teardown
   const stop = Effect.gen(function* () {
-    const finalState = yield* SubscriptionRef.get(stateRef);
-    yield* emitWithTimestamp(inspectorValue, (timestamp) => ({
-      type: "@machine.stop",
-      actorId: id,
-      finalState,
-      timestamp,
-    }));
-    yield* Ref.set(stoppedRef, true);
-    yield* Fiber.interrupt(loopFiber);
-    // Fail all pending call/ask Deferreds
-    yield* settlePendingReplies(pendingReplies, id);
-    // Close state scope (interrupts spawn fibers)
-    yield* Scope.close(stateScopeRef.current, Exit.void);
-    // Interrupt background effects (in parallel)
-    yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
-    // If this actor created an implicit system, tear it down (stops all children)
+    yield* runtime.stop;
     if (implicitSystemScope !== undefined) {
       yield* Scope.close(implicitSystemScope, Exit.void);
     }
@@ -703,9 +684,9 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   return buildActorRefCore(
     id,
     machine,
-    stateRef,
-    eventQueue,
-    stoppedRef,
+    runtime.stateRef,
+    runtime._queue,
+    runtime._stoppedRef,
     listeners,
     stop,
     system,
@@ -728,326 +709,6 @@ export const settlePendingReplies = (
     }
     pendingReplies.clear();
   });
-
-/**
- * Main event loop for the actor.
- * Includes postpone buffer — events matching postpone rules are buffered
- * and drained after state tag changes (gen_statem semantics).
- */
-const eventLoop = Effect.fn("effect-machine.actor.eventLoop")(function* <
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
-  R,
-  GD extends GuardsDef,
-  EFD extends EffectsDef,
->(
-  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
-  stateRef: SubscriptionRef.SubscriptionRef<S>,
-  eventQueue: Queue.Queue<QueuedEvent<E>>,
-  stoppedRef: Ref.Ref<boolean>,
-  self: MachineRef<E>,
-  listeners: Listeners<S>,
-  backgroundFibers: Fiber.Fiber<void, never>[],
-  stateScopeRef: { current: Scope.Closeable },
-  actorId: string,
-  inspector: Inspector<S, E> | undefined,
-  system: ActorSystem,
-  pendingReplies: Set<Deferred.Deferred<unknown, unknown>>,
-  transitionsPubSub: PubSub.PubSub<TransitionInfo<S, E>>,
-  deferredReplyRef: {
-    current: Deferred.Deferred<unknown, NoReplyError | ActorStoppedError> | undefined;
-  },
-) {
-  // Postpone buffer — events deferred for retry after next state change
-  const postponed: QueuedEvent<E>[] = [];
-  const hasPostponeRules = machine.postponeRules.length > 0;
-
-  // Process a single queued event: check postpone, run transition, settle reply
-  const processQueued = Effect.fn("effect-machine.actor.processQueued")(function* (
-    queued: QueuedEvent<E>,
-  ) {
-    const event = queued.event;
-    const currentState = yield* SubscriptionRef.get(stateRef);
-
-    // Check postpone rules before processing
-    if (hasPostponeRules && shouldPostpone(machine, currentState._tag, event._tag)) {
-      postponed.push(queued);
-      if (queued._tag === "call") {
-        const postponedResult: ProcessEventResult<S> = {
-          newState: currentState,
-          previousState: currentState,
-          transitioned: false,
-          lifecycleRan: false,
-          isFinal: false,
-          hasReply: false,
-          deferReply: false,
-          reply: undefined,
-          postponed: true,
-        };
-        yield* Deferred.succeed(queued.reply, postponedResult);
-      }
-      return { shouldStop: false, stateChanged: false };
-    }
-
-    const { shouldStop, result } = yield* Effect.withSpan("effect-machine.event.process", {
-      attributes: {
-        "effect_machine.actor.id": actorId,
-        "effect_machine.state.current": currentState._tag,
-        "effect_machine.event.type": event._tag,
-      },
-    })(
-      processEvent(
-        machine,
-        currentState,
-        event,
-        stateRef,
-        self,
-        listeners,
-        stateScopeRef,
-        actorId,
-        inspector,
-        system,
-      ),
-    );
-
-    // Settle reply based on request type
-    switch (queued._tag) {
-      case "call":
-        yield* Deferred.succeed(queued.reply, result);
-        break;
-      case "ask": {
-        if (result.hasReply) {
-          // Runtime validation: decode reply through event's reply schema
-          const replySchema = machine._replySchemas?.get(event._tag);
-          if (replySchema !== undefined) {
-            // Decode failure = defect (broken handler). Settle deferred before dying
-            // so the ask caller sees the error instead of hanging forever.
-            let decoded: unknown;
-            // @effect-diagnostics tryCatchInEffectGen:off
-            try {
-              decoded = Schema.decodeUnknownSync(replySchema)(result.reply);
-            } catch (decodeError) {
-              yield* Deferred.die(queued.reply, decodeError);
-              return yield* Effect.die(decodeError);
-            }
-            yield* Deferred.succeed(queued.reply, decoded);
-          } else {
-            yield* Deferred.succeed(queued.reply, result.reply);
-          }
-        } else if (result.deferReply) {
-          // Handler returned Machine.deferReply() — spawn handler will call self.reply()
-          deferredReplyRef.current = queued.reply;
-        } else {
-          yield* Deferred.fail(queued.reply, new NoReplyError({ actorId, eventTag: event._tag }));
-        }
-        break;
-      }
-    }
-
-    // Publish transition info for observers (actor.transitions stream)
-    if (result.transitioned) {
-      yield* PubSub.publish(transitionsPubSub, {
-        fromState: result.previousState,
-        toState: result.newState,
-        event,
-      });
-    }
-
-    return { shouldStop, stateChanged: result.lifecycleRan };
-  });
-
-  while (true) {
-    const queued = yield* Queue.take(eventQueue);
-    const { shouldStop, stateChanged } = yield* processQueued(queued);
-
-    if (shouldStop) {
-      yield* Ref.set(stoppedRef, true);
-      postponed.length = 0;
-      yield* settlePendingReplies(pendingReplies, actorId);
-      yield* Scope.close(stateScopeRef.current, Exit.void);
-      yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
-      return;
-    }
-
-    // Drain postponed events with priority — loop until stable
-    let drainTriggered = stateChanged;
-    while (drainTriggered && postponed.length > 0) {
-      drainTriggered = false;
-      const drained = postponed.splice(0);
-      for (const entry of drained) {
-        const drain = yield* processQueued(entry);
-        if (drain.shouldStop) {
-          yield* Ref.set(stoppedRef, true);
-          postponed.length = 0;
-          yield* settlePendingReplies(pendingReplies, actorId);
-          yield* Scope.close(stateScopeRef.current, Exit.void);
-          yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
-          return;
-        }
-        if (drain.stateChanged) {
-          drainTriggered = true;
-        }
-      }
-    }
-  }
-});
-
-/**
- * Process a single event, returning true if the actor should stop.
- * Wraps processEventCore with actor-specific concerns (inspection, listeners, state ref).
- */
-const processEvent = Effect.fn("effect-machine.actor.processEvent")(function* <
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
-  R,
-  GD extends GuardsDef,
-  EFD extends EffectsDef,
->(
-  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
-  currentState: S,
-  event: E,
-  stateRef: SubscriptionRef.SubscriptionRef<S>,
-  self: MachineRef<E>,
-  listeners: Listeners<S>,
-  stateScopeRef: { current: Scope.Closeable },
-  actorId: string,
-  inspector: Inspector<S, E> | undefined,
-  system: ActorSystem,
-) {
-  // Emit event received
-  yield* emitWithTimestamp(inspector, (timestamp) => ({
-    type: "@machine.event",
-    actorId,
-    state: currentState,
-    event,
-    timestamp,
-  }));
-
-  // Build inspection hooks for processEventCore
-  const hooks: ProcessEventHooks<S, E> | undefined =
-    inspector === undefined
-      ? undefined
-      : {
-          onSpawnEffect: (state) =>
-            emitWithTimestamp(inspector, (timestamp) => ({
-              type: "@machine.effect",
-              actorId,
-              effectType: "spawn",
-              state,
-              timestamp,
-            })),
-          onTransition: (from, to, ev) =>
-            emitWithTimestamp(inspector, (timestamp) => ({
-              type: "@machine.transition",
-              actorId,
-              fromState: from,
-              toState: to,
-              event: ev,
-              timestamp,
-            })),
-          onError: (info) =>
-            emitWithTimestamp(inspector, (timestamp) => ({
-              type: "@machine.error",
-              actorId,
-              phase: info.phase,
-              state: info.state,
-              event: info.event,
-              error: Cause.pretty(info.cause),
-              timestamp,
-            })),
-        };
-
-  // Process event using shared core
-  const result = yield* processEventCore(
-    machine,
-    currentState,
-    event,
-    self,
-    stateScopeRef,
-    system,
-    actorId,
-    hooks,
-  );
-
-  if (!result.transitioned) {
-    yield* Effect.annotateCurrentSpan("effect_machine.transition.matched", false);
-    return { shouldStop: false, result };
-  }
-
-  yield* Effect.annotateCurrentSpan("effect_machine.transition.matched", true);
-
-  // Update state ref and notify listeners
-  yield* SubscriptionRef.set(stateRef, result.newState);
-  notifyListeners(listeners, result.newState);
-
-  if (result.lifecycleRan) {
-    yield* Effect.annotateCurrentSpan("effect_machine.state.from", result.previousState._tag);
-    yield* Effect.annotateCurrentSpan("effect_machine.state.to", result.newState._tag);
-
-    // Transition inspection event emitted via hooks in processEventCore
-
-    // Check if new state is final
-    if (result.isFinal) {
-      yield* emitWithTimestamp(inspector, (timestamp) => ({
-        type: "@machine.stop",
-        actorId,
-        finalState: result.newState,
-        timestamp,
-      }));
-      return { shouldStop: true, result };
-    }
-  }
-
-  return { shouldStop: false, result };
-});
-
-/**
- * Run spawn effects with actor-specific inspection and tracing.
- * Wraps the core runSpawnEffects with inspection events and spans.
- * @internal
- */
-const runSpawnEffectsWithInspection = Effect.fn("effect-machine.actor.spawnEffects")(function* <
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
-  R,
-  GD extends GuardsDef,
-  EFD extends EffectsDef,
->(
-  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
-  state: S,
-  event: E,
-  self: MachineRef<E>,
-  stateScope: Scope.Closeable,
-  actorId: string,
-  inspector: Inspector<S, E> | undefined,
-  system: ActorSystem,
-) {
-  // Emit inspection event before running effects
-  yield* emitWithTimestamp(inspector, (timestamp) => ({
-    type: "@machine.effect",
-    actorId,
-    effectType: "spawn",
-    state,
-    timestamp,
-  }));
-
-  // Use shared core
-  const onError =
-    inspector === undefined
-      ? undefined
-      : (info: ProcessEventError<S, E>) =>
-          emitWithTimestamp(inspector, (timestamp) => ({
-            type: "@machine.error",
-            actorId,
-            phase: info.phase,
-            state: info.state,
-            event: info.event,
-            error: Cause.pretty(info.cause),
-            timestamp,
-          }));
-
-  yield* runSpawnEffects(machine, state, event, self, stateScope, system, actorId, onError);
-});
 
 // ============================================================================
 // ActorSystem Implementation
