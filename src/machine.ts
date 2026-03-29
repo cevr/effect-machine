@@ -572,13 +572,26 @@ export class Machine<
    * State-scoped task that runs on entry and sends success/failure events.
    * Interrupts do not emit failure events.
    */
+  /** Task with explicit onSuccess mapping */
   task<NS extends State, A, E1, ES extends Event, EF extends Event>(
     state: TaggedOrConstructor<NS>,
     run: (ctx: StateHandlerContext<NS, Event, EFD>) => Effect.Effect<A, E1, Scope.Scope>,
     options: TaskOptions<NS, Event, EFD, A, E1, ES, EF>,
-  ): Machine<State, Event, R, GD, EFD> {
+  ): Machine<State, Event, R, GD, EFD>;
+  /** Shorthand: when task returns an Event directly, onSuccess can be omitted */
+  task<NS extends State, E1, EF extends Event>(
+    state: TaggedOrConstructor<NS>,
+    run: (ctx: StateHandlerContext<NS, Event, EFD>) => Effect.Effect<Event, E1, Scope.Scope>,
+    options: {
+      onFailure?: (cause: Cause.Cause<E1>, ctx: StateHandlerContext<NS, Event, EFD>) => EF;
+      name?: string;
+    },
+  ): Machine<State, Event, R, GD, EFD>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  task(state: any, run: any, options: any): Machine<State, Event, R, GD, EFD> {
     const handler = Effect.fn("effect-machine.task")(function* (
-      ctx: StateHandlerContext<NS, Event, EFD>,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ctx: StateHandlerContext<any, Event, EFD>,
     ) {
       yield* emitTaskInspection({
         actorId: ctx.actorId,
@@ -587,6 +600,7 @@ export class Machine<
         phase: "start",
       });
 
+      // @effect-diagnostics anyUnknownInErrorContext:off
       const exit = yield* Effect.exit(run(ctx));
 
       if (Exit.isSuccess(exit)) {
@@ -596,7 +610,9 @@ export class Machine<
           taskName: options.name,
           phase: "success",
         });
-        yield* ctx.self.send(options.onSuccess(exit.value, ctx));
+        const successEvent =
+          options.onSuccess !== undefined ? options.onSuccess(exit.value, ctx) : exit.value;
+        yield* ctx.self.send(successEvent);
         yield* Effect.yieldNow;
         return;
       }
@@ -626,7 +642,8 @@ export class Machine<
       return yield* Effect.failCause(cause).pipe(Effect.orDie);
     });
 
-    return this.spawn(state, handler);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return this.spawn(state, handler as any);
   }
 
   // ---- timeout ----
