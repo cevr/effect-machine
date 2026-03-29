@@ -552,16 +552,32 @@ export class Machine<
    *   });
    * ```
    */
+  /** Single state */
   spawn<NS extends State>(
     state: TaggedOrConstructor<NS>,
     handler: StateEffectHandler<NS, Event, EFD, Scope.Scope>,
-  ): Machine<State, Event, R, GD, EFD> {
-    const stateTag = getTag(state);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (this._spawnEffects as any[]).push({
-      stateTag,
-      handler: handler as unknown as SpawnEffect<State, Event, EFD, R>["handler"],
-    });
+  ): Machine<State, Event, R, GD, EFD>;
+  /** Multiple states */
+  spawn<NS extends ReadonlyArray<TaggedOrConstructor<State>>>(
+    states: NS,
+    handler: StateEffectHandler<
+      NS[number] extends TaggedOrConstructor<infer S> ? S : never,
+      Event,
+      EFD,
+      Scope.Scope
+    >,
+  ): Machine<State, Event, R, GD, EFD>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  spawn(stateOrStates: any, handler: any): Machine<State, Event, R, GD, EFD> {
+    const states = Array.isArray(stateOrStates) ? stateOrStates : [stateOrStates];
+    for (const s of states) {
+      const stateTag = getTag(s);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (this._spawnEffects as any[]).push({
+        stateTag,
+        handler: handler as unknown as SpawnEffect<State, Event, EFD, R>["handler"],
+      });
+    }
     invalidateIndex(this);
     return this;
   }
@@ -572,13 +588,39 @@ export class Machine<
    * State-scoped task that runs on entry and sends success/failure events.
    * Interrupts do not emit failure events.
    */
-  /** Task with explicit onSuccess mapping */
+  /** Task with explicit onSuccess mapping — single state */
   task<NS extends State, A, E1, ES extends Event, EF extends Event>(
     state: TaggedOrConstructor<NS>,
     run: (ctx: StateHandlerContext<NS, Event, EFD>) => Effect.Effect<A, E1, Scope.Scope>,
     options: TaskOptions<NS, Event, EFD, A, E1, ES, EF>,
   ): Machine<State, Event, R, GD, EFD>;
-  /** Shorthand: when task returns an Event directly, onSuccess can be omitted */
+  /** Task with explicit onSuccess mapping — multiple states */
+  task<
+    NS extends ReadonlyArray<TaggedOrConstructor<State>>,
+    A,
+    E1,
+    ES extends Event,
+    EF extends Event,
+  >(
+    states: NS,
+    run: (
+      ctx: StateHandlerContext<
+        NS[number] extends TaggedOrConstructor<infer S> ? S : never,
+        Event,
+        EFD
+      >,
+    ) => Effect.Effect<A, E1, Scope.Scope>,
+    options: TaskOptions<
+      NS[number] extends TaggedOrConstructor<infer S> ? S : never,
+      Event,
+      EFD,
+      A,
+      E1,
+      ES,
+      EF
+    >,
+  ): Machine<State, Event, R, GD, EFD>;
+  /** Shorthand: when task returns Event directly, onSuccess can be omitted — single state */
   task<NS extends State, E1, EF extends Event>(
     state: TaggedOrConstructor<NS>,
     run: (ctx: StateHandlerContext<NS, Event, EFD>) => Effect.Effect<Event, E1, Scope.Scope>,
@@ -587,8 +629,30 @@ export class Machine<
       name?: string;
     },
   ): Machine<State, Event, R, GD, EFD>;
+  /** Shorthand: when task returns Event directly — multiple states */
+  task<NS extends ReadonlyArray<TaggedOrConstructor<State>>, E1, EF extends Event>(
+    states: NS,
+    run: (
+      ctx: StateHandlerContext<
+        NS[number] extends TaggedOrConstructor<infer S> ? S : never,
+        Event,
+        EFD
+      >,
+    ) => Effect.Effect<Event, E1, Scope.Scope>,
+    options: {
+      onFailure?: (
+        cause: Cause.Cause<E1>,
+        ctx: StateHandlerContext<
+          NS[number] extends TaggedOrConstructor<infer S> ? S : never,
+          Event,
+          EFD
+        >,
+      ) => EF;
+      name?: string;
+    },
+  ): Machine<State, Event, R, GD, EFD>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  task(state: any, run: any, options: any): Machine<State, Event, R, GD, EFD> {
+  task(stateOrStates: any, run: any, options: any): Machine<State, Event, R, GD, EFD> {
     const handler = Effect.fn("effect-machine.task")(function* (
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ctx: StateHandlerContext<any, Event, EFD>,
@@ -643,7 +707,7 @@ export class Machine<
     });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return this.spawn(state, handler as any);
+    return this.spawn(stateOrStates, handler as any);
   }
 
   // ---- timeout ----
