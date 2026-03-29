@@ -3,7 +3,7 @@ import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import { Machine, simulate, State, Event, Slot } from "../src/index.js";
-import { materializeMachine } from "../src/machine.js";
+import { validateSlots } from "../src/machine.js";
 
 const CounterState = State({
   Idle: { count: Schema.Number },
@@ -351,7 +351,7 @@ describe(".from()", () => {
 //  (F7)
 // ============================================================================
 
-describe("materializeMachine", () => {
+describe("validateSlots", () => {
   test("throws ProvisionValidationError when slots missing", () => {
     const Guards = Slot.Guards({ check: {} });
     const Effects = Slot.Effects({ notify: {} });
@@ -364,7 +364,7 @@ describe("materializeMachine", () => {
       initial: CounterState.Idle({ count: 0 }),
     });
 
-    expect(() => materializeMachine(machine, {})).toThrow();
+    expect(() => validateSlots(machine, {})).toThrow();
   });
 
   test("succeeds when all handlers provided", () => {
@@ -377,21 +377,22 @@ describe("materializeMachine", () => {
       initial: CounterState.Idle({ count: 0 }),
     });
 
-    const materialized = materializeMachine(machine, {
+    const handlers = validateSlots(machine, {
       check: () => true,
     });
 
-    expect(materialized.initial._tag).toBe("Idle");
+    expect(handlers).toBeDefined();
+    expect(handlers?.get("check")).toBeDefined();
   });
 
-  test("no-arg materialize works on slotless machine", () => {
+  test("no-arg validate works on slotless machine", () => {
     const machine = Machine.make({
       state: CounterState,
       event: CounterEvent,
       initial: CounterState.Idle({ count: 0 }),
     });
 
-    const materialized = materializeMachine(machine);
-    expect(materialized.initial._tag).toBe("Idle");
+    const handlers = validateSlots(machine);
+    expect(handlers).toBeUndefined();
   });
 });

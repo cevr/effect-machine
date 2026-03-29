@@ -173,6 +173,9 @@ export interface RuntimeConfig<S, E> {
   readonly skipFinalizer?: boolean;
   /** Prefix for child actor IDs in self.spawn. Entity-machine uses `${actorId}/`. Default: no prefix. */
   readonly childIdPrefix?: string;
+  /** Bound slot handlers from validateSlots. Threaded through MachineContext._slotHandlers. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly slotHandlers?: ReadonlyMap<string, any>;
 }
 
 /** @internal */
@@ -273,12 +276,14 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
   // Fork background effects under actorScope
   const backgroundFibers: Fiber.Fiber<void, never>[] = [];
   const initEvent = { _tag: INTERNAL_INIT_EVENT } as E;
+  const slotHandlers = config.slotHandlers;
   const ctx: MachineContext<S, E, MachineRef<E>> = {
     actorId,
     state: machine.initial,
     event: initEvent,
     self,
     system,
+    _slotHandlers: slotHandlers,
   };
   const { effects: effectSlots } = machine._slots;
 
@@ -327,6 +332,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
     actorId,
     hooks?.onError,
     initialSpawnDefectSignal,
+    slotHandlers,
   ).pipe(
     Effect.catchCause((cause) => {
       // Tag as initial-spawn defect, set exit, clean up, then propagate
@@ -390,6 +396,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
       lifecycle,
       config.wrapProcess,
       fork,
+      slotHandlers,
     ),
   );
   loopFiberRef.current = loopFiber;
@@ -532,6 +539,8 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
   ) => Effect.Effect<ProcessQueuedResult<S>>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   fork?: (effect: Effect.Effect<any>) => Fiber.Fiber<any>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  slotHandlers?: ReadonlyMap<string, any>,
 ) {
   // Fire-and-forget fork with captured services
   const forkEffect = fork ?? Effect.runFork;
@@ -601,6 +610,7 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
       system,
       actorId,
       hooks,
+      slotHandlers,
     );
 
     // Update state if transitioned

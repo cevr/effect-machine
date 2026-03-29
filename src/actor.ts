@@ -27,6 +27,7 @@ import {
 } from "effect";
 
 import type { Machine } from "./machine.js";
+import { validateSlots } from "./internal/slots.js";
 import type { ActorExit, Supervision } from "./supervision.js";
 import type { ReplyTypeBrand, ExtractReply } from "./internal/brands.js";
 import type { GuardsDef, EffectsDef } from "./slot.js";
@@ -241,7 +242,11 @@ export interface ActorSystem {
     id: string,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     machine: Machine<S, E, R, any, any>,
-    options?: { readonly supervision?: Supervision.Policy },
+    options?: {
+      readonly supervision?: Supervision.Policy;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      readonly slots?: Record<string, any>;
+    },
   ) => Effect.Effect<ActorRef<S, E>, DuplicateActorError, R>;
 
   /**
@@ -575,6 +580,9 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     supervision?: Supervision.Policy;
     /** @internal Called by system after each restart — emits ActorRestarted system event */
     onRestart?: (generation: number, exit: ActorExit<unknown>) => Effect.Effect<void>;
+    /** @internal Bound slot handlers from validateSlots */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    slotHandlers?: ReadonlyMap<string, any>;
   },
 ) {
   const initial: S = options?.initialState ?? machine.initial;
@@ -756,6 +764,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
                   );
                 }
               }),
+            slotHandlers: options?.slotHandlers,
           }) as Effect.Effect<RuntimeHandle<S, E>>,
       ),
     );
@@ -988,7 +997,11 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     id: string,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     machine: Machine<S, E, R, any, any>,
-    spawnOptions?: { readonly supervision?: Supervision.Policy },
+    spawnOptions?: {
+      readonly supervision?: Supervision.Policy;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      readonly slotHandlers?: ReadonlyMap<string, any>;
+    },
   ) {
     if (MutableHashMap.has(actorsMap, id)) {
       return yield* new DuplicateActorError({ actorId: id });
@@ -997,6 +1010,7 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     let actorRef: ActorRef<AnyState, unknown> | undefined;
     const actor = yield* createActor(id, machine, {
       supervision: spawnOptions?.supervision,
+      slotHandlers: spawnOptions?.slotHandlers,
       onRestart:
         spawnOptions?.supervision !== undefined
           ? (generation, exit) =>
@@ -1019,13 +1033,16 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     id: string,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     machine: Machine<S, E, R, any, any>,
-    options?: { readonly supervision?: Supervision.Policy },
-  ): Effect.Effect<ActorRef<S, E>, DuplicateActorError, R> =>
-    withSpawnGate(spawnRegular(id, machine, options)) as Effect.Effect<
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    options?: { readonly supervision?: Supervision.Policy; readonly slots?: Record<string, any> },
+  ): Effect.Effect<ActorRef<S, E>, DuplicateActorError, R> => {
+    const slotHandlers = validateSlots(machine, options?.slots);
+    return withSpawnGate(spawnRegular(id, machine, { ...options, slotHandlers })) as Effect.Effect<
       ActorRef<S, E>,
       DuplicateActorError,
       R
     >;
+  };
 
   const get = Effect.fn("effect-machine.actorSystem.get")(function* (id: string) {
     return yield* Effect.sync(() => MutableHashMap.get(actorsMap, id));

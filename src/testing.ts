@@ -1,7 +1,7 @@
 import { Effect, SubscriptionRef } from "effect";
 
 import type { Machine, MachineRef } from "./machine.js";
-import { materializeMachine } from "./machine.js";
+import { validateSlots } from "./internal/slots.js";
 import { AssertionError } from "./errors.js";
 import type { GuardsDef, EffectsDef } from "./slot.js";
 import { executeTransition, shouldPostpone } from "./internal/transition.js";
@@ -65,7 +65,8 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   options?: { slots?: Record<string, any> },
 ) {
-  const machine = materializeMachine(input, options?.slots) as Machine<S, E, R, GD, EFD>;
+  const slotHandlers = validateSlots(input, options?.slots);
+  const machine = input;
 
   const dummySelf = makeDummySelf<E>("effect-machine.testing.simulate");
 
@@ -88,6 +89,7 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
       dummySelf,
       stubSystem,
       "simulation",
+      slotHandlers,
     );
 
     if (!result.transitioned) {
@@ -120,6 +122,7 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
           dummySelf,
           stubSystem,
           "simulation",
+          slotHandlers,
         );
         if (drainResult.transitioned) {
           currentState = drainResult.newState;
@@ -307,7 +310,8 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
   GD extends GuardsDef = Record<string, never>,
   EFD extends EffectsDef = Record<string, never>,
 >(input: MachineInput<S, E, R, GD, EFD>, options?: TestHarnessOptions<S, E>) {
-  const machine = materializeMachine(input, options?.slots) as Machine<S, E, R, GD, EFD>;
+  const slotHandlers = validateSlots(input, options?.slots);
+  const machine = input;
 
   const dummySelf = makeDummySelf<E>("effect-machine.testing.harness");
 
@@ -331,6 +335,7 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
       dummySelf,
       stubSystem,
       "test-harness",
+      slotHandlers,
     );
 
     if (!result.transitioned) {
@@ -365,6 +370,7 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
           dummySelf,
           stubSystem,
           "test-harness",
+          slotHandlers,
         );
         if (drainResult.transitioned) {
           yield* SubscriptionRef.set(stateRef, drainResult.newState);

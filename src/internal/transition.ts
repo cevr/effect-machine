@@ -56,8 +56,17 @@ export const runTransitionHandler = Effect.fn("effect-machine.runTransitionHandl
   self: MachineRef<E>,
   system: ActorSystem,
   actorId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  slotHandlers?: ReadonlyMap<string, any>,
 ) {
-  const ctx: MachineContext<S, E, MachineRef<E>> = { actorId, state, event, self, system };
+  const ctx: MachineContext<S, E, MachineRef<E>> = {
+    actorId,
+    state,
+    event,
+    self,
+    system,
+    _slotHandlers: slotHandlers,
+  };
   const { guards, effects } = machine._slots;
 
   const handlerCtx: HandlerContext<S, E, GD, EFD> = { state, event, guards, effects };
@@ -116,6 +125,8 @@ export const executeTransition = Effect.fn("effect-machine.executeTransition")(f
   self: MachineRef<E>,
   system: ActorSystem,
   actorId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  slotHandlers?: ReadonlyMap<string, any>,
 ) {
   const transition = resolveTransition(machine, currentState, event);
 
@@ -138,6 +149,7 @@ export const executeTransition = Effect.fn("effect-machine.executeTransition")(f
     self,
     system,
     actorId,
+    slotHandlers,
   );
 
   return {
@@ -251,9 +263,19 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
   system: ActorSystem,
   actorId: string,
   hooks?: ProcessEventHooks<S, E>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  slotHandlers?: ReadonlyMap<string, any>,
 ) {
   // Execute transition (defect-aware)
-  const result = yield* executeTransition(machine, currentState, event, self, system, actorId).pipe(
+  const result = yield* executeTransition(
+    machine,
+    currentState,
+    event,
+    self,
+    system,
+    actorId,
+    slotHandlers,
+  ).pipe(
     Effect.catchCause((cause) => {
       if (Cause.hasInterruptsOnly(cause)) {
         return Effect.interrupt;
@@ -318,6 +340,7 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
       actorId,
       hooks?.onError,
       hooks?.onSpawnDefect,
+      slotHandlers,
     );
   }
 
@@ -355,9 +378,18 @@ export const runSpawnEffects = Effect.fn("effect-machine.runSpawnEffects")(funct
   actorId: string,
   onError?: (info: ProcessEventError<S, E>) => Effect.Effect<void>,
   onSpawnDefect?: (cause: Cause.Cause<unknown>) => Effect.Effect<void>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  slotHandlers?: ReadonlyMap<string, any>,
 ) {
   const spawnEffects = findSpawnEffects(machine, state._tag);
-  const ctx: MachineContext<S, E, MachineRef<E>> = { actorId, state, event, self, system };
+  const ctx: MachineContext<S, E, MachineRef<E>> = {
+    actorId,
+    state,
+    event,
+    self,
+    system,
+    _slotHandlers: slotHandlers,
+  };
   const { effects: effectSlots } = machine._slots;
   const reportError = onError;
   const defectSignal = onSpawnDefect;

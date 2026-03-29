@@ -2,7 +2,7 @@
 import { Effect, Schema } from "effect";
 
 import { Machine, State, Event, Slot, simulate, createTestHarness } from "../src/index.js";
-import { materializeMachine } from "../src/machine.js";
+import { validateSlots } from "../src/machine.js";
 import { describe, expect, it, yieldFibers } from "effect-bun-test";
 import { test } from "bun:test";
 
@@ -126,24 +126,24 @@ describe("Machine.spawn with slots", () => {
 });
 
 // ============================================================================
-// materializeMachine validation
+// validateSlots validation
 // ============================================================================
 
-describe("materializeMachine", () => {
+describe("validateSlots", () => {
   test("throws ProvisionValidationError for slotful machine without handlers", () => {
     const machine = createSlotMachine();
-    expect(() => materializeMachine(machine)).toThrow();
+    expect(() => validateSlots(machine)).toThrow();
   });
 
   test("throws ProvisionValidationError for missing slot handlers", () => {
     const machine = createSlotMachine();
-    expect(() => materializeMachine(machine, { canStart: () => true })).toThrow();
+    expect(() => validateSlots(machine, { canStart: () => true })).toThrow();
   });
 
   test("throws ProvisionValidationError for extra slot handlers", () => {
     const machine = createSlotMachine();
     expect(() =>
-      materializeMachine(machine, {
+      validateSlots(machine, {
         canStart: () => true,
         onStart: () => Effect.void,
         extra: () => true,
@@ -151,20 +151,21 @@ describe("materializeMachine", () => {
     ).toThrow();
   });
 
-  test("returns machine as-is for no-slot machine", () => {
+  test("returns undefined for no-slot machine", () => {
     const machine = createSimpleMachine();
-    const result = materializeMachine(machine);
-    expect(result).toBe(machine);
+    const result = validateSlots(machine);
+    expect(result).toBeUndefined();
   });
 
-  test("returns fresh copy for slotful machine with handlers", () => {
+  test("returns handler map for slotful machine with handlers", () => {
     const machine = createSlotMachine();
-    const result = materializeMachine(machine, {
+    const result = validateSlots(machine, {
       canStart: () => true,
       onStart: () => Effect.void,
     });
-    expect(result).not.toBe(machine);
-    expect(result.initial).toEqual(machine.initial);
+    expect(result).toBeDefined();
+    expect(result?.get("canStart")).toBeDefined();
+    expect(result?.get("onStart")).toBeDefined();
   });
 });
 

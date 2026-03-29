@@ -20,7 +20,7 @@ import {
   Event,
   Slot,
 } from "../src/index.js";
-import { materializeMachine } from "../src/machine.js";
+import { validateSlots } from "../src/internal/slots.js";
 import { describe, expect, it, yieldFibers } from "effect-bun-test";
 
 // ============================================================================
@@ -147,21 +147,19 @@ describe("ActorSystem", () => {
 
       const counter = yield* Ref.make(0);
 
-      const machine = materializeMachine(
-        Machine.make({
-          state: SimpleState,
-          event: SimpleEvent,
-          effects: TestEffects,
-          initial: SimpleState.Idle,
-        }).background(({ effects }) => effects.mark()),
-        { mark: () => Ref.update(counter, (n) => n + 1) },
-      );
+      const machine = Machine.make({
+        state: SimpleState,
+        event: SimpleEvent,
+        effects: TestEffects,
+        initial: SimpleState.Idle,
+      }).background(({ effects }) => effects.mark());
+      const slots = { mark: () => Ref.update(counter, (n) => n + 1) };
 
       const system = yield* ActorSystemService;
-      yield* system.spawn("dup-actor", machine);
+      yield* system.spawn("dup-actor", machine, { slots });
       yield* yieldFibers;
 
-      const result = yield* Effect.result(system.spawn("dup-actor", machine));
+      const result = yield* Effect.result(system.spawn("dup-actor", machine, { slots }));
       expect(result._tag).toBe("Failure");
       if (result._tag === "Failure") {
         expect(result.failure._tag).toBe("DuplicateActorError");
@@ -181,21 +179,19 @@ describe("ActorSystem", () => {
 
       const counter = yield* Ref.make(0);
 
-      const machine = materializeMachine(
-        Machine.make({
-          state: SimpleState,
-          event: SimpleEvent,
-          effects: TestEffects,
-          initial: SimpleState.Idle,
-        }).background(({ effects }) => effects.mark()),
-        { mark: () => Ref.update(counter, (n) => n + 1) },
-      );
+      const machine = Machine.make({
+        state: SimpleState,
+        event: SimpleEvent,
+        effects: TestEffects,
+        initial: SimpleState.Idle,
+      }).background(({ effects }) => effects.mark());
+      const slots = { mark: () => Ref.update(counter, (n) => n + 1) };
 
       const system = yield* ActorSystemService;
       const [resultA, resultB] = yield* Effect.all(
         [
-          Effect.result(system.spawn("concurrent-actor", machine)),
-          Effect.result(system.spawn("concurrent-actor", machine)),
+          Effect.result(system.spawn("concurrent-actor", machine, { slots })),
+          Effect.result(system.spawn("concurrent-actor", machine, { slots })),
         ],
         { concurrency: "unbounded" },
       );
@@ -212,7 +208,7 @@ describe("ActorSystem", () => {
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
 
-  it.live("materializeMachine validates missing slot handlers", () =>
+  it.live("validateSlots validates missing slot handlers", () =>
     Effect.sync(() => {
       const SimpleState = State({ Idle: {} });
       const SimpleEvent = Event({ Ping: {} });
@@ -225,8 +221,8 @@ describe("ActorSystem", () => {
         initial: SimpleState.Idle,
       });
 
-      // materializeMachine without required handlers throws ProvisionValidationError
-      expect(() => materializeMachine(machine, {})).toThrow();
+      // validateSlots without required handlers throws ProvisionValidationError
+      expect(() => validateSlots(machine, {})).toThrow();
     }),
   );
 

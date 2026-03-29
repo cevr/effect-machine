@@ -51,6 +51,7 @@ import { Cause, Effect, Exit, Option, Random, Scope } from "effect";
 
 import type { TransitionResult, ReplyResult } from "./internal/utils.js";
 import { getTag, stubSystem, makeReply, makeDeferReply } from "./internal/utils.js";
+import { validateSlots } from "./internal/slots.js";
 import type {
   TaggedOrConstructor,
   BrandedState,
@@ -58,7 +59,7 @@ import type {
   ExtractReply,
 } from "./internal/brands.js";
 import type { MachineStateSchema, MachineEventSchema } from "./schema.js";
-import { SlotProvisionError, ProvisionValidationError } from "./errors.js";
+import { SlotProvisionError } from "./errors.js";
 import type { DuplicateActorError } from "./errors.js";
 import {
   invalidateIndex,
@@ -275,120 +276,8 @@ export type ProvideHandlers<
     ? SlotEffectHandlers<EFD, SlotContext<State, Event>, R>
     : object);
 
-// ============================================================================
-// materializeMachine — internal slot binding at execution boundaries
-// ============================================================================
-
-/**
- * Bind slot handlers to a machine, returning a fresh copy with handlers installed.
- * If no handlers provided and machine has no slots, returns the machine as-is.
- * Validates that all required slots are provided and no extra slots are given.
- *
- * @internal — used by spawn, replay, simulate, test harness, entity-machine
- */
-export const materializeMachine = <
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
-  R,
-  GD extends GuardsDef,
-  EFD extends EffectsDef,
->(
-  machine: Machine<S, E, R, GD, EFD>,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  handlers?: Record<string, any>,
-): Machine<S, E, never, GD, EFD> => {
-  if (handlers === undefined) {
-    // Validate: slot-free machines can skip handlers, slotful machines must provide them
-    const hasGuards =
-      machine._guardsSchema !== undefined &&
-      Object.keys(machine._guardsSchema.definitions).length > 0;
-    const hasEffects =
-      machine._effectsSchema !== undefined &&
-      Object.keys(machine._effectsSchema.definitions).length > 0;
-    if (hasGuards || hasEffects) {
-      const missing: string[] = [];
-      if (machine._guardsSchema !== undefined) {
-        missing.push(...Object.keys(machine._guardsSchema.definitions));
-      }
-      if (machine._effectsSchema !== undefined) {
-        missing.push(...Object.keys(machine._effectsSchema.definitions));
-      }
-      throw new ProvisionValidationError({ missing, extra: [] });
-    }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return machine as any;
-  }
-
-  // Collect all required slot names
-  const requiredSlots = new Set<string>();
-  if (machine._guardsSchema !== undefined) {
-    for (const name of Object.keys(machine._guardsSchema.definitions)) {
-      requiredSlots.add(name);
-    }
-  }
-  if (machine._effectsSchema !== undefined) {
-    for (const name of Object.keys(machine._effectsSchema.definitions)) {
-      requiredSlots.add(name);
-    }
-  }
-
-  // Single-pass validation
-  const providedSlots = new Set(Object.keys(handlers));
-  const missing: string[] = [];
-  const extra: string[] = [];
-
-  for (const name of requiredSlots) {
-    if (!providedSlots.has(name)) {
-      missing.push(name);
-    }
-  }
-  for (const name of providedSlots) {
-    if (!requiredSlots.has(name)) {
-      extra.push(name);
-    }
-  }
-
-  if (missing.length > 0 || extra.length > 0) {
-    throw new ProvisionValidationError({ missing, extra });
-  }
-
-  // Create fresh copy to avoid mutation bleed between actors
-  const result = new Machine<S, E, never, GD, EFD>(
-    machine.initial,
-    machine.stateSchema,
-    machine.eventSchema,
-    machine._guardsSchema,
-    machine._effectsSchema,
-  );
-
-  // Copy arrays/sets
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (result as any)._transitions = [...machine._transitions];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (result as any)._finalStates = new Set(machine._finalStates);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (result as any)._spawnEffects = [...machine._spawnEffects];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (result as any)._backgroundEffects = [...machine._backgroundEffects];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (result as any)._postponeRules = [...machine._postponeRules];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (result as any)._replySchemas = machine._replySchemas;
-
-  // Register handlers
-  if (machine._guardsSchema !== undefined) {
-    for (const name of Object.keys(machine._guardsSchema.definitions)) {
-      result._guardHandlers.set(name, handlers[name]);
-    }
-  }
-  if (machine._effectsSchema !== undefined) {
-    for (const name of Object.keys(machine._effectsSchema.definitions)) {
-      result._effectHandlers.set(name, handlers[name]);
-    }
-  }
-
-  return result;
-};
+// Re-export validateSlots from internal module (avoids circular dependency with actor.ts)
+export { validateSlots } from "./internal/slots.js";
 
 // ============================================================================
 // Machine class
@@ -422,14 +311,6 @@ export class Machine<
   }>;
   /** @internal */ readonly _guardsSchema?: GuardsSchema<GD>;
   /** @internal */ readonly _effectsSchema?: EffectsSchema<EFD>;
-  /** @internal */ readonly _guardHandlers: Map<
-    string,
-    (params: unknown, ctx: SlotContext<State, Event>) => boolean | Effect.Effect<boolean, never, R>
-  >;
-  /** @internal */ readonly _effectHandlers: Map<
-    string,
-    (params: unknown, ctx: SlotContext<State, Event>) => Effect.Effect<void, never, R>
-  >;
   /** @internal */ readonly _slots: {
     guards: GuardSlots<GD>;
     effects: EffectSlots<EFD>;
@@ -494,8 +375,6 @@ export class Machine<
     this._effectsSchema = effectsSchema;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this._replySchemas = (eventSchema as any)?._replySchemas ?? new Map();
-    this._guardHandlers = new Map();
-    this._effectHandlers = new Map();
     this.stateSchema = stateSchema;
     this.eventSchema = eventSchema;
 
@@ -507,7 +386,7 @@ export class Machine<
                 return Effect.die("MachineContext not available");
               }
               const ctx = maybeCtx.value;
-              const handler = this._guardHandlers.get(name);
+              const handler = ctx._slotHandlers?.get(name);
               if (handler === undefined) {
                 return Effect.die(new SlotProvisionError({ slotName: name, slotType: "guard" }));
               }
@@ -526,7 +405,7 @@ export class Machine<
                 return Effect.die("MachineContext not available");
               }
               const ctx = maybeCtx.value;
-              const handler = this._effectHandlers.get(name);
+              const handler = ctx._slotHandlers?.get(name);
               if (handler === undefined) {
                 return Effect.die(new SlotProvisionError({ slotName: name, slotType: "effect" }));
               }
@@ -950,10 +829,11 @@ const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
 ) {
   const opts = typeof idOrOptions === "string" ? { id: idOrOptions } : idOrOptions;
   const actorId = opts?.id ?? `actor-${(yield* Random.next).toString(36).slice(2)}`;
-  const materialized = materializeMachine(machine, opts?.slots);
-  const actor = yield* createActor(actorId, materialized as AnyMachine<S, E, never>, {
+  const slotHandlers = validateSlots(machine, opts?.slots);
+  const actor = yield* createActor(actorId, machine as AnyMachine<S, E, never>, {
     initialState: opts?.hydrate,
     supervision: opts?.supervision,
+    slotHandlers,
   });
 
   // If a scope exists in context, attach cleanup automatically
@@ -1027,7 +907,8 @@ const replayImpl = Effect.fn("effect-machine.replay")(function* <
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   options?: { from?: S; slots?: Record<string, any> },
 ) {
-  const machine = materializeMachine(input, options?.slots);
+  const slotHandlers = validateSlots(input, options?.slots);
+  const machine = input;
   let state: S = options?.from ?? machine.initial;
 
   const hasPostponeRules = machine.postponeRules.length > 0;
@@ -1061,6 +942,7 @@ const replayImpl = Effect.fn("effect-machine.replay")(function* <
         self,
         stubSystem,
         "replay",
+        slotHandlers,
       );
       const previousTag = state._tag;
       state = result.newState;
@@ -1089,6 +971,7 @@ const replayImpl = Effect.fn("effect-machine.replay")(function* <
                 self,
                 stubSystem,
                 "replay",
+                slotHandlers,
               );
               state = pResult.newState;
             }
