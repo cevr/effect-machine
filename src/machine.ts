@@ -1294,3 +1294,7 @@ export { findTransitions } from "./internal/transition.js";
 export const reply = makeReply;
 export const deferReply = makeDeferReply;
 export type { ReplyResult, DeferReplyResult } from "./internal/utils.js";
+
+// Supervision (Machine.supervise) deferred to a dedicated PR — requires
+// deeper integration with the runtime kernel for defect detection and
+// restart semantics that don't fit cleanly into the current ActorRef surface.

@@ -146,6 +146,18 @@ export interface ActorRef<State extends { readonly _tag: string }, Event> {
   /** Subscribe to state changes (sync callback). Returns unsubscribe function. */
   readonly subscribe: (fn: (state: State) => void) => () => void;
 
+  /**
+   * Watch another actor. Returns an Effect that completes when the watched actor stops.
+   * Built on system.events — subscribes then checks current stopped state to avoid race.
+   */
+  readonly watch: (other: ActorRef<AnyState, unknown>) => Effect.Effect<void>;
+
+  /**
+   * Drain: process all remaining events in the queue, then stop.
+   * Unlike `stop` (which interrupts immediately), `drain` lets the actor finish its work.
+   */
+  readonly drain: Effect.Effect<void>;
+
   /** Sync helpers for non-Effect boundaries. */
   readonly sync: ActorRefSync<State, Event>;
 
@@ -440,6 +452,32 @@ export const buildActorRefCore = <
         listeners.delete(fn);
       };
     },
+    watch: (other) =>
+      Effect.gen(function* () {
+        const done = yield* Deferred.make<void>();
+        const unsub = system.subscribe((event) => {
+          if (event._tag === "ActorStopped" && event.id === other.id) {
+            Effect.runFork(Deferred.succeed(done, undefined));
+          }
+        });
+        // Check if actor is already not in system (may have stopped before subscribe)
+        const maybeOther = yield* system.get(other.id);
+        if (Option.isNone(maybeOther)) {
+          unsub();
+          return;
+        }
+        yield* Deferred.await(done);
+        unsub();
+      }).pipe(Effect.asVoid) as Effect.Effect<void>,
+    drain: Effect.gen(function* () {
+      const stopped = yield* Ref.get(stoppedRef);
+      if (stopped) return;
+      // Poll until the queue is empty, then stop
+      while ((yield* Queue.size(eventQueue)) > 0) {
+        yield* Effect.yieldNow;
+      }
+      yield* stop;
+    }).pipe(Effect.asVoid) as Effect.Effect<void>,
     sync: {
       send: (event) => {
         const stopped = Effect.runSync(Ref.get(stoppedRef));
