@@ -454,14 +454,16 @@ export const buildActorRefCore = <
     },
     watch: (other) =>
       Effect.gen(function* () {
+        // Use the watched actor's system (supports cross-system watching)
+        const otherSystem = other.system;
         const done = yield* Deferred.make<void>();
-        const unsub = system.subscribe((event) => {
+        const unsub = otherSystem.subscribe((event) => {
           if (event._tag === "ActorStopped" && event.id === other.id) {
             Effect.runFork(Deferred.succeed(done, undefined));
           }
         });
-        // Check if actor is already not in system (may have stopped before subscribe)
-        const maybeOther = yield* system.get(other.id);
+        // Check if actor is already not in its system (may have stopped before subscribe)
+        const maybeOther = yield* otherSystem.get(other.id);
         if (Option.isNone(maybeOther)) {
           unsub();
           return;
@@ -472,11 +474,11 @@ export const buildActorRefCore = <
     drain: Effect.gen(function* () {
       const stopped = yield* Ref.get(stoppedRef);
       if (stopped) return;
-      // Poll until the queue is empty, then stop
-      while ((yield* Queue.size(eventQueue)) > 0) {
-        yield* Effect.yieldNow;
-      }
-      yield* stop;
+      // Enqueue a drain sentinel — the runtime processes all queued events before it,
+      // then runs shutdown. This guarantees no in-flight work when stop happens.
+      const done = yield* Deferred.make<void, never>();
+      yield* Queue.offer(eventQueue, { _tag: "drain", done });
+      yield* Deferred.await(done);
     }).pipe(Effect.asVoid) as Effect.Effect<void>,
     sync: {
       send: (event) => {

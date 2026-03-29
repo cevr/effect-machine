@@ -48,6 +48,10 @@ export type RuntimeQueuedEvent<E> =
       readonly _tag: "ask";
       readonly event: E;
       readonly reply: Deferred.Deferred<unknown, NoReplyError>;
+    }
+  | {
+      readonly _tag: "drain";
+      readonly done: Deferred.Deferred<void, never>;
     };
 
 // ============================================================================
@@ -379,12 +383,14 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
     inner: Effect.Effect<ProcessQueuedResult<S>>,
   ) => Effect.Effect<ProcessQueuedResult<S>>,
 ) {
-  // Postpone buffer
-  const postponed: RuntimeQueuedEvent<E>[] = [];
-  const hasPostponeRules = machine.postponeRules.length > 0;
+  // Event-bearing queue variants (excludes drain sentinel)
+  type EventQueued = Exclude<RuntimeQueuedEvent<E>, { readonly _tag: "drain" }>;
 
+  // Postpone buffer — only event-bearing variants, never drain
+  const postponed: EventQueued[] = [];
+  const hasPostponeRules = machine.postponeRules.length > 0;
   const processQueued = Effect.fn("effect-machine.runtime.processQueued")(function* (
-    queued: RuntimeQueuedEvent<E>,
+    queued: EventQueued,
   ) {
     const event = queued.event;
     const currentState = yield* SubscriptionRef.get(stateRef);
@@ -545,12 +551,21 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
   while (true) {
     const queued = yield* Queue.take(eventQueue);
 
-    const processInner = processQueued(queued) as Effect.Effect<ProcessQueuedResult<S>>;
+    // Drain: graceful shutdown — process remaining queue then stop
+    if (queued._tag === "drain") {
+      yield* shutdown;
+      yield* Deferred.succeed(queued.done, undefined);
+      return;
+    }
+
+    // queued is narrowed: drain is handled above, so it's always an event-bearing variant here
+    const eventQueued = queued as Exclude<RuntimeQueuedEvent<E>, { readonly _tag: "drain" }>;
+    const processInner = processQueued(eventQueued) as Effect.Effect<ProcessQueuedResult<S>>;
     const wrapped =
       wrapProcess !== undefined
         ? Effect.gen(function* () {
             const currentState = yield* SubscriptionRef.get(stateRef);
-            return yield* wrapProcess(currentState, queued.event, processInner);
+            return yield* wrapProcess(currentState, eventQueued.event, processInner);
           })
         : processInner;
 
@@ -594,7 +609,7 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
 
 /** Settle all pending Deferreds in the postpone buffer on shutdown. */
 const settlePostponed = <E extends { readonly _tag: string }>(
-  postponed: RuntimeQueuedEvent<E>[],
+  postponed: Exclude<RuntimeQueuedEvent<E>, { readonly _tag: "drain" }>[],
   actorId: string,
 ): void => {
   for (const entry of postponed) {
