@@ -131,27 +131,34 @@ describe("Menu Navigation Pattern", () => {
     )
     // Checkout handlers
     .on(MenuState.Checkout, MenuEvent.Close, () => MenuState.Closed)
-    .final(MenuState.Closed)
-    .build({
-      canNavigateToPage: (_params, { state, event }) => {
-        const s = state as { pageId: string };
-        const e = event as { pageId: string };
-        return s.pageId !== e.pageId && pages.some((p) => p.id === e.pageId);
-      },
-      canScrollToSection: (_params, { state, event }) => {
-        const s = state as { pageId: string };
-        const e = event as { sectionIndex: number };
-        const page = pages.find((p) => p.id === s.pageId);
-        return page !== undefined && e.sectionIndex >= 0 && e.sectionIndex < page.sections.length;
-      },
-    });
+    .final(MenuState.Closed);
+
+  const menuSlots = {
+    canNavigateToPage: (
+      _params: unknown,
+      { state, event }: { state: { pageId: string }; event: { pageId: string } },
+    ) => {
+      return state.pageId !== event.pageId && pages.some((p) => p.id === event.pageId);
+    },
+    canScrollToSection: (
+      _params: unknown,
+      { state, event }: { state: { pageId: string }; event: { sectionIndex: number } },
+    ) => {
+      const page = pages.find((p) => p.id === state.pageId);
+      return (
+        page !== undefined && event.sectionIndex >= 0 && event.sectionIndex < page.sections.length
+      );
+    },
+  };
 
   test("page navigation with valid page", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const result = yield* simulate(menuMachine, [
-          MenuEvent.NavigateToPage({ pageId: "drinks" }),
-        ]);
+        const result = yield* simulate(
+          menuMachine,
+          [MenuEvent.NavigateToPage({ pageId: "drinks" })],
+          { slots: menuSlots },
+        );
 
         expect(result.finalState._tag).toBe("Browsing");
         expect((result.finalState as BrowsingState).pageId).toBe("drinks");
@@ -163,10 +170,14 @@ describe("Menu Navigation Pattern", () => {
   test("page navigation to same page is no-op", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const result = yield* simulate(menuMachine, [
-          MenuEvent.ScrollToSection({ sectionIndex: 1 }),
-          MenuEvent.NavigateToPage({ pageId: "food" }), // Same page
-        ]);
+        const result = yield* simulate(
+          menuMachine,
+          [
+            MenuEvent.ScrollToSection({ sectionIndex: 1 }),
+            MenuEvent.NavigateToPage({ pageId: "food" }), // Same page
+          ],
+          { slots: menuSlots },
+        );
 
         // Section should still be 1 (internal transition preserved state)
         expect((result.finalState as BrowsingState).sectionIndex).toBe(1);
@@ -177,9 +188,11 @@ describe("Menu Navigation Pattern", () => {
   test("page navigation to invalid page blocked", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const result = yield* simulate(menuMachine, [
-          MenuEvent.NavigateToPage({ pageId: "nonexistent" }),
-        ]);
+        const result = yield* simulate(
+          menuMachine,
+          [MenuEvent.NavigateToPage({ pageId: "nonexistent" })],
+          { slots: menuSlots },
+        );
 
         // Should stay on food (initial page)
         expect((result.finalState as BrowsingState).pageId).toBe("food");
@@ -190,9 +203,11 @@ describe("Menu Navigation Pattern", () => {
   test("section scrolling with valid index", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const result = yield* simulate(menuMachine, [
-          MenuEvent.ScrollToSection({ sectionIndex: 1 }),
-        ]);
+        const result = yield* simulate(
+          menuMachine,
+          [MenuEvent.ScrollToSection({ sectionIndex: 1 })],
+          { slots: menuSlots },
+        );
 
         expect((result.finalState as BrowsingState).sectionIndex).toBe(1);
       }),
@@ -202,9 +217,13 @@ describe("Menu Navigation Pattern", () => {
   test("section scrolling with invalid index blocked", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const result = yield* simulate(menuMachine, [
-          MenuEvent.ScrollToSection({ sectionIndex: 99 }), // Invalid
-        ]);
+        const result = yield* simulate(
+          menuMachine,
+          [
+            MenuEvent.ScrollToSection({ sectionIndex: 99 }), // Invalid
+          ],
+          { slots: menuSlots },
+        );
 
         expect((result.finalState as BrowsingState).sectionIndex).toBe(0);
       }),
@@ -217,6 +236,7 @@ describe("Menu Navigation Pattern", () => {
         menuMachine,
         [MenuEvent.SelectItem({ itemId: "burger" }), MenuEvent.AddToCart],
         ["Browsing", "ItemSelected", "Browsing"],
+        { slots: menuSlots },
       ),
     );
   });
@@ -224,11 +244,15 @@ describe("Menu Navigation Pattern", () => {
   test("cancel selection returns to browsing", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const result = yield* simulate(menuMachine, [
-          MenuEvent.ScrollToSection({ sectionIndex: 1 }),
-          MenuEvent.SelectItem({ itemId: "burger" }),
-          MenuEvent.Close,
-        ]);
+        const result = yield* simulate(
+          menuMachine,
+          [
+            MenuEvent.ScrollToSection({ sectionIndex: 1 }),
+            MenuEvent.SelectItem({ itemId: "burger" }),
+            MenuEvent.Close,
+          ],
+          { slots: menuSlots },
+        );
 
         expect(result.finalState._tag).toBe("Browsing");
         // Preserves section from before selection
@@ -243,12 +267,15 @@ describe("Menu Navigation Pattern", () => {
         menuMachine,
         [MenuEvent.SelectItem({ itemId: "fries" }), MenuEvent.AddToCart, MenuEvent.GoToCheckout],
         ["Browsing", "ItemSelected", "Browsing", "Checkout"],
+        { slots: menuSlots },
       ),
     );
   });
 
   test("close menu from browsing", async () => {
-    await Effect.runPromise(assertPath(menuMachine, [MenuEvent.Close], ["Browsing", "Closed"]));
+    await Effect.runPromise(
+      assertPath(menuMachine, [MenuEvent.Close], ["Browsing", "Closed"], { slots: menuSlots }),
+    );
   });
 
   test("navigation never reaches checkout without explicit action", async () => {
@@ -261,6 +288,7 @@ describe("Menu Navigation Pattern", () => {
           MenuEvent.NavigateToPage({ pageId: "food" }),
         ],
         "Checkout",
+        { slots: menuSlots },
       ),
     );
   });
@@ -268,16 +296,20 @@ describe("Menu Navigation Pattern", () => {
   test("complex navigation flow", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const result = yield* simulate(menuMachine, [
-          MenuEvent.NavigateToPage({ pageId: "drinks" }),
-          MenuEvent.ScrollToSection({ sectionIndex: 1 }),
-          MenuEvent.SelectItem({ itemId: "beer" }),
-          MenuEvent.Close, // Cancel, back to browsing
-          MenuEvent.NavigateToPage({ pageId: "food" }),
-          MenuEvent.SelectItem({ itemId: "burger" }),
-          MenuEvent.AddToCart,
-          MenuEvent.GoToCheckout,
-        ]);
+        const result = yield* simulate(
+          menuMachine,
+          [
+            MenuEvent.NavigateToPage({ pageId: "drinks" }),
+            MenuEvent.ScrollToSection({ sectionIndex: 1 }),
+            MenuEvent.SelectItem({ itemId: "beer" }),
+            MenuEvent.Close, // Cancel, back to browsing
+            MenuEvent.NavigateToPage({ pageId: "food" }),
+            MenuEvent.SelectItem({ itemId: "burger" }),
+            MenuEvent.AddToCart,
+            MenuEvent.GoToCheckout,
+          ],
+          { slots: menuSlots },
+        );
 
         expect(result.finalState._tag).toBe("Checkout");
       }),

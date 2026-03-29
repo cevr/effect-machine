@@ -43,13 +43,14 @@ describe("Conditional Transitions (replaces choose combinator)", () => {
           )
           .final(TestState.High)
           .final(TestState.Medium)
-          .final(TestState.Low)
-          .build({
+          .final(TestState.Low);
+
+        const result = yield* simulate(machine, [TestEvent.Check], {
+          slots: {
             isHigh: (_params, { state }) => state._tag === "Idle" && state.value >= 70,
             isMedium: (_params, { state }) => state._tag === "Idle" && state.value >= 40,
-          });
-
-        const result = yield* simulate(machine, [TestEvent.Check]);
+          },
+        });
         expect(result.finalState._tag).toBe("High");
       }),
     );
@@ -88,12 +89,13 @@ describe("Conditional Transitions (replaces choose combinator)", () => {
             }),
           )
           .final(TestState.High)
-          .final(TestState.Low)
-          .build({
-            isHigh: (_params, { state }) => state._tag === "Idle" && state.value >= 70,
-          });
+          .final(TestState.Low);
 
-        const result = yield* simulate(machine, [TestEvent.Check]);
+        const result = yield* simulate(machine, [TestEvent.Check], {
+          slots: {
+            isHigh: (_params, { state }) => state._tag === "Idle" && state.value >= 70,
+          },
+        });
         expect(result.finalState._tag).toBe("Low");
       }),
     );
@@ -129,15 +131,16 @@ describe("Conditional Transitions (replaces choose combinator)", () => {
               return TestState.Done;
             }),
           )
-          .final(TestState.Done)
-          .build({
+          .final(TestState.Done);
+
+        yield* simulate(machine, [TestEvent.Go], {
+          slots: {
             logAction: ({ message }) =>
               Effect.sync(() => {
                 logs.push(message);
               }),
-          });
-
-        yield* simulate(machine, [TestEvent.Go]);
+          },
+        });
         expect(logs).toEqual(["effect ran"]);
       }),
     );

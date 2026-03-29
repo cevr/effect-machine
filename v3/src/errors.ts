@@ -16,12 +16,6 @@ export class DuplicateActorError extends Schema.TaggedError<DuplicateActorError>
   { actorId: Schema.String },
 ) {}
 
-/** Machine has unprovided effect slots */
-export class UnprovidedSlotsError extends Schema.TaggedError<UnprovidedSlotsError>()(
-  "UnprovidedSlotsError",
-  { slots: Schema.Array(Schema.String) },
-) {}
-
 /** Operation requires schemas attached to machine */
 export class MissingSchemaError extends Schema.TaggedError<MissingSchemaError>()(
   "MissingSchemaError",
@@ -31,7 +25,7 @@ export class MissingSchemaError extends Schema.TaggedError<MissingSchemaError>()
 /** State/Event schema has no variants */
 export class InvalidSchemaError extends Schema.TaggedError<InvalidSchemaError>()(
   "InvalidSchemaError",
-  {},
+  { message: Schema.String },
 ) {}
 
 /** $match called with missing handler for tag */

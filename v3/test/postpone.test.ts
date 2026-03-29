@@ -33,8 +33,7 @@ describe(".postpone()", () => {
           return ConnState.Connected;
         })
         .postpone(ConnState.Connecting, ConnEvent.Data)
-        .final(ConnState.Failed)
-        .build();
+        .final(ConnState.Failed);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
@@ -71,8 +70,7 @@ describe(".postpone()", () => {
           order.push(event.payload);
           return ConnState.Connected;
         })
-        .postpone(ConnState.Connecting, ConnEvent.Data)
-        .build();
+        .postpone(ConnState.Connecting, ConnEvent.Data);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
@@ -99,8 +97,7 @@ describe(".postpone()", () => {
         .on(ConnState.Connecting, ConnEvent.Connected, () => ConnState.Connected)
         .on(ConnState.Connecting, ConnEvent.Failed, () => ConnState.Failed)
         .postpone(ConnState.Connecting, ConnEvent.Data)
-        .final(ConnState.Failed)
-        .build();
+        .final(ConnState.Failed);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
@@ -120,8 +117,7 @@ describe(".postpone()", () => {
       })
         .on(ConnState.Connecting, ConnEvent.Connected, () => ConnState.Connected)
         .on(ConnState.Connected, ConnEvent.Data, () => ConnState.Connected)
-        .postpone(ConnState.Connecting, ConnEvent.Data)
-        .build();
+        .postpone(ConnState.Connecting, ConnEvent.Data);
 
       const actor = yield* Machine.spawn(machine);
 
@@ -161,8 +157,7 @@ describe(".postpone()", () => {
           received.push("beta");
           return MState.Ready;
         })
-        .postpone(MState.Init, [MEvent.Alpha, MEvent.Beta])
-        .build();
+        .postpone(MState.Init, [MEvent.Alpha, MEvent.Beta]);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
@@ -208,8 +203,7 @@ describe(".postpone()", () => {
           order.push("ack");
           return PState.Ready;
         })
-        .postpone(PState.Init, PEvent.Data)
-        .build();
+        .postpone(PState.Init, PEvent.Data);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test", machine);
@@ -237,8 +231,7 @@ describe(".postpone()", () => {
       })
         .on(ConnState.Connecting, ConnEvent.Connected, () => ConnState.Connected)
         .on(ConnState.Connected, ConnEvent.Data, () => ConnState.Connected)
-        .postpone(ConnState.Connecting, ConnEvent.Data)
-        .build();
+        .postpone(ConnState.Connecting, ConnEvent.Data);
 
       const actor = yield* Machine.spawn(machine);
 
@@ -282,8 +275,7 @@ describe(".postpone()", () => {
         .postpone(MSState.A, MSEvent.Finish)
         .postpone(MSState.B, MSEvent.Finish)
         .postpone(MSState.A, MSEvent.GoC)
-        .final(MSState.Done)
-        .build();
+        .final(MSState.Done);
 
       const actor = yield* Machine.spawn(machine);
 

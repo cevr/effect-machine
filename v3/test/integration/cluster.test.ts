@@ -150,7 +150,7 @@ describe("Cluster Integration with MachineSchema", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const system = yield* ActorSystemService;
-          const actor = yield* system.spawn("task", taskMachine.build());
+          const actor = yield* system.spawn("task", taskMachine);
           yield* actor.send(TaskEvent.Start);
           const finalState = yield* actor.awaitFinal;
           expect(finalState._tag).toBe("Done");
@@ -256,10 +256,12 @@ describe("Entity.makeTestClient with machine handler", () => {
     .on(CounterState.Counting, CounterEvent.Finish, ({ state }) =>
       CounterState.Done({ count: state.count }),
     )
-    .final(CounterState.Done)
-    .build({
-      underLimit: (_params, { state }) => state._tag === "Counting" && state.count < 3,
-    });
+    .final(CounterState.Done);
+
+  const counterMachineSlots = {
+    underLimit: (_params: unknown, { state }: { state: { _tag: string; count?: number } }) =>
+      state._tag === "Counting" && (state.count ?? 0) < 3,
+  };
 
   // Entity using MachineSchema directly as schemas
   const _CounterEntity = Entity.make("Counter", [
@@ -340,13 +342,17 @@ describe("Entity.makeTestClient with machine handler", () => {
   test("guards work with simulate", async () => {
     await Effect.runPromise(
       Effect.gen(function* () {
-        const result = yield* simulate(counterMachine, [
-          CounterEvent.Increment,
-          CounterEvent.Increment,
-          CounterEvent.Increment,
-          CounterEvent.Increment, // blocked by guard
-          CounterEvent.Finish,
-        ]);
+        const result = yield* simulate(
+          counterMachine,
+          [
+            CounterEvent.Increment,
+            CounterEvent.Increment,
+            CounterEvent.Increment,
+            CounterEvent.Increment, // blocked by guard
+            CounterEvent.Finish,
+          ],
+          { slots: counterMachineSlots },
+        );
 
         expect(result.finalState._tag).toBe("Done");
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test assertion

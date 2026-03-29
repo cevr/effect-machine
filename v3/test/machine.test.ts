@@ -3,6 +3,7 @@ import { Effect, Schema } from "effect";
 import { describe, expect, test } from "bun:test";
 
 import { Machine, simulate, State, Event, Slot } from "../src/index.js";
+import { materializeMachine } from "../src/machine.js";
 
 const CounterState = State({
   Idle: { count: Schema.Number },
@@ -86,19 +87,24 @@ describe("Machine", () => {
           .on(CounterState.Counting, CounterEvent.Stop, ({ state }) =>
             CounterState.Done({ count: state.count }),
           )
-          .final(CounterState.Done)
-          .build({
-            // Handler receives (params, ctx) - context passed directly
-            belowLimit: ({ limit }, { state }) => state.count < limit,
-          });
+          .final(CounterState.Done);
 
-        const result = yield* simulate(machine, [
-          CounterEvent.Increment,
-          CounterEvent.Increment,
-          CounterEvent.Increment,
-          CounterEvent.Increment, // blocked
-          CounterEvent.Stop,
-        ]);
+        const result = yield* simulate(
+          machine,
+          [
+            CounterEvent.Increment,
+            CounterEvent.Increment,
+            CounterEvent.Increment,
+            CounterEvent.Increment, // blocked
+            CounterEvent.Stop,
+          ],
+          {
+            slots: {
+              // Handler receives (params, ctx) - context passed directly
+              belowLimit: ({ limit }, { state }) => state.count < limit,
+            },
+          },
+        );
 
         expect(result.finalState.count).toBe(3);
       }),
@@ -345,10 +351,10 @@ describe(".from()", () => {
 });
 
 // ============================================================================
-// .build() (F7)
+// materializeMachine (F7)
 // ============================================================================
 
-describe(".build()", () => {
+describe("materializeMachine", () => {
   test("throws ProvisionValidationError when slots missing", () => {
     const Guards = Slot.Guards({ check: {} });
     const Effects = Slot.Effects({ notify: {} });
@@ -361,32 +367,34 @@ describe(".build()", () => {
       initial: CounterState.Idle({ count: 0 }),
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect(() => (machine as any).build({})).toThrow();
+    expect(() => materializeMachine(machine, {})).toThrow();
   });
 
   test("succeeds when all handlers provided", () => {
     const Guards = Slot.Guards({ check: {} });
 
-    const built = Machine.make({
+    const machine = Machine.make({
       state: CounterState,
       event: CounterEvent,
       guards: Guards,
       initial: CounterState.Idle({ count: 0 }),
-    }).build({
+    });
+
+    const materialized = materializeMachine(machine, {
       check: () => true,
     });
 
-    expect(built.initial._tag).toBe("Idle");
+    expect(materialized.initial._tag).toBe("Idle");
   });
 
-  test("no-arg build works on slotless machine", () => {
-    const built = Machine.make({
+  test("no-arg materialize works on slotless machine", () => {
+    const machine = Machine.make({
       state: CounterState,
       event: CounterEvent,
       initial: CounterState.Idle({ count: 0 }),
-    }).build();
+    });
 
-    expect(built.initial._tag).toBe("Idle");
+    const materialized = materializeMachine(machine);
+    expect(materialized.initial._tag).toBe("Idle");
   });
 });

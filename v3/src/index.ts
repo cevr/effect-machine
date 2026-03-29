@@ -26,9 +26,10 @@ export {
   MissingMatchHandlerError,
   MissingSchemaError,
   NoReplyError,
+  PersistenceError,
   ProvisionValidationError,
   SlotProvisionError,
-  UnprovidedSlotsError,
+  VersionConflictError,
 } from "./errors.js";
 
 // Schema-first State/Event definitions
@@ -38,7 +39,6 @@ export type { MachineStateSchema, MachineEventSchema, ReplyFields } from "./sche
 // Core machine types (for advanced use)
 export type {
   Machine as MachineType,
-  BuiltMachine,
   MachineRef,
   MakeConfig,
   Transition,
@@ -49,6 +49,8 @@ export type {
   TaskOptions,
   ProvideHandlers,
   ReplyResult,
+  SlotContext,
+  TimeoutConfig,
 } from "./machine.js";
 
 // Actor types and system

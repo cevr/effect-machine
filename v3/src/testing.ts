@@ -1,17 +1,26 @@
 import { Effect, SubscriptionRef } from "effect";
 
 import type { Machine, MachineRef } from "./machine.js";
-import { BuiltMachine } from "./machine.js";
+import { materializeMachine } from "./machine.js";
 import { AssertionError } from "./errors.js";
 import type { GuardsDef, EffectsDef } from "./slot.js";
 import { executeTransition, shouldPostpone } from "./internal/transition.js";
 import { stubSystem } from "./internal/utils.js";
 
-/** Accept either Machine or BuiltMachine for testing utilities. */
+/** Create a dummy MachineRef for testing utilities (no real send/spawn). */
+const makeDummySelf = <E>(label: string): MachineRef<E> => {
+  const dummySend = Effect.fn(`effect-machine.testing.${label}.send`)((_event: E) => Effect.void);
+  return {
+    send: dummySend,
+    cast: dummySend,
+    spawn: () => Effect.die(`spawn not supported in ${label}`),
+  };
+};
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type MachineInput<S, E, R, GD extends GuardsDef, EFD extends EffectsDef> =
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  Machine<S, E, R, any, any, GD, EFD> | BuiltMachine<S, E, R>;
+  Machine<S, E, R, any, any, GD, EFD>;
 
 /**
  * Result of simulating events through a machine
@@ -47,8 +56,13 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
   R,
   GD extends GuardsDef = Record<string, never>,
   EFD extends EffectsDef = Record<string, never>,
->(input: MachineInput<S, E, R, GD, EFD>, events: ReadonlyArray<E>) {
-  const machine = (input instanceof BuiltMachine ? input._inner : input) as Machine<
+>(
+  input: MachineInput<S, E, R, GD, EFD>,
+  events: ReadonlyArray<E>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  options?: { slots?: Record<string, any> },
+) {
+  const machine = materializeMachine(input, options?.slots) as Machine<
     S,
     E,
     R,
@@ -58,13 +72,7 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
     EFD
   >;
 
-  // Create a dummy self for slot accessors
-  const dummySend = Effect.fn("effect-machine.testing.simulate.send")((_event: E) => Effect.void);
-  const dummySelf: MachineRef<E> = {
-    send: dummySend,
-    cast: dummySend,
-    spawn: () => Effect.die("spawn not supported in simulation"),
-  };
+  const dummySelf = makeDummySelf<E>("simulate");
 
   let currentState = machine.initial;
   const states: S[] = [currentState];
@@ -144,8 +152,14 @@ export const assertReaches = Effect.fn("effect-machine.assertReaches")(function*
   R,
   GD extends GuardsDef = Record<string, never>,
   EFD extends EffectsDef = Record<string, never>,
->(input: MachineInput<S, E, R, GD, EFD>, events: ReadonlyArray<E>, expectedTag: string) {
-  const result = yield* simulate(input, events);
+>(
+  input: MachineInput<S, E, R, GD, EFD>,
+  events: ReadonlyArray<E>,
+  expectedTag: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  options?: { slots?: Record<string, any> },
+) {
+  const result = yield* simulate(input, events, options);
   if (result.finalState._tag !== expectedTag) {
     return yield* new AssertionError({
       message:
@@ -178,8 +192,10 @@ export const assertPath = Effect.fn("effect-machine.assertPath")(function* <
   input: MachineInput<S, E, R, GD, EFD>,
   events: ReadonlyArray<E>,
   expectedPath: ReadonlyArray<string>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  options?: { slots?: Record<string, any> },
 ) {
-  const result = yield* simulate(input, events);
+  const result = yield* simulate(input, events, options);
   const actualPath = result.states.map((s) => s._tag);
 
   if (actualPath.length !== expectedPath.length) {
@@ -224,8 +240,14 @@ export const assertNeverReaches = Effect.fn("effect-machine.assertNeverReaches")
   R,
   GD extends GuardsDef = Record<string, never>,
   EFD extends EffectsDef = Record<string, never>,
->(input: MachineInput<S, E, R, GD, EFD>, events: ReadonlyArray<E>, forbiddenTag: string) {
-  const result = yield* simulate(input, events);
+>(
+  input: MachineInput<S, E, R, GD, EFD>,
+  events: ReadonlyArray<E>,
+  forbiddenTag: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  options?: { slots?: Record<string, any> },
+) {
+  const result = yield* simulate(input, events, options);
 
   const visitedIndex = result.states.findIndex((s) => s._tag === forbiddenTag);
   if (visitedIndex !== -1) {
@@ -286,8 +308,12 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
   R,
   GD extends GuardsDef = Record<string, never>,
   EFD extends EffectsDef = Record<string, never>,
->(input: MachineInput<S, E, R, GD, EFD>, options?: TestHarnessOptions<S, E>) {
-  const machine = (input instanceof BuiltMachine ? input._inner : input) as Machine<
+>(
+  input: MachineInput<S, E, R, GD, EFD>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  options?: TestHarnessOptions<S, E> & { slots?: Record<string, any> },
+) {
+  const machine = materializeMachine(input, options?.slots) as Machine<
     S,
     E,
     R,
@@ -297,13 +323,7 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
     EFD
   >;
 
-  // Create a dummy self for slot accessors
-  const dummySend = Effect.fn("effect-machine.testing.harness.send")((_event: E) => Effect.void);
-  const dummySelf: MachineRef<E> = {
-    send: dummySend,
-    cast: dummySend,
-    spawn: () => Effect.die("spawn not supported in test harness"),
-  };
+  const dummySelf = makeDummySelf<E>("harness");
 
   const stateRef = yield* SubscriptionRef.make(machine.initial);
   const hasPostponeRules = machine.postponeRules.length > 0;

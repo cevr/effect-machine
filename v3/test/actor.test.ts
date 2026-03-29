@@ -22,6 +22,7 @@ import {
   Event,
   Slot,
 } from "../src/index.js";
+import { materializeMachine } from "../src/machine.js";
 import { describe, expect, it, yieldFibers } from "effect-bun-test/v3";
 
 // ============================================================================
@@ -69,10 +70,12 @@ const createTestMachine = () =>
       }),
     )
     .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
-    .final(TestState.Done)
-    .build({
-      isHighValue: (_params, { event }) => event._tag === "Update" && event.value > 100,
-    });
+    .final(TestState.Done);
+
+const testMachineSlots = {
+  isHighValue: (_params: unknown, { event }: { event: { _tag: string; value?: number } }) =>
+    event._tag === "Update" && (event.value ?? 0) > 100,
+};
 
 // ============================================================================
 // ActorSystem Tests
@@ -93,8 +96,7 @@ describe("ActorSystem", () => {
           TestState.Active({ value: event.value }),
         )
         .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
-        .final(TestState.Done)
-        .build();
+        .final(TestState.Done);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test-actor", machine);
@@ -119,11 +121,9 @@ describe("ActorSystem", () => {
         state: TestState,
         event: TestEvent,
         initial: TestState.Idle,
-      })
-        .on(TestState.Idle, TestEvent.Start, ({ event }) =>
-          TestState.Active({ value: event.value }),
-        )
-        .build();
+      }).on(TestState.Idle, TestEvent.Start, ({ event }) =>
+        TestState.Active({ value: event.value }),
+      );
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("test-actor", machine);
@@ -154,17 +154,14 @@ describe("ActorSystem", () => {
         event: SimpleEvent,
         effects: TestEffects,
         initial: SimpleState.Idle,
-      })
-        .background(({ effects }) => effects.mark())
-        .build({
-          mark: () => Ref.update(counter, (n) => n + 1),
-        });
+      }).background(({ effects }) => effects.mark());
 
+      const slots = { mark: () => Ref.update(counter, (n) => n + 1) };
       const system = yield* ActorSystemService;
-      yield* system.spawn("dup-actor", machine);
+      yield* system.spawn("dup-actor", machine, { slots });
       yield* yieldFibers;
 
-      const result = yield* Effect.exit(system.spawn("dup-actor", machine));
+      const result = yield* Effect.exit(system.spawn("dup-actor", machine, { slots }));
       expect(result._tag).toBe("Failure");
       if (result._tag === "Failure") {
         const err = Cause.failureOption(result.cause);
@@ -190,17 +187,14 @@ describe("ActorSystem", () => {
         event: SimpleEvent,
         effects: TestEffects,
         initial: SimpleState.Idle,
-      })
-        .background(({ effects }) => effects.mark())
-        .build({
-          mark: () => Ref.update(counter, (n) => n + 1),
-        });
+      }).background(({ effects }) => effects.mark());
 
+      const slots = { mark: () => Ref.update(counter, (n) => n + 1) };
       const system = yield* ActorSystemService;
       const [resultA, resultB] = yield* Effect.all(
         [
-          Effect.exit(system.spawn("concurrent-actor", machine)),
-          Effect.exit(system.spawn("concurrent-actor", machine)),
+          Effect.exit(system.spawn("concurrent-actor", machine, { slots })),
+          Effect.exit(system.spawn("concurrent-actor", machine, { slots })),
         ],
         { concurrency: "unbounded" },
       );
@@ -231,9 +225,8 @@ describe("ActorSystem", () => {
         initial: SimpleState.Idle,
       });
 
-      // .build() without required handlers throws ProvisionValidationError
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      expect(() => (machine as any).build({})).toThrow();
+      // materializeMachine without required handlers throws ProvisionValidationError
+      expect(() => materializeMachine(machine, {})).toThrow();
     }),
   );
 
@@ -247,8 +240,7 @@ describe("ActorSystem", () => {
         .on(TestState.Idle, TestEvent.Start, ({ event }) =>
           TestState.Active({ value: event.value }),
         )
-        .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
-        .build();
+        .on(TestState.Active, TestEvent.Stop, () => TestState.Done);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("listener-actor", machine);
@@ -274,8 +266,7 @@ describe("ActorSystem", () => {
         .on(TestState.Idle, TestEvent.Start, ({ event }) =>
           TestState.Active({ value: event.value }),
         )
-        .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
-        .build();
+        .on(TestState.Active, TestEvent.Stop, () => TestState.Done);
 
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("stopped-actor", machine);
@@ -309,8 +300,7 @@ describe("Machine.spawn", () => {
           TestState.Active({ value: event.value }),
         )
         .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
-        .final(TestState.Done)
-        .build();
+        .final(TestState.Done);
 
       // No ActorSystemService needed!
       const actor = yield* Machine.spawn(machine);
@@ -329,11 +319,9 @@ describe("Machine.spawn", () => {
         state: TestState,
         event: TestEvent,
         initial: TestState.Idle,
-      })
-        .on(TestState.Idle, TestEvent.Start, ({ event }) =>
-          TestState.Active({ value: event.value }),
-        )
-        .build();
+      }).on(TestState.Idle, TestEvent.Start, ({ event }) =>
+        TestState.Active({ value: event.value }),
+      );
 
       const actor = yield* Machine.spawn(machine, "my-custom-id");
 
@@ -347,7 +335,7 @@ describe("Machine.spawn", () => {
         state: TestState,
         event: TestEvent,
         initial: TestState.Idle,
-      }).build();
+      });
 
       const actor = yield* Machine.spawn(machine);
 
@@ -366,8 +354,7 @@ describe("Machine.spawn", () => {
           TestState.Active({ value: event.value }),
         )
         .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
-        .final(TestState.Done)
-        .build();
+        .final(TestState.Done);
 
       // No scope needed — Machine.spawn works without Effect.scoped
       const actor = yield* Machine.spawn(machine);
@@ -398,15 +385,16 @@ describe("Machine.spawn", () => {
         .on(TestState.Idle, TestEvent.Start, ({ event }) =>
           TestState.Active({ value: event.value }),
         )
-        .spawn(TestState.Active, ({ effects }) => effects.track())
-        .build({
-          track: () => Effect.addFinalizer(() => Effect.sync(() => cleanedUp.push("cleaned"))),
-        });
+        .spawn(TestState.Active, ({ effects }) => effects.track());
 
       // Run in inner scope
       yield* Effect.scoped(
         Effect.gen(function* () {
-          const actor = yield* Machine.spawn(machine);
+          const actor = yield* Machine.spawn(machine, {
+            slots: {
+              track: () => Effect.addFinalizer(() => Effect.sync(() => cleanedUp.push("cleaned"))),
+            },
+          });
           yield* actor.send(TestEvent.Start({ value: 1 }));
           yield* yieldFibers;
           expect(cleanedUp).toEqual([]);
@@ -429,7 +417,7 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const machine = createTestMachine();
         const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", machine);
+        const actor = yield* system.spawn("test", machine, { slots: testMachineSlots });
 
         const state = yield* actor.snapshot;
         expect(state._tag).toBe("Idle");
@@ -440,7 +428,7 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const machine = createTestMachine();
         const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", machine);
+        const actor = yield* system.spawn("test", machine, { slots: testMachineSlots });
 
         const state = actor.sync.snapshot();
         expect(state._tag).toBe("Idle");
@@ -451,7 +439,7 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const machine = createTestMachine();
         const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", machine);
+        const actor = yield* system.spawn("test", machine, { slots: testMachineSlots });
 
         const r = yield* actor.call(TestEvent.Start({ value: 42 }));
         expect(r.newState._tag).toBe("Loading");
@@ -465,7 +453,7 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const machine = createTestMachine();
         const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", machine);
+        const actor = yield* system.spawn("test", machine, { slots: testMachineSlots });
 
         const isIdle = yield* actor.matches("Idle");
         expect(isIdle).toBe(true);
@@ -479,7 +467,7 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const machine = createTestMachine();
         const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", machine);
+        const actor = yield* system.spawn("test", machine, { slots: testMachineSlots });
 
         expect(actor.sync.matches("Idle")).toBe(true);
         expect(actor.sync.matches("Loading")).toBe(false);
@@ -490,7 +478,7 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const machine = createTestMachine();
         const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", machine);
+        const actor = yield* system.spawn("test", machine, { slots: testMachineSlots });
 
         const r = yield* actor.call(TestEvent.Start({ value: 10 }));
         expect(r.newState._tag).toBe("Loading");
@@ -504,7 +492,7 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const machine = createTestMachine();
         const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", machine);
+        const actor = yield* system.spawn("test", machine, { slots: testMachineSlots });
 
         // In Idle state, can Start
         const canStart = yield* actor.can(TestEvent.Start({ value: 1 }));
@@ -520,7 +508,7 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const machine = createTestMachine();
         const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", machine);
+        const actor = yield* system.spawn("test", machine, { slots: testMachineSlots });
 
         expect(actor.sync.can(TestEvent.Start({ value: 1 }))).toBe(true);
         expect(actor.sync.can(TestEvent.Complete)).toBe(false);
@@ -531,7 +519,7 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const machine = createTestMachine();
         const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", machine);
+        const actor = yield* system.spawn("test", machine, { slots: testMachineSlots });
 
         // Transition to Active state
         yield* actor.call(TestEvent.Start({ value: 10 }));
@@ -553,7 +541,7 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const machine = createTestMachine();
         const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", machine);
+        const actor = yield* system.spawn("test", machine, { slots: testMachineSlots });
 
         // Access state directly
         const state = yield* SubscriptionRef.get(actor.state);
@@ -565,7 +553,7 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const machine = createTestMachine();
         const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", machine);
+        const actor = yield* system.spawn("test", machine, { slots: testMachineSlots });
 
         const tags: string[] = [];
 
@@ -603,7 +591,7 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const machine = createTestMachine();
         const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", machine);
+        const actor = yield* system.spawn("test", machine, { slots: testMachineSlots });
 
         const states: string[] = [];
         const unsubscribe = actor.subscribe((s) => states.push(s._tag));
@@ -624,7 +612,7 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const machine = createTestMachine();
         const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", machine);
+        const actor = yield* system.spawn("test", machine, { slots: testMachineSlots });
 
         const states: string[] = [];
         const unsubscribe = actor.subscribe((s) => states.push(s._tag));
@@ -652,8 +640,7 @@ describe("ActorRef", () => {
           initial: TestState.Idle,
         })
           .on(TestState.Idle, TestEvent.Start, () => TestState.Done)
-          .final(TestState.Done)
-          .build();
+          .final(TestState.Done);
 
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("wait-for", machine);
@@ -672,11 +659,9 @@ describe("ActorRef", () => {
           state: TestState,
           event: TestEvent,
           initial: TestState.Idle,
-        })
-          .on(TestState.Idle, TestEvent.Start, ({ event }) =>
-            TestState.Active({ value: event.value }),
-          )
-          .build();
+        }).on(TestState.Idle, TestEvent.Start, ({ event }) =>
+          TestState.Active({ value: event.value }),
+        );
 
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("send-and-wait", machine);
@@ -697,8 +682,7 @@ describe("ActorRef", () => {
           initial: TestState.Idle,
         })
           .on(TestState.Idle, TestEvent.Start, () => TestState.Done)
-          .final(TestState.Done)
-          .build();
+          .final(TestState.Done);
 
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("await-final", machine);
@@ -740,8 +724,7 @@ describe("ActorRef", () => {
           .task(TaskState.Running, () => Effect.succeed("ok"), {
             onSuccess: () => TaskEvent.Success,
           })
-          .final(TaskState.Done)
-          .build();
+          .final(TaskState.Done);
 
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("task-success", machine);
@@ -768,8 +751,7 @@ describe("ActorRef", () => {
             onSuccess: () => TaskEvent.Success,
             onFailure: () => TaskEvent.Fail({ message: "boom" }),
           })
-          .final(TaskState.Failed)
-          .build();
+          .final(TaskState.Failed);
 
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("task-failure", machine);
@@ -807,8 +789,7 @@ describe("ActorRef", () => {
             onSuccess: () => TE.Completed,
             onFailure: () => TE.Failed,
           })
-          .final(TS.Done)
-          .build();
+          .final(TS.Done);
 
         // Mirrors the gent AgentLoop pattern: send → yieldNow → waitFor(Running)
         // The task fails immediately so Running→Idle can happen before
@@ -911,8 +892,7 @@ describe("ActorRef", () => {
               onFailure: () => TE.Completed({ result: "failed" }),
             },
           )
-          .final(TS.Done)
-          .build();
+          .final(TS.Done);
 
         type Actor = ActorRef<typeof TS.Type, typeof TE.Type>;
 
@@ -997,8 +977,7 @@ describe("ActorRef", () => {
             TestState.Active({ value: state.value }),
           )
           .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
-          .final(TestState.Done)
-          .build();
+          .final(TestState.Done);
 
         const actor = yield* Machine.spawn(machine);
 
@@ -1024,8 +1003,7 @@ describe("ActorRef", () => {
             TestState.Active({ value: event.value }),
           )
           .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
-          .final(TestState.Done)
-          .build();
+          .final(TestState.Done);
 
         const actor = yield* Machine.spawn(machine);
 
@@ -1058,8 +1036,7 @@ describe("ActorRef", () => {
             TestState.Active({ value: event.value }),
           )
           .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
-          .final(TestState.Done)
-          .build();
+          .final(TestState.Done);
 
         const actor = yield* Machine.spawn(machine);
         actor.sync.send(TestEvent.Start({ value: 7 }));
@@ -1079,11 +1056,9 @@ describe("ActorRef", () => {
           state: TestState,
           event: TestEvent,
           initial: TestState.Idle,
-        })
-          .on(TestState.Idle, TestEvent.Start, ({ event }) =>
-            TestState.Active({ value: event.value }),
-          )
-          .build();
+        }).on(TestState.Idle, TestEvent.Start, ({ event }) =>
+          TestState.Active({ value: event.value }),
+        );
 
         const actor = yield* Machine.spawn(machine);
         yield* actor.stop;
@@ -1113,8 +1088,7 @@ describe("ActorRef", () => {
             TestState.Active({ value: event.value }),
           )
           .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
-          .final(TestState.Done)
-          .build();
+          .final(TestState.Done);
 
         const actor = yield* Machine.spawn(machine);
         yield* actor.send(TestEvent.Start({ value: 10 }));
@@ -1130,11 +1104,9 @@ describe("ActorRef", () => {
           state: TestState,
           event: TestEvent,
           initial: TestState.Idle,
-        })
-          .on(TestState.Idle, TestEvent.Start, ({ event }) =>
-            TestState.Active({ value: event.value }),
-          )
-          .build();
+        }).on(TestState.Idle, TestEvent.Start, ({ event }) =>
+          TestState.Active({ value: event.value }),
+        );
 
         const actor = yield* Machine.spawn(machine);
 
@@ -1149,7 +1121,7 @@ describe("ActorRef", () => {
           state: TestState,
           event: TestEvent,
           initial: TestState.Idle,
-        }).build();
+        });
 
         const actor = yield* Machine.spawn(machine);
 
