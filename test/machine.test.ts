@@ -332,10 +332,8 @@ describe(".from()", () => {
       initial: FlowState.Draft,
     })
       .on(FlowState.Draft, FlowEvent.Submit, () => FlowState.Review)
-      .from([FlowState.Draft, FlowState.Review], (scope) =>
-        scope.on(FlowEvent.Cancel, () => FlowState.Cancelled),
-      )
-      .from(FlowState.Review, (scope) => scope.on(FlowEvent.Approve, () => FlowState.Approved))
+      .on([FlowState.Draft, FlowState.Review], FlowEvent.Cancel, () => FlowState.Cancelled)
+      .on(FlowState.Review, FlowEvent.Approve, () => FlowState.Approved)
       .final(FlowState.Cancelled)
       .final(FlowState.Approved);
 

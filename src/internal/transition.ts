@@ -49,7 +49,7 @@ export const runTransitionHandler = Effect.fn("effect-machine.runTransitionHandl
   GD extends GuardsDef,
   EFD extends EffectsDef,
 >(
-  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
+  machine: Machine<S, E, R, GD, EFD>,
   transition: Transition<S, E, GD, EFD, R>,
   state: S,
   event: E,
@@ -110,7 +110,7 @@ export const executeTransition = Effect.fn("effect-machine.executeTransition")(f
   GD extends GuardsDef,
   EFD extends EffectsDef,
 >(
-  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
+  machine: Machine<S, E, R, GD, EFD>,
   currentState: S,
   event: E,
   self: MachineRef<E>,
@@ -212,7 +212,7 @@ export const shouldPostpone = <
   R,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  machine: Machine<S, E, R, any, any, any, any>,
+  machine: Machine<S, E, R, any, any>,
   stateTag: string,
   eventTag: string,
 ): boolean => {
@@ -243,7 +243,7 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
   GD extends GuardsDef,
   EFD extends EffectsDef,
 >(
-  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
+  machine: Machine<S, E, R, GD, EFD>,
   currentState: S,
   event: E,
   self: MachineRef<E>,
@@ -346,7 +346,7 @@ export const runSpawnEffects = Effect.fn("effect-machine.runSpawnEffects")(funct
   GD extends GuardsDef,
   EFD extends EffectsDef,
 >(
-  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
+  machine: Machine<S, E, R, GD, EFD>,
   state: S,
   event: E,
   self: MachineRef<E>,
@@ -405,8 +405,8 @@ export const resolveTransition = <
   E extends { readonly _tag: string },
   R,
 >(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-  machine: Machine<S, E, R, any, any, any, any>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- wide acceptance for slot type params
+  machine: Machine<S, E, R, any, any>,
   currentState: S,
   event: E,
 ): (typeof machine.transitions)[number] | undefined => {
@@ -520,8 +520,8 @@ const getIndex = <
   GD extends GuardsDef,
   EFD extends EffectsDef,
 >(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-  machine: Machine<S, E, R, any, any, GD, EFD>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- wide acceptance for slot type params
+  machine: Machine<S, E, R, GD, EFD>,
 ): MachineIndex<S, E, GD, EFD, R> => {
   let index = indexCache.get(machine) as MachineIndex<S, E, GD, EFD, R> | undefined;
   if (index === undefined) {
@@ -547,8 +547,8 @@ export const findTransitions = <
   GD extends GuardsDef = Record<string, never>,
   EFD extends EffectsDef = Record<string, never>,
 >(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-  machine: Machine<S, E, R, any, any, GD, EFD>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- wide acceptance for slot type params
+  machine: Machine<S, E, R, GD, EFD>,
   stateTag: string,
   eventTag: string,
 ): ReadonlyArray<Transition<S, E, GD, EFD, R>> => {
@@ -572,8 +572,8 @@ export const findSpawnEffects = <
   GD extends GuardsDef = Record<string, never>,
   EFD extends EffectsDef = Record<string, never>,
 >(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-  machine: Machine<S, E, R, any, any, GD, EFD>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- wide acceptance for slot type params
+  machine: Machine<S, E, R, GD, EFD>,
   stateTag: string,
 ): ReadonlyArray<SpawnEffect<S, E, EFD, R>> => {
   const index = getIndex(machine);

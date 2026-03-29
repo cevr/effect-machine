@@ -7,10 +7,13 @@ import type { GuardsDef, EffectsDef } from "./slot.js";
 import { executeTransition, shouldPostpone } from "./internal/transition.js";
 import { stubSystem } from "./internal/utils.js";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type MachineInput<S, E, R, GD extends GuardsDef, EFD extends EffectsDef> =
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  Machine<S, E, R, any, any, GD, EFD>;
+type MachineInput<
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+  GD extends GuardsDef,
+  EFD extends EffectsDef,
+> = Machine<S, E, R, GD, EFD>;
 
 const makeDummySelf = <E>(label: string): MachineRef<E> => {
   const dummySend = Effect.fn(label)((_event: E) => Effect.void);
@@ -62,15 +65,7 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   options?: { slots?: Record<string, any> },
 ) {
-  const machine = materializeMachine(input, options?.slots) as Machine<
-    S,
-    E,
-    R,
-    Record<string, never>,
-    Record<string, never>,
-    GD,
-    EFD
-  >;
+  const machine = materializeMachine(input, options?.slots) as Machine<S, E, R, GD, EFD>;
 
   const dummySelf = makeDummySelf<E>("effect-machine.testing.simulate");
 
@@ -312,15 +307,7 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
   GD extends GuardsDef = Record<string, never>,
   EFD extends EffectsDef = Record<string, never>,
 >(input: MachineInput<S, E, R, GD, EFD>, options?: TestHarnessOptions<S, E>) {
-  const machine = materializeMachine(input, options?.slots) as Machine<
-    S,
-    E,
-    R,
-    Record<string, never>,
-    Record<string, never>,
-    GD,
-    EFD
-  >;
+  const machine = materializeMachine(input, options?.slots) as Machine<S, E, R, GD, EFD>;
 
   const dummySelf = makeDummySelf<E>("effect-machine.testing.harness");
 

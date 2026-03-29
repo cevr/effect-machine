@@ -240,7 +240,7 @@ export interface ActorSystem {
   readonly spawn: <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
     id: string,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    machine: Machine<S, E, R, any, any, any, any>,
+    machine: Machine<S, E, R, any, any>,
     options?: { readonly supervision?: Supervision.Policy },
   ) => Effect.Effect<ActorRef<S, E>, DuplicateActorError, R>;
 
@@ -309,8 +309,7 @@ export const buildActorRefCore = <
   EFD extends EffectsDef,
 >(
   id: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-  machine: Machine<S, E, R, any, any, GD, EFD>,
+  machine: Machine<S, E, R, GD, EFD>,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
   eventQueueRef: Ref.Ref<Queue.Queue<QueuedEvent<E>>>,
   stoppedRef: Ref.Ref<boolean>,
@@ -570,7 +569,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   EFD extends EffectsDef,
 >(
   id: string,
-  machine: Machine<S, E, R, Record<string, never>, Record<string, never>, GD, EFD>,
+  machine: Machine<S, E, R, GD, EFD>,
   options?: {
     initialState?: S;
     supervision?: Supervision.Policy;
@@ -988,7 +987,7 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
   >(
     id: string,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    machine: Machine<S, E, R, any, any, any, any>,
+    machine: Machine<S, E, R, any, any>,
     spawnOptions?: { readonly supervision?: Supervision.Policy },
   ) {
     if (MutableHashMap.has(actorsMap, id)) {
@@ -1019,7 +1018,7 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
   const spawn = <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
     id: string,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    machine: Machine<S, E, R, any, any, any, any>,
+    machine: Machine<S, E, R, any, any>,
     options?: { readonly supervision?: Supervision.Policy },
   ): Effect.Effect<ActorRef<S, E>, DuplicateActorError, R> =>
     withSpawnGate(spawnRegular(id, machine, options)) as Effect.Effect<

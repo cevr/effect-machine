@@ -111,8 +111,8 @@ export const EntityMachine = {
     Rpcs extends Rpc.Any,
   >(
     entity: Entity.Entity<EntityType, Rpcs>,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Machine type params need wide acceptance
-    machine: Machine<S, E, R, any, any, any, any>,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- wide acceptance for slot type params
+    machine: Machine<S, E, R, any, any>,
     options?: EntityMachineOptions<S, E>,
   ): Layer.Layer<never, never, R> => {
     const persistence = options?.persistence;
@@ -349,8 +349,8 @@ const hydratePersistence = <
   persistence: EntityPersistenceConfig | undefined,
   entityDef: { readonly type: string },
   entityId: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Machine type params need wide acceptance
-  machine: Machine<S, E, any, any, any, any, any>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- wide acceptance for slot type params
+  machine: Machine<S, E, any, any, any>,
   initializeState?: (entityId: string) => S,
 ) =>
   Effect.gen(function* () {

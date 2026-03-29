@@ -203,12 +203,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
   R,
   GD extends GuardsDef,
   EFD extends EffectsDef,
->(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- wide acceptance for Machine type params
-  machine: Machine<S, E, R, any, any, GD, EFD>,
-  system: ActorSystem,
-  config: RuntimeConfig<S, E>,
-) {
+>(machine: Machine<S, E, R, GD, EFD>, system: ActorSystem, config: RuntimeConfig<S, E>) {
   const { actorId, hooks, lifecycle } = config;
 
   // Capture services for fire-and-forget Deferred settlement (runForkWith)
@@ -518,8 +513,7 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
   GD extends GuardsDef,
   EFD extends EffectsDef,
 >(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- wide acceptance
-  machine: Machine<S, E, R, any, any, GD, EFD>,
+  machine: Machine<S, E, R, GD, EFD>,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
   eventQueue: Queue.Queue<RuntimeQueuedEvent<E>>,
   stoppedRef: Ref.Ref<boolean>,
