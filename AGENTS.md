@@ -97,6 +97,41 @@ const actor = yield * system.spawn("my-id", machine);
 
 **Lifecycle:** `Machine.spawn` and `system.spawn` detect scope via `Effect.serviceOption` — if present, attach finalizer; if absent, skip. Forgetting `actor.stop` without a scope = permanent fiber leak.
 
+## Supervision
+
+Actors can automatically restart on defect with `Supervision.restart()`:
+
+```ts
+import { Supervision } from "effect-machine";
+
+const actor =
+  yield *
+  Machine.spawn(machine, {
+    supervision: Supervision.restart({ maxRestarts: 3, within: "1 minute" }),
+  });
+
+// Via system
+const actor =
+  yield *
+  system.spawn("id", machine, {
+    supervision: Supervision.restart(),
+  });
+
+// Observe exit reason
+const exit = yield * actor.awaitExit; // ActorExit<S>
+const exit = yield * actor.watch(other); // ActorExit<unknown>
+```
+
+- **Restart from `machine.initial`** — always clean slate, never last-state
+- **Actor ID survives** — same identity across restarts
+- **Pending requests fail** — `call`/`ask`/`sendWait` behind crash get `ActorStoppedError`
+- **Children die** — both scopes close; children come back only if restart re-runs spawn/background
+- **`stop`/`drain` are terminal** — no restart
+- **Final state = no restart** — `awaitExit` resolves with `ActorExit.Final`
+- **Budget** — `Schedule` controls timing/count; exhaustion = terminal `ActorExit.Defect`
+- **Classifier** — `shouldRestart` optionally skips restart for specific defect types
+- Entity-machine: cluster-supervised via `defectRetryPolicy`, NOT local supervision
+
 ## Child Actors
 
 Spawn children from `.spawn()`/`.background()` handlers via `self.spawn(id, childMachine)`:
