@@ -91,8 +91,7 @@ export interface MachineRef<Event> {
   readonly cast: (event: Event) => Effect.Effect<void>;
   readonly spawn: <S2 extends { readonly _tag: string }, E2 extends { readonly _tag: string }, R2>(
     id: string,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    machine: BuiltMachine<S2, E2, R2> | Machine<S2, E2, R2, any, any, any, any>,
+    machine: BuiltMachine<S2, E2, R2>,
   ) => Effect.Effect<ActorRef<S2, E2>, DuplicateActorError, R2>;
   /**
    * Settle a deferred reply from a spawn handler.
@@ -323,6 +322,23 @@ export const materializeMachine = <S, E, R, GD extends GuardsDef, EFD extends Ef
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Machine<S, E, never, any, any, GD, EFD> => {
   if (handlers === undefined) {
+    // Validate: slot-free machines can skip handlers, slotful machines must provide them
+    const hasGuards =
+      machine._guardsSchema !== undefined &&
+      Object.keys(machine._guardsSchema.definitions).length > 0;
+    const hasEffects =
+      machine._effectsSchema !== undefined &&
+      Object.keys(machine._effectsSchema.definitions).length > 0;
+    if (hasGuards || hasEffects) {
+      const missing: string[] = [];
+      if (machine._guardsSchema !== undefined) {
+        missing.push(...Object.keys(machine._guardsSchema.definitions));
+      }
+      if (machine._effectsSchema !== undefined) {
+        missing.push(...Object.keys(machine._effectsSchema.definitions));
+      }
+      throw new ProvisionValidationError({ missing, extra: [] });
+    }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return machine as any;
   }
@@ -1097,7 +1113,8 @@ const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
   const opts = typeof idOrOptions === "string" ? { id: idOrOptions } : idOrOptions;
   const actorId = opts?.id ?? `actor-${Math.random().toString(36).slice(2)}`;
   const raw = unwrapMachine(input);
-  const machine = opts?.slots !== undefined ? materializeMachine(raw, opts.slots) : raw;
+  // For raw machines: always materialize to validate slots. For BuiltMachine: already materialized.
+  const machine = input instanceof BuiltMachine ? raw : materializeMachine(raw, opts?.slots);
   const actor = yield* createActor(actorId, machine as AnyMachine<S, E, never>, {
     initialState: opts?.hydrate,
   });
@@ -1181,7 +1198,7 @@ const replayImpl = Effect.fn("effect-machine.replay")(function* <
   options?: { from?: S; slots?: Record<string, any> },
 ) {
   const raw = unwrapMachine(input);
-  const machine = options?.slots !== undefined ? materializeMachine(raw, options.slots) : raw;
+  const machine = input instanceof BuiltMachine ? raw : materializeMachine(raw, options?.slots);
   let state: S = options?.from ?? machine.initial;
 
   const hasPostponeRules = machine.postponeRules.length > 0;
