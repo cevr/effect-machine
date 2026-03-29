@@ -1,401 +1,205 @@
 # effect-machine
 
-Type-safe state machines for Effect.
+Type-safe state machines for [Effect](https://effect.website).
 
-## Why State Machines?
+Complex workflows usually fail the same way: one `status` field, a few side booleans, and effects scattered across callbacks. `effect-machine` gives you one typed model for state, events, and transitions, then runs it as a real actor.
 
-State machines eliminate entire categories of bugs:
+Use it when a feature has:
 
-- **No invalid states** - Compile-time enforcement of valid transitions
-- **Explicit side effects** - Effects scoped to states, auto-cancelled on exit
-- **Testable** - Simulate transitions without actors, assert paths deterministically
-- **Serializable** - Schemas power persistence and cluster distribution
+- multiple valid and invalid states
+- async work tied to state entry
+- retries, timeouts, cancellation, or backpressure
+- logic you want to reuse in-process, in tests, and in distributed systems
 
 ## Install
 
 ```bash
 bun add effect-machine effect
-# or
-pnpm add effect-machine effect
-# or
-npm install effect-machine effect
 ```
 
-## Quick Example
+## Core Pattern
+
+States and events are schemas. Types, validation, and serialization from one place.
 
 ```ts
-import { Effect, Schema } from "effect";
-import { Machine, State, Event, Slot, type BuiltMachine } from "effect-machine";
+import { Schema } from "effect";
+import { Event, Machine, Slot, State } from "effect-machine";
 
-// Define state schema - states ARE schemas
-const OrderState = State({
-  Pending: { orderId: Schema.String },
-  Processing: { orderId: Schema.String },
-  Shipped: { orderId: Schema.String, trackingId: Schema.String },
-  Cancelled: {},
+const CheckoutState = State({
+  ReviewingCart: { cartId: Schema.String, totalCents: Schema.Number },
+  ChargingCard: { cartId: Schema.String, totalCents: Schema.Number },
+  Confirmed: { cartId: Schema.String, receiptId: Schema.String },
+  Failed: { cartId: Schema.String, reason: Schema.String },
 });
 
-// Define event schema
-const OrderEvent = Event({
-  Process: {},
-  Ship: { trackingId: Schema.String },
+const CheckoutEvent = Event({
+  Submit: {},
+  Charged: { receiptId: Schema.String },
+  Declined: { reason: Schema.String },
   Cancel: {},
 });
 
-// Define effects (side effects scoped to states)
-const OrderEffects = Slot.Effects({
-  notifyWarehouse: { orderId: Schema.String },
+const CheckoutEffects = Slot.Effects({
+  chargeCard: { cartId: Schema.String, totalCents: Schema.Number },
 });
 
-// Build machine with fluent API
-const orderMachine = Machine.make({
-  state: OrderState,
-  event: OrderEvent,
-  effects: OrderEffects,
-  initial: OrderState.Pending({ orderId: "order-1" }),
+const checkoutMachine = Machine.make({
+  state: CheckoutState,
+  event: CheckoutEvent,
+  effects: CheckoutEffects,
+  initial: CheckoutState.ReviewingCart({ cartId: "cart_123", totalCents: 4200 }),
 })
-  .on(OrderState.Pending, OrderEvent.Process, ({ state }) => OrderState.Processing.derive(state))
-  .on(OrderState.Processing, OrderEvent.Ship, ({ state, event }) =>
-    OrderState.Shipped.derive(state, { trackingId: event.trackingId }),
+  .on(CheckoutState.ReviewingCart, CheckoutEvent.Submit, ({ state }) =>
+    CheckoutState.ChargingCard.derive(state),
   )
-  // Cancel from any state
-  .onAny(OrderEvent.Cancel, () => OrderState.Cancelled)
-  // Effect runs when entering Processing, cancelled on exit
-  .spawn(OrderState.Processing, ({ effects, state }) =>
-    effects.notifyWarehouse({ orderId: state.orderId }),
+  .on(CheckoutState.ChargingCard, CheckoutEvent.Charged, ({ state, event }) =>
+    CheckoutState.Confirmed.derive(state, { receiptId: event.receiptId }),
   )
-  .final(OrderState.Shipped)
-  .final(OrderState.Cancelled)
-  .build({
-    notifyWarehouse: ({ orderId }) => Effect.log(`Warehouse notified: ${orderId}`),
-  });
+  .on(CheckoutState.ChargingCard, CheckoutEvent.Declined, ({ state, event }) =>
+    CheckoutState.Failed.derive(state, { reason: event.reason }),
+  )
+  .onAny(CheckoutEvent.Cancel, ({ state }) =>
+    CheckoutState.Failed.derive(state, { reason: "cancelled" }),
+  )
+  .spawn(CheckoutState.ChargingCard, ({ effects, state }) =>
+    effects.chargeCard({ cartId: state.cartId, totalCents: state.totalCents }),
+  )
+  .final(CheckoutState.Confirmed)
+  .final(CheckoutState.Failed);
+```
 
-// Run as actor (simple — no scope required)
+A few things to notice:
+
+- Empty variants are values: `State.Idle`. Non-empty are constructors: `State.Loading({ url })`.
+- `State.derive(source, overrides)` carries overlapping fields forward without manual copying.
+- `.onAny(...)` is a fallback; a specific `.on(...)` wins.
+- `.spawn(...)` runs work on state entry and cancels it on state exit.
+
+The builder also supports `.timeout(state, { duration, event })`, `.postpone(state, event)` for buffering, and `.reenter(...)` for re-running lifecycle on same-state transitions.
+
+## Slots
+
+Slots separate what a machine needs from how the app provides it. Declare them on the machine, provide implementations where you run it.
+
+```ts
+const actor =
+  yield *
+  Machine.spawn(checkoutMachine, {
+    slots: {
+      chargeCard: ({ cartId, totalCents }, { self }) =>
+        Effect.gen(function* () {
+          const result = yield* PaymentService.charge(cartId, totalCents);
+          yield* self.send(
+            result.ok
+              ? CheckoutEvent.Charged({ receiptId: result.receiptId })
+              : CheckoutEvent.Declined({ reason: result.error }),
+          );
+        }),
+    },
+  });
+```
+
+The same machine can run with different slot implementations in tests, local apps, or production. Slots are accepted everywhere the machine runs:
+
+- `Machine.spawn(machine, { slots })`
+- `Machine.replay(machine, events, { slots })`
+- `simulate(machine, events, { slots })`
+- `createTestHarness(machine, { slots })`
+
+## Running Actors
+
+`Machine.spawn` gives you a live actor with a queue and lifecycle management.
+
+```ts
 const program = Effect.gen(function* () {
-  const actor = yield* Machine.spawn(orderMachine);
-
-  // fire-and-forget
-  yield* actor.send(OrderEvent.Process);
-
-  // request-reply — get ProcessEventResult back
-  const result = yield* actor.call(OrderEvent.Ship({ trackingId: "TRACK-123" }));
-  console.log(result.transitioned); // true
-
-  const state = yield* actor.waitFor(OrderState.Shipped);
-  console.log(state); // Shipped { orderId: "order-1", trackingId: "TRACK-123" }
-
-  yield* actor.stop;
-});
-
-Effect.runPromise(program);
-```
-
-## Core Concepts
-
-### Schema-First
-
-States and events ARE schemas. Single source of truth for types and serialization:
-
-```ts
-const MyState = State({
-  Idle: {}, // Empty = plain value
-  Loading: { url: Schema.String }, // Non-empty = constructor
-});
-
-MyState.Idle; // Value (no parens)
-MyState.Loading({ url: "/api" }); // Constructor
-```
-
-### State.derive()
-
-Construct new states from existing ones — picks overlapping fields, applies overrides:
-
-```ts
-// Same-state: preserve fields, override specific ones
-.on(State.Active, Event.Update, ({ state, event }) =>
-  State.Active.derive(state, { count: event.count })
-)
-
-// Cross-state: picks only target fields from source
-.on(State.Processing, Event.Ship, ({ state, event }) =>
-  State.Shipped.derive(state, { trackingId: event.trackingId })
-)
-```
-
-### Multi-State Transitions
-
-Handle the same event from multiple states:
-
-```ts
-// Array of states — handler receives union type
-.on([State.Draft, State.Review], Event.Cancel, () => State.Cancelled)
-
-// Wildcard — fires from any state (specific .on() takes priority)
-.onAny(Event.Cancel, () => State.Cancelled)
-```
-
-### Guards and Effects as Slots
-
-Define parameterized guards and effects, provide implementations:
-
-```ts
-const MyGuards = Slot.Guards({
-  canRetry: { max: Schema.Number },
-});
-
-const MyEffects = Slot.Effects({
-  fetchData: { url: Schema.String },
-});
-
-machine
-  .on(MyState.Error, MyEvent.Retry, ({ state, guards }) =>
-    Effect.gen(function* () {
-      if (yield* guards.canRetry({ max: 3 })) {
-        return MyState.Loading({ url: state.url }); // Transition first
-      }
-      return MyState.Failed;
-    }),
-  )
-  // Fetch runs when entering Loading, auto-cancelled if state changes
-  .spawn(MyState.Loading, ({ effects, state }) => effects.fetchData({ url: state.url }))
-  .build({
-    canRetry: ({ max }, { state }) => state.attempts < max,
-    fetchData: ({ url }, { self }) =>
-      Effect.gen(function* () {
-        const data = yield* Http.get(url);
-        yield* self.send(MyEvent.Resolve({ data }));
-      }),
+  const actor = yield* Machine.spawn(checkoutMachine, {
+    slots: {
+      chargeCard: ({ cartId }, { self }) =>
+        self.send(CheckoutEvent.Charged({ receiptId: `rcpt_${cartId}` })),
+    },
   });
-```
 
-### State-Scoped Effects
-
-`.spawn()` runs effects when entering a state, auto-cancelled on exit:
-
-```ts
-machine
-  .spawn(MyState.Loading, ({ effects, state }) => effects.fetchData({ url: state.url }))
-  .spawn(MyState.Polling, ({ effects }) => effects.poll({ interval: "5 seconds" }));
-```
-
-`.task()` runs on entry and sends success/failure events:
-
-```ts
-machine.task(State.Loading, ({ effects, state }) => effects.fetchData({ url: state.url }), {
-  onSuccess: (data) => MyEvent.Resolve({ data }),
-  onFailure: () => MyEvent.Reject,
-});
-```
-
-### State Timeouts
-
-`.timeout()` — gen_statem-style state timeouts. Timer starts on state entry, cancels on exit:
-
-```ts
-machine
-  .timeout(State.Loading, {
-    duration: Duration.seconds(30),
-    event: Event.Timeout,
-  })
-  // Dynamic duration from state
-  .timeout(State.Retrying, {
-    duration: (state) => Duration.seconds(state.backoff),
-    event: Event.GiveUp,
-  });
-```
-
-`.reenter()` restarts the timer with fresh state values.
-
-### Event Postpone
-
-`.postpone()` — gen_statem-style event postpone. When a matching event arrives in the given state, it is buffered. After the next state transition (tag change), buffered events drain in FIFO order, looping until stable:
-
-```ts
-machine
-  .postpone(State.Connecting, Event.Data) // single event
-  .postpone(State.Connecting, [Event.Data, Event.Cmd]); // multiple events
-```
-
-Reply-bearing events (`call`/`ask`) in the postpone buffer are settled with `ActorStoppedError` on stop/interrupt/final-state.
-
-### ask / reply
-
-Handlers can return a domain reply via `{ state, reply }`:
-
-```ts
-.on(State.Active, Event.GetCount, ({ state }) => ({
-  state, // stay in same state
-  reply: state.count, // domain value returned to caller
-}))
-
-// Caller side:
-const count = yield* actor.ask<number>(Event.GetCount);
-```
-
-`ask` fails with `NoReplyError` if the handler doesn't provide a reply, and `ActorStoppedError` if the actor stops while the request is pending.
-
-### Child Actors
-
-Spawn children from `.spawn()` handlers with `self.spawn`. Children are state-scoped — auto-stopped on state exit:
-
-```ts
-machine
-  .spawn(State.Active, ({ self }) =>
-    Effect.gen(function* () {
-      const child = yield* self.spawn("worker-1", workerMachine).pipe(Effect.orDie);
-      yield* child.send(WorkerEvent.Start);
-      // child auto-stopped when parent exits Active state
-    }),
-  )
-  .build();
-
-// Access children externally via actor.system
-const parent = yield * Machine.spawn(parentMachine);
-yield * parent.send(Event.Activate);
-const child = yield * parent.system.get("worker-1"); // Option<ActorRef>
-```
-
-Every actor always has a system — `Machine.spawn` creates an implicit one if no `ActorSystem` is in context.
-
-### Persistence
-
-Persistence is composed from primitives — no built-in adapter or framework:
-
-```ts
-// Snapshot persistence — observe state changes, save externally
-yield * actor.changes.pipe(Stream.runForEach((state) => saveSnapshot(actor.id, state)));
-
-// Event journal — observe transitions
-yield * actor.transitions.pipe(Stream.runForEach(({ event }) => appendEvent(actor.id, event)));
-
-// Restore from snapshot
-const savedState = yield * loadSnapshot(id);
-const actor = yield * Machine.spawn(machine, { hydrate: savedState });
-
-// Restore from event log
-const events = yield * loadEvents(id);
-const state = yield * Machine.replay(machine, events);
-const actor = yield * Machine.spawn(machine, { hydrate: state });
-
-// Restore from snapshot + tail events
-const state = yield * Machine.replay(machine, tailEvents, { from: snapshot });
-const actor = yield * Machine.spawn(machine, { hydrate: state });
-```
-
-### System Observation
-
-React to actors joining and leaving the system:
-
-```ts
-const system = yield * ActorSystemService;
-
-// Sync callback — like ActorRef.subscribe
-const unsub = system.subscribe((event) => {
-  // event._tag: "ActorSpawned" | "ActorStopped"
-  console.log(`${event._tag}: ${event.id}`);
+  yield* actor.send(CheckoutEvent.Submit);
+  const finalState = yield* actor.awaitFinal;
 });
 
-// Sync snapshot of all registered actors
-const actors = system.actors; // ReadonlyMap<string, ActorRef>
+Effect.runPromise(Effect.scoped(program));
+```
 
-// Async stream (each subscriber gets own queue)
-yield *
-  system.events.pipe(
-    Stream.tap((e) => Effect.log(e._tag, e.id)),
-    Stream.runDrain,
+Key actor operations:
+
+- `send(event)` queues and returns immediately
+- `call(event)` returns full transition info
+- `ask(event)` returns a typed domain reply (requires `Event.reply(...)`)
+- `waitFor(...)` / `awaitFinal` for coordination
+- `stop` interrupts now; `drain` processes the remaining queue first
+- `watch(other)` completes when another actor stops
+
+For named actors or shared lookup, use an actor system:
+
+```ts
+import { ActorSystemDefault, ActorSystemService } from "effect-machine";
+
+const program = Effect.gen(function* () {
+  const system = yield* ActorSystemService;
+  const actor = yield* system.spawn("checkout-123", checkoutMachine);
+  yield* actor.send(CheckoutEvent.Submit);
+}).pipe(Effect.provide(ActorSystemDefault));
+```
+
+### Typed Replies
+
+Events can declare typed reply schemas:
+
+```ts
+const CartEvent = Event({
+  GetTotal: Event.reply({}, Schema.Number),
+});
+
+machine.on(State.Active, CartEvent.GetTotal, ({ state }) => Machine.reply(state, state.totalCents));
+
+const total = yield * actor.ask(CartEvent.GetTotal); // number
+```
+
+## Testing
+
+Test transitions without spawning actors:
+
+```ts
+import { simulate } from "effect-machine";
+
+const result =
+  yield *
+  simulate(
+    checkoutMachine,
+    [CheckoutEvent.Submit, CheckoutEvent.Charged({ receiptId: "rcpt_123" })],
+    { slots: { chargeCard: () => Effect.void } },
   );
+
+expect(result.states.map((s) => s._tag)).toEqual(["ReviewingCart", "ChargingCard", "Confirmed"]);
 ```
 
-### Testing
+`simulate` and `createTestHarness` test transition logic. They do not run `.spawn()` or `.background()` effects.
 
-Test transitions without actors:
+## Cluster
+
+When the same machine needs to run behind `@effect/cluster`, turn it into an entity:
 
 ```ts
-import { simulate, assertPath } from "effect-machine";
+import { EntityMachine, toEntity } from "effect-machine/cluster";
 
-// Simulate events and check path
-const result = yield * simulate(machine, [MyEvent.Start, MyEvent.Complete]);
-expect(result.states.map((s) => s._tag)).toEqual(["Idle", "Loading", "Done"]);
+const CheckoutEntity = toEntity(checkoutMachine, { type: "Checkout" });
 
-// Assert specific path
-yield * assertPath(machine, events, ["Idle", "Loading", "Done"]);
+const CheckoutEntityLayer = EntityMachine.layer(CheckoutEntity, checkoutMachine, {
+  initializeState: (entityId) => CheckoutState.ReviewingCart({ cartId: entityId, totalCents: 0 }),
+  persistence: { strategy: "journal" },
+});
 ```
 
-## API Quick Reference
+Persistence strategies:
 
-### Building
-
-| Method                                    | Purpose                                                     |
-| ----------------------------------------- | ----------------------------------------------------------- |
-| `Machine.make({ state, event, initial })` | Create machine                                              |
-| `.on(State.X, Event.Y, handler)`          | Add transition                                              |
-| `.on([State.X, State.Y], Event.Z, h)`     | Multi-state transition                                      |
-| `.onAny(Event.X, handler)`                | Wildcard transition (any state)                             |
-| `.reenter(State.X, Event.Y, handler)`     | Force re-entry on same state                                |
-| `.spawn(State.X, handler)`                | State-scoped effect                                         |
-| `.task(State.X, run, { onSuccess })`      | State-scoped task                                           |
-| `.timeout(State.X, { duration, event })`  | State timeout (gen_statem)                                  |
-| `.postpone(State.X, Event.Y)`             | Postpone event in state (gen_statem)                        |
-| `.background(handler)`                    | Machine-lifetime effect                                     |
-| `.final(State.X)`                         | Mark final state                                            |
-| `.build({ slot: impl })`                  | Provide implementations, returns `BuiltMachine` (terminal)  |
-| `.build()`                                | Finalize no-slot machine, returns `BuiltMachine` (terminal) |
-
-### Running
-
-| Method                                   | Purpose                                                                                                 |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `Machine.spawn(machine)`                 | Single actor, no registry. Caller manages lifetime via `actor.stop`. Auto-cleans up if `Scope` present. |
-| `Machine.spawn(machine, id)`             | Same as above with custom ID                                                                            |
-| `Machine.spawn(machine, { hydrate: s })` | Restore from saved state — re-runs spawn effects for that state                                         |
-| `Machine.replay(machine, events)`        | Fold events through handlers to compute state (for event sourcing restore)                              |
-| `system.spawn(id, machine)`              | Registry, lookup by ID, bulk ops. Cleans up on system teardown.                                         |
-
-### Actor
-
-| Method                           | Description                                     |
-| -------------------------------- | ----------------------------------------------- |
-| `actor.send(event)`              | Fire-and-forget (queue event)                   |
-| `actor.cast(event)`              | Alias for send (OTP gen_server:cast)            |
-| `actor.call(event)`              | Request-reply, returns `ProcessEventResult`     |
-| `actor.ask<R>(event)`            | Typed domain reply from handler                 |
-| `actor.snapshot`                 | Get current state                               |
-| `actor.matches(tag)`             | Check state tag                                 |
-| `actor.can(event)`               | Can handle event?                               |
-| `actor.changes`                  | Stream of state changes                         |
-| `actor.transitions`              | Stream of `{ fromState, toState, event }` edges |
-| `actor.waitFor(State.X)`         | Wait for state (constructor or fn)              |
-| `actor.awaitFinal`               | Wait final state                                |
-| `actor.sendAndWait(ev, State.X)` | Send + wait for state                           |
-| `actor.subscribe(fn)`            | Sync callback                                   |
-| `actor.sync.send(event)`         | Sync fire-and-forget (for UI)                   |
-| `actor.sync.stop()`              | Sync stop                                       |
-| `actor.sync.snapshot()`          | Sync get state                                  |
-| `actor.sync.matches(tag)`        | Sync check state tag                            |
-| `actor.sync.can(event)`          | Sync can handle event?                          |
-| `actor.system`                   | Access the actor's `ActorSystem`                |
-| `actor.children`                 | Child actors (`ReadonlyMap`)                    |
-
-### ActorSystem
-
-| Method / Property      | Description                                 |
-| ---------------------- | ------------------------------------------- |
-| `system.spawn(id, m)`  | Spawn actor                                 |
-| `system.get(id)`       | Get actor by ID                             |
-| `system.stop(id)`      | Stop actor by ID                            |
-| `system.actors`        | Sync snapshot of all actors (`ReadonlyMap`) |
-| `system.subscribe(fn)` | Sync callback for spawn/stop events         |
-| `system.events`        | Async `Stream<SystemEvent>` for spawn/stop  |
-
-### Testing
-
-| Function                                   | Description                                                      |
-| ------------------------------------------ | ---------------------------------------------------------------- |
-| `simulate(machine, events)`                | Run events, get all states (accepts `Machine` or `BuiltMachine`) |
-| `createTestHarness(machine)`               | Step-by-step testing (accepts `Machine` or `BuiltMachine`)       |
-| `assertPath(machine, events, path)`        | Assert exact path                                                |
-| `assertReaches(machine, events, tag)`      | Assert final state                                               |
-| `assertNeverReaches(machine, events, tag)` | Assert state never visited                                       |
+- **Snapshot** — saves state periodically, restores on reactivation
+- **Journal** — appends events on each RPC, replays on reactivation
 
 ## License
 
