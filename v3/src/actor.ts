@@ -1186,4 +1186,4 @@ export const makeSystem = make;
 /**
  * Default ActorSystem layer
  */
-export const Default = Layer.effect(ActorSystem, make());
+export const Default = Layer.scoped(ActorSystem, make());

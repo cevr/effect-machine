@@ -147,7 +147,6 @@ describe("Cluster Integration with MachineSchema", () => {
       .final(TaskState.Done);
 
     await Effect.runPromise(
-      // @ts-expect-error — v3 generator inference doesn't remove Scope via Effect.scoped
       Effect.gen(function* () {
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("task", taskMachine);
