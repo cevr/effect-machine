@@ -159,7 +159,7 @@ export interface BackgroundEffect<State, Event, SD extends SlotsDef, R> {
 // ============================================================================
 
 export interface TaskOptions<State, Event, SD extends SlotsDef, A, E1, ES, EF> {
-  readonly onSuccess: (value: A, ctx: StateHandlerContext<State, Event, SD>) => ES;
+  readonly onSuccess?: (value: A, ctx: StateHandlerContext<State, Event, SD>) => ES;
   readonly onFailure?: (cause: Cause.Cause<E1>, ctx: StateHandlerContext<State, Event, SD>) => EF;
   readonly name?: string;
 }
@@ -786,53 +786,7 @@ export class Machine<
    * - `.task(State.X, run, { onFailure })` — shorthand when run returns Event directly
    * - `.task([State.X, State.Y], run, opts)` — multi-state
    */
-  /** Single state, shorthand — run returns Event directly, onSuccess omitted */
-  task<
-    NS extends VariantsUnion<_SD> & BrandedState,
-    A extends VariantsUnion<_ED> & BrandedEvent,
-    E1,
-    EF extends VariantsUnion<_ED> & BrandedEvent,
-  >(
-    state: TaggedOrConstructor<NS>,
-    run: (
-      ctx: StateHandlerContext<NS, VariantsUnion<_ED> & BrandedEvent, SD>,
-    ) => Effect.Effect<A, E1, Scope.Scope>,
-    options: {
-      onFailure?: (
-        cause: Cause.Cause<E1>,
-        ctx: StateHandlerContext<NS, VariantsUnion<_ED> & BrandedEvent, SD>,
-      ) => EF;
-      name?: string;
-    },
-  ): Machine<State, Event, R, _SD, _ED, SD>;
-  /** Multiple states, shorthand — run returns Event directly */
-  task<
-    NS extends ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>,
-    A extends VariantsUnion<_ED> & BrandedEvent,
-    E1,
-    EF extends VariantsUnion<_ED> & BrandedEvent,
-  >(
-    states: NS,
-    run: (
-      ctx: StateHandlerContext<
-        NS[number] extends TaggedOrConstructor<infer S> ? S : never,
-        VariantsUnion<_ED> & BrandedEvent,
-        SD
-      >,
-    ) => Effect.Effect<A, E1, Scope.Scope>,
-    options: {
-      onFailure?: (
-        cause: Cause.Cause<E1>,
-        ctx: StateHandlerContext<
-          NS[number] extends TaggedOrConstructor<infer S> ? S : never,
-          VariantsUnion<_ED> & BrandedEvent,
-          SD
-        >,
-      ) => EF;
-      name?: string;
-    },
-  ): Machine<State, Event, R, _SD, _ED, SD>;
-  /** Single state, explicit onSuccess */
+  /** Single state — onSuccess optional (defaults to identity when task returns Event) */
   task<
     NS extends VariantsUnion<_SD> & BrandedState,
     A,
