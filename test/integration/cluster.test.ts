@@ -886,12 +886,7 @@ describe("EntityMachine.layer", () => {
 
   // ---------------------------------------------------------------------------
   // Test 11: WatchState streaming RPC delivers state changes
-  // Skipped: effect@4.0.0-beta.35 has a Queue bug in RpcServer streaming path
-  // (takeBetweenUnsafe: self.state._tag undefined). Handler is correctly wired
-  // — WatchState request arrives and replier.succeed(stream) is called — but
-  // the RPC infrastructure crashes consuming the stream.
-  // ---------------------------------------------------------------------------
-  test.skip("WatchState streams state changes", async () => {
+  test("WatchState streams state changes", async () => {
     const WatchState = State({
       A: {},
       B: {},
@@ -933,7 +928,7 @@ describe("EntityMachine.layer", () => {
 
         const collectFiber = yield* Effect.forkScoped(
           watchStream.pipe(
-            Stream.take(2),
+            Stream.take(3),
             Stream.runForEach((s: WatchState) =>
               Effect.sync(() => {
                 collected.push(s._tag);
@@ -953,8 +948,8 @@ describe("EntityMachine.layer", () => {
         yield* Effect.sleep("200 millis");
         yield* Fiber.interrupt(collectFiber);
 
-        // Should have seen B and C state changes
-        expect(collected.length).toBeGreaterThanOrEqual(2);
+        // Stream includes initial state A, then transitions B, C
+        expect(collected).toContain("A");
         expect(collected).toContain("B");
         expect(collected).toContain("C");
       }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)) as Effect.Effect<void>,
