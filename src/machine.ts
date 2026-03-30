@@ -786,6 +786,52 @@ export class Machine<
    * - `.task(State.X, run, { onFailure })` — shorthand when run returns Event directly
    * - `.task([State.X, State.Y], run, opts)` — multi-state
    */
+  /** Single state, shorthand — run returns Event directly, onSuccess omitted */
+  task<
+    NS extends VariantsUnion<_SD> & BrandedState,
+    A extends VariantsUnion<_ED> & BrandedEvent,
+    E1,
+    EF extends VariantsUnion<_ED> & BrandedEvent,
+  >(
+    state: TaggedOrConstructor<NS>,
+    run: (
+      ctx: StateHandlerContext<NS, VariantsUnion<_ED> & BrandedEvent, SD>,
+    ) => Effect.Effect<A, E1, Scope.Scope>,
+    options: {
+      onFailure?: (
+        cause: Cause.Cause<E1>,
+        ctx: StateHandlerContext<NS, VariantsUnion<_ED> & BrandedEvent, SD>,
+      ) => EF;
+      name?: string;
+    },
+  ): Machine<State, Event, R, _SD, _ED, SD>;
+  /** Multiple states, shorthand — run returns Event directly */
+  task<
+    NS extends ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>,
+    A extends VariantsUnion<_ED> & BrandedEvent,
+    E1,
+    EF extends VariantsUnion<_ED> & BrandedEvent,
+  >(
+    states: NS,
+    run: (
+      ctx: StateHandlerContext<
+        NS[number] extends TaggedOrConstructor<infer S> ? S : never,
+        VariantsUnion<_ED> & BrandedEvent,
+        SD
+      >,
+    ) => Effect.Effect<A, E1, Scope.Scope>,
+    options: {
+      onFailure?: (
+        cause: Cause.Cause<E1>,
+        ctx: StateHandlerContext<
+          NS[number] extends TaggedOrConstructor<infer S> ? S : never,
+          VariantsUnion<_ED> & BrandedEvent,
+          SD
+        >,
+      ) => EF;
+      name?: string;
+    },
+  ): Machine<State, Event, R, _SD, _ED, SD>;
   /** Single state, explicit onSuccess */
   task<
     NS extends VariantsUnion<_SD> & BrandedState,
@@ -825,50 +871,6 @@ export class Machine<
       ES,
       EF
     >,
-  ): Machine<State, Event, R, _SD, _ED, SD>;
-  /** Single state, shorthand — run returns Event directly, onSuccess omitted */
-  task<
-    NS extends VariantsUnion<_SD> & BrandedState,
-    E1,
-    EF extends VariantsUnion<_ED> & BrandedEvent,
-  >(
-    state: TaggedOrConstructor<NS>,
-    run: (
-      ctx: StateHandlerContext<NS, VariantsUnion<_ED> & BrandedEvent, SD>,
-    ) => Effect.Effect<VariantsUnion<_ED> & BrandedEvent, E1, Scope.Scope>,
-    options: {
-      onFailure?: (
-        cause: Cause.Cause<E1>,
-        ctx: StateHandlerContext<NS, VariantsUnion<_ED> & BrandedEvent, SD>,
-      ) => EF;
-      name?: string;
-    },
-  ): Machine<State, Event, R, _SD, _ED, SD>;
-  /** Multiple states, shorthand — run returns Event directly */
-  task<
-    NS extends ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>,
-    E1,
-    EF extends VariantsUnion<_ED> & BrandedEvent,
-  >(
-    states: NS,
-    run: (
-      ctx: StateHandlerContext<
-        NS[number] extends TaggedOrConstructor<infer S> ? S : never,
-        VariantsUnion<_ED> & BrandedEvent,
-        SD
-      >,
-    ) => Effect.Effect<VariantsUnion<_ED> & BrandedEvent, E1, Scope.Scope>,
-    options: {
-      onFailure?: (
-        cause: Cause.Cause<E1>,
-        ctx: StateHandlerContext<
-          NS[number] extends TaggedOrConstructor<infer S> ? S : never,
-          VariantsUnion<_ED> & BrandedEvent,
-          SD
-        >,
-      ) => EF;
-      name?: string;
-    },
   ): Machine<State, Event, R, _SD, _ED, SD>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   task(stateOrStates: any, run: any, options: any): Machine<State, Event, R, _SD, _ED, SD> {
@@ -967,8 +969,10 @@ export class Machine<
         ? (config.event as (state: NS) => VariantsUnion<_ED> & BrandedEvent)
         : () => config.event as VariantsUnion<_ED> & BrandedEvent;
 
-    return this.task(state, (ctx) => Effect.sleep(resolveDuration(ctx.state)), {
-      onSuccess: (_, ctx) => resolveEvent(ctx.state),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (this as any).task(state, (ctx: any) => Effect.sleep(resolveDuration(ctx.state)), {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      onSuccess: (_: void, ctx: any) => resolveEvent(ctx.state),
       name: `$timeout:${stateTag}`,
     });
   }

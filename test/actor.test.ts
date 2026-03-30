@@ -913,7 +913,7 @@ describe("ActorRef", () => {
                 return `processed-${state.value}`;
               }),
             {
-              onSuccess: (result) => TE.Completed({ result }),
+              onSuccess: (result: string) => TE.Completed({ result }),
               onFailure: () => TE.Completed({ result: "failed" }),
             },
           )
