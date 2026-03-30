@@ -2,8 +2,7 @@
  * Internal utilities for effect-machine.
  * @internal
  */
-import type { Effect } from "effect";
-import { Effect as E, Stream } from "effect";
+import { Effect, Stream } from "effect";
 import type { ActorSystem } from "../actor.js";
 
 // ============================================================================
@@ -148,8 +147,8 @@ export const getTag = (
 };
 
 /** Check if a value is an Effect */
-export const isEffect = (value: unknown): value is Effect.Effect<unknown, unknown, unknown> =>
-  typeof value === "object" && value !== null && E.EffectTypeId in value;
+export const isEffect: (value: unknown) => value is Effect.Effect<unknown, unknown, unknown> =
+  Effect.isEffect;
 
 // ============================================================================
 // Stub System
@@ -162,9 +161,9 @@ export const isEffect = (value: unknown): value is Effect.Effect<unknown, unknow
  * @internal
  */
 export const stubSystem: ActorSystem = {
-  spawn: () => E.die("spawn not supported in stub system"),
-  get: () => E.die("get not supported in stub system"),
-  stop: () => E.die("stop not supported in stub system"),
+  spawn: () => Effect.die("spawn not supported in stub system"),
+  get: () => Effect.die("get not supported in stub system"),
+  stop: () => Effect.die("stop not supported in stub system"),
   events: Stream.empty,
   get actors() {
     return new Map();

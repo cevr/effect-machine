@@ -1,3 +1,4 @@
+// @effect-diagnostics strictEffectProvide:off - tests are entry points
 import { Effect, Schema } from "effect";
 
 import { Machine, State, Event, Slot, simulate, createTestHarness } from "../src/index.js";
@@ -23,12 +24,9 @@ const SimpleEvent = Event({
 });
 type SimpleEvent = typeof SimpleEvent.Type;
 
-const SlotGuards = Slot.Guards({
-  canStart: {},
-});
-
-const SlotEffects = Slot.Effects({
-  onStart: {},
+const TestSlots = Slot.define({
+  canStart: Slot.fn({}, Schema.Boolean),
+  onStart: Slot.fn({}),
 });
 
 const createSimpleMachine = () =>
@@ -50,14 +48,13 @@ const createSlotMachine = () =>
   Machine.make({
     state: SimpleState,
     event: SimpleEvent,
-    guards: SlotGuards,
-    effects: SlotEffects,
+    slots: TestSlots,
     initial: SimpleState.Idle,
   })
-    .on(SimpleState.Idle, SimpleEvent.Start, ({ event, guards, effects }) =>
+    .on(SimpleState.Idle, SimpleEvent.Start, ({ event, slots }) =>
       Effect.gen(function* () {
-        if (yield* guards.canStart()) {
-          yield* effects.onStart();
+        if (yield* slots.canStart()) {
+          yield* slots.onStart();
           return SimpleState.Active({ count: event.count });
         }
         return SimpleState.Idle;
@@ -104,7 +101,7 @@ describe("Machine.spawn with slots", () => {
     }),
   );
 
-  it.scopedLive("spawn with slots works end-to-end", () =>
+  it.scopedLive("backward compat: spawn with slots works", () =>
     Effect.gen(function* () {
       const machine = createSlotMachine();
       const actor = yield* Machine.spawn(machine, {

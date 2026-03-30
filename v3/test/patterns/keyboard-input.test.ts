@@ -41,7 +41,7 @@ describe("Keyboard Input Pattern", () => {
     // Typing state handlers
     // Key input - different modes (same state, no lifecycle by default)
     .on(KeyboardState.Typing, KeyboardEvent.KeyPress, ({ state, event }) => {
-      let newValue: string = state.value;
+      let newValue: string;
       switch (state.mode) {
         case "insert":
           newValue = state.value + event.key;

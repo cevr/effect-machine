@@ -85,7 +85,7 @@ export const toEntity = <
   R,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-  machine: Machine<S, E, R, any, any, any, any>,
+  machine: Machine<S, E, R, any, any, any>,
   options: ToEntityOptions,
 ) => {
   const stateSchema = machine.stateSchema;

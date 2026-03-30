@@ -1,7 +1,7 @@
 /**
  * Typed error classes for effect-machine.
  *
- * All errors extend Schema.TaggedError for:
+ * All errors extend Schema.TaggedErrorClass for:
  * - Type-safe catching via Effect.catchTag
  * - Serialization support
  * - Composable error handling
@@ -39,11 +39,11 @@ export class SlotProvisionError extends Schema.TaggedError<SlotProvisionError>()
   "SlotProvisionError",
   {
     slotName: Schema.String,
-    slotType: Schema.Literal("guard", "effect"),
+    slotType: Schema.Literal("slot"),
   },
 ) {}
 
-/** Machine.build() validation failed - missing or extra handlers */
+/** Slot provision validation failed — missing or extra handlers */
 export class ProvisionValidationError extends Schema.TaggedError<ProvisionValidationError>()(
   "ProvisionValidationError",
   {
@@ -71,6 +71,13 @@ export class NoReplyError extends Schema.TaggedError<NoReplyError>()("NoReplyErr
 
 /** Persistence adapter operation failed */
 export class PersistenceError extends Schema.TaggedError<PersistenceError>()("PersistenceError", {
+  message: Schema.String,
+}) {}
+
+/** Slot input/output schema validation failed */
+export class SlotCodecError extends Schema.TaggedError<SlotCodecError>()("SlotCodecError", {
+  slotName: Schema.String,
+  phase: Schema.Literal("input", "output"),
   message: Schema.String,
 }) {}
 

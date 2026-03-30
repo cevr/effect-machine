@@ -63,9 +63,9 @@ describe("Machine", () => {
     );
   });
 
-  test("supports guards via Slot.Guards", async () => {
-    const CounterGuards = Slot.Guards({
-      belowLimit: { limit: Schema.Number },
+  test("supports slots via Slot.define", async () => {
+    const CounterSlots = Slot.define({
+      belowLimit: Slot.fn({ limit: Schema.Number }, Schema.Boolean),
     });
 
     await Effect.runPromise(
@@ -73,12 +73,12 @@ describe("Machine", () => {
         const machine = Machine.make({
           state: CounterState,
           event: CounterEvent,
-          guards: CounterGuards,
+          slots: CounterSlots,
           initial: CounterState.Counting({ count: 0 }),
         })
-          .on(CounterState.Counting, CounterEvent.Increment, ({ state, guards }) =>
+          .on(CounterState.Counting, CounterEvent.Increment, ({ state, slots }) =>
             Effect.gen(function* () {
-              if (yield* guards.belowLimit({ limit: 3 })) {
+              if (yield* slots.belowLimit({ limit: 3 })) {
                 return CounterState.Counting({ count: state.count + 1 });
               }
               return state;
@@ -100,8 +100,12 @@ describe("Machine", () => {
           ],
           {
             slots: {
-              // Handler receives (params, ctx) - context passed directly
-              belowLimit: ({ limit }, { state }) => state.count < limit,
+              belowLimit: ({ limit }: { limit: number }) =>
+                Effect.gen(function* () {
+                  const ctx = yield* machine.Context;
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  return (ctx.state as any).count < limit;
+                }),
             },
           },
         );
@@ -351,19 +355,20 @@ describe(".from()", () => {
 });
 
 // ============================================================================
-// materializeMachine (F7)
+//  (F7)
 // ============================================================================
 
 describe("materializeMachine", () => {
   test("throws ProvisionValidationError when slots missing", () => {
-    const Guards = Slot.Guards({ check: {} });
-    const Effects = Slot.Effects({ notify: {} });
+    const TestSlots = Slot.define({
+      check: Slot.fn({}, Schema.Boolean),
+      notify: Slot.fn({}),
+    });
 
     const machine = Machine.make({
       state: CounterState,
       event: CounterEvent,
-      guards: Guards,
-      effects: Effects,
+      slots: TestSlots,
       initial: CounterState.Idle({ count: 0 }),
     });
 
@@ -371,12 +376,14 @@ describe("materializeMachine", () => {
   });
 
   test("succeeds when all handlers provided", () => {
-    const Guards = Slot.Guards({ check: {} });
+    const TestSlots = Slot.define({
+      check: Slot.fn({}, Schema.Boolean),
+    });
 
     const machine = Machine.make({
       state: CounterState,
       event: CounterEvent,
-      guards: Guards,
+      slots: TestSlots,
       initial: CounterState.Idle({ count: 0 }),
     });
 

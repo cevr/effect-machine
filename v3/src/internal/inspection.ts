@@ -22,7 +22,7 @@ export const emitWithTimestamp = Effect.fn("effect-machine.emitWithTimestamp")(f
       return undefined;
     }
   });
-  if (result !== undefined && Effect.isEffect(result)) {
-    yield* (result as Effect.Effect<void>).pipe(Effect.catchAllCause(() => Effect.void));
+  if (Effect.isEffect(result)) {
+    yield* result.pipe(Effect.catchAllCause(() => Effect.void));
   }
 });

@@ -360,24 +360,27 @@ describe("Child Actor Support", () => {
   describe("slot handler self.spawn", () => {
     it.scopedLive("build() slot handler can spawn children", () =>
       Effect.gen(function* () {
-        const SpawnEffects = Slot.Effects({
-          spawnWorker: {},
+        const SpawnSlots = Slot.define({
+          spawnWorker: Slot.fn({}),
         });
 
         const parentMachine = Machine.make({
           state: ParentState,
           event: ParentEvent,
-          effects: SpawnEffects,
+          slots: SpawnSlots,
           initial: ParentState.Idle,
         })
           .on(ParentState.Idle, ParentEvent.Activate, () => ParentState.Active)
-          .spawn(ParentState.Active, ({ effects }) => effects.spawnWorker())
+          .spawn(ParentState.Active, ({ slots }) => slots.spawnWorker())
           .final(ParentState.Done);
 
         const parent = yield* Machine.spawn(parentMachine, {
           slots: {
-            spawnWorker: (_params, { self }) =>
-              self.spawn("slot-child", childMachine).pipe(Effect.asVoid, Effect.orDie),
+            spawnWorker: () =>
+              Effect.gen(function* () {
+                const ctx = yield* parentMachine.Context;
+                yield* ctx.self.spawn("slot-child", childMachine).pipe(Effect.asVoid, Effect.orDie);
+              }),
           },
         });
         yield* parent.send(ParentEvent.Activate);

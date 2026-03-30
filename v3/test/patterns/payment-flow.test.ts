@@ -3,7 +3,6 @@ import { Effect, Schema, SubscriptionRef, TestClock } from "effect";
 
 import {
   ActorSystemDefault,
-  ActorSystemService,
   assertNeverReaches,
   assertPath,
   Event,
@@ -50,20 +49,16 @@ describe("Payment Flow Pattern", () => {
   });
   type PaymentEvent = typeof PaymentEvent.Type;
 
-  const PaymentGuards = Slot.Guards({
-    canRetry: {},
-  });
-
-  const PaymentEffects = Slot.Effects({
-    scheduleBridgeTimeout: {},
-    scheduleAutoDismiss: {},
+  const PaymentSlots = Slot.define({
+    canRetry: Slot.fn({}, Schema.Boolean),
+    scheduleBridgeTimeout: Slot.fn({}),
+    scheduleAutoDismiss: Slot.fn({}),
   });
 
   const paymentMachine = Machine.make({
     state: PaymentState,
     event: PaymentEvent,
-    guards: PaymentGuards,
-    effects: PaymentEffects,
+    slots: PaymentSlots,
     initial: PaymentState.Idle,
   })
     .on(PaymentState.Idle, PaymentEvent.StartCheckout, ({ event }) =>
@@ -104,9 +99,9 @@ describe("Payment Flow Pattern", () => {
       }),
     )
     // Error handling - retry with guard
-    .on(PaymentState.PaymentError, PaymentEvent.Retry, ({ state, guards }) =>
+    .on(PaymentState.PaymentError, PaymentEvent.Retry, ({ state, slots }) =>
       Effect.gen(function* () {
-        if (yield* guards.canRetry()) {
+        if (yield* slots.canRetry()) {
           return PaymentState.ProcessingPayment({
             method: "card",
             amount: state.amount,
@@ -125,12 +120,12 @@ describe("Payment Flow Pattern", () => {
       return state; // Stay in error state
     })
     // Timeout tasks
-    .task(PaymentState.AwaitingBridgeConfirm, ({ effects }) => effects.scheduleBridgeTimeout(), {
+    .task(PaymentState.AwaitingBridgeConfirm, ({ slots }) => slots.scheduleBridgeTimeout(), {
       onSuccess: () => PaymentEvent.BridgeTimeout,
     })
     // Delay timer only fires for non-retryable errors
     // This works because the timer still fires, but the transition handler can check state
-    .task(PaymentState.PaymentError, ({ effects }) => effects.scheduleAutoDismiss(), {
+    .task(PaymentState.PaymentError, ({ slots }) => slots.scheduleAutoDismiss(), {
       onSuccess: () => PaymentEvent.AutoDismissError,
     })
     // Cancel from multiple states
@@ -146,9 +141,13 @@ describe("Payment Flow Pattern", () => {
     .final(PaymentState.PaymentCancelled);
 
   const paymentSlots = {
-    canRetry: (_params: unknown, { state }: { state: { canRetry: boolean; attempts: number } }) => {
-      return state.canRetry && state.attempts < 3;
-    },
+    canRetry: () =>
+      Effect.gen(function* () {
+        const ctx = yield* paymentMachine.Context;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const s = ctx.state as any;
+        return s.canRetry === true && s.attempts < 3;
+      }),
     scheduleBridgeTimeout: () => Effect.sleep("30 seconds"),
     scheduleAutoDismiss: () => Effect.sleep("5 seconds"),
   };
@@ -203,8 +202,10 @@ describe("Payment Flow Pattern", () => {
 
   it.scopedLive("retry blocked after max attempts", () =>
     Effect.gen(function* () {
-      const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("payment", paymentMachine, { slots: paymentSlots });
+      const actor = yield* Machine.spawn(paymentMachine, {
+        id: "payment",
+        slots: paymentSlots,
+      });
 
       yield* actor.send(PaymentEvent.StartCheckout({ amount: 50 }));
       yield* actor.send(PaymentEvent.SelectMethod({ method: "card" }));
@@ -254,8 +255,10 @@ describe("Payment Flow Pattern", () => {
 
   it.scoped("bridge timeout triggers error", () =>
     Effect.gen(function* () {
-      const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("payment", paymentMachine, { slots: paymentSlots });
+      const actor = yield* Machine.spawn(paymentMachine, {
+        id: "payment",
+        slots: paymentSlots,
+      });
 
       yield* actor.send(PaymentEvent.StartCheckout({ amount: 100 }));
       yield* actor.send(PaymentEvent.SelectMethod({ method: "bridge" }));
@@ -275,8 +278,10 @@ describe("Payment Flow Pattern", () => {
 
   it.scoped("non-retryable error auto-dismisses", () =>
     Effect.gen(function* () {
-      const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("payment", paymentMachine, { slots: paymentSlots });
+      const actor = yield* Machine.spawn(paymentMachine, {
+        id: "payment",
+        slots: paymentSlots,
+      });
 
       yield* actor.send(PaymentEvent.StartCheckout({ amount: 100 }));
       yield* actor.send(PaymentEvent.SelectMethod({ method: "card" }));

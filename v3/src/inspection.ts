@@ -1,4 +1,4 @@
-import { Context, Effect, Option, type Schema } from "effect";
+import { Effect, Option, Context, type Schema } from "effect";
 
 // ============================================================================
 // Type-level helpers
@@ -7,7 +7,7 @@ import { Context, Effect, Option, type Schema } from "effect";
 /**
  * Resolve a type param: if it's a Schema, extract `.Type`; otherwise use as-is.
  */
-type ResolveType<T> = T extends Schema.Schema<infer A, infer _I, infer _R> ? A : T;
+type ResolveType<T> = T extends Schema.Schema<infer A> ? A : T;
 
 // ============================================================================
 // Inspection Events
@@ -57,9 +57,6 @@ export interface EffectEvent<S> {
   readonly timestamp: number;
 }
 
-/**
- * Event emitted when a task lifecycle phase occurs
- */
 export interface TaskEvent<S> {
   readonly type: "@machine.task";
   readonly actorId: string;
@@ -121,15 +118,12 @@ export type AnyInspectionEvent = InspectionEvent<
 // ============================================================================
 
 /**
- * Inspector handler — sync callback or Effect-returning callback.
+ * Inspector interface for observing machine behavior
  */
 export type InspectorHandler<S, E> = (
   event: InspectionEvent<S, E>,
 ) => void | Effect.Effect<void, never, never>;
 
-/**
- * Inspector interface for observing machine behavior
- */
 export interface Inspector<S, E> {
   readonly onInspect: InspectorHandler<S, E>;
 }
@@ -142,7 +136,7 @@ export interface Inspector<S, E> {
 export const Inspector = Context.GenericTag<Inspector<any, any>>("@effect/machine/Inspector");
 
 /**
- * Create an inspector from a sync callback function.
+ * Create an inspector from a callback function.
  *
  * Type params accept either raw tagged types or Schema constructors:
  * - `makeInspector(cb)` — defaults to `AnyInspectionEvent`
@@ -153,19 +147,12 @@ export const makeInspector = <S = { readonly _tag: string }, E = { readonly _tag
   onInspect: InspectorHandler<ResolveType<S>, ResolveType<E>>,
 ): Inspector<ResolveType<S>, ResolveType<E>> => ({ onInspect });
 
-/**
- * Create an inspector from an Effect-returning callback function.
- */
 export const makeInspectorEffect = <S = { readonly _tag: string }, E = { readonly _tag: string }>(
   onInspect: (
     event: InspectionEvent<ResolveType<S>, ResolveType<E>>,
   ) => Effect.Effect<void, never, never>,
 ): Inspector<ResolveType<S>, ResolveType<E>> => ({ onInspect });
 
-/**
- * Run an inspector handler, handling both sync and Effect returns.
- * @internal
- */
 const inspectionEffect = <S, E>(
   inspector: Inspector<S, E>,
   event: InspectionEvent<S, E>,
@@ -174,10 +161,6 @@ const inspectionEffect = <S, E>(
   return Effect.isEffect(result) ? result : Effect.void;
 };
 
-/**
- * Combine multiple inspectors into one. All run concurrently per event.
- * Individual inspector failures are swallowed.
- */
 export const combineInspectors = <S, E>(
   ...inspectors: ReadonlyArray<Inspector<S, E>>
 ): Inspector<S, E> => ({
@@ -190,9 +173,6 @@ export const combineInspectors = <S, E>(
     ),
 });
 
-/**
- * Options for the tracing inspector.
- */
 export interface TracingInspectorOptions<S, E> {
   readonly spanName?: string | ((event: InspectionEvent<S, E>) => string);
   readonly attributes?: (
@@ -300,9 +280,6 @@ const inspectionAttributes = <
   }
 };
 
-/**
- * Inspector that emits OpenTelemetry spans and events for each inspection event.
- */
 export const tracingInspector = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },

@@ -17,9 +17,9 @@ describe("Conditional Transitions (replaces choose combinator)", () => {
       Check: {},
     });
 
-    const TestGuards = Slot.Guards({
-      isHigh: {},
-      isMedium: {},
+    const TestSlots = Slot.define({
+      isHigh: Slot.fn({}, Schema.Boolean),
+      isMedium: Slot.fn({}, Schema.Boolean),
     });
 
     await Effect.runPromise(
@@ -27,15 +27,15 @@ describe("Conditional Transitions (replaces choose combinator)", () => {
         const machine = Machine.make({
           state: TestState,
           event: TestEvent,
-          guards: TestGuards,
+          slots: TestSlots,
           initial: TestState.Idle({ value: 75 }),
         })
-          .on(TestState.Idle, TestEvent.Check, ({ guards }) =>
+          .on(TestState.Idle, TestEvent.Check, ({ slots }) =>
             Effect.gen(function* () {
-              if (yield* guards.isHigh()) {
+              if (yield* slots.isHigh()) {
                 return TestState.High;
               }
-              if (yield* guards.isMedium()) {
+              if (yield* slots.isMedium()) {
                 return TestState.Medium;
               }
               return TestState.Low;
@@ -47,8 +47,20 @@ describe("Conditional Transitions (replaces choose combinator)", () => {
 
         const result = yield* simulate(machine, [TestEvent.Check], {
           slots: {
-            isHigh: (_params, { state }) => state._tag === "Idle" && state.value >= 70,
-            isMedium: (_params, { state }) => state._tag === "Idle" && state.value >= 40,
+            isHigh: () =>
+              Effect.gen(function* () {
+                const ctx = yield* machine.Context;
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const s = ctx.state as any;
+                return s._tag === "Idle" && s.value >= 70;
+              }),
+            isMedium: () =>
+              Effect.gen(function* () {
+                const ctx = yield* machine.Context;
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const s = ctx.state as any;
+                return s._tag === "Idle" && s.value >= 40;
+              }),
           },
         });
         expect(result.finalState._tag).toBe("High");
@@ -67,8 +79,8 @@ describe("Conditional Transitions (replaces choose combinator)", () => {
       Check: {},
     });
 
-    const TestGuards = Slot.Guards({
-      isHigh: {},
+    const TestSlots = Slot.define({
+      isHigh: Slot.fn({}, Schema.Boolean),
     });
 
     await Effect.runPromise(
@@ -76,12 +88,12 @@ describe("Conditional Transitions (replaces choose combinator)", () => {
         const machine = Machine.make({
           state: TestState,
           event: TestEvent,
-          guards: TestGuards,
+          slots: TestSlots,
           initial: TestState.Idle({ value: 10 }),
         })
-          .on(TestState.Idle, TestEvent.Check, ({ guards }) =>
+          .on(TestState.Idle, TestEvent.Check, ({ slots }) =>
             Effect.gen(function* () {
-              if (yield* guards.isHigh()) {
+              if (yield* slots.isHigh()) {
                 return TestState.High;
               }
               // Fallback
@@ -93,7 +105,13 @@ describe("Conditional Transitions (replaces choose combinator)", () => {
 
         const result = yield* simulate(machine, [TestEvent.Check], {
           slots: {
-            isHigh: (_params, { state }) => state._tag === "Idle" && state.value >= 70,
+            isHigh: () =>
+              Effect.gen(function* () {
+                const ctx = yield* machine.Context;
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const s = ctx.state as any;
+                return s._tag === "Idle" && s.value >= 70;
+              }),
           },
         });
         expect(result.finalState._tag).toBe("Low");
@@ -111,8 +129,8 @@ describe("Conditional Transitions (replaces choose combinator)", () => {
       Go: {},
     });
 
-    const TestEffects = Slot.Effects({
-      logAction: { message: Schema.String },
+    const TestSlots = Slot.define({
+      logAction: Slot.fn({ message: Schema.String }),
     });
 
     await Effect.runPromise(
@@ -122,12 +140,12 @@ describe("Conditional Transitions (replaces choose combinator)", () => {
         const machine = Machine.make({
           state: TestState,
           event: TestEvent,
-          effects: TestEffects,
+          slots: TestSlots,
           initial: TestState.Idle,
         })
-          .on(TestState.Idle, TestEvent.Go, ({ effects }) =>
+          .on(TestState.Idle, TestEvent.Go, ({ slots }) =>
             Effect.gen(function* () {
-              yield* effects.logAction({ message: "effect ran" });
+              yield* slots.logAction({ message: "effect ran" });
               return TestState.Done;
             }),
           )
@@ -135,7 +153,7 @@ describe("Conditional Transitions (replaces choose combinator)", () => {
 
         yield* simulate(machine, [TestEvent.Go], {
           slots: {
-            logAction: ({ message }) =>
+            logAction: ({ message }: { message: string }) =>
               Effect.sync(() => {
                 logs.push(message);
               }),

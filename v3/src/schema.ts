@@ -79,7 +79,7 @@ type VariantSchemas<D extends Record<string, Schema.Struct.Fields>> = {
  */
 export type VariantsUnion<D extends Record<string, Schema.Struct.Fields>> = {
   [K in keyof D & string]: TaggedStructType<K, D[K]> &
-    (D[K] extends { readonly [ReplySchemaSymbol]: Schema.Schema<infer R, infer _I, infer _RR> }
+    (D[K] extends { readonly [ReplySchemaSymbol]: Schema.Schema<infer R> }
       ? ReplyTypeBrand<R>
       : unknown);
 }[keyof D & string];
@@ -97,7 +97,7 @@ type IsEmptyFields<Fields extends Schema.Struct.Fields> = string & keyof Fields 
  * If fields carry ReplySchemaSymbol, adds ReplyTypeBrand<R>.
  */
 type VariantReplyBrand<Fields extends Schema.Struct.Fields> = Fields extends {
-  readonly [ReplySchemaSymbol]: Schema.Schema<infer R, infer _I, infer _RR>;
+  readonly [ReplySchemaSymbol]: Schema.Schema<infer R>;
 }
   ? ReplyTypeBrand<R>
   : unknown;
@@ -119,11 +119,11 @@ type VariantConstructors<D extends Record<string, Schema.Struct.Fields>, Brand> 
           readonly derive: (source: object) => TaggedStructType<K, D[K]> & Brand;
         }
     : ((
-        args: Schema.Struct.Constructor<D[K]>,
+        args: Schema.Struct.Type<D[K]>,
       ) => TaggedStructType<K, D[K]> & Brand & VariantReplyBrand<D[K]>) & {
         readonly derive: (
           source: object,
-          partial?: Partial<Schema.Struct.Constructor<D[K]>>,
+          partial?: Partial<Schema.Struct.Type<D[K]>>,
         ) => TaggedStructType<K, D[K]> & Brand;
         readonly _tag: K;
       };
@@ -151,12 +151,6 @@ interface MachineSchemaBase<D extends Record<string, Schema.Struct.Fields>, Bran
   readonly variants: VariantSchemas<D>;
 
   /**
-   * Reply schemas per variant tag. Only populated for event schemas
-   * with variants defined via `Event.reply()`.
-   */
-  readonly _replySchemas: ReadonlyMap<string, Schema.Schema.Any>;
-
-  /**
    * Type guard: `OrderState.$is("Pending")(value)`
    */
   readonly $is: <Tag extends keyof D & string>(
@@ -172,6 +166,12 @@ interface MachineSchemaBase<D extends Record<string, Schema.Struct.Fields>, Bran
     // Uncurried: $match(value, cases)
     <R>(value: VariantsUnion<D> & Brand, cases: MatchCases<D, R>): R;
   };
+
+  /**
+   * Reply schemas per variant tag. Only populated for event schemas
+   * with variants defined via `Event.reply()`.
+   */
+  readonly _replySchemas: ReadonlyMap<string, Schema.Schema.Any>;
 }
 
 // ============================================================================
@@ -190,7 +190,7 @@ interface MachineSchemaBase<D extends Record<string, Schema.Struct.Fields>, Bran
  */
 export type MachineStateSchema<D extends Record<string, Schema.Struct.Fields>> = Schema.Schema<
   VariantsUnion<D> & FullStateBrand<D>,
-  VariantsUnion<D>,
+  unknown,
   never
 > &
   MachineSchemaBase<D, FullStateBrand<D>> &
@@ -204,7 +204,7 @@ export type MachineStateSchema<D extends Record<string, Schema.Struct.Fields>> =
  */
 export type MachineEventSchema<D extends Record<string, Schema.Struct.Fields>> = Schema.Schema<
   VariantsUnion<D> & FullEventBrand<D>,
-  VariantsUnion<D>,
+  unknown,
   never
 > &
   MachineSchemaBase<D, FullEventBrand<D>> &
@@ -217,14 +217,16 @@ export type MachineEventSchema<D extends Record<string, Schema.Struct.Fields>> =
 /**
  * Build a schema-first definition from a record of tag -> fields
  */
+const RESERVED_DERIVE_KEYS = new Set(["_tag"]);
+
 const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
   definition: D,
 ): {
-  schema: Schema.Schema<VariantsUnion<D>, VariantsUnion<D>, never>;
+  schema: Schema.Schema<VariantsUnion<D>>;
   variants: VariantSchemas<D>;
   constructors: Record<string, (args: Record<string, unknown>) => Record<string, unknown>>;
   _definition: D;
-  _replySchemas: Map<string, Schema.Schema.Any>;
+  replySchemas: Map<string, Schema.Schema.Any>;
   $is: <Tag extends string>(tag: Tag) => (u: unknown) => boolean;
   $match: (valueOrCases: unknown, maybeCases?: unknown) => unknown;
 } => {
@@ -266,7 +268,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
         }
         if (partial !== undefined) {
           for (const [key, value] of Object.entries(partial)) {
-            if (key === "_tag") continue;
+            if (RESERVED_DERIVE_KEYS.has(key)) continue;
             result[key] = value;
           }
         }
@@ -282,7 +284,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
   // Build union schema from all variants
   const variantArray = Object.values(variants);
   if (variantArray.length === 0) {
-    throw new InvalidSchemaError();
+    throw new InvalidSchemaError({ message: "Schema must have at least one variant" });
   }
 
   // Schema.Union requires at least 2 members, handle single variant case
@@ -291,7 +293,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
       ? // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- checked length above
         variantArray[0]!
       : // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic schema union
-        Schema.Union(...(variantArray as [any, any, ...any[]]));
+        Schema.Union(...(variantArray as [any, any]));
 
   // Type guard
   const $is =
@@ -323,11 +325,11 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
   };
 
   return {
-    schema: unionSchema as unknown as Schema.Schema<VariantsUnion<D>, VariantsUnion<D>, never>,
+    schema: unionSchema as unknown as Schema.Schema<VariantsUnion<D>>,
     variants: variants as unknown as VariantSchemas<D>,
     constructors,
     _definition: definition,
-    _replySchemas: replySchemas,
+    replySchemas,
     $is,
     $match,
   };
@@ -338,12 +340,12 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
  * Builds the schema object with variants, constructors, $is, and $match.
  */
 const createMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(definition: D) => {
-  const { schema, variants, constructors, _definition, _replySchemas, $is, $match } =
+  const { schema, variants, constructors, _definition, replySchemas, $is, $match } =
     buildMachineSchema(definition);
   return Object.assign(Object.create(schema), {
     variants,
     _definition,
-    _replySchemas,
+    _replySchemas: replySchemas,
     $is,
     $match,
     ...constructors,
@@ -405,6 +407,9 @@ export const State = <const D extends Record<string, Schema.Struct.Fields>>(
  *
  * // Construct
  * const e = OrderEvent.Ship({ trackingId: "abc" })
+ *
+ * // Typed ask
+ * const total = yield* actor.ask(OrderEvent.GetTotal) // number
  * ```
  */
 const EventImpl = <const D extends Record<string, Schema.Struct.Fields>>(

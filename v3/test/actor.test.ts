@@ -23,6 +23,7 @@ import {
   Slot,
 } from "../src/index.js";
 import { materializeMachine } from "../src/machine.js";
+import { MachineContextTag } from "../src/slot.js";
 import { describe, expect, it, yieldFibers } from "effect-bun-test/v3";
 
 // ============================================================================
@@ -45,25 +46,35 @@ const TestEvent = Event({
 });
 type TestEvent = typeof TestEvent.Type;
 
-const TestGuards = Slot.Guards({
-  isHighValue: {},
+const TestSlots = Slot.define({
+  isHighValue: Slot.fn({}, Schema.Boolean),
 });
+
+const testMachineSlots = {
+  isHighValue: () =>
+    Effect.gen(function* () {
+      const ctx = yield* MachineContextTag;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const event = ctx.event as any;
+      return event._tag === "Update" && event.value > 100;
+    }),
+};
 
 const createTestMachine = () =>
   Machine.make({
     state: TestState,
     event: TestEvent,
-    guards: TestGuards,
+    slots: TestSlots,
     initial: TestState.Idle,
   })
     .on(TestState.Idle, TestEvent.Start, ({ event }) => TestState.Loading({ value: event.value }))
     .on(TestState.Loading, TestEvent.Complete, ({ state }) =>
       TestState.Active({ value: state.value }),
     )
-    .on(TestState.Active, TestEvent.Update, ({ event, guards }) =>
+    .on(TestState.Active, TestEvent.Update, ({ event, slots }) =>
       Effect.gen(function* () {
         // If high value (> 100), double it
-        if (yield* guards.isHighValue()) {
+        if (yield* slots.isHighValue()) {
           return TestState.Active({ value: event.value * 2 });
         }
         return TestState.Active({ value: event.value });
@@ -71,11 +82,6 @@ const createTestMachine = () =>
     )
     .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
     .final(TestState.Done);
-
-const testMachineSlots = {
-  isHighValue: (_params: unknown, { event }: { event: { _tag: string; value?: number } }) =>
-    event._tag === "Update" && (event.value ?? 0) > 100,
-};
 
 // ============================================================================
 // ActorSystem Tests
@@ -145,27 +151,29 @@ describe("ActorSystem", () => {
     Effect.gen(function* () {
       const SimpleState = State({ Idle: {} });
       const SimpleEvent = Event({ Ping: {} });
-      const TestEffects = Slot.Effects({ mark: {} });
+      const TestSlots2 = Slot.define({ mark: Slot.fn({}) });
 
       const counter = yield* Ref.make(0);
 
-      const machine = Machine.make({
-        state: SimpleState,
-        event: SimpleEvent,
-        effects: TestEffects,
-        initial: SimpleState.Idle,
-      }).background(({ effects }) => effects.mark());
+      const machine = materializeMachine(
+        Machine.make({
+          state: SimpleState,
+          event: SimpleEvent,
+          slots: TestSlots2,
+          initial: SimpleState.Idle,
+        }).background(({ slots }) => slots.mark()),
+        { mark: () => Ref.update(counter, (n) => n + 1) },
+      );
 
-      const slots = { mark: () => Ref.update(counter, (n) => n + 1) };
       const system = yield* ActorSystemService;
-      yield* system.spawn("dup-actor", machine, { slots });
+      yield* system.spawn("dup-actor", machine);
       yield* yieldFibers;
 
-      const result = yield* Effect.exit(system.spawn("dup-actor", machine, { slots }));
+      const result = yield* Effect.exit(system.spawn("dup-actor", machine));
       expect(result._tag).toBe("Failure");
       if (result._tag === "Failure") {
         const err = Cause.failureOption(result.cause);
-        expect(Option.isSome(err) && err.value._tag).toBe("DuplicateActorError");
+        expect(Option.isSome(err) && err.value._tag === "DuplicateActorError").toBe(true);
       }
 
       yield* yieldFibers;
@@ -178,23 +186,25 @@ describe("ActorSystem", () => {
     Effect.gen(function* () {
       const SimpleState = State({ Idle: {} });
       const SimpleEvent = Event({ Ping: {} });
-      const TestEffects = Slot.Effects({ mark: {} });
+      const TestSlots3 = Slot.define({ mark: Slot.fn({}) });
 
       const counter = yield* Ref.make(0);
 
-      const machine = Machine.make({
-        state: SimpleState,
-        event: SimpleEvent,
-        effects: TestEffects,
-        initial: SimpleState.Idle,
-      }).background(({ effects }) => effects.mark());
+      const machine = materializeMachine(
+        Machine.make({
+          state: SimpleState,
+          event: SimpleEvent,
+          slots: TestSlots3,
+          initial: SimpleState.Idle,
+        }).background(({ slots }) => slots.mark()),
+        { mark: () => Ref.update(counter, (n) => n + 1) },
+      );
 
-      const slots = { mark: () => Ref.update(counter, (n) => n + 1) };
       const system = yield* ActorSystemService;
       const [resultA, resultB] = yield* Effect.all(
         [
-          Effect.exit(system.spawn("concurrent-actor", machine, { slots })),
-          Effect.exit(system.spawn("concurrent-actor", machine, { slots })),
+          Effect.exit(system.spawn("concurrent-actor", machine)),
+          Effect.exit(system.spawn("concurrent-actor", machine)),
         ],
         { concurrency: "unbounded" },
       );
@@ -203,7 +213,7 @@ describe("ActorSystem", () => {
       expect(failures.length).toBe(1);
       if (failures[0]?._tag === "Failure") {
         const err = Cause.failureOption(failures[0].cause);
-        expect(Option.isSome(err) && err.value._tag).toBe("DuplicateActorError");
+        expect(Option.isSome(err) && err.value._tag === "DuplicateActorError").toBe(true);
       }
 
       yield* yieldFibers;
@@ -212,16 +222,16 @@ describe("ActorSystem", () => {
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
 
-  it.live("build validates missing slot handlers", () =>
+  it.live("materializeMachine validates missing slot handlers", () =>
     Effect.sync(() => {
       const SimpleState = State({ Idle: {} });
       const SimpleEvent = Event({ Ping: {} });
-      const TestEffects = Slot.Effects({ mark: {} });
+      const TestSlots4 = Slot.define({ mark: Slot.fn({}) });
 
       const machine = Machine.make({
         state: SimpleState,
         event: SimpleEvent,
-        effects: TestEffects,
+        slots: TestSlots4,
         initial: SimpleState.Idle,
       });
 
@@ -343,6 +353,38 @@ describe("Machine.spawn", () => {
     }),
   );
 
+  it.scopedLive("spawns with hydrate — restores from saved state", () =>
+    Effect.gen(function* () {
+      const machine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle,
+      })
+        .on(TestState.Idle, TestEvent.Start, ({ event }) =>
+          TestState.Active({ value: event.value }),
+        )
+        .on(TestState.Active, TestEvent.Stop, () => TestState.Done)
+        .final(TestState.Done);
+
+      // Hydrate from a previously-saved snapshot
+      const actor = yield* Machine.spawn(machine, {
+        id: "hydrated-actor",
+        hydrate: TestState.Active({ value: 42 }),
+      });
+
+      expect(actor.id).toBe("hydrated-actor");
+      const state = yield* actor.snapshot;
+      expect(state._tag).toBe("Active");
+      if (state._tag === "Active") {
+        expect(state.value).toBe(42);
+      }
+
+      // Can still process events from the hydrated state
+      const r = yield* actor.call(TestEvent.Stop);
+      expect(r.newState._tag).toBe("Done");
+    }),
+  );
+
   it.live("spawns without scope — caller manages lifetime via actor.stop", () =>
     Effect.gen(function* () {
       const machine = Machine.make({
@@ -374,18 +416,18 @@ describe("Machine.spawn", () => {
     Effect.gen(function* () {
       const cleanedUp: string[] = [];
 
-      const TestEffects = Slot.Effects({ track: {} });
+      const TestSlots5 = Slot.define({ track: Slot.fn({}) });
 
       const machine = Machine.make({
         state: TestState,
         event: TestEvent,
-        effects: TestEffects,
+        slots: TestSlots5,
         initial: TestState.Idle,
       })
         .on(TestState.Idle, TestEvent.Start, ({ event }) =>
           TestState.Active({ value: event.value }),
         )
-        .spawn(TestState.Active, ({ effects }) => effects.track());
+        .spawn(TestState.Active, ({ slots }) => slots.track());
 
       // Run in inner scope
       yield* Effect.scoped(
@@ -416,8 +458,7 @@ describe("ActorRef", () => {
     it.scopedLive("snapshot returns current state (Effect)", () =>
       Effect.gen(function* () {
         const machine = createTestMachine();
-        const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", machine, { slots: testMachineSlots });
+        const actor = yield* Machine.spawn(machine, { id: "test", slots: testMachineSlots });
 
         const state = yield* actor.snapshot;
         expect(state._tag).toBe("Idle");
@@ -427,8 +468,7 @@ describe("ActorRef", () => {
     it.scopedLive("snapshotSync returns current state synchronously", () =>
       Effect.gen(function* () {
         const machine = createTestMachine();
-        const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", machine, { slots: testMachineSlots });
+        const actor = yield* Machine.spawn(machine, { id: "test", slots: testMachineSlots });
 
         const state = actor.sync.snapshot();
         expect(state._tag).toBe("Idle");
@@ -438,8 +478,7 @@ describe("ActorRef", () => {
     it.scopedLive("snapshot updates after transitions", () =>
       Effect.gen(function* () {
         const machine = createTestMachine();
-        const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", machine, { slots: testMachineSlots });
+        const actor = yield* Machine.spawn(machine, { id: "test", slots: testMachineSlots });
 
         const r = yield* actor.call(TestEvent.Start({ value: 42 }));
         expect(r.newState._tag).toBe("Loading");
@@ -452,8 +491,7 @@ describe("ActorRef", () => {
     it.scopedLive("matches returns true for current state", () =>
       Effect.gen(function* () {
         const machine = createTestMachine();
-        const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", machine, { slots: testMachineSlots });
+        const actor = yield* Machine.spawn(machine, { id: "test", slots: testMachineSlots });
 
         const isIdle = yield* actor.matches("Idle");
         expect(isIdle).toBe(true);
@@ -466,8 +504,7 @@ describe("ActorRef", () => {
     it.scopedLive("matchesSync returns synchronously", () =>
       Effect.gen(function* () {
         const machine = createTestMachine();
-        const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", machine, { slots: testMachineSlots });
+        const actor = yield* Machine.spawn(machine, { id: "test", slots: testMachineSlots });
 
         expect(actor.sync.matches("Idle")).toBe(true);
         expect(actor.sync.matches("Loading")).toBe(false);
@@ -477,8 +514,7 @@ describe("ActorRef", () => {
     it.scopedLive("matches updates after transitions", () =>
       Effect.gen(function* () {
         const machine = createTestMachine();
-        const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", machine, { slots: testMachineSlots });
+        const actor = yield* Machine.spawn(machine, { id: "test", slots: testMachineSlots });
 
         const r = yield* actor.call(TestEvent.Start({ value: 10 }));
         expect(r.newState._tag).toBe("Loading");
@@ -491,8 +527,7 @@ describe("ActorRef", () => {
     it.scopedLive("can returns true when transition is possible", () =>
       Effect.gen(function* () {
         const machine = createTestMachine();
-        const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", machine, { slots: testMachineSlots });
+        const actor = yield* Machine.spawn(machine, { id: "test", slots: testMachineSlots });
 
         // In Idle state, can Start
         const canStart = yield* actor.can(TestEvent.Start({ value: 1 }));
@@ -507,8 +542,7 @@ describe("ActorRef", () => {
     it.scopedLive("canSync returns synchronously", () =>
       Effect.gen(function* () {
         const machine = createTestMachine();
-        const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", machine, { slots: testMachineSlots });
+        const actor = yield* Machine.spawn(machine, { id: "test", slots: testMachineSlots });
 
         expect(actor.sync.can(TestEvent.Start({ value: 1 }))).toBe(true);
         expect(actor.sync.can(TestEvent.Complete)).toBe(false);
@@ -518,8 +552,7 @@ describe("ActorRef", () => {
     it.scopedLive("can accounts for guards", () =>
       Effect.gen(function* () {
         const machine = createTestMachine();
-        const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", machine, { slots: testMachineSlots });
+        const actor = yield* Machine.spawn(machine, { id: "test", slots: testMachineSlots });
 
         // Transition to Active state
         yield* actor.call(TestEvent.Start({ value: 10 }));
@@ -540,8 +573,7 @@ describe("ActorRef", () => {
     it.scopedLive("state provides access to SubscriptionRef", () =>
       Effect.gen(function* () {
         const machine = createTestMachine();
-        const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", machine, { slots: testMachineSlots });
+        const actor = yield* Machine.spawn(machine, { id: "test", slots: testMachineSlots });
 
         // Access state directly
         const state = yield* SubscriptionRef.get(actor.state);
@@ -552,16 +584,15 @@ describe("ActorRef", () => {
     it.scopedLive("state changes stream emits on transitions", () =>
       Effect.gen(function* () {
         const machine = createTestMachine();
-        const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", machine, { slots: testMachineSlots });
+        const actor = yield* Machine.spawn(machine, { id: "test", slots: testMachineSlots });
 
         const tags: string[] = [];
 
         // Start collecting changes in background
-        yield* Effect.fork(
+        yield* Effect.forkScoped(
           actor.state.changes.pipe(
             Stream.take(3),
-            Stream.tap((s) =>
+            Stream.tap((s: { _tag: string }) =>
               Effect.sync(() => {
                 tags.push(s._tag);
               }),
@@ -590,8 +621,7 @@ describe("ActorRef", () => {
     it.scopedLive("subscribe notifies on state changes", () =>
       Effect.gen(function* () {
         const machine = createTestMachine();
-        const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", machine, { slots: testMachineSlots });
+        const actor = yield* Machine.spawn(machine, { id: "test", slots: testMachineSlots });
 
         const states: string[] = [];
         const unsubscribe = actor.subscribe((s) => states.push(s._tag));
@@ -611,8 +641,7 @@ describe("ActorRef", () => {
     it.scopedLive("unsubscribe stops notifications", () =>
       Effect.gen(function* () {
         const machine = createTestMachine();
-        const system = yield* ActorSystemService;
-        const actor = yield* system.spawn("test", machine, { slots: testMachineSlots });
+        const actor = yield* Machine.spawn(machine, { id: "test", slots: testMachineSlots });
 
         const states: string[] = [];
         const unsubscribe = actor.subscribe((s) => states.push(s._tag));

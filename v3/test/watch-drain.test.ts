@@ -1,3 +1,4 @@
+// @effect-diagnostics strictEffectProvide:off - tests are entry points
 import { Deferred, Duration, Effect, Schema } from "effect";
 
 import { ActorSystemDefault, ActorSystemService, Machine, State, Event } from "../src/index.js";

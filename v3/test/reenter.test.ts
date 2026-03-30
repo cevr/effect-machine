@@ -120,8 +120,8 @@ describe("Reenter Transitions", () => {
     Finish: {},
   });
 
-  const PollEffects = Slot.Effects({
-    runPollingEffect: {},
+  const PollSlots = Slot.define({
+    runPollingEffect: Slot.fn({}),
   });
 
   it.scopedLive("reenter runs exit/enter for same state tag", () =>
@@ -184,19 +184,19 @@ describe("Reenter Transitions", () => {
       const machine = Machine.make({
         state: PollState,
         event: PollEvent,
-        effects: PollEffects,
+        slots: PollSlots,
         initial: PollState.Polling({ attempts: 0 }),
       })
         .on(PollState.Polling, PollEvent.Poll, () => PollState.Done)
         .reenter(PollState.Polling, PollEvent.Reset, ({ state }) =>
           PollState.Polling.derive(state, { attempts: state.attempts + 1 }),
         )
-        .task(PollState.Polling, ({ effects }) => effects.runPollingEffect(), {
+        .task(PollState.Polling, ({ slots }) => slots.runPollingEffect(), {
           onSuccess: () => PollEvent.Poll,
         });
 
-      const system = yield* ActorSystemService;
-      const actor = yield* system.spawn("poller", machine, {
+      const actor = yield* Machine.spawn(machine, {
+        id: "poller",
         slots: {
           runPollingEffect: () => Effect.sleep("5 seconds"),
         },

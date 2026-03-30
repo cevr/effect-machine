@@ -1,26 +1,20 @@
 // eslint-disable-next-line eslint-plugin-import/namespace -- false positive: Brand is a type namespace in effect
 import type { Brand } from "effect";
 
-// Unique symbols for type-level branding
-declare const StateTypeId: unique symbol;
-declare const EventTypeId: unique symbol;
+// String-based type IDs for branding (v4 Brand requires string keys)
+export type StateTypeId = "effect-machine/StateTypeId";
+export type EventTypeId = "effect-machine/EventTypeId";
 
-export type StateTypeId = typeof StateTypeId;
-export type EventTypeId = typeof EventTypeId;
-
-// Brand interfaces - eslint-disable-next-line comments for false positive namespace warnings
-// eslint-disable-next-line import/namespace
+// Brand interfaces
 export interface StateBrand extends Brand.Brand<StateTypeId> {}
-// eslint-disable-next-line import/namespace
 export interface EventBrand extends Brand.Brand<EventTypeId> {}
 
 // Shared branded type constraints used across all combinators
 export type BrandedState = { readonly _tag: string } & StateBrand;
 export type BrandedEvent = { readonly _tag: string } & EventBrand;
 
-// Unique symbols for schema-level branding (ties brand to specific schema definition)
-declare const SchemaIdTypeId: unique symbol;
-type SchemaIdTypeId = typeof SchemaIdTypeId;
+// String-based schema branding (ties brand to specific schema definition)
+type SchemaIdTypeId = "effect-machine/SchemaIdTypeId";
 
 /**
  * Brand that captures the schema definition type D.
@@ -29,7 +23,6 @@ type SchemaIdTypeId = typeof SchemaIdTypeId;
  */
 export interface SchemaIdBrand<
   _D extends Record<string, unknown>,
-  // eslint-disable-next-line import/namespace
 > extends Brand.Brand<SchemaIdTypeId> {}
 
 /**
@@ -46,9 +39,7 @@ export type FullEventBrand<D extends Record<string, unknown>> = EventBrand & Sch
  * Brand that carries the reply type for an event variant.
  * Present only on events defined with Event.reply().
  */
-declare const ReplyTypeId: unique symbol;
-export type ReplyTypeId = typeof ReplyTypeId;
-// eslint-disable-next-line import/namespace
+export type ReplyTypeId = "effect-machine/ReplyTypeId";
 export interface ReplyTypeBrand<R> extends Brand.Brand<ReplyTypeId> {
   readonly _ReplyType: R;
 }

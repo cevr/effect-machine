@@ -169,7 +169,7 @@ describe("ActorSystem Observation", () => {
 
         // Collect 2 events from stream in background
         const fiber = yield* Stream.runCollect(system.events.pipe(Stream.take(2))).pipe(
-          Effect.fork,
+          Effect.forkScoped,
         );
 
         // Give the stream subscription time to register

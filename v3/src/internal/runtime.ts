@@ -1,3 +1,4 @@
+// @effect-diagnostics anyUnknownInErrorContext:off
 /**
  * Shared runtime kernel for machine event processing.
  *
@@ -24,6 +25,7 @@ import {
   Fiber,
   Queue,
   Ref,
+  Runtime,
   Schema,
   Scope,
   SubscriptionRef,
@@ -33,7 +35,7 @@ import type { Machine, MachineRef } from "../machine.js";
 import type { ActorSystem } from "../actor.js";
 import { ActorSystem as ActorSystemTag } from "../actor.js";
 import type { ProcessEventHooks, ProcessEventResult } from "./transition.js";
-import type { GuardsDef, EffectsDef, MachineContext } from "../slot.js";
+import type { SlotsDef, MachineContext } from "../slot.js";
 import { processEventCore, runSpawnEffects, shouldPostpone } from "./transition.js";
 import { NoReplyError } from "../errors.js";
 import { INTERNAL_INIT_EVENT } from "./utils.js";
@@ -49,7 +51,7 @@ export type RuntimeQueuedEvent<E> =
   | {
       readonly _tag: "sendWait";
       readonly event: E;
-      readonly done: Deferred.Deferred<void>;
+      readonly done: Deferred.Deferred<void, unknown>;
     }
   | {
       readonly _tag: "call";
@@ -89,13 +91,13 @@ export interface RuntimeCellResources<S, E> {
 export interface RuntimeHandle<S, E> {
   /** Enqueue a fire-and-forget event */
   readonly send: (event: E) => Effect.Effect<void>;
-  /** Enqueue event and wait for processing to complete (for RPC Send) */
-  readonly sendWait: (event: E) => Effect.Effect<void>;
+  /** Enqueue event and wait for processing to complete (for RPC Send). Fails on defect. */
+  readonly sendWait: (event: E) => Effect.Effect<void, unknown>;
   /** Enqueue an ask event, returns the reply value */
   readonly ask: (event: E) => Effect.Effect<unknown, NoReplyError>;
   /** Get current state */
   readonly getState: Effect.Effect<S>;
-  /** SubscriptionRef for state observation */
+  /** SubscriptionRef for state observation (WatchState streaming) */
   readonly stateRef: SubscriptionRef.SubscriptionRef<S>;
   /** Whether the runtime has stopped (final state reached) */
   readonly isStopped: Effect.Effect<boolean>;
@@ -185,7 +187,7 @@ export interface ProcessQueuedResult<S> {
  * and querying state. The runtime owns:
  * - Event loop fiber
  * - Postpone buffer
- * - Background effects
+ * - Background effects (under actorScope)
  * - State scope (spawn effects)
  * - Final state detection
  * - Exit reason via exitDeferred
@@ -199,15 +201,18 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
-  GD extends GuardsDef,
-  EFD extends EffectsDef,
+  SD extends SlotsDef,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- wide acceptance for Machine type params
-  machine: Machine<S, E, R, any, any, GD, EFD>,
+  machine: Machine<S, E, R, any, any, SD>,
   system: ActorSystem,
   config: RuntimeConfig<S, E>,
 ) {
   const { actorId, hooks, lifecycle } = config;
+
+  // Capture runtime for fire-and-forget Deferred settlement
+  const rt = yield* Effect.runtime();
+  const fork = Runtime.runFork(rt);
 
   // Resources: use cell-provided or allocate fresh
   const stateRef =
@@ -222,6 +227,12 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
 
   // Actor scope — owns background fibers for this generation
   const actorScope = yield* Scope.make();
+
+  // Pending deferred reply — stored when handler returns Machine.deferReply()
+  // Settled by self.reply() from spawn handler
+  const deferredReplyRef: { current: Deferred.Deferred<unknown, NoReplyError> | undefined } = {
+    current: undefined,
+  };
 
   // Self reference — sends go through the same queue
   const selfSend = Effect.fn("effect-machine.runtime.self.send")(function* (event: E) {
@@ -246,6 +257,16 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
               Effect.tap((child) => onChildSpawned(childId, child)),
             )
         : defaultSpawn,
+    reply: (value: unknown) =>
+      Effect.sync(() => {
+        const deferred = deferredReplyRef.current;
+        if (deferred !== undefined) {
+          deferredReplyRef.current = undefined;
+          fork(Deferred.succeed(deferred, value));
+          return true;
+        }
+        return false;
+      }),
   };
 
   // State scope for spawn effects
@@ -253,7 +274,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
     current: yield* Scope.make(),
   };
 
-  // Fork background effects into actorScope
+  // Fork background effects under actorScope
   const backgroundFibers: Fiber.Fiber<void, never>[] = [];
   const initEvent = { _tag: INTERNAL_INIT_EVENT } as E;
   const ctx: MachineContext<S, E, MachineRef<E>> = {
@@ -263,44 +284,43 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
     self,
     system,
   };
-  const { effects: effectSlots } = machine._slots;
+  const slots = machine._slots;
 
   for (const bg of machine.backgroundEffects) {
-    const fiber = yield* Effect.forkDaemon(
-      bg
-        .handler({
-          actorId,
-          state: machine.initial,
-          event: initEvent,
-          self,
-          effects: effectSlots,
-          system,
-        })
-        .pipe(Effect.provideService(machine.Context, ctx)),
-    );
-    backgroundFibers.push(fiber);
+    const fiber = yield* bg
+      .handler({
+        actorId,
+        state: machine.initial,
+        event: initEvent,
+        self,
+        slots,
+        system,
+      })
+      .pipe(Effect.provideService(machine.Context, ctx), Effect.forkIn(actorScope));
+    backgroundFibers.push(fiber as Fiber.Fiber<void, never>);
   }
 
-  // Run initial spawn effects
+  // Run initial spawn effects — catch defects, tag as initial-spawn, and propagate.
+  // For unsupervised actors this fails createActor (correct: don't register dead actors).
+  // For supervised actors (Step 3), the supervision loop will catch and restart.
   if (lifecycle?.onInitialSpawnEffects !== undefined) {
     yield* lifecycle.onInitialSpawnEffects(machine.initial);
   }
-
-  // Mutable holder for the loop fiber — spawn defect signals need to interrupt the loop
+  // Mutable holder for the loop fiber — initial-spawn fibers that defect asynchronously
+  // need to interrupt the loop, but the loop hasn't been created yet at fork time.
   const loopFiberRef: { current: Fiber.Fiber<void, never> | undefined } = { current: undefined };
-
-  // Spawn defect signal for initial spawn fibers that defect asynchronously
+  // Note: onSpawnDefect for initial spawn fibers that defect asynchronously (after forking).
+  // If they defect later, this signals through exitDeferred and interrupts the loop.
   const initialSpawnDefectSignal = (cause: Cause.Cause<unknown>) =>
     Deferred.succeed(exitDeferred, ActorExit.Defect(cause, "initial-spawn")).pipe(
-      Effect.zipRight(Ref.set(stoppedRef, true)),
-      Effect.zipRight(
+      Effect.andThen(Ref.set(stoppedRef, true)),
+      Effect.andThen(
         Effect.suspend(() =>
           loopFiberRef.current !== undefined ? Fiber.interrupt(loopFiberRef.current) : Effect.void,
         ),
       ),
       Effect.asVoid,
     );
-
   yield* runSpawnEffects(
     machine,
     machine.initial,
@@ -313,6 +333,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
     initialSpawnDefectSignal,
   ).pipe(
     Effect.catchAllCause((cause) => {
+      // Tag as initial-spawn defect, set exit, clean up, then propagate
       return Effect.gen(function* () {
         yield* Ref.set(stoppedRef, true);
         yield* Scope.close(stateScopeRef.current, Exit.void);
@@ -332,18 +353,19 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
     yield* Ref.set(stoppedRef, true);
     yield* Scope.close(stateScopeRef.current, Exit.void);
     yield* Scope.close(actorScope, Exit.void);
-    yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
     yield* setExit(ActorExit.Final(machine.initial));
     return makeHandle(stateRef, stoppedRef, eventQueue, exitDeferred, actorScope);
   }
 
-  // Augment hooks with spawn defect signal
+  // Augment hooks with spawn defect signal — spawn fibers signal through this
+  // instead of dying silently, so the runtime can set exitDeferred and terminate.
+  // Must be created here (in createRuntime) so it has access to loopFiberRef.
   const augmentedHooks: ProcessEventHooks<S, E> = {
     ...hooks,
     onSpawnDefect: (cause: Cause.Cause<unknown>) =>
       Deferred.succeed(exitDeferred, ActorExit.Defect(cause, "spawn")).pipe(
-        Effect.zipRight(Ref.set(stoppedRef, true)),
-        Effect.zipRight(
+        Effect.andThen(Ref.set(stoppedRef, true)),
+        Effect.andThen(
           Effect.suspend(() =>
             loopFiberRef.current !== undefined
               ? Fiber.interrupt(loopFiberRef.current)
@@ -354,7 +376,8 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
       ),
   };
 
-  // Start event loop
+  // Start event loop — forked OUTSIDE actorScope (not a background fiber).
+  // The generation owner fiber below observes its exit and closes actorScope.
   const loopFiber = yield* Effect.forkDaemon(
     runtimeEventLoop(
       machine,
@@ -367,32 +390,51 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
       system,
       exitDeferred,
       augmentedHooks,
+      deferredReplyRef,
       lifecycle,
       config.wrapProcess,
+      fork,
     ),
   );
   loopFiberRef.current = loopFiber;
 
-  // Background defect observer
+  // Background defect observer: Fiber.await each background fiber.
+  // forkIn defects are silent (not propagated to scope), so we must explicitly watch them.
+  // On defect: set exitDeferred with phase "background", then interrupt the event loop.
+  // Interrupt-only exits are normal lifecycle (scope close on stop/final) — not defects.
+  // Forked INTO actorScope — gets interrupted when actorScope closes (no leak).
   if (backgroundFibers.length > 0) {
-    yield* Effect.forkDaemon(
-      Effect.raceAll(
-        backgroundFibers.map((fiber) =>
-          Fiber.await(fiber).pipe(
-            Effect.flatMap((exit) => {
-              if (exit._tag === "Failure" && !Cause.isInterruptedOnly(exit.cause)) {
-                return setExit(ActorExit.Defect(exit.cause, "background")).pipe(
-                  Effect.zipRight(Ref.set(stoppedRef, true)),
-                  Effect.zipRight(Fiber.interrupt(loopFiber)),
-                );
-              }
-              return Effect.never;
-            }),
-          ),
+    yield* Effect.raceAll(
+      backgroundFibers.map((fiber) =>
+        Fiber.await(fiber).pipe(
+          Effect.flatMap((exit) => {
+            if (exit._tag === "Failure" && !Cause.isInterruptedOnly(exit.cause)) {
+              return setExit(ActorExit.Defect(exit.cause, "background")).pipe(
+                Effect.andThen(Ref.set(stoppedRef, true)),
+                Effect.andThen(Fiber.interrupt(loopFiber)),
+              );
+            }
+            // Normal exit or clean interrupt — ignore, wait forever (scope close will interrupt)
+            return Effect.never;
+          }),
         ),
-      ).pipe(Effect.catchAllCause(() => Effect.void)),
-    );
+      ),
+    ).pipe(Effect.forkIn(actorScope));
   }
+
+  // Generation owner: observes loop exit, then closes actorScope to clean up
+  // background fibers. The loop sets exitDeferred before exiting.
+  yield* Effect.forkDaemon(
+    Effect.gen(function* () {
+      const loopExit = yield* Fiber.await(loopFiber);
+      // Close actorScope — interrupts background fibers and their defect watchers
+      if (loopExit._tag === "Success") {
+        yield* Scope.close(actorScope, Exit.void);
+      } else {
+        yield* Scope.close(actorScope, loopExit);
+      }
+    }),
+  );
 
   const stop = Effect.gen(function* () {
     const alreadyStopped = yield* Ref.get(stoppedRef);
@@ -402,7 +444,6 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
     yield* Fiber.interrupt(loopFiber);
     yield* Scope.close(stateScopeRef.current, Exit.void);
     yield* Scope.close(actorScope, Exit.void);
-    yield* Effect.all(backgroundFibers.map(Fiber.interrupt), { concurrency: "unbounded" });
     yield* setExit(ActorExit.Stopped as ActorExit<S>);
   }).pipe(Effect.asVoid);
 
@@ -440,7 +481,7 @@ const makeHandle = <S extends { readonly _tag: string }, E extends { readonly _t
     Effect.gen(function* () {
       const stopped = yield* Ref.get(stoppedRef);
       if (!stopped) {
-        const done = yield* Deferred.make<void>();
+        const done = yield* Deferred.make<void, unknown>();
         yield* Queue.offer(eventQueue, { _tag: "sendWait", event, done });
         yield* Deferred.await(done);
       }
@@ -473,11 +514,10 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
-  GD extends GuardsDef,
-  EFD extends EffectsDef,
+  SD extends SlotsDef,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- wide acceptance
-  machine: Machine<S, E, R, any, any, GD, EFD>,
+  machine: Machine<S, E, R, any, any, SD>,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
   eventQueue: Queue.Queue<RuntimeQueuedEvent<E>>,
   stoppedRef: Ref.Ref<boolean>,
@@ -487,13 +527,19 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
   system: ActorSystem,
   exitDeferred: Deferred.Deferred<ActorExit<S>, never>,
   hooks?: ProcessEventHooks<S, E>,
+  deferredReplyRef?: { current: Deferred.Deferred<unknown, NoReplyError> | undefined },
   lifecycle?: RuntimeLifecycleHooks<S, E>,
   wrapProcess?: (
     state: S,
     event: E,
     inner: Effect.Effect<ProcessQueuedResult<S>>,
   ) => Effect.Effect<ProcessQueuedResult<S>>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  fork?: (effect: Effect.Effect<any>) => Fiber.Fiber<any>,
 ) {
+  // Fire-and-forget fork with captured services
+  const forkEffect = fork ?? Effect.runFork;
+
   // Event-bearing queue variants (excludes drain sentinel)
   type EventQueued = Exclude<RuntimeQueuedEvent<E>, { readonly _tag: "drain" }>;
 
@@ -589,7 +635,7 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
             let decoded: unknown;
             // @effect-diagnostics tryCatchInEffectGen:off
             try {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema.Any has R=unknown, decodeUnknownSync needs R=never
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               decoded = Schema.decodeUnknownSync(replySchema as Schema.Schema<any, any, never>)(
                 result.reply,
               );
@@ -601,6 +647,9 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
           } else {
             yield* Deferred.succeed(queued.reply, result.reply);
           }
+        } else if (result.deferReply && deferredReplyRef !== undefined) {
+          // Handler returned Machine.deferReply() — spawn handler will call self.reply()
+          deferredReplyRef.current = queued.reply;
         } else {
           yield* Deferred.fail(queued.reply, new NoReplyError({ actorId, eventTag: event._tag }));
         }
@@ -631,20 +680,20 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
     Effect.gen(function* () {
       yield* Ref.set(stoppedRef, true);
       if (lifecycle?.onShutdown !== undefined) yield* lifecycle.onShutdown();
-      settlePostponed(postponed, actorId);
-      // Drain remaining events from queue and settle their Deferreds
+      settlePostponed(postponed, actorId, forkEffect);
+      // Drain remaining events non-blocking
       const remaining = yield* Queue.takeAll(eventQueue);
       for (const entry of remaining) {
         if (entry._tag === "sendWait") {
-          Effect.runFork(Deferred.succeed(entry.done, undefined));
+          forkEffect(Deferred.succeed(entry.done, undefined));
         } else if (entry._tag === "ask") {
-          Effect.runFork(
+          forkEffect(
             Deferred.fail(entry.reply, new NoReplyError({ actorId, eventTag: entry.event._tag })),
           );
         } else if (entry._tag === "call") {
           // Settle with a stopped result
           const currentState = yield* SubscriptionRef.get(stateRef);
-          Effect.runFork(
+          forkEffect(
             Deferred.succeed(entry.reply, {
               newState: currentState,
               previousState: currentState,
@@ -660,6 +709,8 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
         }
       }
       yield* Scope.close(stateScopeRef.current, Exit.void);
+      // actorScope is closed by the generation owner fiber (which observes loop exit),
+      // or by stop(). Not closed here — the loop just sets the exit reason and returns.
       yield* setExit(exitReason);
     });
 
@@ -688,15 +739,16 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
       Effect.catchAllCause((cause) => {
         // On defect: settle the current event's Deferred, run shutdown cleanup, then die
         if (queued._tag === "sendWait") {
-          Effect.runFork(Deferred.succeed(queued.done, undefined));
+          forkEffect(Deferred.failCause(queued.done, cause));
         } else if (queued._tag === "ask") {
-          Effect.runFork(Deferred.die(queued.reply, cause));
+          forkEffect(Deferred.die(queued.reply, cause));
         } else if (queued._tag === "call") {
-          Effect.runFork(Deferred.failCause(queued.reply, cause));
+          forkEffect(Deferred.failCause(queued.reply, cause));
         }
+        // Determine defect phase from cause
         const phase: DefectPhase = "transition";
         return shutdown(ActorExit.Defect(cause, phase)).pipe(
-          Effect.zipRight(Effect.failCause(cause)),
+          Effect.andThen(Effect.failCause(cause)),
         );
       }),
     );
@@ -731,14 +783,14 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
 const settlePostponed = <E extends { readonly _tag: string }>(
   postponed: Exclude<RuntimeQueuedEvent<E>, { readonly _tag: "drain" }>[],
   actorId: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  forkFn: (effect: Effect.Effect<any>) => Fiber.Fiber<any>,
 ): void => {
   for (const entry of postponed) {
     if (entry._tag === "ask") {
-      Effect.runFork(
-        Deferred.fail(entry.reply, new NoReplyError({ actorId, eventTag: entry.event._tag })),
-      );
+      forkFn(Deferred.fail(entry.reply, new NoReplyError({ actorId, eventTag: entry.event._tag })));
     } else if (entry._tag === "sendWait") {
-      Effect.runFork(Deferred.succeed(entry.done, undefined));
+      forkFn(Deferred.succeed(entry.done, undefined));
     }
     // call entries in postpone buffer were already settled on postpone
     // send entries have no Deferred

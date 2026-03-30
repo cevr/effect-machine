@@ -147,15 +147,14 @@ describe("Cluster Integration with MachineSchema", () => {
       .final(TaskState.Done);
 
     await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const system = yield* ActorSystemService;
-          const actor = yield* system.spawn("task", taskMachine);
-          yield* actor.send(TaskEvent.Start);
-          const finalState = yield* actor.awaitFinal;
-          expect(finalState._tag).toBe("Done");
-        }),
-      ).pipe(Effect.provide(ActorSystemDefault)),
+      // @ts-expect-error — v3 generator inference doesn't remove Scope via Effect.scoped
+      Effect.gen(function* () {
+        const system = yield* ActorSystemService;
+        const actor = yield* system.spawn("task", taskMachine);
+        yield* actor.send(TaskEvent.Start);
+        const finalState = yield* actor.awaitFinal;
+        expect(finalState._tag).toBe("Done");
+      }).pipe(Effect.scoped, Effect.provide(ActorSystemDefault)),
     );
   });
 
@@ -235,19 +234,19 @@ describe("Entity.makeTestClient with machine handler", () => {
   });
   type CounterEvent = typeof CounterEvent.Type;
 
-  const CounterGuards = Slot.Guards({
-    underLimit: {},
+  const CounterSlots = Slot.define({
+    underLimit: Slot.fn({}, Schema.Boolean),
   });
 
   const counterMachine = Machine.make({
     state: CounterState,
     event: CounterEvent,
-    guards: CounterGuards,
+    slots: CounterSlots,
     initial: CounterState.Counting({ count: 0 }),
   })
-    .on(CounterState.Counting, CounterEvent.Increment, ({ state, guards }) =>
+    .on(CounterState.Counting, CounterEvent.Increment, ({ state, slots }) =>
       Effect.gen(function* () {
-        if (yield* guards.underLimit()) {
+        if (yield* slots.underLimit()) {
           return CounterState.Counting({ count: state.count + 1 });
         }
         return state;
@@ -259,8 +258,10 @@ describe("Entity.makeTestClient with machine handler", () => {
     .final(CounterState.Done);
 
   const counterMachineSlots = {
-    underLimit: (_params: unknown, { state }: { state: { _tag: string; count?: number } }) =>
-      state._tag === "Counting" && (state.count ?? 0) < 3,
+    underLimit: () =>
+      counterMachine.Context.pipe(
+        Effect.map((ctx) => ctx.state._tag === "Counting" && ((ctx.state as any).count ?? 0) < 3),
+      ),
   };
 
   // Entity using MachineSchema directly as schemas
@@ -303,8 +304,7 @@ describe("Entity.makeTestClient with machine handler", () => {
               const handlerResult = transition.handler({
                 state: currentState,
                 event,
-                guards: {} as any,
-                effects: {} as any,
+                slots: {} as any,
               });
               const newState = Effect.isEffect(handlerResult)
                 ? yield* handlerResult as Effect.Effect<OrderState>

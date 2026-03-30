@@ -4,16 +4,17 @@ export * as Machine from "./machine.js";
 // Slot module
 export { Slot } from "./slot.js";
 export type {
-  GuardsSchema,
-  EffectsSchema,
-  GuardsDef,
-  EffectsDef,
-  GuardSlots,
-  EffectSlots,
-  GuardSlot,
-  EffectSlot as SlotEffectSlot,
-  GuardHandlers,
-  EffectHandlers as SlotEffectHandlers,
+  SlotsDef,
+  SlotsSchema,
+  SlotCalls,
+  SlotCall,
+  SlotFnDef,
+  SlotHandler,
+  SlotRequest,
+  SlotResult,
+  SlotInvocation,
+  ProvideSlots,
+  HasSlotKeys,
   MachineContext,
 } from "./slot.js";
 
@@ -28,6 +29,7 @@ export {
   NoReplyError,
   PersistenceError,
   ProvisionValidationError,
+  SlotCodecError,
   SlotProvisionError,
   VersionConflictError,
 } from "./errors.js";
@@ -47,10 +49,9 @@ export type {
   HandlerContext,
   StateHandlerContext,
   TaskOptions,
-  ProvideHandlers,
-  ReplyResult,
-  SlotContext,
   TimeoutConfig,
+  ReplyResult,
+  DeferReplyResult,
 } from "./machine.js";
 
 // Actor types and system

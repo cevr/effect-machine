@@ -236,17 +236,18 @@ describe(".postpone()", () => {
       const actor = yield* Machine.spawn(machine);
 
       // call will block until event is processed — but we stop before that
-      const fiber = yield* Effect.fork(
-        actor.call(ConnEvent.Data({ payload: "x" })).pipe(Effect.exit),
-      );
+      const fiber = yield* actor
+        .call(ConnEvent.Data({ payload: "x" }))
+        .pipe(Effect.exit, Effect.forkScoped);
 
       yield* yieldFibers;
       yield* actor.stop;
       yield* yieldFibers;
 
-      const exit = yield* Fiber.join(fiber);
-      // call on stopped actor returns a non-transitioned result
-      expect(exit._tag).toBe("Success");
+      const result = yield* Fiber.join(fiber);
+      // call on stopped actor returns a non-transitioned result (not a failure)
+      // since call catches ActorStoppedError and returns a default result
+      expect(result._tag).toBe("Success");
     }),
   );
 
