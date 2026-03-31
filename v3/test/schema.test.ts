@@ -276,6 +276,125 @@ describe("State.derive()", () => {
   });
 });
 
+describe("State.derive() (union-level)", () => {
+  const TS = State({
+    Idle: { queue: Schema.Array(Schema.String), currentAgent: Schema.optional(Schema.String) },
+    Streaming: {
+      queue: Schema.Array(Schema.String),
+      currentAgent: Schema.optional(Schema.String),
+      model: Schema.String,
+    },
+    Done: {},
+  });
+  type TSType = typeof TS.Type;
+
+  test("preserves variant subtype when deriving on same variant", () => {
+    const idle = TS.Idle({ queue: ["a"], currentAgent: "x" });
+    const updated = TS.derive(idle, { queue: ["b"] });
+
+    expect(updated._tag).toBe("Idle");
+    expect(updated.queue).toEqual(["b"]);
+    expect(updated.currentAgent).toBe("x");
+  });
+
+  test("preserves specific variant type through narrowing", () => {
+    const streaming = TS.Streaming({ queue: [], currentAgent: "x", model: "gpt-4" });
+    // Type-level: TS.derive returns the same specific type
+    const updated: Extract<TSType, { _tag: "Streaming" }> = TS.derive(streaming, { queue: ["a"] });
+
+    expect(updated._tag).toBe("Streaming");
+    expect(updated.model).toBe("gpt-4");
+    expect(updated.queue).toEqual(["a"]);
+  });
+
+  test("works on union-typed value (runtime dispatch)", () => {
+    const states: TSType[] = [
+      TS.Idle({ queue: ["old"], currentAgent: "a" }),
+      TS.Streaming({ queue: ["old"], currentAgent: "b", model: "gpt" }),
+    ];
+
+    for (const state of states) {
+      if (state._tag === "Done") continue;
+      const updated = TS.derive(state, { queue: ["new"] });
+      expect(updated._tag).toBe(state._tag);
+      expect(updated.queue).toEqual(["new"]);
+    }
+  });
+
+  test("empty variant derive returns tagged value", () => {
+    const done = TS.Done;
+    const derived = TS.derive(done);
+
+    expect(derived._tag).toBe("Done");
+    expect(Object.keys(derived)).toEqual(["_tag"]);
+  });
+
+  test("partial overrides win over source fields", () => {
+    const s = TS.Idle({ queue: ["a"], currentAgent: "old" });
+    const updated = TS.derive(s, { currentAgent: "new" });
+
+    expect(updated.currentAgent).toBe("new");
+    expect(updated.queue).toEqual(["a"]);
+  });
+
+  test("works without partial (copy)", () => {
+    const s = TS.Streaming({ queue: ["a"], currentAgent: "x", model: "m" });
+    const copy = TS.derive(s);
+
+    expect(copy._tag).toBe("Streaming");
+    expect(copy.queue).toEqual(["a"]);
+    expect(copy.model).toBe("m");
+  });
+
+  test("partial keys not in target variant are dropped", () => {
+    const idle = TS.Idle({ queue: [], currentAgent: "x" });
+    // model is not a field of Idle — should be dropped
+    const updated = TS.derive(idle, { queue: ["a"], model: "gpt-4" } as never);
+
+    expect(updated._tag).toBe("Idle");
+    expect(updated.queue).toEqual(["a"]);
+    expect((updated as unknown as Record<string, unknown>)["model"]).toBeUndefined();
+  });
+
+  test("throws on unknown _tag", () => {
+    const fake = { _tag: "NonExistent", queue: [] } as never;
+    expect(() => TS.derive(fake)).toThrow();
+  });
+});
+
+describe("Event.derive() (union-level)", () => {
+  const TE = Event({
+    Start: { input: Schema.String },
+    Stop: { reason: Schema.String },
+    Ping: {},
+  });
+  type TEType = typeof TE.Type;
+
+  test("preserves variant subtype", () => {
+    const start = TE.Start({ input: "hello" });
+    const updated = TE.derive(start, { input: "world" });
+
+    expect(updated._tag).toBe("Start");
+    expect(updated.input).toBe("world");
+  });
+
+  test("works on union-typed event", () => {
+    const events: TEType[] = [TE.Start({ input: "a" }), TE.Stop({ reason: "done" })];
+
+    for (const e of events) {
+      const copy = TE.derive(e);
+      expect(copy._tag).toBe(e._tag);
+    }
+  });
+
+  test("empty variant derive returns tagged value", () => {
+    const ping = TE.Ping;
+    const derived = TE.derive(ping);
+
+    expect(derived._tag).toBe("Ping");
+  });
+});
+
 describe("Event (schema-first)", () => {
   test("creates event constructors", () => {
     const OrderEvent = Event({
