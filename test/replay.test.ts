@@ -221,6 +221,7 @@ describe("actor.transitions", () => {
     Effect.gen(function* () {
       const machine = createMachine();
       const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
 
       const collected: Array<{ from: string; to: string; event: string }> = [];
       yield* Effect.forkDetach(
@@ -256,6 +257,7 @@ describe("actor.transitions", () => {
     Effect.gen(function* () {
       const machine = createMachine();
       const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
 
       const collected: string[] = [];
       yield* Effect.forkDetach(

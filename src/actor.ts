@@ -115,6 +115,16 @@ export interface ActorRef<State extends { readonly _tag: string }, Event> {
   /** Stop the actor gracefully. */
   readonly stop: Effect.Effect<void>;
 
+  /**
+   * Start the actor — fork event loop, background effects, spawn effects.
+   * Idempotent: first caller runs initialization, subsequent callers await completion.
+   * Events sent before start() are queued and processed when start() runs.
+   *
+   * Called automatically by `system.spawn`. For `Machine.spawn`, the caller
+   * must call `start` explicitly.
+   */
+  readonly start: Effect.Effect<void>;
+
   /** Get current state snapshot. */
   readonly snapshot: Effect.Effect<State>;
 
@@ -326,6 +336,7 @@ export const buildActorRefCore = <
   stoppedRef: Ref.Ref<boolean>,
   listeners: Listeners<S>,
   stop: Effect.Effect<void>,
+  start: Effect.Effect<void>,
   system: ActorSystem,
   childrenMap: ReadonlyMap<string, ActorRef<AnyState, unknown>>,
   pendingReplies: Set<Deferred.Deferred<unknown, unknown>>,
@@ -478,6 +489,7 @@ export const buildActorRefCore = <
     ask: ask as ActorRef<S, E>["ask"],
     state: stateRef,
     stop,
+    start,
     snapshot,
     matches,
     can,
@@ -677,6 +689,7 @@ const runSupervisionLoop = <
           : params.machine;
       const newRuntime = yield* params.spawnGeneration(machineForRestart);
       params.runtimeRef.current = newRuntime;
+      yield* newRuntime.start;
       generation++;
 
       if (params.onRestart !== undefined) {
@@ -949,6 +962,14 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     }
   }).pipe(Effect.withSpan("effect-machine.actor.stop"), Effect.asVoid);
 
+  // Build actor start — delegates to the current runtime's start
+  const start = Effect.gen(function* () {
+    const currentRuntime = runtimeRef.current;
+    if (currentRuntime !== undefined) {
+      yield* currentRuntime.start;
+    }
+  }).pipe(Effect.withSpan("effect-machine.actor.start"), Effect.asVoid);
+
   return buildActorRefCore(
     id,
     machine,
@@ -957,6 +978,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     stoppedRef,
     listeners,
     stop,
+    start,
     system,
     childrenMap,
     pendingReplies,
@@ -1110,6 +1132,10 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
           : undefined,
     });
     actorRef = actor as unknown as ActorRef<AnyState, unknown>;
+    // Auto-start: system.spawn returns a running actor
+    yield* actor.start.pipe(
+      Effect.catchCause((cause) => actor.stop.pipe(Effect.andThen(Effect.failCause(cause)))),
+    );
     return yield* registerActor(id, actor);
   });
 

@@ -169,6 +169,7 @@ export const EntityMachine = {
         childIdPrefix: `${entityId}/`,
         cellResources: { stateRef, stoppedRef, eventQueue },
       });
+      yield* runtime.start;
 
       // ----------------------------------------------------------------
       // Persistence: snapshot scheduling

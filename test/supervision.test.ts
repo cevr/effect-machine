@@ -39,6 +39,7 @@ describe("supervision: restart on defect", () => {
       const actor = yield* Machine.spawn(machine, {
         supervision: Supervision.restart({ maxRestarts: 3 }),
       });
+      yield* actor.start;
 
       // Drive to Active state
       yield* actor.send(E.Start({ count: 10 }));
@@ -85,6 +86,7 @@ describe("supervision: final state", () => {
       const actor = yield* Machine.spawn(machine, {
         supervision: Supervision.restart({ maxRestarts: 3 }),
       });
+      yield* actor.start;
 
       yield* actor.send(E.Start({ count: 0 }));
       yield* actor.send(E.Finish);
@@ -111,6 +113,7 @@ describe("supervision: explicit stop", () => {
       const actor = yield* Machine.spawn(machine, {
         supervision: Supervision.restart({ maxRestarts: 3 }),
       });
+      yield* actor.start;
 
       yield* actor.send(E.Start({ count: 0 }));
       yield* Effect.yieldNow;
@@ -135,6 +138,7 @@ describe("supervision: drain", () => {
       const actor = yield* Machine.spawn(machine, {
         supervision: Supervision.restart({ maxRestarts: 3 }),
       });
+      yield* actor.start;
 
       yield* actor.send(E.Start({ count: 0 }));
       yield* Effect.yieldNow;
@@ -164,6 +168,7 @@ describe("supervision: budget exceeded", () => {
       const actor = yield* Machine.spawn(crashMachine, {
         supervision: Supervision.restart({ maxRestarts: 2 }),
       });
+      yield* actor.start;
 
       // Each Start will crash, restart, and we send again
       yield* actor.send(E.Start({ count: 0 }));
@@ -265,6 +270,7 @@ describe("awaitExit (unsupervised)", () => {
   it.scopedLive("resolves with Final on clean completion", () =>
     Effect.gen(function* () {
       const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
 
       yield* actor.send(E.Start({ count: 0 }));
       yield* actor.send(E.Finish);
@@ -280,6 +286,7 @@ describe("awaitExit (unsupervised)", () => {
   it.scopedLive("resolves with Stopped on explicit stop", () =>
     Effect.gen(function* () {
       const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
       yield* actor.stop;
       yield* yieldFibers;
 
@@ -311,6 +318,7 @@ describe("supervision: background crash", () => {
       const actor = yield* Machine.spawn(bgCrashMachine, {
         supervision: Supervision.restart({ maxRestarts: 2 }),
       });
+      yield* actor.start;
 
       // Wait for background to crash and restart to complete
       yield* Effect.sleep(Duration.millis(200));
@@ -346,6 +354,7 @@ describe("supervision: pending requests", () => {
       const actor = yield* Machine.spawn(replyMachine, {
         supervision: Supervision.restart({ maxRestarts: 1 }),
       });
+      yield* actor.start;
 
       yield* actor.send(ReplyE.SetCount({ count: 5 }));
       yield* Effect.yieldNow;

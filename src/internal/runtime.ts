@@ -102,6 +102,12 @@ export interface RuntimeHandle<S, E> {
   readonly isStopped: Effect.Effect<boolean>;
   /** Stop the runtime (interrupt event loop, clean up) */
   readonly stop: Effect.Effect<void>;
+  /**
+   * Start the runtime — fork event loop, background effects, spawn effects.
+   * Idempotent: first caller runs initialization, subsequent callers await completion.
+   * Events sent before start() are queued and processed when start() runs.
+   */
+  readonly start: Effect.Effect<void>;
   /** @internal — raw event queue for direct enqueue (actor.ts uses this for pendingReplies tracking) */
   readonly _queue: Queue.Queue<RuntimeQueuedEvent<E>>;
   /** @internal — stopped ref for direct access */
@@ -273,8 +279,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
     current: yield* Scope.make(),
   };
 
-  // Fork background effects under actorScope
-  const backgroundFibers: Fiber.Fiber<void, never>[] = [];
+  // Shared mutable refs used by both start() and stop()
   const initEvent = { _tag: INTERNAL_INIT_EVENT } as E;
   const ctx: MachineContext<S, E, MachineRef<E>> = {
     actorId,
@@ -285,84 +290,51 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
   };
   const slots = machine._slots;
 
-  for (const bg of machine.backgroundEffects) {
-    const fiber = yield* bg
-      .handler({
-        actorId,
-        state: machine.initial,
-        event: initEvent,
-        self,
-        slots,
-        system,
-      })
-      .pipe(Effect.provideService(machine.Context, ctx), Effect.forkIn(actorScope));
-    backgroundFibers.push(fiber as Fiber.Fiber<void, never>);
-  }
-
-  // Run initial spawn effects — catch defects, tag as initial-spawn, and propagate.
-  // For unsupervised actors this fails createActor (correct: don't register dead actors).
-  // For supervised actors (Step 3), the supervision loop will catch and restart.
-  if (lifecycle?.onInitialSpawnEffects !== undefined) {
-    yield* lifecycle.onInitialSpawnEffects(machine.initial);
-  }
-  // Mutable holder for the loop fiber — initial-spawn fibers that defect asynchronously
-  // need to interrupt the loop, but the loop hasn't been created yet at fork time.
+  // Mutable holder for the loop fiber — needed by stop() and spawn defect signals
   const loopFiberRef: { current: Fiber.Fiber<void, never> | undefined } = { current: undefined };
-  // Note: onSpawnDefect for initial spawn fibers that defect asynchronously (after forking).
-  // If they defect later, this signals through exitDeferred and interrupts the loop.
-  const initialSpawnDefectSignal = (cause: Cause.Cause<unknown>) =>
-    Deferred.succeed(exitDeferred, ActorExit.Defect(cause, "initial-spawn")).pipe(
-      Effect.andThen(Ref.set(stoppedRef, true)),
-      Effect.andThen(
-        Effect.suspend(() =>
-          loopFiberRef.current !== undefined ? Fiber.interrupt(loopFiberRef.current) : Effect.void,
-        ),
-      ),
-      Effect.asVoid,
-    );
-  yield* runSpawnEffects(
-    machine,
-    machine.initial,
-    initEvent,
-    self,
-    stateScopeRef.current,
-    system,
-    actorId,
-    hooks?.onError,
-    initialSpawnDefectSignal,
-  ).pipe(
-    Effect.catchCause((cause) => {
-      // Tag as initial-spawn defect, set exit, clean up, then propagate
-      return Effect.gen(function* () {
-        yield* Ref.set(stoppedRef, true);
-        yield* Scope.close(stateScopeRef.current, Exit.void);
-        yield* Scope.close(actorScope, Exit.void);
-        yield* Deferred.succeed(exitDeferred, ActorExit.Defect(cause, "initial-spawn"));
-        return yield* Effect.failCause(cause);
-      });
-    }),
-  );
 
   /** Set the exit deferred exactly once. */
   const setExit = (exit: ActorExit<S>) => Deferred.succeed(exitDeferred, exit).pipe(Effect.asVoid);
 
-  // Check if initial state is final
-  if (machine.finalStates.has(machine.initial._tag)) {
-    if (lifecycle?.onFinal !== undefined) yield* lifecycle.onFinal(machine.initial);
-    yield* Ref.set(stoppedRef, true);
-    yield* Scope.close(stateScopeRef.current, Exit.void);
-    yield* Scope.close(actorScope, Exit.void);
-    yield* setExit(ActorExit.Final(machine.initial));
-    return makeHandle(stateRef, stoppedRef, eventQueue, exitDeferred, actorScope);
-  }
+  // Idempotent start gate — first caller runs initialization, subsequent callers await
+  const startDeferred = yield* Deferred.make<void, unknown>();
+  const startedRef = yield* Ref.make(false);
 
-  // Augment hooks with spawn defect signal — spawn fibers signal through this
-  // instead of dying silently, so the runtime can set exitDeferred and terminate.
-  // Must be created here (in createRuntime) so it has access to loopFiberRef.
-  const augmentedHooks: ProcessEventHooks<S, E> = {
-    ...hooks,
-    onSpawnDefect: (cause: Cause.Cause<unknown>) =>
-      Deferred.succeed(exitDeferred, ActorExit.Defect(cause, "spawn")).pipe(
+  const start = Effect.gen(function* () {
+    // Idempotent: if already started, just await completion
+    const alreadyStarted = yield* Ref.getAndSet(startedRef, true);
+    if (alreadyStarted) {
+      yield* Deferred.await(startDeferred);
+      return;
+    }
+
+    // Fork background effects under actorScope
+    const backgroundFibers: Fiber.Fiber<void, never>[] = [];
+
+    for (const bg of machine.backgroundEffects) {
+      const fiber = yield* bg
+        .handler({
+          actorId,
+          state: machine.initial,
+          event: initEvent,
+          self,
+          slots,
+          system,
+        })
+        .pipe(Effect.provideService(machine.Context, ctx), Effect.forkIn(actorScope));
+      backgroundFibers.push(fiber as Fiber.Fiber<void, never>);
+    }
+
+    // Run initial spawn effects — catch defects, tag as initial-spawn, and propagate.
+    // For unsupervised actors this fails createActor (correct: don't register dead actors).
+    // For supervised actors (Step 3), the supervision loop will catch and restart.
+    if (lifecycle?.onInitialSpawnEffects !== undefined) {
+      yield* lifecycle.onInitialSpawnEffects(machine.initial);
+    }
+    // Note: onSpawnDefect for initial spawn fibers that defect asynchronously (after forking).
+    // If they defect later, this signals through exitDeferred and interrupts the loop.
+    const initialSpawnDefectSignal = (cause: Cause.Cause<unknown>) =>
+      Deferred.succeed(exitDeferred, ActorExit.Defect(cause, "initial-spawn")).pipe(
         Effect.andThen(Ref.set(stoppedRef, true)),
         Effect.andThen(
           Effect.suspend(() =>
@@ -372,67 +344,124 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
           ),
         ),
         Effect.asVoid,
-      ),
-  };
-
-  // Start event loop — forked OUTSIDE actorScope (not a background fiber).
-  // The generation owner fiber below observes its exit and closes actorScope.
-  const loopFiber = yield* Effect.forkDetach(
-    runtimeEventLoop(
+      );
+    yield* runSpawnEffects(
       machine,
-      stateRef,
-      eventQueue,
-      stoppedRef,
+      machine.initial,
+      initEvent,
       self,
-      stateScopeRef,
-      actorId,
+      stateScopeRef.current,
       system,
-      exitDeferred,
-      augmentedHooks,
-      deferredReplyRef,
-      lifecycle,
-      config.wrapProcess,
-      fork,
-    ),
-  );
-  loopFiberRef.current = loopFiber;
+      actorId,
+      hooks?.onError,
+      initialSpawnDefectSignal,
+    ).pipe(
+      Effect.catchCause((cause) => {
+        // Tag as initial-spawn defect, set exit, clean up, then propagate
+        return Effect.gen(function* () {
+          yield* Ref.set(stoppedRef, true);
+          yield* Scope.close(stateScopeRef.current, Exit.void);
+          yield* Scope.close(actorScope, Exit.void);
+          yield* Deferred.succeed(exitDeferred, ActorExit.Defect(cause, "initial-spawn"));
+          return yield* Effect.failCause(cause);
+        });
+      }),
+    );
 
-  // Background defect observer: Fiber.await each background fiber.
-  // forkIn defects are silent (not propagated to scope), so we must explicitly watch them.
-  // On defect: set exitDeferred with phase "background", then interrupt the event loop.
-  // Interrupt-only exits are normal lifecycle (scope close on stop/final) — not defects.
-  // Forked INTO actorScope — gets interrupted when actorScope closes (no leak).
-  if (backgroundFibers.length > 0) {
-    yield* Effect.raceAll(
-      backgroundFibers.map((fiber) =>
-        Fiber.await(fiber).pipe(
-          Effect.flatMap((exit) => {
-            if (exit._tag === "Failure" && !Cause.hasInterruptsOnly(exit.cause)) {
-              return setExit(ActorExit.Defect(exit.cause, "background")).pipe(
-                Effect.andThen(Ref.set(stoppedRef, true)),
-                Effect.andThen(Fiber.interrupt(loopFiber)),
-              );
-            }
-            // Normal exit or clean interrupt — ignore, wait forever (scope close will interrupt)
-            return Effect.never;
-          }),
+    // Check if initial state is final — if so, clean up and signal done
+    if (machine.finalStates.has(machine.initial._tag)) {
+      if (lifecycle?.onFinal !== undefined) yield* lifecycle.onFinal(machine.initial);
+      yield* Ref.set(stoppedRef, true);
+      yield* Scope.close(stateScopeRef.current, Exit.void);
+      yield* Scope.close(actorScope, Exit.void);
+      yield* setExit(ActorExit.Final(machine.initial));
+      yield* Deferred.succeed(startDeferred, undefined);
+      return;
+    }
+
+    // Augment hooks with spawn defect signal — spawn fibers signal through this
+    // instead of dying silently, so the runtime can set exitDeferred and terminate.
+    const augmentedHooks: ProcessEventHooks<S, E> = {
+      ...hooks,
+      onSpawnDefect: (cause: Cause.Cause<unknown>) =>
+        Deferred.succeed(exitDeferred, ActorExit.Defect(cause, "spawn")).pipe(
+          Effect.andThen(Ref.set(stoppedRef, true)),
+          Effect.andThen(
+            Effect.suspend(() =>
+              loopFiberRef.current !== undefined
+                ? Fiber.interrupt(loopFiberRef.current)
+                : Effect.void,
+            ),
+          ),
+          Effect.asVoid,
         ),
-      ),
-    ).pipe(Effect.forkIn(actorScope));
-  }
+    };
 
-  // Generation owner: observes loop exit, then closes actorScope to clean up
-  // background fibers. The loop sets exitDeferred before exiting.
-  yield* Effect.forkDetach(
-    Effect.gen(function* () {
-      const loopExit = yield* Fiber.await(loopFiber);
-      // Close actorScope — interrupts background fibers and their defect watchers
-      if (loopExit._tag === "Success") {
-        yield* Scope.close(actorScope, Exit.void);
-      } else {
-        yield* Scope.close(actorScope, loopExit);
-      }
-    }),
+    // Start event loop — forked OUTSIDE actorScope (not a background fiber).
+    // The generation owner fiber below observes its exit and closes actorScope.
+    const loopFiber = yield* Effect.forkDetach(
+      runtimeEventLoop(
+        machine,
+        stateRef,
+        eventQueue,
+        stoppedRef,
+        self,
+        stateScopeRef,
+        actorId,
+        system,
+        exitDeferred,
+        augmentedHooks,
+        deferredReplyRef,
+        lifecycle,
+        config.wrapProcess,
+        fork,
+      ),
+    );
+    loopFiberRef.current = loopFiber;
+
+    // Background defect observer: Fiber.await each background fiber.
+    // forkIn defects are silent (not propagated to scope), so we must explicitly watch them.
+    // On defect: set exitDeferred with phase "background", then interrupt the event loop.
+    // Interrupt-only exits are normal lifecycle (scope close on stop/final) — not defects.
+    // Forked INTO actorScope — gets interrupted when actorScope closes (no leak).
+    if (backgroundFibers.length > 0) {
+      yield* Effect.raceAll(
+        backgroundFibers.map((fiber) =>
+          Fiber.await(fiber).pipe(
+            Effect.flatMap((exit) => {
+              if (exit._tag === "Failure" && !Cause.hasInterruptsOnly(exit.cause)) {
+                return setExit(ActorExit.Defect(exit.cause, "background")).pipe(
+                  Effect.andThen(Ref.set(stoppedRef, true)),
+                  Effect.andThen(Fiber.interrupt(loopFiber)),
+                );
+              }
+              // Normal exit or clean interrupt — ignore, wait forever (scope close will interrupt)
+              return Effect.never;
+            }),
+          ),
+        ),
+      ).pipe(Effect.forkIn(actorScope));
+    }
+
+    // Generation owner: observes loop exit, then closes actorScope to clean up
+    // background fibers. The loop sets exitDeferred before exiting.
+    yield* Effect.forkDetach(
+      Effect.gen(function* () {
+        const loopExit = yield* Fiber.await(loopFiber);
+        // Close actorScope — interrupts background fibers and their defect watchers
+        if (loopExit._tag === "Success") {
+          yield* Scope.close(actorScope, Exit.void);
+        } else {
+          yield* Scope.close(actorScope, loopExit);
+        }
+      }),
+    );
+
+    yield* Deferred.succeed(startDeferred, undefined);
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Deferred.failCause(startDeferred, cause).pipe(Effect.andThen(Effect.failCause(cause))),
+    ),
   );
 
   const stop = Effect.gen(function* () {
@@ -440,7 +469,10 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
     if (alreadyStopped) return;
     if (lifecycle?.onShutdown !== undefined) yield* lifecycle.onShutdown();
     yield* Ref.set(stoppedRef, true);
-    yield* Fiber.interrupt(loopFiber);
+    const loopFiber = loopFiberRef.current;
+    if (loopFiber !== undefined) {
+      yield* Fiber.interrupt(loopFiber);
+    }
     yield* Scope.close(stateScopeRef.current, Exit.void);
     yield* Scope.close(actorScope, Exit.void);
     yield* setExit(ActorExit.Stopped as ActorExit<S>);
@@ -455,6 +487,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
   return {
     ...makeHandle(stateRef, stoppedRef, eventQueue, exitDeferred, actorScope),
     stop,
+    start,
   };
 });
 
@@ -499,6 +532,7 @@ const makeHandle = <S extends { readonly _tag: string }, E extends { readonly _t
   stateRef,
   isStopped: Ref.get(stoppedRef),
   stop: Effect.void,
+  start: Effect.void,
   _queue: eventQueue,
   _stoppedRef: stoppedRef,
   exitDeferred,

@@ -310,6 +310,7 @@ describe("Machine.spawn", () => {
 
       // No ActorSystemService needed!
       const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
 
       const r = yield* actor.call(TestEvent.Start({ value: 42 }));
       expect(r.newState._tag).toBe("Active");
@@ -330,6 +331,7 @@ describe("Machine.spawn", () => {
       );
 
       const actor = yield* Machine.spawn(machine, "my-custom-id");
+      yield* actor.start;
 
       expect(actor.id).toBe("my-custom-id");
     }),
@@ -344,6 +346,7 @@ describe("Machine.spawn", () => {
       });
 
       const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
 
       expect(actor.id).toMatch(/^actor-/);
     }),
@@ -367,6 +370,7 @@ describe("Machine.spawn", () => {
         id: "hydrated-actor",
         hydrate: TestState.Active({ value: 42 }),
       });
+      yield* actor.start;
 
       expect(actor.id).toBe("hydrated-actor");
       const state = yield* actor.snapshot;
@@ -396,6 +400,7 @@ describe("Machine.spawn", () => {
 
       // No scope needed — Machine.spawn works without Effect.scoped
       const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
 
       const r = yield* actor.call(TestEvent.Start({ value: 99 }));
       expect(r.newState._tag).toBe("Active");
@@ -433,6 +438,7 @@ describe("Machine.spawn", () => {
               track: () => Effect.addFinalizer(() => Effect.sync(() => cleanedUp.push("cleaned"))),
             },
           });
+          yield* actor.start;
           yield* actor.send(TestEvent.Start({ value: 1 }));
           yield* yieldFibers;
           expect(cleanedUp).toEqual([]);
@@ -455,6 +461,7 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const machine = createTestMachine();
         const actor = yield* Machine.spawn(machine, { id: "test", slots: testMachineSlots });
+        yield* actor.start;
 
         const state = yield* actor.snapshot;
         expect(state._tag).toBe("Idle");
@@ -465,6 +472,7 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const machine = createTestMachine();
         const actor = yield* Machine.spawn(machine, { id: "test", slots: testMachineSlots });
+        yield* actor.start;
 
         const state = actor.sync.snapshot();
         expect(state._tag).toBe("Idle");
@@ -475,6 +483,7 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const machine = createTestMachine();
         const actor = yield* Machine.spawn(machine, { id: "test", slots: testMachineSlots });
+        yield* actor.start;
 
         const r = yield* actor.call(TestEvent.Start({ value: 42 }));
         expect(r.newState._tag).toBe("Loading");
@@ -488,6 +497,7 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const machine = createTestMachine();
         const actor = yield* Machine.spawn(machine, { id: "test", slots: testMachineSlots });
+        yield* actor.start;
 
         const isIdle = yield* actor.matches("Idle");
         expect(isIdle).toBe(true);
@@ -501,6 +511,7 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const machine = createTestMachine();
         const actor = yield* Machine.spawn(machine, { id: "test", slots: testMachineSlots });
+        yield* actor.start;
 
         expect(actor.sync.matches("Idle")).toBe(true);
         expect(actor.sync.matches("Loading")).toBe(false);
@@ -511,6 +522,7 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const machine = createTestMachine();
         const actor = yield* Machine.spawn(machine, { id: "test", slots: testMachineSlots });
+        yield* actor.start;
 
         const r = yield* actor.call(TestEvent.Start({ value: 10 }));
         expect(r.newState._tag).toBe("Loading");
@@ -524,6 +536,7 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const machine = createTestMachine();
         const actor = yield* Machine.spawn(machine, { id: "test", slots: testMachineSlots });
+        yield* actor.start;
 
         // In Idle state, can Start
         const canStart = yield* actor.can(TestEvent.Start({ value: 1 }));
@@ -539,6 +552,7 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const machine = createTestMachine();
         const actor = yield* Machine.spawn(machine, { id: "test", slots: testMachineSlots });
+        yield* actor.start;
 
         expect(actor.sync.can(TestEvent.Start({ value: 1 }))).toBe(true);
         expect(actor.sync.can(TestEvent.Complete)).toBe(false);
@@ -549,6 +563,7 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const machine = createTestMachine();
         const actor = yield* Machine.spawn(machine, { id: "test", slots: testMachineSlots });
+        yield* actor.start;
 
         // Transition to Active state
         yield* actor.call(TestEvent.Start({ value: 10 }));
@@ -570,6 +585,7 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const machine = createTestMachine();
         const actor = yield* Machine.spawn(machine, { id: "test", slots: testMachineSlots });
+        yield* actor.start;
 
         // Access state directly
         const state = yield* SubscriptionRef.get(actor.state);
@@ -581,6 +597,7 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const machine = createTestMachine();
         const actor = yield* Machine.spawn(machine, { id: "test", slots: testMachineSlots });
+        yield* actor.start;
 
         const tags: string[] = [];
 
@@ -618,6 +635,7 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const machine = createTestMachine();
         const actor = yield* Machine.spawn(machine, { id: "test", slots: testMachineSlots });
+        yield* actor.start;
 
         const states: string[] = [];
         const unsubscribe = actor.subscribe((s) => states.push(s._tag));
@@ -638,6 +656,7 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const machine = createTestMachine();
         const actor = yield* Machine.spawn(machine, { id: "test", slots: testMachineSlots });
+        yield* actor.start;
 
         const states: string[] = [];
         const unsubscribe = actor.subscribe((s) => states.push(s._tag));
@@ -837,6 +856,7 @@ describe("ActorRef", () => {
               const existing = yield* Ref.get(actorRef);
               if (existing !== undefined) return existing;
               const actor = yield* Machine.spawn(machine);
+              yield* actor.start;
               yield* Ref.set(actorRef, actor);
               return actor;
             });
@@ -937,6 +957,7 @@ describe("ActorRef", () => {
               const existing = yield* Ref.get(actorRef);
               if (existing !== undefined) return existing;
               const actor = yield* Machine.spawn(machine);
+              yield* actor.start;
               yield* Ref.set(actorRef, actor);
               return actor;
             });
@@ -1005,6 +1026,7 @@ describe("ActorRef", () => {
           .final(TestState.Done);
 
         const actor = yield* Machine.spawn(machine);
+        yield* actor.start;
 
         // Send Start and wait for Loading — must not deadlock
         const result = yield* Effect.race(
@@ -1031,6 +1053,7 @@ describe("ActorRef", () => {
           .final(TestState.Done);
 
         const actor = yield* Machine.spawn(machine);
+        yield* actor.start;
 
         // Fire-and-forget start, then waitFor Active
         yield* actor.send(TestEvent.Start({ value: 42 }));
@@ -1064,6 +1087,7 @@ describe("ActorRef", () => {
           .final(TestState.Done);
 
         const actor = yield* Machine.spawn(machine);
+        yield* actor.start;
         actor.sync.send(TestEvent.Start({ value: 7 }));
         yield* yieldFibers;
 
@@ -1086,6 +1110,7 @@ describe("ActorRef", () => {
         );
 
         const actor = yield* Machine.spawn(machine);
+        yield* actor.start;
         yield* actor.stop;
 
         // Should not throw
@@ -1116,6 +1141,7 @@ describe("ActorRef", () => {
           .final(TestState.Done);
 
         const actor = yield* Machine.spawn(machine);
+        yield* actor.start;
         yield* actor.send(TestEvent.Start({ value: 10 }));
 
         const state = yield* actor.waitFor(TestState.Active);
@@ -1134,6 +1160,7 @@ describe("ActorRef", () => {
         );
 
         const actor = yield* Machine.spawn(machine);
+        yield* actor.start;
 
         const state = yield* actor.sendAndWait(TestEvent.Start({ value: 5 }), TestState.Active);
         expect(state._tag).toBe("Active");
@@ -1149,6 +1176,7 @@ describe("ActorRef", () => {
         });
 
         const actor = yield* Machine.spawn(machine);
+        yield* actor.start;
 
         const state = yield* actor.waitFor(TestState.Idle);
         expect(state._tag).toBe("Idle");

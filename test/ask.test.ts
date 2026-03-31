@@ -44,6 +44,7 @@ describe("ActorRef.ask", () => {
     Effect.gen(function* () {
       const machine = createMachine();
       const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
 
       yield* actor.call(TestEvent.Start);
       yield* actor.call(TestEvent.Increment);
@@ -58,6 +59,7 @@ describe("ActorRef.ask", () => {
     Effect.gen(function* () {
       const machine = createMachine();
       const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
 
       // In Idle state — no handler for GetCount, so ask fails with NoReplyError
       const result = yield* actor.ask(TestEvent.GetCount).pipe(Effect.result);
@@ -69,6 +71,7 @@ describe("ActorRef.ask", () => {
     Effect.gen(function* () {
       const machine = createMachine();
       const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
 
       yield* actor.stop;
 
@@ -81,6 +84,7 @@ describe("ActorRef.ask", () => {
     Effect.gen(function* () {
       const machine = createMachine();
       const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
 
       yield* actor.call(TestEvent.Start);
       yield* actor.call(TestEvent.Increment);
@@ -99,6 +103,7 @@ describe("ActorRef.ask", () => {
     Effect.gen(function* () {
       const machine = createMachine();
       const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
 
       yield* actor.call(TestEvent.Start);
 
@@ -116,6 +121,7 @@ describe("ActorRef.ask", () => {
     Effect.gen(function* () {
       const machine = createMachine();
       const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
 
       yield* actor.call(TestEvent.Start);
 
@@ -141,6 +147,7 @@ describe("ActorRef.ask", () => {
       );
 
       const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
       const exit = yield* actor.ask(BadEvent.GetCount).pipe(Effect.exit);
       // Decode failure surfaces as a defect (die), not a checked error
       expect(exit._tag).toBe("Failure");

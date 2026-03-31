@@ -200,6 +200,7 @@ describe("ActorSystem Observation", () => {
       Effect.gen(function* () {
         const events: SystemEvent[] = [];
         const actor = yield* Machine.spawn(testMachine);
+        yield* actor.start;
 
         actor.system.subscribe((e) => events.push(e));
         expect(actor.system.actors).toBeDefined();

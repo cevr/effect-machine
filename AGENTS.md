@@ -39,6 +39,42 @@ const machine = Machine.make({ state, event, initial })
 - Builder chain ends naturally — no terminal method needed
 - `.onAny()` fires when no specific `.on()` matches for that event
 
+## .task()
+
+Async work that emits an event on completion:
+
+```ts
+// Explicit onSuccess mapping
+.task(State.Loading, ({ state }) => fetchData(state.url), {
+  onSuccess: (data) => Event.Loaded({ data }),
+  onFailure: (cause) => Event.Failed({ error: Cause.pretty(cause) }),
+})
+
+// Shorthand — when task returns Event directly, onSuccess can be omitted
+.task(State.Loading, ({ state }) => fetchData(state.url).pipe(Effect.map(d => Event.Loaded({ data: d }))), {
+  onFailure: (cause) => Event.Failed({ error: Cause.pretty(cause) }),
+})
+
+// Multi-state
+.task([State.Loading, State.Retrying], ({ state }) => fetchData(state.url), { onSuccess: ... })
+```
+
+## State.derive()
+
+Construct state from existing source. Per-variant and union-level:
+
+```ts
+// Per-variant: target-specific, works cross-state
+State.Active.derive(state, { count: state.count + 1 });
+State.Shipped.derive(processingState, { trackingId: "TRACK-123" });
+State.Idle.derive(anyState); // → { _tag: "Idle" }
+
+// Union-level: dispatches by _tag, preserves specific variant subtype
+const updated = MyState.derive(state, { queue: newQueue });
+// If state is Streaming, returns Streaming (not union type)
+// Partial keys not in target variant are silently dropped
+```
+
 ## Slots
 
 Unified parameterized slots via `Slot.define` + `Slot.fn`. Handlers take only params (no ctx parameter):

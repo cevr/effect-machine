@@ -207,6 +207,7 @@ describe("Payment Flow Pattern", () => {
         id: "payment",
         slots: paymentSlots,
       });
+      yield* actor.start;
 
       yield* actor.send(PaymentEvent.StartCheckout({ amount: 50 }));
       yield* actor.send(PaymentEvent.SelectMethod({ method: "card" }));
@@ -260,6 +261,7 @@ describe("Payment Flow Pattern", () => {
         id: "payment",
         slots: paymentSlots,
       });
+      yield* actor.start;
 
       yield* actor.send(PaymentEvent.StartCheckout({ amount: 100 }));
       yield* actor.send(PaymentEvent.SelectMethod({ method: "bridge" }));
@@ -283,6 +285,7 @@ describe("Payment Flow Pattern", () => {
         id: "payment",
         slots: paymentSlots,
       });
+      yield* actor.start;
 
       yield* actor.send(PaymentEvent.StartCheckout({ amount: 100 }));
       yield* actor.send(PaymentEvent.SelectMethod({ method: "card" }));

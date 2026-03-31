@@ -213,7 +213,10 @@ export type MachineStateSchema<D extends Record<string, Schema.Struct.Fields>> =
   never
 > &
   MachineSchemaBase<D, FullStateBrand<D>> &
-  VariantConstructors<D, FullStateBrand<D>>;
+  VariantConstructors<D, FullStateBrand<D>> & {
+    /** Unbranded schema for persistence — same structure without FullStateBrand. */
+    readonly plain: Schema.Schema<VariantsUnion<D>>;
+  };
 
 /**
  * Schema-first event definition (same structure as state, different brand)
@@ -381,6 +384,7 @@ const createMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(def
     variants,
     _definition,
     _replySchemas: replySchemas,
+    plain: schema,
     $is,
     $match,
     derive,

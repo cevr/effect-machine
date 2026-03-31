@@ -46,6 +46,7 @@ describe("Machine.spawn with persist", () => {
           save: () => Effect.void,
         },
       });
+      yield* actor.start;
 
       const state = yield* actor.snapshot;
       expect(state._tag).toBe("Active");
@@ -62,6 +63,7 @@ describe("Machine.spawn with persist", () => {
           save: () => Effect.void,
         },
       });
+      yield* actor.start;
 
       const state = yield* actor.snapshot;
       expect(state._tag).toBe("Idle");
@@ -78,6 +80,7 @@ describe("Machine.spawn with persist", () => {
           save: (state) => Ref.update(saves, (arr) => [...arr, { _tag: state._tag }]),
         },
       });
+      yield* actor.start;
 
       yield* actor.send(PEvent.Activate({ count: 1 }));
       yield* yieldFibers;
@@ -103,6 +106,7 @@ describe("Machine.spawn with persist", () => {
           shouldSave: (state, prev) => state._tag !== prev._tag,
         },
       });
+      yield* actor.start;
 
       yield* actor.send(PEvent.Activate({ count: 1 }));
       yield* yieldFibers;
@@ -134,6 +138,7 @@ describe("Machine.spawn with persist", () => {
           save: () => Effect.void,
         },
       });
+      yield* actor.start;
 
       const state = yield* actor.snapshot;
       // hydrate wins — count is 99, not 1
@@ -175,6 +180,7 @@ describe("Machine.spawn with persist", () => {
           save: (state) => Ref.set(storage, Option.some(state)),
         },
       });
+      yield* actor.start;
 
       // Transition to Active — triggers save
       yield* actor.send(CrashEvent.Activate({ count: 10 }));
@@ -222,6 +228,7 @@ describe("Machine.spawn with persist.onRestore", () => {
             ),
         },
       });
+      yield* actor.start;
 
       const state = yield* actor.snapshot;
       expect(state._tag).toBe("Active");
@@ -240,6 +247,7 @@ describe("Machine.spawn with persist.onRestore", () => {
           onRestore: () => Effect.succeed(Option.none()),
         },
       });
+      yield* actor.start;
 
       const state = yield* actor.snapshot;
       expect(state._tag).toBe("Idle");
@@ -260,6 +268,7 @@ describe("Machine.spawn with persist.onRestore", () => {
           },
         },
       });
+      yield* actor.start;
 
       const state = yield* actor.snapshot;
       expect(state._tag).toBe("Idle");
@@ -281,6 +290,7 @@ describe("Machine.spawn with persist.onRestore", () => {
           },
         },
       });
+      yield* actor.start;
 
       expect((receivedInitial as { _tag: string })._tag).toBe("Idle");
       yield* actor.stop;
@@ -305,6 +315,7 @@ describe("Machine.spawn with persist.onRestore", () => {
           },
         },
       });
+      yield* actor.start;
 
       const state = yield* actor.snapshot;
       expect((state as { count: number }).count).toBe(77);
