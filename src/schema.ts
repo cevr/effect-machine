@@ -168,6 +168,24 @@ interface MachineSchemaBase<D extends Record<string, Schema.Struct.Fields>, Bran
   };
 
   /**
+   * Union-level derive: copies fields from `source` into the same variant,
+   * overriding with `partial`. Preserves the specific variant subtype.
+   *
+   * Dispatches to the per-variant `derive` based on `source._tag`.
+   *
+   * @example
+   * ```ts
+   * // Instead of switching on _tag to call per-variant derive:
+   * const updated = AgentLoopState.derive(state, { queue: newQueue })
+   * // If state is StreamingState, returns StreamingState (not LoopState)
+   * ```
+   */
+  readonly derive: <S extends VariantsUnion<D> & Brand>(
+    source: S,
+    partial?: Partial<Omit<S, "_tag">>,
+  ) => S;
+
+  /**
    * Reply schemas per variant tag. Only populated for event schemas
    * with variants defined via `Event.reply()`.
    */
@@ -344,12 +362,27 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
 const createMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(definition: D) => {
   const { schema, variants, constructors, _definition, replySchemas, $is, $match } =
     buildMachineSchema(definition);
+  // Union-level derive: dispatch to per-variant derive based on _tag
+  const derive = (source: { _tag: string }, partial?: Record<string, unknown>) => {
+    const ctor = constructors[source._tag];
+    if (ctor === undefined) {
+      throw new MissingMatchHandlerError({ tag: source._tag });
+    }
+    // Per-variant derive is either on a callable constructor or a plain object (empty variant)
+    const deriveFn = (ctor as { derive?: (s: object, p?: object) => object }).derive;
+    if (deriveFn === undefined) {
+      throw new MissingMatchHandlerError({ tag: source._tag });
+    }
+    return deriveFn(source, partial);
+  };
+
   return Object.assign(Object.create(schema), {
     variants,
     _definition,
     _replySchemas: replySchemas,
     $is,
     $match,
+    derive,
     ...constructors,
   });
 };
