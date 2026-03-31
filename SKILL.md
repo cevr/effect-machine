@@ -53,7 +53,7 @@ const machine = Machine.make({
 Construct state from existing source:
 
 ```ts
-// Same-state: preserve fields, override specific ones
+// Per-variant: preserve fields, override specific ones
 State.Active.derive(state, { count: state.count + 1 });
 
 // Cross-state: picks only target fields
@@ -61,6 +61,10 @@ State.Shipped.derive(processingState, { trackingId: "TRACK-123" });
 
 // Empty variant
 State.Idle.derive(anyState); // → { _tag: "Idle" }
+
+// Union-level: dispatches to correct variant based on _tag
+// Preserves specific variant subtype — no switch needed
+const updated = MyState.derive(state, { queue: newQueue });
 ```
 
 ## Slots
