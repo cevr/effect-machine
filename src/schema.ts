@@ -289,6 +289,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
         if (partial !== undefined) {
           for (const [key, value] of Object.entries(partial)) {
             if (RESERVED_DERIVE_KEYS.has(key)) continue;
+            if (!fieldNames.has(key)) continue;
             result[key] = value;
           }
         }

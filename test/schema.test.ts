@@ -345,6 +345,54 @@ describe("State.derive() (union-level)", () => {
     expect(copy.queue).toEqual(["a"]);
     expect(copy.model).toBe("m");
   });
+
+  test("partial keys not in target variant are dropped", () => {
+    const idle = TS.Idle({ queue: [], currentAgent: "x" });
+    // model is not a field of Idle — should be dropped
+    const updated = TS.derive(idle, { queue: ["a"], model: "gpt-4" } as never);
+
+    expect(updated._tag).toBe("Idle");
+    expect(updated.queue).toEqual(["a"]);
+    expect((updated as unknown as Record<string, unknown>)["model"]).toBeUndefined();
+  });
+
+  test("throws on unknown _tag", () => {
+    const fake = { _tag: "NonExistent", queue: [] } as never;
+    expect(() => TS.derive(fake)).toThrow();
+  });
+});
+
+describe("Event.derive() (union-level)", () => {
+  const TE = Event({
+    Start: { input: Schema.String },
+    Stop: { reason: Schema.String },
+    Ping: {},
+  });
+  type TEType = typeof TE.Type;
+
+  test("preserves variant subtype", () => {
+    const start = TE.Start({ input: "hello" });
+    const updated = TE.derive(start, { input: "world" });
+
+    expect(updated._tag).toBe("Start");
+    expect(updated.input).toBe("world");
+  });
+
+  test("works on union-typed event", () => {
+    const events: TEType[] = [TE.Start({ input: "a" }), TE.Stop({ reason: "done" })];
+
+    for (const e of events) {
+      const copy = TE.derive(e);
+      expect(copy._tag).toBe(e._tag);
+    }
+  });
+
+  test("empty variant derive returns tagged value", () => {
+    const ping = TE.Ping;
+    const derived = TE.derive(ping);
+
+    expect(derived._tag).toBe("Ping");
+  });
 });
 
 describe("Event (schema-first)", () => {
