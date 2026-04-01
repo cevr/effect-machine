@@ -194,6 +194,71 @@ export interface PersistConfig<S> {
   ) => Effect.Effect<Option.Option<S>>;
 }
 
+// ============================================================================
+// Recovery / Durability — replaces PersistConfig
+// ============================================================================
+
+/**
+ * Recovery resolves the initial state for a generation. Runs during actor.start.
+ *
+ * For initial start (generation 0): loads persisted state.
+ * For supervision restart (generation 1+): reloads state after crash.
+ */
+export interface Recovery<S> {
+  readonly resolve: (ctx: RecoveryContext<S>) => Effect.Effect<Option.Option<S>>;
+}
+
+export interface RecoveryContext<S> {
+  readonly actorId: string;
+  readonly generation: number;
+  readonly machineInitial: S;
+}
+
+/**
+ * Durability saves state after committed transitions. Runs during runtime.
+ */
+export interface Durability<S, E> {
+  readonly save: (commit: DurabilityCommit<S, E>) => Effect.Effect<void>;
+  readonly shouldSave?: (state: S, previousState: S) => boolean;
+}
+
+export interface DurabilityCommit<S, E> {
+  readonly actorId: string;
+  readonly generation: number;
+  readonly previousState: S;
+  readonly nextState: S;
+  readonly event: E;
+}
+
+/**
+ * Actor lifecycle configuration — replaces PersistConfig.
+ */
+export interface Lifecycle<S, E> {
+  readonly recovery?: Recovery<S>;
+  readonly durability?: Durability<S, E>;
+}
+
+/**
+ * Convert legacy PersistConfig to the new Lifecycle API.
+ * @deprecated Use Lifecycle directly.
+ */
+export const fromPersistConfig = <S, E>(persist: PersistConfig<S>): Lifecycle<S, E> => ({
+  recovery: {
+    resolve: (ctx) =>
+      persist.load().pipe(
+        Effect.flatMap((loaded) => {
+          if (Option.isNone(loaded)) return Effect.succeed(Option.none<S>());
+          if (persist.onRestore === undefined) return Effect.succeed(loaded);
+          return persist.onRestore(loaded.value, { initial: ctx.machineInitial });
+        }),
+      ),
+  },
+  durability: {
+    save: (commit) => persist.save(commit.nextState),
+    shouldSave: persist.shouldSave,
+  },
+});
+
 /**
  * Configuration for `.timeout()` — gen_statem-style state timeouts.
  *
@@ -1111,6 +1176,7 @@ const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
         slots?: Record<string, any>;
         supervision?: Supervision.Policy;
         persist?: PersistConfig<S>;
+        lifecycle?: Lifecycle<S, E>;
       },
 ) {
   const opts = typeof idOrOptions === "string" ? { id: idOrOptions } : idOrOptions;
@@ -1120,6 +1186,7 @@ const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
     initialState: opts?.hydrate,
     supervision: opts?.supervision,
     persist: opts?.persist,
+    lifecycle: opts?.lifecycle,
   });
 
   // If a scope exists in context, attach cleanup automatically
@@ -1172,6 +1239,7 @@ export const spawn: <
         slots?: ProvideSlots<SD, any>;
         supervision?: Supervision.Policy;
         persist?: PersistConfig<S>;
+        lifecycle?: Lifecycle<S, E>;
       },
 ) => Effect.Effect<ActorRef<S, E>, never, R> = spawnImpl;
 

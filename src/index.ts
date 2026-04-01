@@ -52,7 +52,15 @@ export type {
   TimeoutConfig,
   ReplyResult,
   DeferReplyResult,
+  Recovery,
+  RecoveryContext,
+  Durability,
+  DurabilityCommit,
+  Lifecycle,
 } from "./machine.js";
+
+// Recovery/Durability helpers
+export { fromPersistConfig } from "./machine.js";
 
 // Actor types and system
 export type {
