@@ -26,8 +26,8 @@ import {
   SubscriptionRef,
 } from "effect";
 
-import type { Machine, PersistConfig, Lifecycle } from "./machine.js";
-import { materializeMachine, fromPersistConfig } from "./machine.js";
+import type { Machine, Lifecycle } from "./machine.js";
+import { materializeMachine } from "./machine.js";
 import type { ActorExit, Supervision } from "./supervision.js";
 import type { ReplyTypeBrand, ExtractReply } from "./internal/brands.js";
 import type { SlotsDef, ProvideSlots } from "./slot.js";
@@ -261,7 +261,6 @@ export interface ActorSystem {
       readonly supervision?: Supervision.Policy;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       readonly slots?: ProvideSlots<SD, any>;
-      readonly persist?: PersistConfig<S>;
       readonly lifecycle?: Lifecycle<S, E>;
     },
   ) => Effect.Effect<ActorRef<S, E>, DuplicateActorError, R>;
@@ -712,16 +711,12 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   options?: {
     initialState?: S;
     supervision?: Supervision.Policy;
-    persist?: PersistConfig<S>;
     lifecycle?: Lifecycle<S, E>;
     /** @internal Called by system after each restart — emits ActorRestarted system event */
     onRestart?: (generation: number, exit: ActorExit<unknown>) => Effect.Effect<void>;
   },
 ) {
-  // Resolve lifecycle: explicit > converted from persist > none
-  const lifecycle: Lifecycle<S, E> | undefined =
-    options?.lifecycle ??
-    (options?.persist !== undefined ? fromPersistConfig(options.persist) : undefined);
+  const lifecycle: Lifecycle<S, E> | undefined = options?.lifecycle;
 
   // Spawn is cold — initial state from hydrate or machine.initial.
   // Recovery runs during start, not allocate.
@@ -1149,7 +1144,6 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
       readonly supervision?: Supervision.Policy;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       readonly slots?: Record<string, any>;
-      readonly persist?: PersistConfig<S>;
       readonly lifecycle?: Lifecycle<S, E>;
     },
   ) {
@@ -1164,7 +1158,6 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const actor = yield* createActor(id, materialized as Machine<S, E, never, any, any, any>, {
       supervision: spawnOptions?.supervision,
-      persist: spawnOptions?.persist,
       lifecycle: spawnOptions?.lifecycle,
       onRestart:
         spawnOptions?.supervision !== undefined
@@ -1203,7 +1196,6 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
       readonly supervision?: Supervision.Policy;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       readonly slots?: ProvideSlots<SD, any>;
-      readonly persist?: PersistConfig<S>;
       readonly lifecycle?: Lifecycle<S, E>;
     },
   ): Effect.Effect<ActorRef<S, E>, DuplicateActorError, R> =>

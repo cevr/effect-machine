@@ -164,38 +164,8 @@ export interface TaskOptions<State, Event, SD extends SlotsDef, A, E1, ES, EF> {
   readonly name?: string;
 }
 
-/**
- * Local persistence configuration for Machine.spawn.
- *
- * Fully-resolved callbacks — no service dependency.
- * Separate from cluster EntityPersistence which uses a service-based adapter.
- */
-export interface PersistConfig<S> {
-  /** Load saved state on actor start (and restart). Returns None for cold start. */
-  readonly load: () => Effect.Effect<Option.Option<S>>;
-  /** Save state after each transition. Runs inline (blocks next event). */
-  readonly save: (state: S) => Effect.Effect<void>;
-  /** Optional filter — return false to skip saving for this transition. */
-  readonly shouldSave?: (state: S, previousState: S) => boolean;
-  /**
-   * Called after load() returns Some(state). Inspect the restored state
-   * and decide how to proceed before the machine starts.
-   *
-   * Return Some(state) to use that state, or None to discard and start fresh.
-   * Called on both initial spawn and supervision restart.
-   * Receives `initial` (machine.initial) for comparison.
-   *
-   * Use cases: validate persisted state against external systems,
-   * migrate schema changes, downgrade to a safe state on partial corruption.
-   */
-  readonly onRestore?: (
-    state: S,
-    context: { readonly initial: S },
-  ) => Effect.Effect<Option.Option<S>>;
-}
-
 // ============================================================================
-// Recovery / Durability — replaces PersistConfig
+// Recovery / Durability
 // ============================================================================
 
 /**
@@ -231,33 +201,12 @@ export interface DurabilityCommit<S, E> {
 }
 
 /**
- * Actor lifecycle configuration — replaces PersistConfig.
+ * Actor lifecycle configuration.
  */
 export interface Lifecycle<S, E> {
   readonly recovery?: Recovery<S>;
   readonly durability?: Durability<S, E>;
 }
-
-/**
- * Convert legacy PersistConfig to the new Lifecycle API.
- * @deprecated Use Lifecycle directly.
- */
-export const fromPersistConfig = <S, E>(persist: PersistConfig<S>): Lifecycle<S, E> => ({
-  recovery: {
-    resolve: (ctx) =>
-      persist.load().pipe(
-        Effect.flatMap((loaded) => {
-          if (Option.isNone(loaded)) return Effect.succeed(Option.none<S>());
-          if (persist.onRestore === undefined) return Effect.succeed(loaded);
-          return persist.onRestore(loaded.value, { initial: ctx.machineInitial });
-        }),
-      ),
-  },
-  durability: {
-    save: (commit) => persist.save(commit.nextState),
-    shouldSave: persist.shouldSave,
-  },
-});
 
 /**
  * Configuration for `.timeout()` — gen_statem-style state timeouts.
@@ -1175,7 +1124,6 @@ const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         slots?: Record<string, any>;
         supervision?: Supervision.Policy;
-        persist?: PersistConfig<S>;
         lifecycle?: Lifecycle<S, E>;
       },
 ) {
@@ -1185,7 +1133,6 @@ const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
   const actor = yield* createActor(actorId, materialized as AnyMachine<S, E, never>, {
     initialState: opts?.hydrate,
     supervision: opts?.supervision,
-    persist: opts?.persist,
     lifecycle: opts?.lifecycle,
   });
 
@@ -1213,11 +1160,11 @@ const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
  *   slots: { canRetry: ({ max }) => attempts < max },
  * });
  *
- * // With persistence
+ * // With lifecycle (recovery + durability)
  * const actor = yield* Machine.spawn(machine, {
- *   persist: {
- *     load: () => storage.get("actor-state"),
- *     save: (state) => storage.set("actor-state", state),
+ *   lifecycle: {
+ *     recovery: { resolve: (ctx) => storage.get("actor-state") },
+ *     durability: { save: (commit) => storage.set("actor-state", commit.nextState) },
  *   },
  * });
  * ```
@@ -1238,7 +1185,6 @@ export const spawn: <
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         slots?: ProvideSlots<SD, any>;
         supervision?: Supervision.Policy;
-        persist?: PersistConfig<S>;
         lifecycle?: Lifecycle<S, E>;
       },
 ) => Effect.Effect<ActorRef<S, E>, never, R> = spawnImpl;

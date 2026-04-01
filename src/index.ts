@@ -59,9 +59,6 @@ export type {
   Lifecycle,
 } from "./machine.js";
 
-// Recovery/Durability helpers
-export { fromPersistConfig } from "./machine.js";
-
 // Actor types and system
 export type {
   ActorRef,
