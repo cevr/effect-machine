@@ -98,6 +98,7 @@ const actor =
         }),
     },
   });
+yield * actor.start;
 ```
 
 The same machine can run with different slot implementations in tests, local apps, or production. Slots are accepted everywhere the machine runs:
@@ -109,7 +110,7 @@ The same machine can run with different slot implementations in tests, local app
 
 ## Running Actors
 
-`Machine.spawn` gives you a live actor with a queue and lifecycle management.
+`Machine.spawn` allocates an actor but does not start it. Call `actor.start` to fork the event loop, background effects, and spawn effects. Events sent before `start()` are queued.
 
 ```ts
 const program = Effect.gen(function* () {
@@ -123,6 +124,7 @@ const program = Effect.gen(function* () {
         ),
     },
   });
+  yield* actor.start;
 
   yield* actor.send(CheckoutEvent.Submit);
   const finalState = yield* actor.awaitFinal;
@@ -133,6 +135,7 @@ Effect.runPromise(Effect.scoped(program));
 
 Key actor operations:
 
+- `start` forks the event loop (idempotent, required after `Machine.spawn`)
 - `send(event)` queues and returns immediately
 - `call(event)` returns full transition info
 - `ask(event)` returns a typed domain reply (requires `Event.reply(...)`)
@@ -140,7 +143,7 @@ Key actor operations:
 - `stop` interrupts now; `drain` processes the remaining queue first
 - `watch(other)` completes when another actor stops
 
-For named actors or shared lookup, use an actor system:
+For named actors or shared lookup, use an actor system. `system.spawn` auto-starts — no `actor.start` needed:
 
 ```ts
 import { ActorSystemDefault, ActorSystemService } from "effect-machine";
