@@ -155,6 +155,7 @@ describe("Session Lifecycle Pattern", () => {
         id: "session",
         slots: sessionSlots,
       });
+      yield* actor.start;
 
       let state = yield* SubscriptionRef.get(actor.state);
       expect(state._tag).toBe("Active");
@@ -204,6 +205,7 @@ describe("Session Lifecycle Pattern", () => {
         id: "session",
         slots: sessionSlots,
       });
+      yield* actor.start;
 
       // Activity after 20 minutes
       yield* TestClock.adjust("20 minutes");

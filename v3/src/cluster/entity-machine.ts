@@ -153,6 +153,7 @@ export const EntityMachine = {
         hooks: options?.hooks,
         childIdPrefix: `${entityId}/`,
       });
+      yield* runtime.start;
 
       // ----------------------------------------------------------------
       // Persistence: deactivation finalizer (save final snapshot)

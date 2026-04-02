@@ -77,6 +77,7 @@ describe("Machine.spawn with slots", () => {
           onStart: () => Effect.void,
         },
       });
+      yield* actor.start;
 
       yield* actor.send(SimpleEvent.Start({ count: 42 }));
       yield* Effect.yieldNow();
@@ -91,6 +92,7 @@ describe("Machine.spawn with slots", () => {
     Effect.gen(function* () {
       const machine = createSimpleMachine();
       const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
 
       yield* actor.send(SimpleEvent.Start({ count: 1 }));
       yield* Effect.yieldNow();
@@ -110,6 +112,7 @@ describe("Machine.spawn with slots", () => {
           onStart: () => Effect.void,
         },
       });
+      yield* actor.start;
 
       yield* actor.send(SimpleEvent.Start({ count: 5 }));
       yield* Effect.yieldNow();

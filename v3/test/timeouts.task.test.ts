@@ -40,6 +40,7 @@ describe("Timeout Transitions via Task", () => {
           scheduleAutoDismiss: () => Effect.sleep("3 seconds"),
         },
       });
+      yield* actor.start;
 
       // Initial state
       let current = yield* SubscriptionRef.get(actor.state);
@@ -77,6 +78,7 @@ describe("Timeout Transitions via Task", () => {
           scheduleAutoDismiss: () => Effect.sleep("3 seconds"),
         },
       });
+      yield* actor.start;
 
       // Manual dismiss before timer
       yield* actor.send(NotifEvent.Dismiss);
@@ -136,6 +138,7 @@ describe("Dynamic Timeout Duration via Task", () => {
             }),
         },
       });
+      yield* actor.start;
 
       // Initial state
       let current = yield* SubscriptionRef.get(actor.state);
@@ -203,6 +206,7 @@ describe("Dynamic Timeout Duration via Task", () => {
             }),
         },
       });
+      yield* actor.start;
 
       // Initial state should be Retrying with attempt=1, backoff=1
       let current = yield* SubscriptionRef.get(actor.state);

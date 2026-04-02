@@ -201,6 +201,7 @@ describe("Reenter Transitions", () => {
           runPollingEffect: () => Effect.sleep("5 seconds"),
         },
       });
+      yield* actor.start;
 
       // Advance 3 seconds
       yield* TestClock.adjust("3 seconds");

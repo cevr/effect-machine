@@ -165,33 +165,43 @@ export interface TaskOptions<State, Event, SD extends SlotsDef, A, E1, ES, EF> {
 }
 
 /**
- * Local persistence configuration for Machine.spawn.
+ * Recovery resolves the initial state for a generation. Runs during actor.start.
  *
- * Fully-resolved callbacks — no service dependency.
- * Separate from cluster EntityPersistence which uses a service-based adapter.
+ * For initial start (generation 0): loads persisted state.
+ * For supervision restart (generation 1+): reloads state after crash.
  */
-export interface PersistConfig<S> {
-  /** Load saved state on actor start (and restart). Returns None for cold start. */
-  readonly load: () => Effect.Effect<Option.Option<S>>;
-  /** Save state after each transition. Runs inline (blocks next event). */
-  readonly save: (state: S) => Effect.Effect<void>;
-  /** Optional filter — return false to skip saving for this transition. */
+export interface Recovery<S> {
+  readonly resolve: (ctx: RecoveryContext<S>) => Effect.Effect<Option.Option<S>>;
+}
+
+export interface RecoveryContext<S> {
+  readonly actorId: string;
+  readonly generation: number;
+  readonly machineInitial: S;
+}
+
+/**
+ * Durability saves state after committed transitions. Runs during runtime.
+ */
+export interface Durability<S, E> {
+  readonly save: (commit: DurabilityCommit<S, E>) => Effect.Effect<void>;
   readonly shouldSave?: (state: S, previousState: S) => boolean;
-  /**
-   * Called after load() returns Some(state). Inspect the restored state
-   * and decide how to proceed before the machine starts.
-   *
-   * Return Some(state) to use that state, or None to discard and start fresh.
-   * Called on both initial spawn and supervision restart.
-   * Receives `initial` (machine.initial) for comparison.
-   *
-   * Use cases: validate persisted state against external systems,
-   * migrate schema changes, downgrade to a safe state on partial corruption.
-   */
-  readonly onRestore?: (
-    state: S,
-    context: { readonly initial: S },
-  ) => Effect.Effect<Option.Option<S>>;
+}
+
+export interface DurabilityCommit<S, E> {
+  readonly actorId: string;
+  readonly generation: number;
+  readonly previousState: S;
+  readonly nextState: S;
+  readonly event: E;
+}
+
+/**
+ * Actor lifecycle configuration.
+ */
+export interface Lifecycle<S, E> {
+  readonly recovery?: Recovery<S>;
+  readonly durability?: Durability<S, E>;
 }
 
 /**
@@ -1116,7 +1126,7 @@ const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         slots?: Record<string, any>;
         supervision?: Supervision.Policy;
-        persist?: PersistConfig<S>;
+        lifecycle?: Lifecycle<S, E>;
       },
 ) {
   const opts = typeof idOrOptions === "string" ? { id: idOrOptions } : idOrOptions;
@@ -1125,7 +1135,7 @@ const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
   const actor = yield* createActor(actorId, materialized as AnyMachine<S, E, never>, {
     initialState: opts?.hydrate,
     supervision: opts?.supervision,
-    persist: opts?.persist,
+    lifecycle: opts?.lifecycle,
   });
 
   // If a scope exists in context, attach cleanup automatically
@@ -1152,11 +1162,11 @@ const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
  *   slots: { canRetry: ({ max }) => attempts < max },
  * });
  *
- * // With persistence
+ * // With lifecycle (recovery + durability)
  * const actor = yield* Machine.spawn(machine, {
- *   persist: {
- *     load: () => storage.get("actor-state"),
- *     save: (state) => storage.set("actor-state", state),
+ *   lifecycle: {
+ *     recovery: { resolve: ({ machineInitial }) => storage.get("actor-state") },
+ *     durability: { save: ({ nextState }) => storage.set("actor-state", nextState) },
  *   },
  * });
  * ```
@@ -1177,7 +1187,7 @@ export const spawn: <
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         slots?: ProvideSlots<SD, any>;
         supervision?: Supervision.Policy;
-        persist?: PersistConfig<S>;
+        lifecycle?: Lifecycle<S, E>;
       },
 ) => Effect.Effect<ActorRef<S, E>, never, R> = spawnImpl;
 

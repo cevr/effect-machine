@@ -154,6 +154,7 @@ describe("ActorRef.call", () => {
     Effect.gen(function* () {
       const machine = createMachine();
       const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
 
       const result = yield* actor.call(TestEvent.Start({ value: 7 }));
 
@@ -171,6 +172,7 @@ describe("ActorRef.call (Promise-free)", () => {
     Effect.gen(function* () {
       const machine = createMachine();
       const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
 
       const result = yield* actor.call(TestEvent.Start({ value: 99 }));
 
@@ -187,6 +189,7 @@ describe("ActorRef.call (Promise-free)", () => {
     Effect.gen(function* () {
       const machine = createMachine();
       const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
 
       const result = yield* actor.call(TestEvent.Unknown);
 

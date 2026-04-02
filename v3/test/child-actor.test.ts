@@ -90,6 +90,7 @@ describe("Child Actor Support", () => {
           .final(ParentState.Done);
 
         const parent = yield* Machine.spawn(parentMachine);
+        yield* parent.start;
         yield* parent.send(ParentEvent.Activate);
         yield* Effect.yieldNow();
         yield* yieldFibers;
@@ -122,6 +123,7 @@ describe("Child Actor Support", () => {
           .final(ParentState.Done);
 
         const parent = yield* Machine.spawn(parentMachine);
+        yield* parent.start;
         yield* parent.send(ParentEvent.Activate);
         yield* Effect.yieldNow();
         yield* yieldFibers;
@@ -161,6 +163,7 @@ describe("Child Actor Support", () => {
           .final(ParentState.Done);
 
         const parent = yield* Machine.spawn(parentMachine);
+        yield* parent.start;
         yield* parent.send(ParentEvent.Activate);
         yield* Effect.yieldNow();
         yield* yieldFibers;
@@ -193,6 +196,7 @@ describe("Child Actor Support", () => {
           .final(ParentState.Done);
 
         const parent = yield* Machine.spawn(parentMachine);
+        yield* parent.start;
         yield* parent.send(ParentEvent.Activate);
         yield* Effect.yieldNow();
         yield* yieldFibers;
@@ -226,6 +230,7 @@ describe("Child Actor Support", () => {
           .final(ParentState.Done);
 
         const actor = yield* Machine.spawn(simpleMachine);
+        yield* actor.start;
         // actor.system should exist (implicit system)
         expect(actor.system).toBeDefined();
         expect(actor.system.get).toBeDefined();
@@ -249,6 +254,7 @@ describe("Child Actor Support", () => {
           .final(ParentState.Done);
 
         const parent = yield* Machine.spawn(parentMachine);
+        yield* parent.start;
         yield* parent.send(ParentEvent.Activate);
         yield* Effect.yieldNow();
         yield* yieldFibers;
@@ -383,6 +389,7 @@ describe("Child Actor Support", () => {
               }),
           },
         });
+        yield* parent.start;
         yield* parent.send(ParentEvent.Activate);
         yield* Effect.yieldNow();
         yield* yieldFibers;
@@ -411,6 +418,7 @@ describe("Child Actor Support", () => {
           .final(ParentState.Done);
 
         const parent = yield* Machine.spawn(parentMachine);
+        yield* parent.start;
         expect(parent.children.size).toBe(0);
 
         yield* parent.send(ParentEvent.Activate);
@@ -439,6 +447,7 @@ describe("Child Actor Support", () => {
           .final(ParentState.Done);
 
         const parent = yield* Machine.spawn(parentMachine);
+        yield* parent.start;
         yield* parent.send(ParentEvent.Activate);
         yield* Effect.yieldNow();
         yield* yieldFibers;
@@ -475,6 +484,7 @@ describe("Child Actor Support", () => {
           .final(ParentState.Done);
 
         const parent = yield* Machine.spawn(parentMachine);
+        yield* parent.start;
         yield* parent.send(ParentEvent.Activate);
         yield* Effect.yieldNow();
         yield* yieldFibers;
@@ -502,6 +512,7 @@ describe("Child Actor Support", () => {
           .final(ParentState.Done);
 
         const parent = yield* Machine.spawn(parentMachine);
+        yield* parent.start;
         yield* Effect.yieldNow();
         yield* yieldFibers;
 

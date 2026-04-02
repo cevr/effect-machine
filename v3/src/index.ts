@@ -52,6 +52,11 @@ export type {
   TimeoutConfig,
   ReplyResult,
   DeferReplyResult,
+  Recovery,
+  RecoveryContext,
+  Durability,
+  DurabilityCommit,
+  Lifecycle,
 } from "./machine.js";
 
 // Actor types and system

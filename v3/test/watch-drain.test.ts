@@ -80,6 +80,7 @@ describe("actor.drain", () => {
   it.scopedLive("stops cleanly after all events are processed", () =>
     Effect.gen(function* () {
       const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
 
       // Send events and let them process
       yield* actor.send(E.Start({ count: 0 }));
@@ -108,6 +109,7 @@ describe("actor.drain", () => {
   it.scopedLive("is no-op on already-stopped actor", () =>
     Effect.gen(function* () {
       const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
       yield* actor.stop;
       yield* yieldFibers;
       yield* actor.drain;

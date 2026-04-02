@@ -25,7 +25,7 @@ import {
   SubscriptionRef,
 } from "effect";
 
-import type { Machine, PersistConfig } from "./machine.js";
+import type { Machine, Lifecycle } from "./machine.js";
 import { materializeMachine } from "./machine.js";
 import type { ActorExit, Supervision } from "./supervision.js";
 import type { ReplyTypeBrand, ExtractReply } from "./internal/brands.js";
@@ -113,6 +113,13 @@ export interface ActorRef<State extends { readonly _tag: string }, Event> {
 
   /** Stop the actor gracefully. */
   readonly stop: Effect.Effect<void>;
+
+  /**
+   * Start the actor — fork event loop, background effects, spawn effects.
+   * Called automatically by `system.spawn`. For `Machine.spawn`, the caller
+   * must call `start` explicitly. Events sent before start() are queued.
+   */
+  readonly start: Effect.Effect<void>;
 
   /** Get current state snapshot. */
   readonly snapshot: Effect.Effect<State>;
@@ -250,7 +257,7 @@ export interface ActorSystem {
       readonly supervision?: Supervision.Policy;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       readonly slots?: ProvideSlots<SD, any>;
-      readonly persist?: PersistConfig<S>;
+      readonly lifecycle?: Lifecycle<S, E>;
     },
   ) => Effect.Effect<ActorRef<S, E>, DuplicateActorError, R>;
 
@@ -325,6 +332,7 @@ export const buildActorRefCore = <
   stoppedRef: Ref.Ref<boolean>,
   listeners: Listeners<S>,
   stop: Effect.Effect<void>,
+  start: Effect.Effect<void>,
   system: ActorSystem,
   childrenMap: ReadonlyMap<string, ActorRef<AnyState, unknown>>,
   pendingReplies: Set<Deferred.Deferred<unknown, unknown>>,
@@ -477,6 +485,7 @@ export const buildActorRefCore = <
     ask: ask as ActorRef<S, E>["ask"],
     state: stateRef,
     stop,
+    start,
     snapshot,
     matches,
     can,
@@ -568,23 +577,6 @@ const buildInspectionHooks = <
 });
 
 /**
- * Load persisted state and run onRestore hook if present.
- * Returns the resolved initial state (loaded, restored, or fallback to machineInitial).
- * @internal
- */
-const loadAndRestore = <S extends { readonly _tag: string }>(
-  persist: PersistConfig<S>,
-  machineInitial: S,
-): Effect.Effect<S> =>
-  Effect.gen(function* () {
-    const loaded = yield* persist.load();
-    if (Option.isNone(loaded)) return machineInitial;
-    if (persist.onRestore === undefined) return loaded.value;
-    const restored = yield* persist.onRestore(loaded.value, { initial: machineInitial });
-    return Option.getOrElse(restored, () => machineInitial);
-  });
-
-/**
  * Resolve actor system from context, creating an implicit one if none exists.
  * @internal
  */
@@ -621,7 +613,7 @@ const runSupervisionLoop = <
   listeners: Listeners<S>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   spawnGeneration: (m: any) => Effect.Effect<RuntimeHandle<S, E>>;
-  persist?: PersistConfig<S>;
+  lifecycle?: Lifecycle<S, E>;
   onRestart?: (generation: number, exit: ActorExit<unknown>) => Effect.Effect<void>;
 }) =>
   Effect.gen(function* () {
@@ -654,11 +646,18 @@ const runSupervisionLoop = <
         return;
       }
 
-      // Resolve restart state: persist.load()+onRestore > machine.initial
-      const restartState =
-        params.persist !== undefined
-          ? yield* loadAndRestore(params.persist, params.machine.initial)
-          : params.machine.initial;
+      // Resolve restart state: recovery.resolve > machine.initial
+      let restartState = params.machine.initial;
+      if (params.lifecycle?.recovery !== undefined) {
+        const resolved = yield* params.lifecycle.recovery.resolve({
+          actorId: params.id,
+          generation: generation + 1,
+          machineInitial: params.machine.initial,
+        });
+        if (Option.isSome(resolved)) {
+          restartState = resolved.value;
+        }
+      }
 
       yield* settlePendingReplies(params.pendingReplies, params.id);
       const freshQueue = yield* Queue.unbounded<QueuedEvent<E>>();
@@ -675,6 +674,7 @@ const runSupervisionLoop = <
           : params.machine;
       const newRuntime = yield* params.spawnGeneration(machineForRestart);
       params.runtimeRef.current = newRuntime;
+      yield* newRuntime.start;
       generation++;
 
       if (params.onRestart !== undefined) {
@@ -701,17 +701,16 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   options?: {
     initialState?: S;
     supervision?: Supervision.Policy;
-    persist?: PersistConfig<S>;
+    lifecycle?: Lifecycle<S, E>;
     /** @internal Called by system after each restart — emits ActorRestarted system event */
     onRestart?: (generation: number, exit: ActorExit<unknown>) => Effect.Effect<void>;
   },
 ) {
-  const persist = options?.persist;
+  const lifecycle: Lifecycle<S, E> | undefined = options?.lifecycle;
 
-  // Resolve initial state: hydrate > persist.load()+onRestore > machine.initial
-  const initial: S =
-    options?.initialState ??
-    (persist !== undefined ? yield* loadAndRestore(persist, machine.initial) : machine.initial);
+  // Spawn is cold — initial state from hydrate or machine.initial.
+  // Recovery runs during start, not allocate.
+  const initial: S = options?.initialState ?? machine.initial;
   yield* Effect.annotateCurrentSpan("effect_machine.actor.id", id);
   yield* Effect.annotateCurrentSpan("effect_machine.actor.initial_state", initial._tag);
 
@@ -727,14 +726,6 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   const pendingReplies = new Set<Deferred.Deferred<unknown, unknown>>();
   const listeners: Listeners<S> = new Set();
   const transitionsPubSub = yield* PubSub.unbounded<TransitionInfo<S, E>>();
-
-  // Emit @machine.spawn inspection event
-  yield* emitWithTimestamp(inspectorValue, (timestamp) => ({
-    type: "@machine.spawn",
-    actorId: id,
-    initialState: initial,
-    timestamp,
-  }));
 
   // Build hooks from inspector
   const hooks = inspectorValue !== undefined ? buildInspectionHooks(id, inspectorValue) : undefined;
@@ -760,6 +751,9 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   // Track whether @machine.stop has been emitted
   let stopEmitted = false;
 
+  // Generation counter — used by recovery to distinguish cold start from restart
+  let generation = 0;
+
   // Mutable ref for the current runtime — supervision loop updates this
   const runtimeRef: { current: RuntimeHandle<S, E> | undefined } = { current: undefined };
 
@@ -778,16 +772,23 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
                 timestamp,
               }))
           : undefined,
-      onStateChange: (result, _event) =>
+      onStateChange: (result, event) =>
         Effect.gen(function* () {
           notifyListeners(listeners, result.newState);
-          // Persist after state committed to ref, before reply settlement
-          if (persist !== undefined && result.transitioned) {
+          // Durability: save after state committed to ref, before reply settlement
+          if (lifecycle?.durability !== undefined && result.transitioned) {
+            const durability = lifecycle.durability;
             const shouldPersist =
-              persist.shouldSave === undefined ||
-              persist.shouldSave(result.newState, result.previousState);
+              durability.shouldSave === undefined ||
+              durability.shouldSave(result.newState, result.previousState);
             if (shouldPersist) {
-              yield* persist.save(result.newState);
+              yield* durability.save({
+                actorId: id,
+                generation,
+                previousState: result.previousState,
+                nextState: result.newState,
+                event,
+              });
             }
           }
           yield* Effect.annotateCurrentSpan("effect_machine.transition.matched", true);
@@ -898,43 +899,18 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
 
   const supervision = options?.supervision;
 
-  // Supervision loop or simple exit wiring
-  let supervisorFiber: Fiber.Fiber<void, never> | undefined;
-  if (supervision !== undefined) {
-    supervisorFiber = yield* Effect.forkDaemon(
-      runSupervisionLoop({
-        supervision,
-        machine,
-        id,
-        runtimeRef,
-        terminalExitDeferred,
-        pendingReplies,
-        eventQueueRef,
-        stateRef,
-        stoppedRef,
-        childrenMap,
-        listeners,
-        spawnGeneration,
-        persist,
-        onRestart: options?.onRestart,
-      }),
-    );
-  } else {
-    // No supervision — wire terminal exit from the single generation
-    yield* Effect.forkDaemon(
-      Deferred.await(runtime.exitDeferred).pipe(
-        Effect.tap((exit) => Deferred.succeed(terminalExitDeferred, exit)),
-      ),
-    );
-  }
+  // Mutable ref for supervisor fiber — set during start, used by stop
+  const supervisorFiberRef: { current: Fiber.Fiber<void, never> | undefined } = {
+    current: undefined,
+  };
 
   // Build actor stop — wraps current runtime.stop with implicit system teardown.
   // For supervised actors: interrupt supervisor fiber first (cancels restart/backoff),
   // then stop the current runtime, then set terminal exit.
   const stop = Effect.gen(function* () {
     // Interrupt supervisor loop first — prevents restart during/after stop
-    if (supervisorFiber !== undefined) {
-      yield* Fiber.interrupt(supervisorFiber);
+    if (supervisorFiberRef.current !== undefined) {
+      yield* Fiber.interrupt(supervisorFiberRef.current);
     }
     const currentRuntime = runtimeRef.current;
     if (currentRuntime !== undefined) {
@@ -947,6 +923,79 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     }
   }).pipe(Effect.withSpan("effect-machine.actor.stop"), Effect.asVoid);
 
+  // Track whether hydrate was provided — skip recovery when hydrated
+  const isHydrated = options?.initialState !== undefined;
+
+  // Build actor start — runs recovery, emits @machine.spawn, arms supervisor, then delegates to runtime.start
+  const start = Effect.gen(function* () {
+    // Run recovery if lifecycle.recovery exists AND not hydrated (hydrate takes precedence)
+    if (lifecycle?.recovery !== undefined && !isHydrated) {
+      const resolved = yield* lifecycle.recovery.resolve({
+        actorId: id,
+        generation,
+        machineInitial: machine.initial,
+      });
+      if (Option.isSome(resolved)) {
+        // Update cell stateRef
+        yield* SubscriptionRef.set(stateRef, resolved.value);
+        // Runtime was created with cold initial — recreate with recovered state.
+        // The runtime reads machine.initial for background/spawn effects.
+        const recoveredMachine = Object.create(machine, {
+          initial: { value: resolved.value, enumerable: true },
+        }) as typeof machine;
+        const newRuntime = yield* spawnGeneration(recoveredMachine);
+        runtimeRef.current = newRuntime;
+      }
+    }
+
+    // Emit @machine.spawn inspection event (moved from allocate → start)
+    const currentState = yield* SubscriptionRef.get(stateRef);
+    yield* emitWithTimestamp(inspectorValue, (timestamp) => ({
+      type: "@machine.spawn",
+      actorId: id,
+      initialState: currentState,
+      timestamp,
+    }));
+
+    // Arm supervisor (moved from allocate → start)
+    if (supervision !== undefined) {
+      supervisorFiberRef.current = yield* Effect.forkDaemon(
+        runSupervisionLoop({
+          supervision,
+          machine,
+          id,
+          runtimeRef,
+          terminalExitDeferred,
+          pendingReplies,
+          eventQueueRef,
+          stateRef,
+          stoppedRef,
+          childrenMap,
+          listeners,
+          spawnGeneration,
+          lifecycle,
+          onRestart: options?.onRestart,
+        }),
+      );
+    } else {
+      // No supervision — wire terminal exit from the current generation
+      const currentRuntime = runtimeRef.current;
+      if (currentRuntime !== undefined) {
+        yield* Effect.forkDaemon(
+          Deferred.await(currentRuntime.exitDeferred).pipe(
+            Effect.tap((exit) => Deferred.succeed(terminalExitDeferred, exit)),
+          ),
+        );
+      }
+    }
+
+    // Delegate to runtime.start (forks event loop, background, spawn effects)
+    const currentRuntime = runtimeRef.current;
+    if (currentRuntime !== undefined) {
+      yield* currentRuntime.start;
+    }
+  }).pipe(Effect.withSpan("effect-machine.actor.start"), Effect.asVoid);
+
   return buildActorRefCore(
     id,
     machine,
@@ -955,6 +1004,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     stoppedRef,
     listeners,
     stop,
+    start,
     system,
     childrenMap,
     pendingReplies,
@@ -1078,7 +1128,7 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
       readonly supervision?: Supervision.Policy;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       readonly slots?: Record<string, any>;
-      readonly persist?: PersistConfig<S>;
+      readonly lifecycle?: Lifecycle<S, E>;
     },
   ) {
     if (MutableHashMap.has(actorsMap, id)) {
@@ -1092,7 +1142,7 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const actor = yield* createActor(id, materialized as Machine<S, E, never, any, any, any>, {
       supervision: spawnOptions?.supervision,
-      persist: spawnOptions?.persist,
+      lifecycle: spawnOptions?.lifecycle,
       onRestart:
         spawnOptions?.supervision !== undefined
           ? (generation, exit) =>
@@ -1108,7 +1158,13 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
           : undefined,
     });
     actorRef = actor as unknown as ActorRef<AnyState, unknown>;
-    return yield* registerActor(id, actor);
+    // Register before start — actor is in the map before lifecycle hooks fire
+    yield* registerActor(id, actor);
+    // Auto-start: system.spawn returns a running actor
+    yield* actor.start.pipe(
+      Effect.catchAllCause((cause) => actor.stop.pipe(Effect.andThen(Effect.failCause(cause)))),
+    );
+    return actor;
   });
 
   const spawn = <
@@ -1124,7 +1180,7 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
       readonly supervision?: Supervision.Policy;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       readonly slots?: ProvideSlots<SD, any>;
-      readonly persist?: PersistConfig<S>;
+      readonly lifecycle?: Lifecycle<S, E>;
     },
   ): Effect.Effect<ActorRef<S, E>, DuplicateActorError, R> =>
     withSpawnGate(spawnRegular(id, machine, options)) as Effect.Effect<

@@ -120,6 +120,7 @@ describe(".postpone()", () => {
         .postpone(ConnState.Connecting, ConnEvent.Data);
 
       const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
 
       // call on postponed event returns immediately with postponed: true
       const result = yield* actor.call(ConnEvent.Data({ payload: "x" }));
@@ -234,6 +235,7 @@ describe(".postpone()", () => {
         .postpone(ConnState.Connecting, ConnEvent.Data);
 
       const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
 
       // call will block until event is processed — but we stop before that
       const fiber = yield* actor
@@ -279,6 +281,7 @@ describe(".postpone()", () => {
         .final(MSState.Done);
 
       const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
 
       // Send events: Finish and GoC are postponed in A.
       // GoB moves to B → drains GoC (→ C) → drains Finish (→ Done)

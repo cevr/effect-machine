@@ -106,6 +106,7 @@ const actor =
       fetch: ({ url }) => Http.get(url),
     },
   });
+yield * actor.start;
 
 // When a handler needs machine state, access via service
 Machine.spawn(machine, {
@@ -119,8 +120,11 @@ Machine.spawn(machine, {
 
 **Simple (no registry):**
 
+`Machine.spawn` returns an **unstarted** actor. Call `actor.start` to fork the event loop.
+
 ```ts
 const actor = yield * Machine.spawn(machine);
+yield * actor.start; // fork event loop, background effects, spawn effects
 yield * actor.stop; // caller responsible
 
 // Scope-aware — auto-cleanup:
@@ -128,6 +132,7 @@ yield *
   Effect.scoped(
     Effect.gen(function* () {
       const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
       // actor.stop called automatically when scope closes
     }),
   );
@@ -135,12 +140,40 @@ yield *
 
 **With registry:**
 
+`system.spawn` auto-starts — no `actor.start` needed.
+
 ```ts
 const system = yield * ActorSystemService;
 const actor = yield * system.spawn("my-id", machine);
 ```
 
-**Lifecycle:** `Machine.spawn` and `system.spawn` detect scope via `Effect.serviceOption` — if present, attach finalizer; if absent, skip. Forgetting `actor.stop` without a scope = permanent fiber leak.
+**Scope detection:** `Machine.spawn` and `system.spawn` detect scope via `Effect.serviceOption` — if present, attach finalizer; if absent, skip. Forgetting `actor.stop` without a scope = permanent fiber leak.
+
+## Recovery + Durability
+
+Lifecycle hooks for persistence. Replace the old `PersistConfig`.
+
+```ts
+const actor =
+  yield *
+  Machine.spawn(machine, {
+    lifecycle: {
+      recovery: {
+        resolve: ({ actorId, generation, machineInitial }) =>
+          storage.get(actorId).pipe(Effect.map(Option.fromNullable)),
+      },
+      durability: {
+        save: ({ actorId, nextState, event }) => storage.set(actorId, nextState),
+        shouldSave: (state, prev) => state._tag !== prev._tag,
+      },
+    },
+  });
+yield * actor.start;
+```
+
+- **Recovery** — resolves initial state per generation. Runs during `actor.start`. Returns `Option<S>`: `Some` overrides initial, `None` uses `machine.initial`. `generation` is 0 for cold start, 1+ for supervision restarts.
+- **Durability** — saves state after committed transitions. Receives `DurabilityCommit` with actorId, generation, previousState, nextState, event. `shouldSave` is a sync predicate to skip uninteresting transitions.
+- **`hydrate` overrides recovery** — `Machine.spawn(machine, { hydrate: state })` skips `recovery.resolve` entirely.
 
 ## Supervision
 
@@ -154,8 +187,9 @@ const actor =
   Machine.spawn(machine, {
     supervision: Supervision.restart({ maxRestarts: 3, within: "1 minute" }),
   });
+yield * actor.start;
 
-// Via system
+// Via system (auto-starts)
 const actor =
   yield *
   system.spawn("id", machine, {
@@ -251,6 +285,7 @@ const count = yield* actor.ask(Event.GetCount);  // number
 
 ## Gotchas
 
+- `Machine.spawn` returns an **unstarted** actor — must call `yield* actor.start`. `system.spawn` auto-starts.
 - Never `throw` in Effect.gen — use `yield* Effect.fail()`
 - `yield* Effect.yieldNow` after `send()` to let effects run
 - `simulate()`/`createTestHarness()` don't run spawn effects
