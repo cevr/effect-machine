@@ -1,6 +1,6 @@
 ---
 name: effect-machine
-description: Type-safe state machines for Effect. Use when building state machines with effect-machine — defining states/events, transition handlers, spawn effects, timeouts, postpone, actors, typed ask/reply, testing, persistence composition. Triggers on effect-machine imports, Machine.make, Machine.spawn, Machine.replay, Machine.reply, Event.reply, State/Event definitions, ActorRef usage.
+description: Type-safe state machines for Effect. Use when building state machines with effect-machine — defining states/events, transition handlers, spawn effects, timeouts, postpone, actors, typed ask/reply, testing, recovery/durability lifecycle. Triggers on effect-machine imports, Machine.make, Machine.spawn, actor.start, Machine.replay, Machine.reply, Event.reply, State/Event definitions, ActorRef usage, Recovery, Durability, Lifecycle.
 ---
 
 ## Navigation
@@ -13,7 +13,7 @@ What are you building?
 ├─ Testing machines                 → §Testing
 ├─ Running actors                   → §Actors
 ├─ Typed ask/reply                  → §Ask / Reply
-├─ Persistence/restore              → §Persistence
+├─ Recovery/durability              → §Lifecycle
 ├─ Timeouts / postpone              → §Timeouts, §Postpone
 └─ Slots (guards/effects)           → §Slots
 ```
@@ -154,6 +154,7 @@ const actor =
       notify: ({ msg }) => Effect.log(msg),
     },
   });
+yield * actor.start;
 ```
 
 Slots are accepted everywhere: `Machine.spawn`, `Machine.replay`, `simulate`, `createTestHarness`.
@@ -216,12 +217,17 @@ Multi-stage: if a drained event causes another state change, postponed events re
 
 ## Actors
 
-### Machine.spawn — standalone actor
+### Machine.spawn — standalone, unstarted actor
+
+`Machine.spawn` returns a **cold** actor. Call `actor.start` to fork the event loop. Events sent before `start()` are queued.
 
 ```ts
 const actor = yield * Machine.spawn(machine);
-const actor = yield * Machine.spawn(machine, "my-id");
+yield * actor.start;
+
+// With options
 const actor = yield * Machine.spawn(machine, { id: "my-id", hydrate: savedState });
+yield * actor.start;
 ```
 
 Auto-cleans up if `Scope` is present. Otherwise call `actor.stop` manually.
@@ -230,6 +236,7 @@ Auto-cleans up if `Scope` is present. Otherwise call `actor.stop` manually.
 
 | Method                 | Description                                                         |
 | ---------------------- | ------------------------------------------------------------------- |
+| `start`                | Fork event loop + effects (required after `Machine.spawn`)          |
 | `send(event)`          | Fire-and-forget                                                     |
 | `cast(event)`          | Alias for send                                                      |
 | `call(event)`          | Request-reply → `ProcessEventResult`                                |
@@ -242,11 +249,13 @@ Auto-cleans up if `Scope` is present. Otherwise call `actor.stop` manually.
 | `awaitFinal`           | Wait for final state                                                |
 | `sync.*`               | Sync variants for non-Effect boundaries                             |
 
-### ActorSystem — registry + lifecycle
+### ActorSystem — registry + lifecycle (auto-starts)
+
+`system.spawn` auto-starts — no `actor.start` needed.
 
 ```ts
 const system = yield * ActorSystemService;
-const actor = yield * system.spawn("id", machine); // DuplicateActorError if exists
+const actor = yield * system.spawn("id", machine); // auto-started
 const maybe = yield * system.get("id"); // Option<ActorRef>
 yield * system.stop("id"); // boolean
 system.actors; // ReadonlyMap snapshot
@@ -265,35 +274,57 @@ machine.spawn(S.Active, ({ self }) =>
 );
 ```
 
-## Persistence
+## Lifecycle
 
-Local persistence via `Machine.spawn`:
+Recovery + Durability hooks for persistence. Passed via `lifecycle` option on `Machine.spawn` / `system.spawn`.
 
 ```ts
 const actor =
   yield *
   Machine.spawn(machine, {
-    persist: {
-      load: () => storage.get("state"), // Effect<Option<S>>
-      save: (state) => storage.set("state", state),
+    lifecycle: {
+      recovery: {
+        // Runs during actor.start. Return Some to override initial state, None for cold start.
+        resolve: ({ actorId, generation, machineInitial }) =>
+          storage.get(actorId).pipe(Effect.map(Option.fromNullable)),
+      },
+      durability: {
+        // Runs after each committed transition
+        save: ({ actorId, generation, previousState, nextState, event }) =>
+          storage.set(actorId, nextState),
+        // Optional sync filter — skip uninteresting transitions
+        shouldSave: (state, prev) => state._tag !== prev._tag,
+      },
     },
   });
-// load() called at spawn and on supervision restart
-// save() called after each state transition
+yield * actor.start;
+```
 
-// Or observe state changes manually:
-yield * actor.changes.pipe(Stream.runForEach((state) => saveSnapshot(id, state)));
+| Interface          | When it runs                                     | Receives                                                   |
+| ------------------ | ------------------------------------------------ | ---------------------------------------------------------- |
+| `Recovery<S>`      | During `actor.start` (and supervision restart)   | `{ actorId, generation, machineInitial }`                  |
+| `Durability<S, E>` | After each state commit, before reply settlement | `{ actorId, generation, previousState, nextState, event }` |
 
+- `generation` — 0 = cold start, 1+ = supervision restart
+- `hydrate` overrides recovery — `Machine.spawn(machine, { hydrate: state })` skips `resolve` entirely
+- `Lifecycle<S, E>` = `{ recovery?, durability? }` — both optional
+
+### Replay + Hydrate
+
+```ts
 // Restore from snapshot
 const actor = yield * Machine.spawn(machine, { hydrate: loadedState });
+yield * actor.start;
 
 // Restore from event log
 const state = yield * Machine.replay(machine, events);
 const actor = yield * Machine.spawn(machine, { hydrate: state });
+yield * actor.start;
 
 // Restore from snapshot + tail events
 const state = yield * Machine.replay(machine, tailEvents, { from: snapshot });
 const actor = yield * Machine.spawn(machine, { hydrate: state });
+yield * actor.start;
 ```
 
 **Machine.replay semantics:**
@@ -328,9 +359,11 @@ Both `simulate` and `createTestHarness` accept `Machine` directly.
 
 ## Gotchas
 
+- **`Machine.spawn` returns unstarted actor** — must call `yield* actor.start`. `system.spawn` auto-starts.
 - **Slots are provided at spawn time** — `Machine.spawn(machine, { slots: { ... } })`
 - **Empty state = value, non-empty = constructor** — `S.Idle` vs `S.Loading({ url })`
 - **Spawn effects re-run on hydrate** — `Machine.spawn({ hydrate })` re-runs spawn effects for the hydrated state (timers, scoped resources)
+- **`hydrate` overrides recovery** — `resolve()` is never called when `hydrate` is set
 - **`transitions` is observational** — PubSub-backed, late subscribers miss edges. Not a durability guarantee.
 - **Effectful handlers in replay** — replay runs handlers but stubs `self`/`system`. Side effects through `self.send` are no-ops.
 - **`ask()` requires reply schema** — only events with `Event.reply()` accepted; non-reply events are type errors
