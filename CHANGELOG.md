@@ -1,5 +1,15 @@
 # effect-machine
 
+## 0.15.1
+
+### Patch Changes
+
+- [`612e686`](https://github.com/cevr/effect-machine/commit/612e6863cdde4c806a2c91dbc70eb34598020359) Thanks [@cevr](https://github.com/cevr)! - Fix `Event.reply(...)` constructor payload typing so reply schema metadata does not leak into user payload arguments.
+
+  Add regressions for:
+  - payload-bearing reply event constructors accepting plain payload objects
+  - `ask()` with payload-bearing reply events
+
 ## 0.15.0
 
 ### Minor Changes
