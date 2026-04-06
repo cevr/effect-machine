@@ -1,5 +1,13 @@
 # effect-machine
 
+## 0.15.2
+
+### Patch Changes
+
+- [`0c81fd3`](https://github.com/cevr/effect-machine/commit/0c81fd3a079dc8ce34a2077c0eeaf96382d95bdb) Thanks [@cevr](https://github.com/cevr)! - fix(v3): backport reply metadata stripping from event constructor payloads
+
+  `Event.reply(...)` constructor payload typing no longer leaks reply schema metadata into user payload arguments.
+
 ## 0.15.1
 
 ### Patch Changes
