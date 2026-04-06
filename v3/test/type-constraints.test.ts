@@ -140,6 +140,14 @@ const _test9 = Machine.make({
   Machine.reply(ReplyState.Active({ count: state.count }), "not a number"),
 );
 
+// Test 9b: reply-bearing constructors accept plain payload fields, not hidden reply metadata
+const PayloadReplyEvent = Event({
+  GetById: Event.reply({ id: Schema.String }, Schema.Number),
+});
+const _test9bPayload: Parameters<typeof PayloadReplyEvent.GetById>[0] = { id: "task-1" };
+const _test9b = PayloadReplyEvent.GetById(_test9bPayload);
+const _test9bId: string = _test9b.id;
+
 // ============================================================================
 // Slot Type Safety Regression Tests
 // ============================================================================

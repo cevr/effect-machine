@@ -55,6 +55,14 @@ export type ReplyFields<F extends Schema.Struct.Fields, RS extends Schema.Schema
   readonly [ReplySchemaSymbol]: RS;
 };
 
+/**
+ * Payload fields that actually flow through constructors and runtime values.
+ * Reply schema metadata is type-only and must not leak into payload shapes.
+ */
+type PayloadFields<F extends Schema.Struct.Fields> = {
+  readonly [K in keyof F as K extends ReplySchemaSymbol ? never : K]: F[K];
+};
+
 // ============================================================================
 // Type Helpers
 // ============================================================================
@@ -63,14 +71,14 @@ export type ReplyFields<F extends Schema.Struct.Fields, RS extends Schema.Schema
  * Extract the TypeScript type from a TaggedStruct schema
  */
 type TaggedStructType<Tag extends string, Fields extends Schema.Struct.Fields> = Schema.Schema.Type<
-  Schema.TaggedStruct<Tag, Fields>
+  Schema.TaggedStruct<Tag, PayloadFields<Fields>>
 >;
 
 /**
  * Build variant schemas type from definition
  */
 type VariantSchemas<D extends Record<string, Schema.Struct.Fields>> = {
-  readonly [K in keyof D & string]: Schema.TaggedStruct<K, D[K]>;
+  readonly [K in keyof D & string]: Schema.TaggedStruct<K, PayloadFields<D[K]>>;
 };
 
 /**
@@ -119,11 +127,11 @@ type VariantConstructors<D extends Record<string, Schema.Struct.Fields>, Brand> 
           readonly derive: (source: object) => TaggedStructType<K, D[K]> & Brand;
         }
     : ((
-        args: Schema.Struct.Type<D[K]>,
+        args: Schema.Struct.Type<PayloadFields<D[K]>>,
       ) => TaggedStructType<K, D[K]> & Brand & VariantReplyBrand<D[K]>) & {
         readonly derive: (
           source: object,
-          partial?: Partial<Schema.Struct.Type<D[K]>>,
+          partial?: Partial<Schema.Struct.Type<PayloadFields<D[K]>>>,
         ) => TaggedStructType<K, D[K]> & Brand;
         readonly _tag: K;
       };

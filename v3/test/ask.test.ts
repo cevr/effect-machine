@@ -14,6 +14,7 @@ const TestEvent = Event({
   Start: {},
   Increment: {},
   GetCount: Event.reply({}, Schema.Number),
+  MultiplyCount: Event.reply({ factor: Schema.Number }, Schema.Number),
   GetNothing: Event.reply({}, Schema.Undefined),
   Stop: {},
 });
@@ -31,6 +32,9 @@ const createMachine = () =>
     // Handler that returns Machine.reply — typed domain reply for ask
     .on(TestState.Active, TestEvent.GetCount, ({ state }) =>
       Machine.reply(TestState.Active({ count: state.count }), state.count),
+    )
+    .on(TestState.Active, TestEvent.MultiplyCount, ({ state, event }) =>
+      Machine.reply(TestState.Active({ count: state.count }), state.count * event.factor),
     )
     // Handler that returns Machine.reply with undefined — explicit undefined reply
     .on(TestState.Active, TestEvent.GetNothing, ({ state }) =>
@@ -114,6 +118,21 @@ describe("ActorRef.ask", () => {
       yield* actor.call(TestEvent.Increment);
       const count2 = yield* actor.ask(TestEvent.GetCount);
       expect(count2).toBe(2);
+    }),
+  );
+
+  it.scopedLive("reply-bearing events with payload accept plain constructor args", () =>
+    Effect.gen(function* () {
+      const machine = createMachine();
+      const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
+
+      yield* actor.call(TestEvent.Start);
+      yield* actor.call(TestEvent.Increment);
+      yield* actor.call(TestEvent.Increment);
+
+      const result = yield* actor.ask(TestEvent.MultiplyCount({ factor: 3 }));
+      expect(result).toBe(6);
     }),
   );
 
