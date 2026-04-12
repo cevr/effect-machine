@@ -8,4 +8,7 @@ export default defineConfig({
   unbundle: true,
   platform: "neutral",
   target: "esnext",
+  deps: {
+    neverBundle: [/^@effect\//, /^effect/],
+  },
 });

@@ -9,4 +9,7 @@ export default defineConfig({
   platform: "neutral",
   target: "esnext",
   outDir: "dist",
+  deps: {
+    neverBundle: [/^@effect\//, /^effect/],
+  },
 });
