@@ -1,5 +1,25 @@
 # effect-machine
 
+## 0.16.0
+
+### Minor Changes
+
+- [`d17665e`](https://github.com/cevr/effect-machine/commit/d17665e726ac10b82ac470d58539643e3624592d) Thanks [@cevr](https://github.com/cevr)! - Replace ambient Scope detection with explicit ActorScope service
+  - `Machine.spawn` and `system.spawn` no longer attach cleanup finalizers to ambient `Scope.Scope`. This fixes a bug where unrelated scopes would unexpectedly tear down actors.
+  - New `ActorScope` service tag — when present in context, actors attach stop finalizers to it.
+  - New `Machine.scoped(effect)` helper bridges `Scope.Scope` → `ActorScope` for opt-in auto-cleanup.
+  - Backport `call` improvements to v3: warning log on stopped actor, complete `ProcessEventResult` fields with `satisfies` for type safety.
+  - Fix `bun test` tsconfig resolution and add `test:all` / v3 tests to gate.
+
+- [`ec8ccd3`](https://github.com/cevr/effect-machine/commit/ec8ccd3560df0f1e7f8c2ea91086373341072c93) Thanks [@cevr](https://github.com/cevr)! - Upgrade to effect 4.0.0-beta.47, require tsgo for type checking
+
+  **Breaking:** Minimum peer dependency is now `effect@>=4.0.0-beta.47`. The `ServiceMap` module was removed upstream — all `ServiceMap.Service` usages are now `Context.Service`.
+  - Rename `ServiceMap.Service` → `Context.Service` throughout
+  - Rename `Effect.services()` → `Effect.context()`
+  - Switch type checker from `tsc` to `tsgo` (native Go compiler via `@typescript/native-preview`)
+  - Switch Effect LSP from tsconfig plugin patch to `effect-language-service diagnostics` CLI
+  - Simplify tsconfig.json for TypeScript 6 defaults
+
 ## 0.15.2
 
 ### Patch Changes
