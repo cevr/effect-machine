@@ -31,7 +31,7 @@
  *
  * @module
  */
-import { Schema, ServiceMap } from "effect";
+import { Schema, Context } from "effect";
 import type { Effect } from "effect";
 import type { ActorSystem } from "./actor.js";
 
@@ -253,7 +253,7 @@ export interface MachineContext<State, Event, Self> {
  */
 /* eslint-disable @typescript-eslint/no-explicit-any -- generic context tag */
 export const MachineContextTag =
-  ServiceMap.Service<MachineContext<any, any, any>>("@effect-machine/Context");
+  Context.Service<MachineContext<any, any, any>>("@effect-machine/Context");
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 // ============================================================================

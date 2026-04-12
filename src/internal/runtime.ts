@@ -215,8 +215,8 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
 ) {
   const { actorId, hooks, lifecycle } = config;
 
-  // Capture services for fire-and-forget Deferred settlement (runForkWith)
-  const services = yield* Effect.services();
+  // Capture context for fire-and-forget Deferred settlement (runForkWith)
+  const services = yield* Effect.context();
   const fork = Effect.runForkWith(services);
 
   // Resources: use cell-provided or allocate fresh

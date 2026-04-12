@@ -21,7 +21,7 @@ import {
   Schedule,
   Scope,
   Semaphore,
-  ServiceMap,
+  Context,
   Stream,
   SubscriptionRef,
 } from "effect";
@@ -297,7 +297,7 @@ export interface ActorSystem {
 /**
  * ActorSystem service tag
  */
-export const ActorSystem = ServiceMap.Service<ActorSystem>("@effect/machine/ActorSystem");
+export const ActorSystem = Context.Service<ActorSystem>("@effect/machine/ActorSystem");
 
 /**
  * Explicit scope for actor lifecycle management.
@@ -308,7 +308,7 @@ export const ActorSystem = ServiceMap.Service<ActorSystem>("@effect/machine/Acto
  *
  * Provide via `Machine.scoped` or `Effect.provideService(ActorScope, scope)`.
  */
-export const ActorScope = ServiceMap.Service<Scope.Scope>("@effect/machine/ActorScope");
+export const ActorScope = Context.Service<Scope.Scope>("@effect/machine/ActorScope");
 
 // ============================================================================
 // Actor Core Helpers

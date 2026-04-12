@@ -7,8 +7,9 @@ Type-safe state machines for Effect.
 ```bash
 bun run gate          # typecheck + lint + test + build
 bun test              # Run tests
-bun run typecheck     # TypeScript check
-bun run lint          # oxlint
+bun run typecheck     # tsgo --noEmit (native Go compiler)
+bun run lint          # oxlint + effect-language-service diagnostics
+bun run lint:effect   # effect LSP diagnostics only
 bun run fmt           # oxfmt
 ```
 

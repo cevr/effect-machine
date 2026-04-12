@@ -40,9 +40,11 @@
     "access": "public"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsgo --noEmit",
     "typecheck:v3": "tsc --noEmit -p v3/tsconfig.json",
-    "lint": "oxlint",
+    "lint": "concurrently -n ox,effect -c yellow,blue \"oxlint\" \"bun run lint:effect\"",
+    "lint:ox": "oxlint",
+    "lint:effect": "effect-language-service diagnostics --project tsconfig.json --lspconfig \"$(cat .effect-lsp.json)\"",
     "lint:fix": "oxlint --fix",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
@@ -51,30 +53,31 @@
     "test:watch": "bun test --watch",
     "test:all": "bun run test && bun run test:v3",
     "gate": "concurrently -n type,lint,fmt,test,build -c blue,yellow,magenta,green,cyan \"bun run typecheck\" \"bun run lint:fix\" \"bun run fmt\" \"bun run test:all\" \"bun run build\"",
-    "prepare": "lefthook install || true && effect-language-service patch",
+    "prepare": "lefthook install",
     "version": "changeset version",
     "build": "tsdown && tsdown --config v3/tsdown.config.ts",
     "release": "bun run build && changeset publish"
   },
   "dependencies": {
-    "effect": "4.0.0-beta.43"
+    "effect": "4.0.0-beta.47"
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.6.0",
     "@changesets/cli": "^2.30.0",
-    "@effect/language-service": "^0.84.2",
-    "@types/bun": "1.3.11",
+    "@effect/language-service": "^0.85.1",
+    "@types/bun": "1.3.12",
+    "@typescript/native-preview": "^7.0.0-dev.20260412.1",
     "concurrently": "^9.2.1",
     "effect-bun-test": "0.3.0",
     "effect-v3": "npm:effect@^3.21.0",
-    "lefthook": "^2.1.4",
-    "oxfmt": "^0.42.0",
-    "oxlint": "^1.57.0",
+    "lefthook": "^2.1.5",
+    "oxfmt": "^0.44.0",
+    "oxlint": "^1.59.0",
     "tsdown": "^0.21.7",
-    "typescript": "^5.9.3"
+    "typescript": "^6.0.2"
   },
   "peerDependencies": {
-    "effect": ">=3.19.16"
+    "effect": ">=4.0.0-beta.47"
   },
   "peerDependenciesMeta": {
     "effect": {
@@ -82,6 +85,6 @@
     }
   },
   "overrides": {
-    "effect": "4.0.0-beta.43"
+    "effect": "4.0.0-beta.47"
   }
 }

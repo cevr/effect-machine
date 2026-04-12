@@ -1,0 +1,49 @@
+{
+  "diagnostics": true,
+  "diagnosticsName": true,
+  "diagnosticSeverity": {
+    "anyUnknownInErrorContext": "error",
+    "deterministicKeys": "warning",
+    "importFromBarrel": "warning",
+    "instanceOfSchema": "warning",
+    "missedPipeableOpportunity": "off",
+    "missingEffectServiceDependency": "warning",
+    "schemaUnionOfLiterals": "warning",
+    "strictBooleanExpressions": "warning",
+    "strictEffectProvide": "warning",
+    "catchAllToMapError": "warning",
+    "catchUnfailableEffect": "warning",
+    "effectFnOpportunity": "warning",
+    "effectMapVoid": "warning",
+    "effectSucceedWithVoid": "warning",
+    "leakingRequirements": "warning",
+    "preferSchemaOverJson": "warning",
+    "redundantSchemaTagIdentifier": "warning",
+    "returnEffectInGen": "warning",
+    "runEffectInsideEffect": "error",
+    "schemaStructWithTag": "warning",
+    "schemaSyncInEffect": "warning",
+    "tryCatchInEffectGen": "warning",
+    "unnecessaryEffectGen": "warning",
+    "unnecessaryFailYieldableError": "warning",
+    "unnecessaryPipe": "warning",
+    "unnecessaryPipeChain": "warning",
+    "globalConsoleInEffect": "warning",
+    "globalDateInEffect": "warning",
+    "globalFetchInEffect": "warning",
+    "globalRandomInEffect": "warning",
+    "globalTimersInEffect": "warning"
+  },
+  "keyPatterns": [
+    {
+      "target": "service",
+      "pattern": "default",
+      "skipLeadingPath": ["src/"]
+    },
+    {
+      "target": "error",
+      "pattern": "default",
+      "skipLeadingPath": ["src/"]
+    }
+  ]
+}

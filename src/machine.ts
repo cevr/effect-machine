@@ -42,7 +42,7 @@
  *
  * @module
  */
-import type { ServiceMap, Duration } from "effect";
+import type { Context, Duration } from "effect";
 import { Cause, Effect, Exit, Option, Random, Schema, Scope } from "effect";
 
 import type { TransitionResult, ReplyResult } from "./internal/utils.js";
@@ -410,10 +410,10 @@ export class Machine<
    * Context tag for accessing machine state/event/self in slot handlers.
    * Uses shared module-level tag for all machines.
    */
-  readonly Context: ServiceMap.Service<
+  readonly Context: Context.Service<
     MachineContext<State, Event, MachineRef<Event>>,
     MachineContext<State, Event, MachineRef<Event>>
-  > = MachineContextTag as ServiceMap.Service<
+  > = MachineContextTag as Context.Service<
     MachineContext<State, Event, MachineRef<Event>>,
     MachineContext<State, Event, MachineRef<Event>>
   >;

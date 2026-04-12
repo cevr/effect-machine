@@ -1,4 +1,4 @@
-import { Effect, Option, ServiceMap, type Schema } from "effect";
+import { Effect, Option, Context, type Schema } from "effect";
 
 // ============================================================================
 // Type-level helpers
@@ -133,7 +133,7 @@ export interface Inspector<S, E> {
  * Uses `any` types to allow variance flexibility when providing the service
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const Inspector = ServiceMap.Service<Inspector<any, any>>("@effect/machine/Inspector");
+export const Inspector = Context.Service<Inspector<any, any>>("@effect/machine/Inspector");
 
 /**
  * Create an inspector from a callback function.

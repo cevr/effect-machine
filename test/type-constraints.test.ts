@@ -12,7 +12,7 @@
  *
  * All "bad" tests use @ts-expect-error on the handler return expression.
  */
-import { Effect, Schema, ServiceMap } from "effect";
+import { Effect, Schema, Context } from "effect";
 import { Machine, State, Event, Slot } from "../src/index.js";
 import type { ProvideSlots } from "../src/slot.js";
 
@@ -28,7 +28,7 @@ const MyEvent = Event({
 });
 
 // Test 1: Handler cannot require arbitrary services
-class MyService extends ServiceMap.Service<MyService, { foo: string }>()("@test/MyService") {}
+class MyService extends Context.Service<MyService, { foo: string }>()("@test/MyService") {}
 
 const _test1 = Machine.make({
   state: MyState,

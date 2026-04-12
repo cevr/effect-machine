@@ -6,7 +6,7 @@ import {
   Layer,
   Ref,
   Schema,
-  ServiceMap,
+  Context,
   Stream,
   SubscriptionRef,
 } from "effect";
@@ -844,7 +844,7 @@ describe("ActorRef", () => {
         interface LoopService {
           readonly run: () => Effect.Effect<string>;
         }
-        const LoopTag = ServiceMap.Service<LoopService>("test/FastFailLoop");
+        const LoopTag = Context.Service<LoopService>("test/FastFailLoop");
 
         const LoopLive = Layer.effect(
           LoopTag,
@@ -947,7 +947,7 @@ describe("ActorRef", () => {
         interface LoopService {
           readonly run: (value: number) => Effect.Effect<void>;
         }
-        const LoopTag = ServiceMap.Service<LoopService>("test/LoopService");
+        const LoopTag = Context.Service<LoopService>("test/LoopService");
 
         const LoopLive = Layer.effect(
           LoopTag,

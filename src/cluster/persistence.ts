@@ -10,7 +10,7 @@
  *
  * @module
  */
-import { type Effect, type Option, type Schedule, ServiceMap } from "effect";
+import { type Effect, type Option, type Schedule, Context } from "effect";
 
 import type { PersistenceError, VersionConflictError } from "../errors.js";
 
@@ -95,6 +95,6 @@ export interface PersistenceAdapter {
 // ============================================================================
 
 /** Service tag for PersistenceAdapter — resolve from context for shared infra. */
-export const PersistenceAdapter = ServiceMap.Service<PersistenceAdapter>(
+export const PersistenceAdapter = Context.Service<PersistenceAdapter>(
   "@effect-machine/cluster/PersistenceAdapter",
 );
