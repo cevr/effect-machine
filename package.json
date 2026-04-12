@@ -55,7 +55,7 @@
     "gate": "concurrently -n type,lint,fmt,test,build -c blue,yellow,magenta,green,cyan \"bun run typecheck\" \"bun run lint:fix\" \"bun run fmt\" \"bun run test:all\" \"bun run build\"",
     "prepare": "lefthook install",
     "version": "changeset version",
-    "build": "tsdown && tsdown --config v3/tsdown.config.ts",
+    "build": "concurrently -n v4,v3 -c cyan,magenta \"tsdown\" \"tsdown --config v3/tsdown.config.ts\"",
     "release": "bun run build && changeset publish"
   },
   "dependencies": {
