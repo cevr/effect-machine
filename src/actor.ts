@@ -299,6 +299,17 @@ export interface ActorSystem {
  */
 export const ActorSystem = ServiceMap.Service<ActorSystem>("@effect/machine/ActorSystem");
 
+/**
+ * Explicit scope for actor lifecycle management.
+ *
+ * When present in context, actors attach cleanup finalizers to this scope.
+ * This replaces ambient `Scope.Scope` detection which caused bugs where
+ * unrelated scopes would tear down actors unexpectedly.
+ *
+ * Provide via `Machine.scoped` or `Effect.provideService(ActorScope, scope)`.
+ */
+export const ActorScope = ServiceMap.Service<Scope.Scope>("@effect/machine/ActorScope");
+
 // ============================================================================
 // Actor Core Helpers
 // ============================================================================
@@ -355,14 +366,21 @@ export const buildActorRefCore = <
   const call = Effect.fn("effect-machine.actor.call")(function* (event: E) {
     const stopped = yield* Ref.get(stoppedRef);
     if (stopped) {
+      yield* Effect.logWarning("effect-machine.actor.call.stopped").pipe(
+        Effect.annotateLogs({ actorId: id, eventTag: (event as { _tag?: string })._tag }),
+      );
       const currentState = yield* SubscriptionRef.get(stateRef);
       return {
         newState: currentState,
         previousState: currentState,
         transitioned: false,
+        hasReply: false,
+        deferReply: false,
+        reply: undefined,
+        postponed: false,
         lifecycleRan: false,
         isFinal: machine.finalStates.has(currentState._tag),
-      } as ProcessEventResult<S>;
+      } satisfies ProcessEventResult<S>;
     }
     const reply = yield* Deferred.make<
       ProcessEventResult<{ readonly _tag: string }>,
@@ -381,13 +399,20 @@ export const buildActorRefCore = <
       ),
       Effect.catchTag("ActorStoppedError", () =>
         SubscriptionRef.get(stateRef).pipe(
-          Effect.map((currentState) => ({
-            newState: currentState,
-            previousState: currentState,
-            transitioned: false,
-            lifecycleRan: false,
-            isFinal: machine.finalStates.has(currentState._tag),
-          })),
+          Effect.map(
+            (currentState) =>
+              ({
+                newState: currentState,
+                previousState: currentState,
+                transitioned: false,
+                hasReply: false,
+                deferReply: false,
+                reply: undefined,
+                postponed: false,
+                lifecycleRan: false,
+                isFinal: machine.finalStates.has(currentState._tag),
+              }) satisfies ProcessEventResult<S>,
+          ),
         ),
       ),
     )) as ProcessEventResult<S>;
@@ -894,6 +919,9 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
             onChildSpawned: (childId, child) =>
               Effect.gen(function* () {
                 childrenMap.set(childId, child as unknown as ActorRef<AnyState, unknown>);
+                // Use Scope.Scope here intentionally — this is the spawn handler's
+                // state-scoped scope, not an ambient scope. When the state exits,
+                // this scope closes and the child is removed from the map.
                 const maybeScope = yield* Effect.serviceOption(Scope.Scope);
                 if (Option.isSome(maybeScope)) {
                   yield* Scope.addFinalizer(
@@ -1106,8 +1134,8 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     // Emit spawned event
     yield* emitSystemEvent({ _tag: "ActorSpawned", id, actor: actorRef });
 
-    // If scope available, attach per-actor cleanup
-    const maybeScope = yield* Effect.serviceOption(Scope.Scope);
+    // If ActorScope available, attach per-actor cleanup
+    const maybeScope = yield* Effect.serviceOption(ActorScope);
     if (Option.isSome(maybeScope)) {
       yield* Scope.addFinalizer(
         maybeScope.value,

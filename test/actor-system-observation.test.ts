@@ -256,7 +256,9 @@ describe("ActorSystem Observation", () => {
         system.subscribe((e) => events.push(e));
 
         // Spawn in a nested scope that closes before system teardown
-        yield* Effect.scoped(system.spawn("scoped-1", testMachine).pipe(Effect.asVoid));
+        yield* Effect.scoped(
+          Machine.scoped(system.spawn("scoped-1", testMachine).pipe(Effect.asVoid)),
+        );
 
         // Scope closed — should have spawned + stopped
         const spawned = events.filter((e) => e._tag === "ActorSpawned" && e.id === "scoped-1");

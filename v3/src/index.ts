@@ -69,7 +69,11 @@ export type {
   SystemEventListener,
   TransitionInfo,
 } from "./actor.js";
-export { ActorSystem as ActorSystemService, Default as ActorSystemDefault } from "./actor.js";
+export {
+  ActorSystem as ActorSystemService,
+  ActorScope,
+  Default as ActorSystemDefault,
+} from "./actor.js";
 
 // Supervision
 export { ActorExit, Supervision } from "./supervision.js";

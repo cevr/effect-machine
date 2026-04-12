@@ -434,19 +434,22 @@ describe("Machine.spawn", () => {
         )
         .spawn(TestState.Active, ({ slots }) => slots.track());
 
-      // Run in inner scope
+      // Run in inner scope — Machine.scoped bridges ActorScope from Scope
       yield* Effect.scoped(
-        Effect.gen(function* () {
-          const actor = yield* Machine.spawn(machine, {
-            slots: {
-              track: () => Effect.addFinalizer(() => Effect.sync(() => cleanedUp.push("cleaned"))),
-            },
-          });
-          yield* actor.start;
-          yield* actor.send(TestEvent.Start({ value: 1 }));
-          yield* yieldFibers;
-          expect(cleanedUp).toEqual([]);
-        }),
+        Machine.scoped(
+          Effect.gen(function* () {
+            const actor = yield* Machine.spawn(machine, {
+              slots: {
+                track: () =>
+                  Effect.addFinalizer(() => Effect.sync(() => cleanedUp.push("cleaned"))),
+              },
+            });
+            yield* actor.start;
+            yield* actor.send(TestEvent.Start({ value: 1 }));
+            yield* yieldFibers;
+            expect(cleanedUp).toEqual([]);
+          }),
+        ),
       );
 
       // After scope closes, finalizer should have run

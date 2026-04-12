@@ -1078,7 +1078,7 @@ export const make = Machine.make;
 // spawn function - simple actor creation without ActorSystem
 // ============================================================================
 
-import { createActor } from "./actor.js";
+import { createActor, ActorScope } from "./actor.js";
 import type { Supervision } from "./supervision.js";
 
 /**
@@ -1086,7 +1086,8 @@ import type { Supervision } from "./supervision.js";
  * Accepts a `Machine` directly. For slotful machines, pass `{ slots }` in options.
  *
  * **Single actor, no registry.** Caller manages lifetime via `actor.stop`.
- * If a `Scope` exists in context, cleanup attaches automatically on scope close.
+ * If an `ActorScope` exists in context, cleanup attaches automatically on scope close.
+ * Use `Machine.scoped` to bridge from `Scope` to `ActorScope`.
  *
  * For registry, lookup by ID, persistence, or multi-actor coordination,
  * use `ActorSystemService` / `system.spawn` instead.
@@ -1095,16 +1096,18 @@ import type { Supervision } from "./supervision.js";
  * ```ts
  * // Fire-and-forget — caller manages lifetime
  * const actor = yield* Machine.spawn(machine);
+ * yield* actor.start;
  * yield* actor.send(Event.Start);
  * yield* actor.awaitFinal;
  * yield* actor.stop;
  *
  * // Scope-aware — auto-cleans up on scope close
- * yield* Effect.scoped(Effect.gen(function* () {
+ * yield* Effect.scoped(Machine.scoped(Effect.gen(function* () {
  *   const actor = yield* Machine.spawn(machine);
+ *   yield* actor.start;
  *   yield* actor.send(Event.Start);
  *   // actor.stop called automatically when scope closes
- * }));
+ * })));
  * ```
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1136,8 +1139,8 @@ const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
     lifecycle: opts?.lifecycle,
   });
 
-  // If a scope exists in context, attach cleanup automatically
-  const maybeScope = yield* Effect.serviceOption(Scope.Scope);
+  // If an ActorScope exists in context, attach cleanup automatically
+  const maybeScope = yield* Effect.serviceOption(ActorScope);
   if (Option.isSome(maybeScope)) {
     yield* Scope.addFinalizer(maybeScope.value, actor.stop);
   }
@@ -1188,6 +1191,32 @@ export const spawn: <
         lifecycle?: Lifecycle<S, E>;
       },
 ) => Effect.Effect<ActorRef<S, E>, never, R> = spawnImpl;
+
+/**
+ * Wrap an effect to provide an `ActorScope` from the current `Scope`.
+ *
+ * Actors spawned inside will attach cleanup finalizers to this scope,
+ * so they are automatically stopped when the scope closes.
+ *
+ * @example
+ * ```ts
+ * yield* Effect.scoped(
+ *   Machine.scoped(
+ *     Effect.gen(function* () {
+ *       const actor = yield* Machine.spawn(machine);
+ *       yield* actor.start;
+ *       // actor auto-stopped when scope closes
+ *     }),
+ *   ),
+ * );
+ * ```
+ */
+export const scoped = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R | Scope.Scope> =>
+  Effect.flatMap(Effect.service(Scope.Scope), (scope) =>
+    Effect.provideService(effect, ActorScope, scope),
+  );
 
 /**
  * Replay events through a machine to compute the final state.

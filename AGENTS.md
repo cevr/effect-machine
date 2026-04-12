@@ -127,14 +127,16 @@ const actor = yield * Machine.spawn(machine);
 yield * actor.start; // fork event loop, background effects, spawn effects
 yield * actor.stop; // caller responsible
 
-// Scope-aware — auto-cleanup:
+// Scope-aware — use Machine.scoped to bridge ActorScope from Scope:
 yield *
   Effect.scoped(
-    Effect.gen(function* () {
-      const actor = yield* Machine.spawn(machine);
-      yield* actor.start;
-      // actor.stop called automatically when scope closes
-    }),
+    Machine.scoped(
+      Effect.gen(function* () {
+        const actor = yield* Machine.spawn(machine);
+        yield* actor.start;
+        // actor.stop called automatically when scope closes
+      }),
+    ),
   );
 ```
 
@@ -147,7 +149,7 @@ const system = yield * ActorSystemService;
 const actor = yield * system.spawn("my-id", machine);
 ```
 
-**Scope detection:** `Machine.spawn` and `system.spawn` detect scope via `Effect.serviceOption` — if present, attach finalizer; if absent, skip. Forgetting `actor.stop` without a scope = permanent fiber leak.
+**ActorScope:** `Machine.spawn` and `system.spawn` detect `ActorScope` via `Effect.serviceOption` — if present, attach stop finalizer; if absent, skip. Use `Machine.scoped(effect)` to bridge `Scope.Scope` → `ActorScope`. This is explicit opt-in — ambient `Scope.Scope` does NOT trigger auto-cleanup (prevents bugs where unrelated scopes tear down actors).
 
 ## Recovery + Durability
 
