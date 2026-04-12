@@ -1,5 +1,5 @@
 ---
-"effect-machine": major
+"effect-machine": minor
 ---
 
 Upgrade to effect 4.0.0-beta.47, require tsgo for type checking
