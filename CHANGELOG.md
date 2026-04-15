@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.17.0
+
+### Minor Changes
+
+- [`5e344f7`](https://github.com/cevr/effect-machine/commit/5e344f76b0e3b06bd28d71297b53e02739dc0a5b) Thanks [@cevr](https://github.com/cevr)! - Rename `derive` to `with` on state/event schemas. Union-level `with` accepts shared fields without casts on generic type parameters. Add `.schema` (branded) accessor to `MachineStateSchema`. Remove `.plain` — use constructors in tests instead of raw object literals. Add `Slot.of(slotsSchema, provided)` to convert `ProvideSlots` into `SlotCalls` without consumer-side casts.
+
 ## 0.16.0
 
 ### Minor Changes
