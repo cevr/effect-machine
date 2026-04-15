@@ -203,7 +203,7 @@ interface MachineSchemaBase<D extends Record<string, Schema.Struct.Fields>, Bran
    */
   readonly with: <S extends VariantsUnion<D> & Brand>(
     source: S,
-    partial?: Partial<Omit<S, "_tag">> & Partial<Record<SharedKeys<D>, unknown>>,
+    partial?: Partial<Record<SharedKeys<D>, unknown>>,
   ) => S;
 
   /**
