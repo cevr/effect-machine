@@ -31,8 +31,7 @@
  *
  * @module
  */
-import { Schema, Context } from "effect";
-import type { Effect } from "effect";
+import { Schema, Context, Effect } from "effect";
 import type { ActorSystem } from "./actor.js";
 
 // ============================================================================
@@ -325,10 +324,48 @@ export const define = <D extends SlotsDef>(definitions: D): SlotsSchema<D> => {
 };
 
 // ============================================================================
+// Slot.of — normalize ProvideSlots into SlotCalls
+// ============================================================================
+
+/**
+ * Convert raw slot handler implementations into the callable `SlotCalls` form.
+ *
+ * Handlers that return plain values are wrapped in `Effect.succeed`.
+ * Handlers that return Effects are called directly inside `Effect.suspend`.
+ *
+ * @example
+ * ```ts
+ * const provided = yield* myExtension.slots(ctx)
+ * const slots = Slot.of(slotsSchema, provided)
+ * // slots.mySlot({ param: 1 }) returns Effect<ReturnType>
+ * ```
+ */
+const of = <D extends SlotsDef>(
+  slotsSchema: SlotsSchema<D>,
+  provided: ProvideSlots<D>,
+): SlotCalls<D> => {
+  const slots: Record<string, unknown> = {};
+  for (const name of Object.keys(slotsSchema.definitions)) {
+    const handler = (provided as Record<string, (params: unknown) => unknown>)[name];
+    if (handler === undefined) continue;
+    const call = (params: unknown) =>
+      Effect.suspend(() => {
+        const result = handler(params);
+        return Effect.isEffect(result) ? result : Effect.succeed(result);
+      });
+    Object.defineProperty(call, "_tag", { value: "Slot", enumerable: true });
+    Object.defineProperty(call, "name", { value: name, enumerable: true });
+    slots[name] = call;
+  }
+  return slots as SlotCalls<D>;
+};
+
+// ============================================================================
 // Slot namespace export
 // ============================================================================
 
 export const Slot = {
   fn,
   define,
+  of,
 } as const;

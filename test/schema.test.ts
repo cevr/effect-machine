@@ -169,14 +169,14 @@ describe("State (schema-first)", () => {
   });
 });
 
-describe("State.derive()", () => {
+describe("State.with()", () => {
   test("same-state: preserves other fields, overrides specified", () => {
     const TS = State({
       Editor: { text: Schema.String, cursor: Schema.Number },
     });
 
     const s = TS.Editor({ text: "hello", cursor: 0 });
-    const s2 = TS.Editor.derive(s, { cursor: 5 });
+    const s2 = TS.Editor.with(s, { cursor: 5 });
 
     expect(s2._tag).toBe("Editor");
     expect(s2.text).toBe("hello");
@@ -189,7 +189,7 @@ describe("State.derive()", () => {
     });
 
     const s = TS.A({ x: 10, y: "hi" });
-    const s2 = TS.A.derive(s);
+    const s2 = TS.A.with(s);
 
     expect(s2._tag).toBe("A");
     expect(s2.x).toBe(10);
@@ -203,7 +203,7 @@ describe("State.derive()", () => {
     });
 
     const a = TS.A({ x: 42, y: "hello" });
-    const b = TS.B.derive(a);
+    const b = TS.B.with(a);
 
     expect(b._tag).toBe("B");
     expect(b.x).toBe(42);
@@ -217,21 +217,21 @@ describe("State.derive()", () => {
     });
 
     const a = TS.A({ x: 1, y: "test" });
-    const b = TS.B.derive(a, { z: true });
+    const b = TS.B.with(a, { z: true });
 
     expect(b._tag).toBe("B");
     expect(b.x).toBe(1);
     expect(b.z).toBe(true);
   });
 
-  test("empty variant: derive returns tagged value", () => {
+  test("empty variant: with returns tagged value", () => {
     const TS = State({
       Idle: {},
       Active: { value: Schema.Number },
     });
 
     const active = TS.Active({ value: 5 });
-    const idle = TS.Idle.derive(active);
+    const idle = TS.Idle.with(active);
 
     expect(idle._tag).toBe("Idle");
     expect(Object.keys(idle)).toEqual(["_tag"]);
@@ -243,7 +243,7 @@ describe("State.derive()", () => {
     });
 
     const s = TS.A({ x: 1, y: 2 });
-    const s2 = TS.A.derive(s, { x: 99 });
+    const s2 = TS.A.with(s, { x: 99 });
 
     expect(s2.x).toBe(99);
     expect(s2.y).toBe(2);
@@ -256,7 +256,7 @@ describe("State.derive()", () => {
     });
 
     const a = TS.A({ x: 1 });
-    const b = TS.B.derive(a, { _tag: "A" } as never);
+    const b = TS.B.with(a, { _tag: "A" } as never);
 
     expect(b._tag).toBe("B");
     expect(b.x).toBe(1);
@@ -269,14 +269,14 @@ describe("State.derive()", () => {
     });
 
     const a = TS.A({ x: 1, extra: "nope" });
-    const b = TS.B.derive(a);
+    const b = TS.B.with(a);
 
     expect(b.x).toBe(1);
     expect((b as unknown as Record<string, unknown>)["extra"]).toBeUndefined();
   });
 });
 
-describe("State.derive() (union-level)", () => {
+describe("State.with() (union-level)", () => {
   const TS = State({
     Idle: { queue: Schema.Array(Schema.String), currentAgent: Schema.optional(Schema.String) },
     Streaming: {
@@ -290,7 +290,7 @@ describe("State.derive() (union-level)", () => {
 
   test("preserves variant subtype when deriving on same variant", () => {
     const idle = TS.Idle({ queue: ["a"], currentAgent: "x" });
-    const updated = TS.derive(idle, { queue: ["b"] });
+    const updated = TS.with(idle, { queue: ["b"] });
 
     expect(updated._tag).toBe("Idle");
     expect(updated.queue).toEqual(["b"]);
@@ -299,8 +299,8 @@ describe("State.derive() (union-level)", () => {
 
   test("preserves specific variant type through narrowing", () => {
     const streaming = TS.Streaming({ queue: [], currentAgent: "x", model: "gpt-4" });
-    // Type-level: TS.derive returns the same specific type
-    const updated: Extract<TSType, { _tag: "Streaming" }> = TS.derive(streaming, { queue: ["a"] });
+    // Type-level: TS.with returns the same specific type
+    const updated: Extract<TSType, { _tag: "Streaming" }> = TS.with(streaming, { queue: ["a"] });
 
     expect(updated._tag).toBe("Streaming");
     expect(updated.model).toBe("gpt-4");
@@ -315,15 +315,15 @@ describe("State.derive() (union-level)", () => {
 
     for (const state of states) {
       if (state._tag === "Done") continue;
-      const updated = TS.derive(state, { queue: ["new"] });
+      const updated = TS.with(state, { queue: ["new"] });
       expect(updated._tag).toBe(state._tag);
       expect(updated.queue).toEqual(["new"]);
     }
   });
 
-  test("empty variant derive returns tagged value", () => {
+  test("empty variant with returns tagged value", () => {
     const done = TS.Done;
-    const derived = TS.derive(done);
+    const derived = TS.with(done);
 
     expect(derived._tag).toBe("Done");
     expect(Object.keys(derived)).toEqual(["_tag"]);
@@ -331,7 +331,7 @@ describe("State.derive() (union-level)", () => {
 
   test("partial overrides win over source fields", () => {
     const s = TS.Idle({ queue: ["a"], currentAgent: "old" });
-    const updated = TS.derive(s, { currentAgent: "new" });
+    const updated = TS.with(s, { currentAgent: "new" });
 
     expect(updated.currentAgent).toBe("new");
     expect(updated.queue).toEqual(["a"]);
@@ -339,7 +339,7 @@ describe("State.derive() (union-level)", () => {
 
   test("works without partial (copy)", () => {
     const s = TS.Streaming({ queue: ["a"], currentAgent: "x", model: "m" });
-    const copy = TS.derive(s);
+    const copy = TS.with(s);
 
     expect(copy._tag).toBe("Streaming");
     expect(copy.queue).toEqual(["a"]);
@@ -349,7 +349,7 @@ describe("State.derive() (union-level)", () => {
   test("partial keys not in target variant are dropped", () => {
     const idle = TS.Idle({ queue: [], currentAgent: "x" });
     // model is not a field of Idle — should be dropped
-    const updated = TS.derive(idle, { queue: ["a"], model: "gpt-4" } as never);
+    const updated = TS.with(idle, { queue: ["a"], model: "gpt-4" } as never);
 
     expect(updated._tag).toBe("Idle");
     expect(updated.queue).toEqual(["a"]);
@@ -358,11 +358,11 @@ describe("State.derive() (union-level)", () => {
 
   test("throws on unknown _tag", () => {
     const fake = { _tag: "NonExistent", queue: [] } as never;
-    expect(() => TS.derive(fake)).toThrow();
+    expect(() => TS.with(fake)).toThrow();
   });
 });
 
-describe("Event.derive() (union-level)", () => {
+describe("Event.with() (union-level)", () => {
   const TE = Event({
     Start: { input: Schema.String },
     Stop: { reason: Schema.String },
@@ -372,7 +372,7 @@ describe("Event.derive() (union-level)", () => {
 
   test("preserves variant subtype", () => {
     const start = TE.Start({ input: "hello" });
-    const updated = TE.derive(start, { input: "world" });
+    const updated = TE.with(start, { input: "world" });
 
     expect(updated._tag).toBe("Start");
     expect(updated.input).toBe("world");
@@ -382,14 +382,14 @@ describe("Event.derive() (union-level)", () => {
     const events: TEType[] = [TE.Start({ input: "a" }), TE.Stop({ reason: "done" })];
 
     for (const e of events) {
-      const copy = TE.derive(e);
+      const copy = TE.with(e);
       expect(copy._tag).toBe(e._tag);
     }
   });
 
-  test("empty variant derive returns tagged value", () => {
+  test("empty variant with returns tagged value", () => {
     const ping = TE.Ping;
-    const derived = TE.derive(ping);
+    const derived = TE.with(ping);
 
     expect(derived._tag).toBe("Ping");
   });
@@ -427,7 +427,7 @@ describe("Event (schema-first)", () => {
 });
 
 describe("State/Event with Machine", () => {
-  test("schema-first types work with Machine.make (using derive)", async () => {
+  test("schema-first types work with Machine.make (using with)", async () => {
     const OrderState = State({
       Pending: { orderId: Schema.String },
       Processing: { orderId: Schema.String },
@@ -441,17 +441,15 @@ describe("State/Event with Machine", () => {
     });
     type OrderEvent = typeof OrderEvent.Type;
 
-    // Machine uses derive to carry orderId across states
+    // Machine uses with to carry orderId across states
     const machine = Machine.make({
       state: OrderState,
       event: OrderEvent,
       initial: OrderState.Pending({ orderId: "test-order" }),
     })
-      .on(OrderState.Pending, OrderEvent.Process, ({ state }) =>
-        OrderState.Processing.derive(state),
-      )
+      .on(OrderState.Pending, OrderEvent.Process, ({ state }) => OrderState.Processing.with(state))
       .on(OrderState.Processing, OrderEvent.Ship, ({ state, event }) =>
-        OrderState.Shipped.derive(state, { trackingId: event.trackingId }),
+        OrderState.Shipped.with(state, { trackingId: event.trackingId }),
       )
       .final(OrderState.Shipped);
 

@@ -115,7 +115,8 @@ type VariantReplyBrand<Fields extends Schema.Struct.Fields> = Fields extends {
  * Empty structs: plain values with `_tag`: `State.Idle`
  * Non-empty structs require args: `State.Loading({ url })`
  *
- * Each variant also has a `derive` method for constructing from a source object.
+ * Each variant also has a `with` method for constructing from a source object,
+ * copying matching fields and overriding with a partial.
  * The source type uses `object` to accept branded state types without index signature issues.
  * Reply-bearing variants carry ReplyTypeBrand<R> for ask() type inference.
  */
@@ -124,18 +125,26 @@ type VariantConstructors<D extends Record<string, Schema.Struct.Fields>, Brand> 
     ? TaggedStructType<K, D[K]> &
         Brand &
         VariantReplyBrand<D[K]> & {
-          readonly derive: (source: object) => TaggedStructType<K, D[K]> & Brand;
+          readonly with: (source: object) => TaggedStructType<K, D[K]> & Brand;
         }
     : ((
         args: Schema.Struct.Type<PayloadFields<D[K]>>,
       ) => TaggedStructType<K, D[K]> & Brand & VariantReplyBrand<D[K]>) & {
-        readonly derive: (
+        readonly with: (
           source: object,
           partial?: Partial<Schema.Struct.Type<PayloadFields<D[K]>>>,
         ) => TaggedStructType<K, D[K]> & Brand;
         readonly _tag: K;
       };
 };
+
+/**
+ * Keys present in ALL variants (intersection of field names).
+ * Used by union-level `with` to accept only fields safe to update
+ * regardless of which variant the source is.
+ */
+type SharedKeys<D extends Record<string, Schema.Struct.Fields>> = keyof D[keyof D & string] &
+  string;
 
 /**
  * Pattern matching cases type
@@ -176,21 +185,25 @@ interface MachineSchemaBase<D extends Record<string, Schema.Struct.Fields>, Bran
   };
 
   /**
-   * Union-level derive: copies fields from `source` into the same variant,
-   * overriding with `partial`. Preserves the specific variant subtype.
+   * Copy fields from `source` into the same variant, overriding with `partial`.
+   * Preserves the specific variant subtype in the return.
    *
-   * Dispatches to the per-variant `derive` based on `source._tag`.
+   * The partial accepts fields common to all variants, so it works safely
+   * when `S` is a generic type parameter (e.g., `<S extends MyState>`).
    *
    * @example
    * ```ts
-   * // Instead of switching on _tag to call per-variant derive:
-   * const updated = AgentLoopState.derive(state, { queue: newQueue })
-   * // If state is StreamingState, returns StreamingState (not LoopState)
+   * // Per-variant field update — partial accepts that variant's fields
+   * const next = MyState.Streaming.with(state, { draft: newDraft })
+   *
+   * // Cross-variant shared field — works with generic state
+   * const updateQueue = <S extends MyState>(state: S, queue: Queue): S =>
+   *   MyState.with(state, { queue })
    * ```
    */
-  readonly derive: <S extends VariantsUnion<D> & Brand>(
+  readonly with: <S extends VariantsUnion<D> & Brand>(
     source: S,
-    partial?: Partial<Omit<S, "_tag">>,
+    partial?: Partial<Omit<S, "_tag">> & Partial<Record<SharedKeys<D>, unknown>>,
   ) => S;
 
   /**
@@ -222,8 +235,8 @@ export type MachineStateSchema<D extends Record<string, Schema.Struct.Fields>> =
 > &
   MachineSchemaBase<D, FullStateBrand<D>> &
   VariantConstructors<D, FullStateBrand<D>> & {
-    /** Unbranded schema for persistence — same structure without FullStateBrand. */
-    readonly plain: Schema.Schema<VariantsUnion<D>>;
+    /** Schema for persistence, config, and registration. */
+    readonly schema: Schema.Schema<VariantsUnion<D> & FullStateBrand<D>>;
   };
 
 /**
@@ -292,7 +305,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
       // Non-empty: constructor function requiring args
       const constructor = (args: Record<string, unknown>) => ({ ...args, _tag: tag });
       constructor._tag = tag;
-      constructor.derive = (source: Record<string, unknown>, partial?: Record<string, unknown>) => {
+      constructor.with = (source: Record<string, unknown>, partial?: Record<string, unknown>) => {
         const result: Record<string, unknown> = { _tag: tag };
         for (const key of fieldNames) {
           if (key in source) result[key] = source[key];
@@ -309,7 +322,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
       constructors[tag] = constructor;
     } else {
       // Empty: plain value, not callable
-      constructors[tag] = { _tag: tag, derive: () => ({ _tag: tag }) } as never;
+      constructors[tag] = { _tag: tag, with: () => ({ _tag: tag }) } as never;
     }
   }
 
@@ -374,28 +387,27 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
 const createMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(definition: D) => {
   const { schema, variants, constructors, _definition, replySchemas, $is, $match } =
     buildMachineSchema(definition);
-  // Union-level derive: dispatch to per-variant derive based on _tag
-  const derive = (source: { _tag: string }, partial?: Record<string, unknown>) => {
+  // Union-level with: dispatch to per-variant with based on _tag
+  const withFn = (source: { _tag: string }, partial?: Record<string, unknown>) => {
     const ctor = constructors[source._tag];
     if (ctor === undefined) {
       throw new MissingMatchHandlerError({ tag: source._tag });
     }
-    // Per-variant derive is either on a callable constructor or a plain object (empty variant)
-    const deriveFn = (ctor as { derive?: (s: object, p?: object) => object }).derive;
-    if (deriveFn === undefined) {
+    const fn = (ctor as { with?: (s: object, p?: object) => object }).with;
+    if (fn === undefined) {
       throw new MissingMatchHandlerError({ tag: source._tag });
     }
-    return deriveFn(source, partial);
+    return fn(source, partial);
   };
 
   return Object.assign(Object.create(schema), {
     variants,
     _definition,
     _replySchemas: replySchemas,
-    plain: schema,
+    schema,
     $is,
     $match,
-    derive,
+    with: withFn,
     ...constructors,
   });
 };

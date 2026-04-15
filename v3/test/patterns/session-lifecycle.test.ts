@@ -197,7 +197,7 @@ describe("Session Lifecycle Pattern", () => {
         .on(SessionState.Active, SessionEvent.SessionTimeout, () => SessionState.SessionExpired)
         // Use reenter to reenter the state, resetting the task timer
         .reenter(SessionState.Active, SessionEvent.Activity, ({ state }) =>
-          SessionState.Active.derive(state, { lastActivity: Date.now() }),
+          SessionState.Active.with(state, { lastActivity: Date.now() }),
         )
         .final(SessionState.SessionExpired);
 
