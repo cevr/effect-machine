@@ -1,5 +1,17 @@
 # effect-machine
 
+## 0.17.0
+
+### Minor Changes
+
+- [`5e344f7`](https://github.com/cevr/effect-machine/commit/5e344f76b0e3b06bd28d71297b53e02739dc0a5b) Thanks [@cevr](https://github.com/cevr)! - Rename `derive` to `with` on state/event schemas. Union-level `with` accepts shared fields without casts on generic type parameters. Add `.schema` (branded) accessor to `MachineStateSchema`. Remove `.plain` — use constructors in tests instead of raw object literals. Add `Slot.of(slotsSchema, provided)` to convert `ProvideSlots` into `SlotCalls` without consumer-side casts.
+
+### Patch Changes
+
+- [`79a9311`](https://github.com/cevr/effect-machine/commit/79a9311e0370eaa4dbecc2d149ffa0be76039bf8) Thanks [@cevr](https://github.com/cevr)! - Modernize the repository toolchain around `@effect/tsgo`, the latest Effect beta, and type-aware oxlint.
+
+  `effect` is now peer-only at runtime, v4 service tags use the `Context.Service` class form with `serviceNotAsClass` enabled, and the v3 mirror is validated through the same tsgo gate.
+
 ## 0.16.0
 
 ### Minor Changes
