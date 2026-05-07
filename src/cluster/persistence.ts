@@ -64,7 +64,7 @@ export interface EntityPersistenceConfig {
 // ============================================================================
 
 /** Storage backend for entity state persistence. */
-export interface PersistenceAdapter {
+export interface PersistenceAdapterService {
   /** Save a state snapshot. Fails with VersionConflictError if version is stale. */
   readonly saveSnapshot: (
     key: PersistenceKey,
@@ -95,6 +95,7 @@ export interface PersistenceAdapter {
 // ============================================================================
 
 /** Service tag for PersistenceAdapter — resolve from context for shared infra. */
-export const PersistenceAdapter = Context.Service<PersistenceAdapter>(
-  "@effect-machine/cluster/PersistenceAdapter",
-);
+export class PersistenceAdapter extends Context.Service<
+  PersistenceAdapter,
+  PersistenceAdapterService
+>()("effect-machine/cluster/persistence/PersistenceAdapter") {}

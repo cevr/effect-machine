@@ -120,9 +120,7 @@ export type AnyInspectionEvent = InspectionEvent<
 /**
  * Inspector interface for observing machine behavior
  */
-export type InspectorHandler<S, E> = (
-  event: InspectionEvent<S, E>,
-) => void | Effect.Effect<void, never, never>;
+export type InspectorHandler<S, E> = (event: InspectionEvent<S, E>) => void | Effect.Effect<void>;
 
 export interface Inspector<S, E> {
   readonly onInspect: InspectorHandler<S, E>;
@@ -148,15 +146,13 @@ export const makeInspector = <S = { readonly _tag: string }, E = { readonly _tag
 ): Inspector<ResolveType<S>, ResolveType<E>> => ({ onInspect });
 
 export const makeInspectorEffect = <S = { readonly _tag: string }, E = { readonly _tag: string }>(
-  onInspect: (
-    event: InspectionEvent<ResolveType<S>, ResolveType<E>>,
-  ) => Effect.Effect<void, never, never>,
+  onInspect: (event: InspectionEvent<ResolveType<S>, ResolveType<E>>) => Effect.Effect<void>,
 ): Inspector<ResolveType<S>, ResolveType<E>> => ({ onInspect });
 
 const inspectionEffect = <S, E>(
   inspector: Inspector<S, E>,
   event: InspectionEvent<S, E>,
-): Effect.Effect<void, never, never> => {
+): Effect.Effect<void> => {
   const result = inspector.onInspect(event);
   return Effect.isEffect(result) ? result : Effect.void;
 };
@@ -318,37 +314,27 @@ export const consoleInspector = (): Inspector<
   { readonly _tag: string },
   { readonly _tag: string }
 > =>
-  makeInspector((event) => {
+  makeInspectorEffect((event) => {
     const prefix = `[${event.actorId}]`;
     switch (event.type) {
       case "@machine.spawn":
-        console.log(prefix, "spawned →", event.initialState._tag);
-        break;
+        return Effect.log(`${prefix} spawned -> ${event.initialState._tag}`);
       case "@machine.event":
-        console.log(prefix, "received", event.event._tag, "in", event.state._tag);
-        break;
+        return Effect.log(`${prefix} received ${event.event._tag} in ${event.state._tag}`);
       case "@machine.transition":
-        console.log(prefix, event.fromState._tag, "→", event.toState._tag);
-        break;
+        return Effect.log(`${prefix} ${event.fromState._tag} -> ${event.toState._tag}`);
       case "@machine.effect":
-        console.log(prefix, event.effectType, "effect in", event.state._tag);
-        break;
+        return Effect.log(`${prefix} ${event.effectType} effect in ${event.state._tag}`);
       case "@machine.task":
-        console.log(
-          prefix,
-          "task",
-          event.phase,
-          event.taskName ?? "<unnamed>",
-          "in",
-          event.state._tag,
+        return Effect.log(
+          `${prefix} task ${event.phase} ${event.taskName ?? "<unnamed>"} in ${event.state._tag}`,
         );
-        break;
       case "@machine.error":
-        console.log(prefix, "error in", event.phase, event.state._tag, "-", event.error);
-        break;
+        return Effect.log(
+          `${prefix} error in ${event.phase} ${event.state._tag} - ${String(event.error)}`,
+        );
       case "@machine.stop":
-        console.log(prefix, "stopped in", event.finalState._tag);
-        break;
+        return Effect.log(`${prefix} stopped in ${event.finalState._tag}`);
     }
   });
 

@@ -57,7 +57,7 @@ describe("Session Lifecycle Pattern", () => {
         ({ state, event }) =>
           SessionState.Maintenance({
             message: event.message,
-            previousState: state._tag as "Active" | "Guest",
+            previousState: state._tag,
           }),
       )
       .on(SessionState.Active, SessionEvent.SessionTimeout, () => SessionState.SessionExpired)

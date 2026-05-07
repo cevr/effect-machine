@@ -53,7 +53,7 @@ const testMachineSlots = {
     Effect.gen(function* () {
       const ctx = yield* MachineContextTag;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const event = ctx.event as any;
+      const event = ctx.event;
       return event._tag === "Update" && event.value > 100;
     }),
 };
@@ -844,7 +844,9 @@ describe("ActorRef", () => {
         interface LoopService {
           readonly run: () => Effect.Effect<string>;
         }
-        const LoopTag = Context.Service<LoopService>("test/FastFailLoop");
+        class LoopTag extends Context.Service<LoopTag, LoopService>()(
+          "effect-machine/test/actor.test/LoopTag",
+        ) {}
 
         const LoopLive = Layer.effect(
           LoopTag,
@@ -947,7 +949,9 @@ describe("ActorRef", () => {
         interface LoopService {
           readonly run: (value: number) => Effect.Effect<void>;
         }
-        const LoopTag = Context.Service<LoopService>("test/LoopService");
+        class LoopTag extends Context.Service<LoopTag, LoopService>()(
+          "effect-machine/test/actor.test/LoopTag",
+        ) {}
 
         const LoopLive = Layer.effect(
           LoopTag,

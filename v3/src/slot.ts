@@ -88,7 +88,7 @@ export const fn: {
     fields: F,
     returnSchema: S,
   ): SlotFnDef<F, Schema.Schema.Type<S>>;
-  <F extends Fields>(fields: F): SlotFnDef<F, void>;
+  <F extends Fields>(fields: F): SlotFnDef<F>;
 } = <F extends Fields>(
   fields: F,
   returnSchema?: Schema.Schema.Any,
@@ -102,7 +102,7 @@ export const fn: {
   return {
     _tag: "SlotFnDef",
     fields,
-    returnSchema: returnSchema as SlotFnDef["returnSchema"],
+    returnSchema: returnSchema,
     inputSchema,
     outputSchema,
   };
@@ -355,10 +355,12 @@ const of = <D extends SlotsDef>(
   for (const name of Object.keys(slotsSchema.definitions)) {
     const handler = (provided as Record<string, (params: unknown) => unknown>)[name];
     if (handler === undefined) continue;
-    const call = (params: unknown) =>
-      Effect.suspend(() => {
+    const call = (params: unknown): Effect.Effect<unknown, never> =>
+      Effect.suspend((): Effect.Effect<unknown, never> => {
         const result = handler(params);
-        return Effect.isEffect(result) ? result : Effect.succeed(result);
+        return Effect.isEffect(result)
+          ? (result as Effect.Effect<unknown, never>)
+          : Effect.succeed(result);
       });
     Object.defineProperty(call, "_tag", { value: "Slot", enumerable: true });
     Object.defineProperty(call, "name", { value: name, enumerable: true });

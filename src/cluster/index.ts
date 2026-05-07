@@ -47,7 +47,7 @@ export {
   type Snapshot,
   type PersistedEvent,
   type EntityPersistenceConfig,
-  type PersistenceAdapter as PersistenceAdapterInterface,
+  type PersistenceAdapterService as PersistenceAdapterInterface,
   PersistenceAdapter,
 } from "./persistence.js";
 export { makeInMemoryPersistenceAdapter } from "./adapters/in-memory.js";

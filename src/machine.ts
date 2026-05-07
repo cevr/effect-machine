@@ -45,7 +45,7 @@
 import type { Context, Duration } from "effect";
 import { Cause, Effect, Exit, Option, Random, Schema, Scope } from "effect";
 
-import type { TransitionResult, ReplyResult } from "./internal/utils.js";
+import type { TransitionResult } from "./internal/utils.js";
 import { getTag, stubSystem, makeReply, makeDeferReply } from "./internal/utils.js";
 import type {
   TaggedOrConstructor,
@@ -63,7 +63,7 @@ import {
   shouldPostpone,
 } from "./internal/transition.js";
 import { emitWithTimestamp } from "./internal/inspection.js";
-import type { ActorRef, ActorSystem } from "./actor.js";
+import type { ActorRef, ActorSystemService } from "./actor.js";
 import { Inspector as InspectorTag } from "./inspection.js";
 import type { SlotsDef, SlotsSchema, SlotCalls, ProvideSlots, MachineContext } from "./slot.js";
 import { MachineContextTag } from "./slot.js";
@@ -110,7 +110,7 @@ export interface StateHandlerContext<State, Event, SD extends SlotsDef = Record<
   readonly event: Event;
   readonly self: MachineRef<Event>;
   readonly slots: SlotCalls<SD>;
-  readonly system: ActorSystem;
+  readonly system: ActorSystemService;
 }
 
 /**
@@ -411,12 +411,9 @@ export class Machine<
    * Uses shared module-level tag for all machines.
    */
   readonly Context: Context.Service<
-    MachineContext<State, Event, MachineRef<Event>>,
+    MachineContextTag,
     MachineContext<State, Event, MachineRef<Event>>
-  > = MachineContextTag as Context.Service<
-    MachineContext<State, Event, MachineRef<Event>>,
-    MachineContext<State, Event, MachineRef<Event>>
-  >;
+  > = MachineContextTag;
 
   // Public readonly views
   get transitions(): ReadonlyArray<Transition<State, Event, SD, R>> {
@@ -1028,7 +1025,7 @@ export class Machine<
       config.initial,
       config.state as unknown as Schema.Schema<S>,
       config.event as unknown as Schema.Schema<E>,
-      config.slots as SlotsSchema<SLD> | undefined,
+      config.slots,
       config.slotValidation ?? true,
     );
   }
@@ -1090,7 +1087,7 @@ import type { Supervision } from "./supervision.js";
  * Use `Machine.scoped` to bridge from `Scope` to `ActorScope`.
  *
  * For registry, lookup by ID, persistence, or multi-actor coordination,
- * use `ActorSystemService` / `system.spawn` instead.
+ * use `ActorSystem` / `system.spawn` instead.
  *
  * @example
  * ```ts

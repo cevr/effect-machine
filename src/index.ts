@@ -63,7 +63,7 @@ export type {
 export type {
   ActorRef,
   ActorRefSync,
-  ActorSystem,
+  ActorSystemService as ActorSystem,
   ProcessEventResult,
   SystemEvent,
   SystemEventListener,
@@ -96,7 +96,7 @@ export type {
   ErrorEvent,
   EventReceivedEvent,
   InspectionEvent,
-  Inspector,
+  InspectorService as Inspector,
   InspectorHandler,
   SpawnEvent,
   StopEvent,

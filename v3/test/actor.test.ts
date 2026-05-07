@@ -55,7 +55,7 @@ const testMachineSlots = {
     Effect.gen(function* () {
       const ctx = yield* MachineContextTag;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const event = ctx.event as any;
+      const event = ctx.event;
       return event._tag === "Update" && event.value > 100;
     }),
 };

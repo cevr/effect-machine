@@ -32,7 +32,7 @@
  * @module
  */
 import { Schema, Context, Effect } from "effect";
-import type { ActorSystem } from "./actor.js";
+import type { ActorSystemService } from "./actor.js";
 
 // ============================================================================
 // Type-level utilities
@@ -85,7 +85,7 @@ export interface SlotFnDef<F extends Fields = Fields, Return = void> {
  */
 export const fn: {
   <F extends Fields, Return>(fields: F, returnSchema: Schema.Schema<Return>): SlotFnDef<F, Return>;
-  <F extends Fields>(fields: F): SlotFnDef<F, void>;
+  <F extends Fields>(fields: F): SlotFnDef<F>;
 } = <F extends Fields, Return = void>(
   fields: F,
   returnSchema?: Schema.Schema<Return>,
@@ -98,7 +98,7 @@ export const fn: {
   return {
     _tag: "SlotFnDef",
     fields,
-    returnSchema: returnSchema as SlotFnDef<F, Return>["returnSchema"],
+    returnSchema: returnSchema,
     inputSchema,
     outputSchema,
   };
@@ -242,7 +242,7 @@ export interface MachineContext<State, Event, Self> {
   readonly state: State;
   readonly event: Event;
   readonly self: Self;
-  readonly system: ActorSystem;
+  readonly system: ActorSystemService;
 }
 
 /**
@@ -251,8 +251,10 @@ export interface MachineContext<State, Event, Self> {
  * @internal
  */
 /* eslint-disable @typescript-eslint/no-explicit-any -- generic context tag */
-export const MachineContextTag =
-  Context.Service<MachineContext<any, any, any>>("@effect-machine/Context");
+export class MachineContextTag extends Context.Service<
+  MachineContextTag,
+  MachineContext<any, any, any>
+>()("effect-machine/slot/MachineContextTag") {}
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 // ============================================================================
@@ -348,10 +350,12 @@ const of = <D extends SlotsDef>(
   for (const name of Object.keys(slotsSchema.definitions)) {
     const handler = (provided as Record<string, (params: unknown) => unknown>)[name];
     if (handler === undefined) continue;
-    const call = (params: unknown) =>
-      Effect.suspend(() => {
+    const call = (params: unknown): Effect.Effect<unknown, never> =>
+      Effect.suspend((): Effect.Effect<unknown, never> => {
         const result = handler(params);
-        return Effect.isEffect(result) ? result : Effect.succeed(result);
+        return Effect.isEffect(result)
+          ? (result as Effect.Effect<unknown, never>)
+          : Effect.succeed(result);
       });
     Object.defineProperty(call, "_tag", { value: "Slot", enumerable: true });
     Object.defineProperty(call, "name", { value: name, enumerable: true });

@@ -31,21 +31,14 @@ export type EntityRpcs<
   StateSchema extends Schema.Schema.Any,
   EventSchema extends Schema.Schema.Any,
 > = readonly [
-  Rpc.Rpc<
-    "Send",
-    Schema.Struct<{ readonly event: EventSchema }>,
-    StateSchema,
-    typeof Schema.Never,
-    never
-  >,
+  Rpc.Rpc<"Send", Schema.Struct<{ readonly event: EventSchema }>, StateSchema, typeof Schema.Never>,
   Rpc.Rpc<
     "Ask",
     Schema.Struct<{ readonly event: EventSchema }>,
     typeof Schema.Unknown,
-    typeof Schema.Never,
-    never
+    typeof Schema.Never
   >,
-  Rpc.Rpc<"GetState", typeof Schema.Void, StateSchema, typeof Schema.Never, never>,
+  Rpc.Rpc<"GetState", typeof Schema.Void, StateSchema, typeof Schema.Never>,
 ];
 
 /**

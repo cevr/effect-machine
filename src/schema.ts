@@ -229,9 +229,7 @@ interface MachineSchemaBase<D extends Record<string, Schema.Struct.Fields>, Bran
  */
 export type MachineStateSchema<D extends Record<string, Schema.Struct.Fields>> = Schema.Codec<
   VariantsUnion<D> & FullStateBrand<D>,
-  unknown,
-  never,
-  never
+  unknown
 > &
   MachineSchemaBase<D, FullStateBrand<D>> &
   VariantConstructors<D, FullStateBrand<D>> & {
@@ -247,9 +245,7 @@ export type MachineStateSchema<D extends Record<string, Schema.Struct.Fields>> =
  */
 export type MachineEventSchema<D extends Record<string, Schema.Struct.Fields>> = Schema.Codec<
   VariantsUnion<D> & FullEventBrand<D>,
-  unknown,
-  never,
-  never
+  unknown
 > &
   MachineSchemaBase<D, FullEventBrand<D>> &
   VariantConstructors<D, FullEventBrand<D>>;

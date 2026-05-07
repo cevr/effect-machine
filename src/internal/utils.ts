@@ -3,7 +3,7 @@
  * @internal
  */
 import { Effect, Stream } from "effect";
-import type { ActorSystem } from "../actor.js";
+import type { ActorSystemService } from "../actor.js";
 
 // ============================================================================
 // Type Helpers
@@ -155,12 +155,12 @@ export const isEffect: (value: unknown) => value is Effect.Effect<unknown, unkno
 // ============================================================================
 
 /**
- * Stub ActorSystem that dies on any method call.
+ * Stub ActorSystemService that dies on any method call.
  * Used in contexts where spawning/system access isn't supported
  * (testing simulation, persistent actor replay).
  * @internal
  */
-export const stubSystem: ActorSystem = {
+export const stubSystem: ActorSystemService = {
   spawn: () => Effect.die("spawn not supported in stub system"),
   get: () => Effect.die("get not supported in stub system"),
   stop: () => Effect.die("stop not supported in stub system"),

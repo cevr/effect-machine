@@ -72,7 +72,7 @@ export const runTransitionHandler = Effect.fn("effect-machine.runTransitionHandl
   // Detect branded ReplyResult (created via Machine.reply())
   if (isReplyResult(resolved)) {
     return {
-      newState: resolved.state as S,
+      newState: resolved.state,
       hasReply: true,
       deferReply: false,
       reply: resolved.reply,
@@ -82,14 +82,14 @@ export const runTransitionHandler = Effect.fn("effect-machine.runTransitionHandl
   // Detect branded DeferReplyResult (created via Machine.deferReply())
   if (isDeferReplyResult(resolved)) {
     return {
-      newState: resolved.state as S,
+      newState: resolved.state,
       hasReply: false,
       deferReply: true,
       reply: undefined,
     };
   }
 
-  return { newState: resolved as S, hasReply: false, deferReply: false, reply: undefined };
+  return { newState: resolved, hasReply: false, deferReply: false, reply: undefined };
 });
 
 /**
@@ -364,33 +364,33 @@ export const runSpawnEffects = Effect.fn("effect-machine.runSpawnEffects")(funct
 
   for (const spawnEffect of spawnEffects) {
     // Fork the spawn effect into the state scope - interrupted when scope closes
-    const effect = (
-      spawnEffect.handler({
+    const effect = spawnEffect
+      .handler({
         actorId,
         state,
         event,
         self,
         slots,
         system,
-      }) as Effect.Effect<void, never, R>
-    ).pipe(
-      Effect.provideService(machine.Context, ctx),
-      Effect.catchAllCause((cause) => {
-        if (Cause.isInterruptedOnly(cause)) {
-          return Effect.interrupt;
-        }
-        const report =
-          reportError !== undefined
-            ? reportError({ phase: "spawn", state, event, cause })
-            : Effect.void;
-        // Signal spawn defect to runtime (if provided) so it can set exitDeferred
-        const signal = defectSignal !== undefined ? defectSignal(cause) : Effect.void;
-        return report.pipe(
-          Effect.andThen(signal),
-          Effect.andThen(Effect.failCause(cause).pipe(Effect.orDie)),
-        );
-      }),
-    );
+      })
+      .pipe(
+        Effect.provideService(machine.Context, ctx),
+        Effect.catchAllCause((cause) => {
+          if (Cause.isInterruptedOnly(cause)) {
+            return Effect.interrupt;
+          }
+          const report =
+            reportError !== undefined
+              ? reportError({ phase: "spawn", state, event, cause })
+              : Effect.void;
+          // Signal spawn defect to runtime (if provided) so it can set exitDeferred
+          const signal = defectSignal !== undefined ? defectSignal(cause) : Effect.void;
+          return report.pipe(
+            Effect.andThen(signal),
+            Effect.andThen(Effect.failCause(cause).pipe(Effect.orDie)),
+          );
+        }),
+      );
 
     yield* Effect.forkScoped(effect).pipe(Effect.provideService(Scope.Scope, stateScope));
   }

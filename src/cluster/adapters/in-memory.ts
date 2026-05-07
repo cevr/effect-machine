@@ -13,6 +13,7 @@ import { VersionConflictError } from "../../errors.js";
 import {
   PersistenceAdapter,
   type PersistenceKey,
+  type PersistenceAdapterService,
   type PersistedEvent,
   type Snapshot,
 } from "../persistence.js";
@@ -44,13 +45,13 @@ const getOrCreate = (store: Map<string, EntityStore>, key: string): EntityStore 
 /**
  * Create an in-memory persistence adapter.
  *
- * Returns a Layer providing `PersistenceAdapter` and a ref
+ * Returns a Layer providing `PersistenceAdapterService` and a ref
  * to the backing store for test assertions.
  *
  * @example
  * ```ts
  * const { layer, storeRef } = yield* makeInMemoryPersistenceAdapter
- * // Use layer to provide PersistenceAdapter
+ * // Use layer to provide PersistenceAdapterService
  * // Inspect storeRef for test assertions
  * ```
  */
@@ -58,7 +59,7 @@ export const makeInMemoryPersistenceAdapter = Effect.gen(function* () {
   const store = new Map<string, EntityStore>();
   const storeRef = yield* Ref.make(store);
 
-  const adapter: PersistenceAdapter = {
+  const adapter: PersistenceAdapterService = {
     saveSnapshot: (key, snapshot) =>
       Effect.gen(function* () {
         const s = yield* Ref.get(storeRef);

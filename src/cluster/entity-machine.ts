@@ -28,17 +28,18 @@ import {
 } from "effect";
 
 import { type Machine, replay } from "../machine.js";
-import type { ActorSystem } from "../actor.js";
+import type { ActorSystemService } from "../actor.js";
 import { ActorSystem as ActorSystemTag, makeSystem } from "../actor.js";
 import type { ProcessEventHooks } from "../internal/transition.js";
 import { createRuntime, type RuntimeQueuedEvent } from "../internal/runtime.js";
-import type {
-  EntityPersistenceConfig,
-  PersistenceKey,
-  PersistedEvent,
-  Snapshot,
+import {
+  PersistenceAdapter,
+  type EntityPersistenceConfig,
+  type PersistenceAdapterService,
+  type PersistenceKey,
+  type PersistedEvent,
+  type Snapshot,
 } from "./persistence.js";
-import { PersistenceAdapter } from "./persistence.js";
 
 /**
  * Options for EntityMachine.layer
@@ -78,10 +79,10 @@ export interface EntityMachineOptions<S, E> {
    * Forwarded to Entity.toLayerQueue.
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schedule type needs wide acceptance
-  readonly defectRetryPolicy?: Schedule.Schedule<any, unknown>;
+  readonly defectRetryPolicy?: Schedule.Schedule<any>;
 
   /**
-   * Persistence configuration. When set, requires PersistenceAdapter in R.
+   * Persistence configuration. When set, requires PersistenceAdapterService in R.
    */
   readonly persistence?: EntityPersistenceConfig;
 }
@@ -126,7 +127,7 @@ export const EntityMachine = {
 
       // Resolve actor system from context, or create implicit one
       const existingSystem = yield* Effect.serviceOption(ActorSystemTag);
-      const system: ActorSystem = Option.isSome(existingSystem)
+      const system: ActorSystemService = Option.isSome(existingSystem)
         ? existingSystem.value
         : yield* makeSystem();
 
@@ -301,7 +302,7 @@ export const EntityMachine = {
       mailboxCapacity?: number | "unbounded";
       disableFatalDefects?: boolean;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      defectRetryPolicy?: Schedule.Schedule<any, unknown>;
+      defectRetryPolicy?: Schedule.Schedule<any>;
     } = {};
     if (options?.maxIdleTime !== undefined) clusterOptions.maxIdleTime = options.maxIdleTime;
     if (options?.mailboxCapacity !== undefined)
@@ -328,7 +329,7 @@ export const EntityMachine = {
 // ============================================================================
 
 interface PersistenceContext<S> {
-  readonly adapter: PersistenceAdapter | undefined;
+  readonly adapter: PersistenceAdapterService | undefined;
   readonly key: PersistenceKey;
   readonly hydratedState: S | undefined;
   readonly initialVersion: number;
@@ -419,11 +420,11 @@ const hydratePersistence = <
  * is now unreliable and must restart.
  */
 const persistEvent = <E>(
-  adapter: PersistenceAdapter,
+  adapter: PersistenceAdapterService,
   key: PersistenceKey,
   versionRef: Ref.Ref<number>,
   event: E,
-): Effect.Effect<void> =>
+): Effect.Effect<void, never, never> =>
   Effect.gen(function* () {
     const expectedVersion = yield* Ref.get(versionRef);
     const newVersion = expectedVersion + 1;

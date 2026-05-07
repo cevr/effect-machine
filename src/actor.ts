@@ -31,7 +31,7 @@ import { materializeMachine } from "./machine.js";
 import type { ActorExit, Supervision } from "./supervision.js";
 import type { ReplyTypeBrand, ExtractReply } from "./internal/brands.js";
 import type { SlotsDef, ProvideSlots } from "./slot.js";
-import type { Inspector } from "./inspection.js";
+import type { InspectorService } from "./inspection.js";
 import { Inspector as InspectorTag } from "./inspection.js";
 import { resolveTransition } from "./internal/transition.js";
 import type { ProcessEventHooks, ProcessEventResult } from "./internal/transition.js";
@@ -191,7 +191,7 @@ export interface ActorRef<State extends { readonly _tag: string }, Event> {
   readonly sync: ActorRefSync<State, Event>;
 
   /** The actor system this actor belongs to. */
-  readonly system: ActorSystem;
+  readonly system: ActorSystemService;
 
   /** Child actors spawned via `self.spawn` in this actor's handlers. */
   readonly children: ReadonlyMap<string, ActorRef<AnyState, unknown>>;
@@ -239,7 +239,7 @@ export type SystemEventListener = (event: SystemEvent) => void;
 /**
  * Actor system for managing actor lifecycles
  */
-export interface ActorSystem {
+export interface ActorSystemService {
   /**
    * Spawn a new actor with the given machine.
    *
@@ -297,7 +297,9 @@ export interface ActorSystem {
 /**
  * ActorSystem service tag
  */
-export const ActorSystem = Context.Service<ActorSystem>("@effect/machine/ActorSystem");
+export class ActorSystem extends Context.Service<ActorSystem, ActorSystemService>()(
+  "effect-machine/actor/ActorSystem",
+) {}
 
 /**
  * Explicit scope for actor lifecycle management.
@@ -308,7 +310,9 @@ export const ActorSystem = Context.Service<ActorSystem>("@effect/machine/ActorSy
  *
  * Provide via `Machine.scoped` or `Effect.provideService(ActorScope, scope)`.
  */
-export const ActorScope = Context.Service<Scope.Scope>("@effect/machine/ActorScope");
+export class ActorScope extends Context.Service<ActorScope, Scope.Scope>()(
+  "effect-machine/actor/ActorScope",
+) {}
 
 // ============================================================================
 // Actor Core Helpers
@@ -348,11 +352,11 @@ export const buildActorRefCore = <
   listeners: Listeners<S>,
   stop: Effect.Effect<void>,
   start: Effect.Effect<void>,
-  system: ActorSystem,
+  system: ActorSystemService,
   childrenMap: ReadonlyMap<string, ActorRef<AnyState, unknown>>,
   pendingReplies: Set<Deferred.Deferred<unknown, unknown>>,
   transitionsPubSub: PubSub.PubSub<TransitionInfo<S, E>> | undefined,
-  exitDeferred: Deferred.Deferred<ActorExit<S>, never>,
+  exitDeferred: Deferred.Deferred<ActorExit<S>>,
 ): ActorRef<S, E> => {
   const send = Effect.fn("effect-machine.actor.send")(function* (event: E) {
     const stopped = yield* Ref.get(stoppedRef);
@@ -534,15 +538,15 @@ export const buildActorRefCore = <
     watch: (other) =>
       // Bind to the other actor's exitDeferred — authoritative, not system events.
       // Resolves with exit reason on terminal stop (ignores restarts in Step 3).
-      other.awaitExit as Effect.Effect<ActorExit<unknown>>,
+      other.awaitExit,
     drain: Effect.gen(function* () {
       const stopped = yield* Ref.get(stoppedRef);
       if (stopped) return;
       const q = yield* Ref.get(eventQueueRef);
-      const done = yield* Deferred.make<void, never>();
+      const done = yield* Deferred.make<void>();
       yield* Queue.offer(q, { _tag: "drain" as const, done });
       yield* Deferred.await(done);
-    }).pipe(Effect.asVoid) as Effect.Effect<void>,
+    }).pipe(Effect.asVoid),
     sync: {
       send: (event) => {
         const stopped = Effect.runSync(Ref.get(stoppedRef));
@@ -574,7 +578,7 @@ const buildInspectionHooks = <
   E extends { readonly _tag: string },
 >(
   actorId: string,
-  inspector: Inspector<S, E>,
+  inspector: InspectorService<S, E>,
 ): ProcessEventHooks<S, E> => ({
   onSpawnEffect: (state) =>
     emitWithTimestamp(inspector, (timestamp) => ({
@@ -633,7 +637,7 @@ const runSupervisionLoop = <
   machine: Machine<S, E, any, any, any, any>;
   id: string;
   runtimeRef: { current: RuntimeHandle<S, E> | undefined };
-  terminalExitDeferred: Deferred.Deferred<ActorExit<S>, never>;
+  terminalExitDeferred: Deferred.Deferred<ActorExit<S>>;
   pendingReplies: Set<Deferred.Deferred<unknown, unknown>>;
   eventQueueRef: Ref.Ref<Queue.Queue<QueuedEvent<E>>>;
   stateRef: SubscriptionRef.SubscriptionRef<S>;
@@ -753,7 +757,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
 
   // Get optional inspector from context
   const inspectorValue = Option.getOrUndefined(yield* Effect.serviceOption(InspectorTag)) as
-    | Inspector<S, E>
+    | InspectorService<S, E>
     | undefined;
 
   // Actor-specific state
@@ -781,7 +785,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
 
   // Terminal exit deferred — set exactly once when the actor truly terminates.
   // This is what awaitExit/watch bind to, NOT the per-generation exitDeferred.
-  const terminalExitDeferred = yield* Deferred.make<ActorExit<S>, never>();
+  const terminalExitDeferred = yield* Deferred.make<ActorExit<S>>();
 
   // Track whether @machine.stop has been emitted
   let stopEmitted = false;
@@ -793,7 +797,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   const runtimeRef: { current: RuntimeHandle<S, E> | undefined } = { current: undefined };
 
   // Mutable ref for supervisor fiber — set during start, used by stop
-  const supervisorFiberRef: { current: Fiber.Fiber<void, never> | undefined } = {
+  const supervisorFiberRef: { current: Fiber.Fiber<void> | undefined } = {
     current: undefined,
   };
 
@@ -918,7 +922,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
               ),
             onChildSpawned: (childId, child) =>
               Effect.gen(function* () {
-                childrenMap.set(childId, child as unknown as ActorRef<AnyState, unknown>);
+                childrenMap.set(childId, child as ActorRef<AnyState, unknown>);
                 // Use Scope.Scope here intentionally — this is the spawn handler's
                 // state-scoped scope, not an ambient scope. When the state exits,
                 // this scope closes and the child is removed from the map.

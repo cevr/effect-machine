@@ -134,7 +134,7 @@ describe("Dynamic Timeout Duration via Task", () => {
             Effect.gen(function* () {
               const ctx = yield* MachineContextTag;
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const s = ctx.state as any;
+              const s = ctx.state;
               yield* Effect.sleep(Duration.seconds(s.timeout));
             }),
         },
@@ -202,7 +202,7 @@ describe("Dynamic Timeout Duration via Task", () => {
             Effect.gen(function* () {
               const ctx = yield* MachineContextTag;
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const s = ctx.state as any;
+              const s = ctx.state;
               yield* Effect.sleep(Duration.seconds(s.backoff));
             }),
         },

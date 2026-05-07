@@ -28,21 +28,9 @@ export interface ToEntityOptions {
  * - `GetState` - Get current state
  */
 export type EntityRpcs<StateSchema extends Schema.Top, EventSchema extends Schema.Top> = readonly [
-  Rpc.Rpc<
-    "Send",
-    Schema.Struct<{ readonly event: EventSchema }>,
-    StateSchema,
-    typeof Schema.Never,
-    never
-  >,
-  Rpc.Rpc<
-    "Ask",
-    Schema.Struct<{ readonly event: EventSchema }>,
-    typeof Schema.Unknown,
-    typeof Schema.Never,
-    never
-  >,
-  Rpc.Rpc<"GetState", typeof Schema.Void, StateSchema, typeof Schema.Never, never>,
+  Rpc.Rpc<"Send", Schema.Struct<{ readonly event: EventSchema }>, StateSchema>,
+  Rpc.Rpc<"Ask", Schema.Struct<{ readonly event: EventSchema }>, typeof Schema.Unknown>,
+  Rpc.Rpc<"GetState", typeof Schema.Void, StateSchema>,
 ];
 
 /**

@@ -45,7 +45,7 @@
 import type { Context, Duration } from "effect";
 import { Cause, Effect, Exit, Option, Random, Schema, Scope } from "effect";
 
-import type { TransitionResult, ReplyResult } from "./internal/utils.js";
+import type { TransitionResult } from "./internal/utils.js";
 import { getTag, stubSystem, makeReply, makeDeferReply } from "./internal/utils.js";
 import type {
   TaggedOrConstructor,
@@ -467,12 +467,8 @@ export class Machine<
               name,
               {
                 /* eslint-disable @typescript-eslint/no-explicit-any -- v3 Schema.Any context mismatch */
-                decodeInput: Schema.decodeUnknownSync(
-                  def.inputSchema as Schema.Schema<any, any, never>,
-                ),
-                decodeOutput: Schema.decodeUnknownSync(
-                  def.outputSchema as Schema.Schema<any, any, never>,
-                ),
+                decodeInput: Schema.decodeUnknownSync(def.inputSchema as Schema.Schema<any, any>),
+                decodeOutput: Schema.decodeUnknownSync(def.outputSchema as Schema.Schema<any, any>),
                 /* eslint-enable @typescript-eslint/no-explicit-any */
               },
             ]),
@@ -1030,7 +1026,7 @@ export class Machine<
       config.initial,
       config.state as unknown as Schema.Schema<S>,
       config.event as unknown as Schema.Schema<E>,
-      config.slots as SlotsSchema<SLD> | undefined,
+      config.slots,
       config.slotValidation ?? true,
     );
   }

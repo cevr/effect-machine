@@ -13,7 +13,7 @@
  */
 import { Entity } from "@effect/cluster";
 import type { Rpc } from "@effect/rpc";
-import { type Duration, Effect, type Layer, Option, Ref, type Schedule } from "effect";
+import { Clock, type Duration, Effect, type Layer, Option, Ref, type Schedule } from "effect";
 
 import { type Machine, replay } from "../machine.js";
 import type { ActorSystem } from "../actor.js";
@@ -73,7 +73,7 @@ export interface EntityMachineOptions<S, E> {
    * Forwarded to Entity.toLayer.
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schedule type needs wide acceptance
-  readonly defectRetryPolicy?: Schedule.Schedule<any, unknown>;
+  readonly defectRetryPolicy?: Schedule.Schedule<any>;
 
   /**
    * Persistence configuration. When set, requires PersistenceAdapter in R.
@@ -166,10 +166,11 @@ export const EntityMachine = {
           Effect.gen(function* () {
             const state: S = yield* runtime.getState;
             const version = yield* Ref.get(versionRef);
+            const now = yield* Clock.currentTimeMillis;
             yield* pAdapter.saveSnapshot(key, {
               state,
               version,
-              timestamp: Date.now(),
+              timestamp: now,
             } satisfies Snapshot<S>);
           }).pipe(Effect.catchAll(() => Effect.void)),
         );
@@ -228,7 +229,7 @@ export const EntityMachine = {
       mailboxCapacity?: number | "unbounded";
       disableFatalDefects?: boolean;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      defectRetryPolicy?: Schedule.Schedule<any, unknown>;
+      defectRetryPolicy?: Schedule.Schedule<any>;
     } = {};
     if (options?.maxIdleTime !== undefined) clusterOptions.maxIdleTime = options.maxIdleTime;
     if (options?.concurrency !== undefined) clusterOptions.concurrency = options.concurrency;
@@ -349,10 +350,11 @@ const persistEvent = <E>(
   Effect.gen(function* () {
     const expectedVersion = yield* Ref.get(versionRef);
     const newVersion = expectedVersion + 1;
+    const now = yield* Clock.currentTimeMillis;
     const persisted: PersistedEvent<unknown> = {
       event,
       version: newVersion,
-      timestamp: Date.now(),
+      timestamp: now,
     };
     yield* adapter.appendEvents(key, [persisted], expectedVersion);
     yield* Ref.set(versionRef, newVersion);

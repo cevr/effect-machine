@@ -304,10 +304,10 @@ describe("Entity.makeTestClient with machine handler", () => {
                 slots: {} as any,
               });
               const newState = Effect.isEffect(handlerResult)
-                ? yield* handlerResult as Effect.Effect<OrderState>
+                ? yield* handlerResult
                 : handlerResult;
-              yield* Ref.set(stateRef, newState as OrderState);
-              return newState as OrderState;
+              yield* Ref.set(stateRef, newState);
+              return newState;
             }),
 
           GetState: () => Ref.get(stateRef),

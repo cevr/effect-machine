@@ -306,10 +306,10 @@ describe("Entity.makeTestClient with machine handler", () => {
                 slots: {} as any,
               });
               const newState = Effect.isEffect(handlerResult)
-                ? yield* handlerResult as Effect.Effect<OrderState>
+                ? yield* handlerResult
                 : handlerResult;
-              yield* Ref.set(stateRef, newState as OrderState);
-              return newState as OrderState;
+              yield* Ref.set(stateRef, newState);
+              return newState;
             }),
 
           GetState: () => Ref.get(stateRef),
@@ -332,8 +332,10 @@ describe("Entity.makeTestClient with machine handler", () => {
           event: OrderEvent.Ship({ trackingId: "TRACK-789" }),
         });
         expect(shippedState._tag).toBe("Shipped");
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test assertion
-        expect((shippedState as any).trackingId).toBe("TRACK-789");
+        if (shippedState._tag !== "Shipped") {
+          throw new Error("expected shipped state");
+        }
+        expect(shippedState.trackingId).toBe("TRACK-789");
       }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)),
     );
   });

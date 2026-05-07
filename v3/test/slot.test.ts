@@ -219,15 +219,15 @@ describe("Slot schemas", () => {
     expect(canRetryDef.outputSchema).toBeDefined();
 
     // Input schema decodes correctly
-    const params = Schema.decodeUnknownSync(
-      canRetryDef.inputSchema as Schema.Schema<any, any, never>,
-    )({ max: 3 });
+    const params = Schema.decodeUnknownSync(canRetryDef.inputSchema as Schema.Schema<any, any>)({
+      max: 3,
+    });
     expect(params).toEqual({ max: 3 });
 
     // Output schema decodes correctly
-    const result = Schema.decodeUnknownSync(
-      canRetryDef.outputSchema as Schema.Schema<any, any, never>,
-    )(true);
+    const result = Schema.decodeUnknownSync(canRetryDef.outputSchema as Schema.Schema<any, any>)(
+      true,
+    );
     expect(result).toBe(true);
   });
 
@@ -235,9 +235,9 @@ describe("Slot schemas", () => {
     const fetchDef = MySlots.definitions.fetchData;
     expect(fetchDef.returnSchema).toBeUndefined();
     // outputSchema is Schema.Void
-    const result = Schema.decodeUnknownSync(
-      fetchDef.outputSchema as Schema.Schema<any, any, never>,
-    )(undefined);
+    const result = Schema.decodeUnknownSync(fetchDef.outputSchema as Schema.Schema<any, any>)(
+      undefined,
+    );
     expect(result).toBeUndefined();
   });
 
@@ -246,7 +246,7 @@ describe("Slot schemas", () => {
       ping: Slot.fn({}, Schema.Boolean),
     });
     const result = Schema.decodeUnknownSync(
-      EmptySlots.definitions.ping.inputSchema as Schema.Schema<any, any, never>,
+      EmptySlots.definitions.ping.inputSchema as Schema.Schema<any, any>,
     )(undefined);
     expect(result).toBeUndefined();
   });
@@ -254,19 +254,19 @@ describe("Slot schemas", () => {
   test("input schema rejects invalid data", () => {
     const canRetryDef = MySlots.definitions.canRetry;
     expect(() =>
-      Schema.decodeUnknownSync(canRetryDef.inputSchema as Schema.Schema<any, any, never>)({
+      Schema.decodeUnknownSync(canRetryDef.inputSchema as Schema.Schema<any, any>)({
         max: "not a number",
       }),
     ).toThrow();
     expect(() =>
-      Schema.decodeUnknownSync(canRetryDef.inputSchema as Schema.Schema<any, any, never>)({}),
+      Schema.decodeUnknownSync(canRetryDef.inputSchema as Schema.Schema<any, any>)({}),
     ).toThrow();
   });
 
   test("output schema rejects invalid data", () => {
     const canRetryDef = MySlots.definitions.canRetry;
     expect(() =>
-      Schema.decodeUnknownSync(canRetryDef.outputSchema as Schema.Schema<any, any, never>)(
+      Schema.decodeUnknownSync(canRetryDef.outputSchema as Schema.Schema<any, any>)(
         "not a boolean",
       ),
     ).toThrow();
