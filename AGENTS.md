@@ -7,9 +7,8 @@ Type-safe state machines for Effect.
 ```bash
 bun run gate          # typecheck + lint + test + build
 bun test              # Run tests
-bun run typecheck     # tsgo --noEmit (native Go compiler)
-bun run lint          # oxlint + effect-language-service diagnostics
-bun run lint:effect   # effect LSP diagnostics only
+bun run typecheck     # tsgo --noEmit for v4 and v3, patched by @effect/tsgo
+bun run lint          # type-aware oxlint; Effect diagnostics run through tsgo plugin
 bun run fmt           # oxfmt
 ```
 
@@ -22,6 +21,8 @@ bun run fmt           # oxfmt
 - Machine creation: `Machine.make({ state, event, initial })` - types inferred
 - Exports: all public API via `src/index.ts`
 - Namespace pattern: `import { Machine } from "effect-machine"` then `Machine.make`, etc.
+- v4 services use `class X extends Context.Service<X, Shape>()("key") {}`; keep `serviceNotAsClass` enabled.
+- `effect` stays peer-only at runtime; keep concrete Effect versions in dev deps for validation.
 
 ## Fluent Builder
 

@@ -17,6 +17,10 @@ Use it when a feature has:
 bun add effect-machine effect
 ```
 
+`effect` is a peer dependency. The repository validates both the v4 entrypoint
+and the `effect-machine/v3` mirror with `@effect/tsgo`, the latest Effect beta,
+type-aware oxlint, and Bun tests.
+
 ## Core Pattern
 
 States and events are schemas. Types, validation, and serialization from one place.
