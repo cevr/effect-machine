@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.17.1
+
+### Patch Changes
+
+- [`99fcb3f`](https://github.com/cevr/effect-machine/commit/99fcb3f7b2770c51b66843f9973fe6380ace812e) Thanks [@cevr](https://github.com/cevr)! - Update the Effect v4 toolchain to `effect@4.0.0-beta.64` and run tsdown through Bun so CI and local builds share Bun's package resolution.
+
 ## 0.17.0
 
 ### Minor Changes
