@@ -42,8 +42,8 @@
  *
  * @module
  */
-import type { Context, Duration } from "effect";
-import { Cause, Effect, Exit, Option, ParseResult, Random, Schema, Scope } from "effect";
+import type { Context, Duration, ParseResult } from "effect";
+import { Cause, Effect, Exit, Option, Random, Schema, Scope } from "effect";
 
 import type { TransitionResult } from "./internal/utils.js";
 import { getTag, stubSystem, makeReply, makeDeferReply } from "./internal/utils.js";
