@@ -9,7 +9,7 @@
  * - Integration with Machine
  */
 import { Effect, Schema } from "effect";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, it, test } from "effect-bun-test";
 
 import { Machine, State, Event, simulate } from "../src/index.js";
 
@@ -427,40 +427,43 @@ describe("Event (schema-first)", () => {
 });
 
 describe("State/Event with Machine", () => {
-  test("schema-first types work with Machine.make (using with)", async () => {
-    const OrderState = State({
-      Pending: { orderId: Schema.String },
-      Processing: { orderId: Schema.String },
-      Shipped: { orderId: Schema.String, trackingId: Schema.String },
-    });
-    type OrderState = typeof OrderState.Type;
+  it.scopedLive("schema-first types work with Machine.make (using with)", () =>
+    Effect.gen(function* () {
+      const OrderState = State({
+        Pending: { orderId: Schema.String },
+        Processing: { orderId: Schema.String },
+        Shipped: { orderId: Schema.String, trackingId: Schema.String },
+      });
+      type OrderState = typeof OrderState.Type;
 
-    const OrderEvent = Event({
-      Process: {},
-      Ship: { trackingId: Schema.String },
-    });
-    type OrderEvent = typeof OrderEvent.Type;
+      const OrderEvent = Event({
+        Process: {},
+        Ship: { trackingId: Schema.String },
+      });
+      type OrderEvent = typeof OrderEvent.Type;
 
-    // Machine uses with to carry orderId across states
-    const machine = Machine.make({
-      state: OrderState,
-      event: OrderEvent,
-      initial: OrderState.Pending({ orderId: "test-order" }),
-    })
-      .on(OrderState.Pending, OrderEvent.Process, ({ state }) => OrderState.Processing.with(state))
-      .on(OrderState.Processing, OrderEvent.Ship, ({ state, event }) =>
-        OrderState.Shipped.with(state, { trackingId: event.trackingId }),
-      )
-      .final(OrderState.Shipped);
+      // Machine uses with to carry orderId across states
+      const machine = Machine.make({
+        state: OrderState,
+        event: OrderEvent,
+        initial: OrderState.Pending({ orderId: "test-order" }),
+      })
+        .on(OrderState.Pending, OrderEvent.Process, ({ state }) => OrderState.Processing.with(state))
+        .on(OrderState.Processing, OrderEvent.Ship, ({ state, event }) =>
+          OrderState.Shipped.with(state, { trackingId: event.trackingId }),
+        )
+        .final(OrderState.Shipped);
 
-    const result = await Effect.runPromise(
-      simulate(machine, [OrderEvent.Process, OrderEvent.Ship({ trackingId: "TRACK-123" })]),
-    );
+      const result = yield* simulate(machine, [
+        OrderEvent.Process,
+        OrderEvent.Ship({ trackingId: "TRACK-123" }),
+      ]);
 
-    expect(result.finalState._tag).toBe("Shipped");
-    expect((result.finalState as { trackingId: string }).trackingId).toBe("TRACK-123");
-    expect((result.finalState as { orderId: string }).orderId).toBe("test-order");
-  });
+      expect(result.finalState._tag).toBe("Shipped");
+      expect((result.finalState as { trackingId: string }).trackingId).toBe("TRACK-123");
+      expect((result.finalState as { orderId: string }).orderId).toBe("test-order");
+    }),
+  );
 
   test("state constructors are compatible with Machine.on", () => {
     const TestState = State({
@@ -484,94 +487,92 @@ describe("State/Event with Machine", () => {
     expect(machine.transitions.length).toBe(1);
   });
 
-  test("fluent from() scopes transitions to a state", async () => {
-    const EditorState = State({
-      Idle: {},
-      Typing: { text: Schema.String },
-      Submitted: { text: Schema.String },
-    });
+  it.scopedLive("fluent from() scopes transitions to a state", () =>
+    Effect.gen(function* () {
+      const EditorState = State({
+        Idle: {},
+        Typing: { text: Schema.String },
+        Submitted: { text: Schema.String },
+      });
 
-    const EditorEvent = Event({
-      Focus: {},
-      KeyPress: { key: Schema.String },
-      Submit: {},
-    });
+      const EditorEvent = Event({
+        Focus: {},
+        KeyPress: { key: Schema.String },
+        Submit: {},
+      });
 
-    const machine = Machine.make({
-      state: EditorState,
-      event: EditorEvent,
-      initial: EditorState.Idle,
-    })
-      .on(EditorState.Idle, EditorEvent.Focus, () => EditorState.Typing({ text: "" }))
-      .from(EditorState.Typing, (typing) =>
-        typing
-          .on(EditorEvent.KeyPress, ({ state, event }) =>
-            EditorState.Typing({ text: state.text + event.key }),
-          )
-          .on(EditorEvent.Submit, ({ state }) => EditorState.Submitted({ text: state.text })),
-      )
-      .final(EditorState.Submitted);
+      const machine = Machine.make({
+        state: EditorState,
+        event: EditorEvent,
+        initial: EditorState.Idle,
+      })
+        .on(EditorState.Idle, EditorEvent.Focus, () => EditorState.Typing({ text: "" }))
+        .from(EditorState.Typing, (typing) =>
+          typing
+            .on(EditorEvent.KeyPress, ({ state, event }) =>
+              EditorState.Typing({ text: state.text + event.key }),
+            )
+            .on(EditorEvent.Submit, ({ state }) => EditorState.Submitted({ text: state.text })),
+        )
+        .final(EditorState.Submitted);
 
-    // 3 transitions: Idle->Focus, Typing->KeyPress, Typing->Submit
-    expect(machine.transitions.length).toBe(3);
+      // 3 transitions: Idle->Focus, Typing->KeyPress, Typing->Submit
+      expect(machine.transitions.length).toBe(3);
 
-    const result = await Effect.runPromise(
-      simulate(machine, [
+      const result = yield* simulate(machine, [
         EditorEvent.Focus,
         EditorEvent.KeyPress({ key: "h" }),
         EditorEvent.KeyPress({ key: "i" }),
         EditorEvent.Submit,
-      ]),
-    );
+      ]);
 
-    expect(result.finalState._tag).toBe("Submitted");
-    expect((result.finalState as { text: string }).text).toBe("hi");
-  });
+      expect(result.finalState._tag).toBe("Submitted");
+      expect((result.finalState as { text: string }).text).toBe("hi");
+    }),
+  );
 
-  test("multiple state transitions with multi-state .on()", async () => {
-    const WorkflowState = State({
-      Draft: {},
-      Review: {},
-      Approved: {},
-      Cancelled: {},
-    });
+  it.scopedLive("multiple state transitions with multi-state .on()", () =>
+    Effect.gen(function* () {
+      const WorkflowState = State({
+        Draft: {},
+        Review: {},
+        Approved: {},
+        Cancelled: {},
+      });
 
-    const WorkflowEvent = Event({
-      Submit: {},
-      Approve: {},
-      Cancel: {},
-    });
+      const WorkflowEvent = Event({
+        Submit: {},
+        Approve: {},
+        Cancel: {},
+      });
 
-    const machine = Machine.make({
-      state: WorkflowState,
-      event: WorkflowEvent,
-      initial: WorkflowState.Draft,
-    })
-      .on(WorkflowState.Draft, WorkflowEvent.Submit, () => WorkflowState.Review)
-      .on(WorkflowState.Review, WorkflowEvent.Approve, () => WorkflowState.Approved)
-      // Cancel from Draft or Review → Cancelled (multi-state .on)
-      .on(
-        [WorkflowState.Draft, WorkflowState.Review],
-        WorkflowEvent.Cancel,
-        () => WorkflowState.Cancelled,
-      )
-      .final(WorkflowState.Approved)
-      .final(WorkflowState.Cancelled);
+      const machine = Machine.make({
+        state: WorkflowState,
+        event: WorkflowEvent,
+        initial: WorkflowState.Draft,
+      })
+        .on(WorkflowState.Draft, WorkflowEvent.Submit, () => WorkflowState.Review)
+        .on(WorkflowState.Review, WorkflowEvent.Approve, () => WorkflowState.Approved)
+        // Cancel from Draft or Review → Cancelled (multi-state .on)
+        .on(
+          [WorkflowState.Draft, WorkflowState.Review],
+          WorkflowEvent.Cancel,
+          () => WorkflowState.Cancelled,
+        )
+        .final(WorkflowState.Approved)
+        .final(WorkflowState.Cancelled);
 
-    // Cancel from Draft
-    const result1 = await Effect.runPromise(simulate(machine, [WorkflowEvent.Cancel]));
-    expect(result1.finalState._tag).toBe("Cancelled");
+      // Cancel from Draft
+      const result1 = yield* simulate(machine, [WorkflowEvent.Cancel]);
+      expect(result1.finalState._tag).toBe("Cancelled");
 
-    // Cancel from Review
-    const result2 = await Effect.runPromise(
-      simulate(machine, [WorkflowEvent.Submit, WorkflowEvent.Cancel]),
-    );
-    expect(result2.finalState._tag).toBe("Cancelled");
+      // Cancel from Review
+      const result2 = yield* simulate(machine, [WorkflowEvent.Submit, WorkflowEvent.Cancel]);
+      expect(result2.finalState._tag).toBe("Cancelled");
 
-    // Normal flow
-    const result3 = await Effect.runPromise(
-      simulate(machine, [WorkflowEvent.Submit, WorkflowEvent.Approve]),
-    );
-    expect(result3.finalState._tag).toBe("Approved");
-  });
+      // Normal flow
+      const result3 = yield* simulate(machine, [WorkflowEvent.Submit, WorkflowEvent.Approve]);
+      expect(result3.finalState._tag).toBe("Approved");
+    }),
+  );
 });

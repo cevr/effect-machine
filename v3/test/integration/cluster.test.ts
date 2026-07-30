@@ -10,7 +10,6 @@
 import { Entity, ShardingConfig } from "@effect/cluster";
 import { Rpc } from "@effect/rpc";
 import { Effect, Ref, Schema } from "effect";
-import { describe, expect, test } from "bun:test";
 
 import {
   ActorSystemDefault,
@@ -22,6 +21,7 @@ import {
   Slot,
 } from "../../src/index.js";
 import { toEntity } from "../../src/cluster/index.js";
+import { describe, expect, it, test } from "effect-bun-test/v3";
 
 // =============================================================================
 // Schema-first definitions using MachineSchema
@@ -91,71 +91,69 @@ const TestShardingConfig = ShardingConfig.layer({
 // =============================================================================
 
 describe("Cluster Integration with MachineSchema", () => {
-  test("MachineSchema types work with simulate() (baseline)", async () => {
-    // simulate() works great for testing pure state machine logic
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const machineWithInitial = Machine.make({
-          state: OrderState,
-          event: OrderEvent,
-          initial: OrderState.Pending({ orderId: "order-123" }),
-        })
-          .on(OrderState.Pending, OrderEvent.Process, ({ state }) =>
-            OrderState.Processing({ orderId: state.orderId, startedAt: 1000 }),
-          )
-          .on(OrderState.Processing, OrderEvent.Ship, ({ state, event }) =>
-            OrderState.Shipped({ orderId: state.orderId, trackingId: event.trackingId }),
-          )
-          .final(OrderState.Shipped);
-
-        const result = yield* simulate(machineWithInitial, [
-          OrderEvent.Process,
-          OrderEvent.Ship({ trackingId: "TRACK-456" }),
-        ]);
-
-        expect(result.finalState._tag).toBe("Shipped");
-        expect((result.finalState as { trackingId: string }).trackingId).toBe("TRACK-456");
-        expect(result.states.map((s) => s._tag)).toEqual(["Pending", "Processing", "Shipped"]);
-      }),
-    );
-  });
-
-  test("Machine.task works with schema-first machine at runtime", async () => {
-    const TaskState = State({
-      Idle: {},
-      Working: {},
-      Done: {},
-    });
-    type TaskState = typeof TaskState.Type;
-
-    const TaskEvent = Event({
-      Start: {},
-      Done: {},
-    });
-    type TaskEvent = typeof TaskEvent.Type;
-
-    const taskMachine = Machine.make({
-      state: TaskState,
-      event: TaskEvent,
-      initial: TaskState.Idle,
-    })
-      .on(TaskState.Idle, TaskEvent.Start, () => TaskState.Working)
-      .on(TaskState.Working, TaskEvent.Done, () => TaskState.Done)
-      .task(TaskState.Working, () => Effect.succeed("ok"), {
-        onSuccess: () => TaskEvent.Done,
+  it.scopedLive("MachineSchema types work with simulate() (baseline)", () =>
+    Effect.gen(function* () {
+      // simulate() works great for testing pure state machine logic
+      const machineWithInitial = Machine.make({
+        state: OrderState,
+        event: OrderEvent,
+        initial: OrderState.Pending({ orderId: "order-123" }),
       })
-      .final(TaskState.Done);
+        .on(OrderState.Pending, OrderEvent.Process, ({ state }) =>
+          OrderState.Processing({ orderId: state.orderId, startedAt: 1000 }),
+        )
+        .on(OrderState.Processing, OrderEvent.Ship, ({ state, event }) =>
+          OrderState.Shipped({ orderId: state.orderId, trackingId: event.trackingId }),
+        )
+        .final(OrderState.Shipped);
 
-    await Effect.runPromise(
-      Effect.gen(function* () {
+      const result = yield* simulate(machineWithInitial, [
+        OrderEvent.Process,
+        OrderEvent.Ship({ trackingId: "TRACK-456" }),
+      ]);
+
+      expect(result.finalState._tag).toBe("Shipped");
+      expect((result.finalState as { trackingId: string }).trackingId).toBe("TRACK-456");
+      expect(result.states.map((s) => s._tag)).toEqual(["Pending", "Processing", "Shipped"]);
+    }),
+  );
+
+  it.scopedLive("Machine.task works with schema-first machine at runtime", () =>
+    Effect.gen(function* () {
+      const TaskState = State({
+        Idle: {},
+        Working: {},
+        Done: {},
+      });
+      type TaskState = typeof TaskState.Type;
+
+      const TaskEvent = Event({
+        Start: {},
+        Done: {},
+      });
+      type TaskEvent = typeof TaskEvent.Type;
+
+      const taskMachine = Machine.make({
+        state: TaskState,
+        event: TaskEvent,
+        initial: TaskState.Idle,
+      })
+        .on(TaskState.Idle, TaskEvent.Start, () => TaskState.Working)
+        .on(TaskState.Working, TaskEvent.Done, () => TaskState.Done)
+        .task(TaskState.Working, () => Effect.succeed("ok"), {
+          onSuccess: () => TaskEvent.Done,
+        })
+        .final(TaskState.Done);
+
+      yield* Effect.gen(function* () {
         const system = yield* ActorSystemService;
         const actor = yield* system.spawn("task", taskMachine);
         yield* actor.send(TaskEvent.Start);
         const finalState = yield* actor.awaitFinal;
         expect(finalState._tag).toBe("Done");
-      }).pipe(Effect.scoped, Effect.provide(ActorSystemDefault)),
-    );
-  });
+      }).pipe(Effect.scoped, Effect.provide(ActorSystemDefault));
+    }),
+  );
 
   test("toEntity generates correct Entity definition", () => {
     // toEntity creates an Entity with Send and GetState RPCs
@@ -275,50 +273,50 @@ describe("Entity.makeTestClient with machine handler", () => {
     Rpc.make("GetState", { success: OrderState }),
   ]);
 
-  test("Entity.makeTestClient works with MachineSchema", async () => {
-    const OrderEntityWithMachine = OrderEntityManual.toLayer(
-      Effect.gen(function* () {
-        const stateRef = yield* Ref.make<OrderState>(
-          OrderState.Pending({ orderId: "will-be-set" }),
-        );
+  it.scopedLive("Entity.makeTestClient works with MachineSchema", () =>
+    Effect.gen(function* () {
+      const OrderEntityWithMachine = OrderEntityManual.toLayer(
+        Effect.gen(function* () {
+          const stateRef = yield* Ref.make<OrderState>(
+            OrderState.Pending({ orderId: "will-be-set" }),
+          );
 
-        return OrderEntityManual.of({
-          Send: (envelope) =>
-            Effect.gen(function* () {
-              const currentState = yield* Ref.get(stateRef);
-              const event = envelope.payload.event as unknown as OrderEvent;
+          return OrderEntityManual.of({
+            Send: (envelope) =>
+              Effect.gen(function* () {
+                const currentState = yield* Ref.get(stateRef);
+                const event = envelope.payload.event as unknown as OrderEvent;
 
-              const transitions = Machine.findTransitions(
-                orderMachine,
-                currentState._tag,
-                event._tag,
-              );
+                const transitions = Machine.findTransitions(
+                  orderMachine,
+                  currentState._tag,
+                  event._tag,
+                );
 
-              const transition = transitions[0];
-              if (transition === undefined) {
-                return currentState;
-              }
+                const transition = transitions[0];
+                if (transition === undefined) {
+                  return currentState;
+                }
 
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test helper
-              const handlerResult = transition.handler({
-                state: currentState,
-                event,
-                slots: {} as any,
-              });
-              const newState = Effect.isEffect(handlerResult)
-                ? yield* handlerResult
-                : handlerResult;
-              yield* Ref.set(stateRef, newState);
-              return newState;
-            }),
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test helper
+                const handlerResult = transition.handler({
+                  state: currentState,
+                  event,
+                  slots: {} as any,
+                });
+                const newState = Effect.isEffect(handlerResult)
+                  ? yield* handlerResult
+                  : handlerResult;
+                yield* Ref.set(stateRef, newState);
+                return newState;
+              }),
 
-          GetState: () => Ref.get(stateRef),
-        });
-      }),
-    );
+            GetState: () => Ref.get(stateRef),
+          });
+        }),
+      );
 
-    await Effect.runPromise(
-      Effect.gen(function* () {
+      yield* Effect.gen(function* () {
         const makeClient = yield* Entity.makeTestClient(OrderEntityManual, OrderEntityWithMachine);
         const client = yield* makeClient("order-123");
 
@@ -332,35 +330,32 @@ describe("Entity.makeTestClient with machine handler", () => {
           event: OrderEvent.Ship({ trackingId: "TRACK-789" }),
         });
         expect(shippedState._tag).toBe("Shipped");
-        if (shippedState._tag !== "Shipped") {
-          throw new Error("expected shipped state");
+        if (shippedState._tag === "Shipped") {
+          expect(shippedState.trackingId).toBe("TRACK-789");
         }
-        expect(shippedState.trackingId).toBe("TRACK-789");
-      }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)),
-    );
-  });
+      }).pipe(Effect.scoped, Effect.provide(TestShardingConfig));
+    }),
+  );
 
-  test("guards work with simulate", async () => {
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const result = yield* simulate(
-          counterMachine,
-          [
-            CounterEvent.Increment,
-            CounterEvent.Increment,
-            CounterEvent.Increment,
-            CounterEvent.Increment, // blocked by guard
-            CounterEvent.Finish,
-          ],
-          { slots: counterMachineSlots },
-        );
+  it.scopedLive("guards work with simulate", () =>
+    Effect.gen(function* () {
+      const result = yield* simulate(
+        counterMachine,
+        [
+          CounterEvent.Increment,
+          CounterEvent.Increment,
+          CounterEvent.Increment,
+          CounterEvent.Increment, // blocked by guard
+          CounterEvent.Finish,
+        ],
+        { slots: counterMachineSlots },
+      );
 
-        expect(result.finalState._tag).toBe("Done");
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test assertion
-        expect((result.finalState as any).count).toBe(3);
-      }),
-    );
-  });
+      expect(result.finalState._tag).toBe("Done");
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test assertion
+      expect((result.finalState as any).count).toBe(3);
+    }),
+  );
 });
 
 // =============================================================================

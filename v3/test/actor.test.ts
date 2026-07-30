@@ -1,6 +1,7 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
 import {
   Cause,
+  Data,
   Deferred,
   Effect,
   Fiber,
@@ -29,6 +30,11 @@ import { describe, expect, it, yieldFibers } from "effect-bun-test/v3";
 // ============================================================================
 // Shared Test Fixtures
 // ============================================================================
+
+/** Thrown by a deliberately-failing listener to prove it does not crash the actor. */
+class ListenerBoomError extends Data.TaggedError(
+  "effect-machine/v3/test/actor.test/ListenerBoomError",
+)<{ readonly message: string }> {}
 
 const TestState = State({
   Idle: {},
@@ -256,7 +262,7 @@ describe("ActorSystem", () => {
       const actor = yield* system.spawn("listener-actor", machine);
 
       actor.subscribe(() => {
-        throw new Error("boom");
+        throw new ListenerBoomError({ message: "boom" });
       });
 
       yield* actor.call(TestEvent.Start({ value: 1 }));

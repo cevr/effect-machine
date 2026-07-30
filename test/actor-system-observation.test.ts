@@ -1,9 +1,12 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Effect, Fiber, Stream } from "effect";
+import { Data, Effect, Fiber, Stream } from "effect";
 
 import { ActorSystemDefault, ActorSystemService, Machine, State, Event } from "../src/index.js";
 import type { SystemEvent } from "../src/index.js";
 import { describe, expect, it, yieldFibers } from "effect-bun-test";
+
+/** Thrown by deliberately-failing listeners to prove they do not crash the system. */
+class ListenerBoomError extends Data.TaggedError("effect-machine/test/actor-system-observation.test/ListenerBoomError")<{ readonly message: string }> {}
 
 // ============================================================================
 // Test machines
@@ -90,7 +93,7 @@ describe("ActorSystem Observation", () => {
 
         // First listener throws
         system.subscribe(() => {
-          throw new Error("boom");
+          throw new ListenerBoomError({ message: "boom" });
         });
         // Second listener should still receive events
         system.subscribe((e) => events.push(e));

@@ -1,5 +1,5 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Effect, Schema } from "effect";
+import { Data, Effect, Schema } from "effect";
 
 import {
   ActorSystemDefault,
@@ -16,6 +16,11 @@ import {
   Event,
 } from "../src/index.js";
 import { describe, expect, it, yieldFibers } from "effect-bun-test";
+
+/** Thrown by a deliberately-failing inspector to prove it does not crash the machine. */
+class InspectorBoomError extends Data.TaggedError("effect-machine/test/inspection.test/InspectorBoomError")<{
+  readonly message: string;
+}> {}
 
 const TestState = State({
   Idle: {},
@@ -262,7 +267,7 @@ describe("Inspection", () => {
       Effect.provideService(
         InspectorService,
         makeInspector(() => {
-          throw new Error("boom");
+          throw new InspectorBoomError({ message: "boom" });
         }),
       ),
     ),
