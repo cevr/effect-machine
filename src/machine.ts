@@ -240,7 +240,7 @@ type SlotValidators = Map<
 const dieAsSlotCodecError =
   (slotName: string, phase: "input" | "output") =>
   (cause: Cause.Cause<Schema.SchemaError>): Effect.Effect<never> =>
-    Effect.die(new SlotCodecError({ slotName, phase, message: Cause.pretty(cause) }));
+    Effect.die(SlotCodecError.make({ slotName, phase, message: Cause.pretty(cause) }));
 
 /**
  * `Array.isArray` widens to `any[]` and does not narrow a
@@ -327,7 +327,7 @@ export const materializeMachine = <S, E, R, SD extends SlotsDef>(
       Object.keys(machine._slotsSchema.definitions).length > 0
     ) {
       const missing = Object.keys(machine._slotsSchema.definitions);
-      throw new ProvisionValidationError({ missing, extra: [] });
+      throw ProvisionValidationError.make({ missing, extra: [] });
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return machine as any;
@@ -358,7 +358,7 @@ export const materializeMachine = <S, E, R, SD extends SlotsDef>(
   }
 
   if (missing.length > 0 || extra.length > 0) {
-    throw new ProvisionValidationError({ missing, extra });
+    throw ProvisionValidationError.make({ missing, extra });
   }
 
   // Create fresh copy to avoid mutation bleed between actors
@@ -515,7 +515,7 @@ export class Machine<
         }
         const handler = this._slotHandlers.get(name);
         if (handler === undefined) {
-          return Effect.die(new SlotProvisionError({ slotName: name, slotType: "slot" }));
+          return Effect.die(SlotProvisionError.make({ slotName: name, slotType: "slot" }));
         }
 
         const validator = validators?.get(name);
@@ -651,12 +651,7 @@ export class Machine<
   ): Machine<State, Event, R, _SD, _ED, SD>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   on(stateOrStates: any, event: any, handler: any): Machine<State, Event, R, _SD, _ED, SD> {
-    let states: any[];
-    if (Array.isArray(stateOrStates)) {
-      states = stateOrStates;
-    } else {
-      states = [stateOrStates];
-    }
+    const states = toReadonlyArray(stateOrStates);
     for (const s of states) {
       this.addTransition(s, event, handler, false);
     }
@@ -791,12 +786,7 @@ export class Machine<
   ): Machine<State, Event, R, _SD, _ED, SD>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   spawn(stateOrStates: any, handler: any): Machine<State, Event, R, _SD, _ED, SD> {
-    let states: any[];
-    if (Array.isArray(stateOrStates)) {
-      states = stateOrStates;
-    } else {
-      states = [stateOrStates];
-    }
+    const states = toReadonlyArray(stateOrStates);
     for (const s of states) {
       const stateTag = getTag(s);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

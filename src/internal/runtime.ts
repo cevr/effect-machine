@@ -523,7 +523,7 @@ const makeHandle = <S extends { readonly _tag: string }, E extends { readonly _t
     Effect.gen(function* () {
       const stopped = yield* Ref.get(stoppedRef);
       if (stopped) {
-        return yield* new NoReplyError({ actorId: "stopped", eventTag: event._tag });
+        return yield* NoReplyError.make({ actorId: "stopped", eventTag: event._tag });
       }
       const reply = yield* Deferred.make<unknown, NoReplyError>();
       yield* Queue.offer(eventQueue, { _tag: "ask", event, reply });
@@ -682,7 +682,7 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
           // Handler returned Machine.deferReply() — spawn handler will call self.reply()
           deferredReplyRef.current = queued.reply;
         } else {
-          yield* Deferred.fail(queued.reply, new NoReplyError({ actorId, eventTag: event._tag }));
+          yield* Deferred.fail(queued.reply, NoReplyError.make({ actorId, eventTag: event._tag }));
         }
         break;
     }
@@ -719,7 +719,7 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
           forkEffect(Deferred.succeed(entry.done, undefined));
         } else if (entry._tag === "ask") {
           forkEffect(
-            Deferred.fail(entry.reply, new NoReplyError({ actorId, eventTag: entry.event._tag })),
+            Deferred.fail(entry.reply, NoReplyError.make({ actorId, eventTag: entry.event._tag })),
           );
         } else if (entry._tag === "call") {
           // Settle with a stopped result
@@ -757,7 +757,12 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
 
     // queued is narrowed: drain is handled above, so it's always an event-bearing variant here
     const eventQueued = queued;
-    const processInner = processQueued(eventQueued) as Effect.Effect<ProcessQueuedResult<S>>;
+    // processQueued carries the machine's R, but createRuntime provides
+    // MachineContextTag and Scope before the loop is forked, so R is already
+    // satisfied at this point. wrapProcess is declared context-free to match.
+    const processInner: Effect.Effect<ProcessQueuedResult<S>> = processQueued(
+      eventQueued,
+    ) as Effect.Effect<ProcessQueuedResult<S>>;
     let wrapped: Effect.Effect<ProcessQueuedResult<S>> = processInner;
     if (wrapProcess !== undefined) {
       wrapped = Effect.gen(function* () {
@@ -819,7 +824,9 @@ const settlePostponed = <E extends { readonly _tag: string }>(
 ): void => {
   for (const entry of postponed) {
     if (entry._tag === "ask") {
-      forkFn(Deferred.fail(entry.reply, new NoReplyError({ actorId, eventTag: entry.event._tag })));
+      forkFn(
+        Deferred.fail(entry.reply, NoReplyError.make({ actorId, eventTag: entry.event._tag })),
+      );
     } else if (entry._tag === "sendWait") {
       forkFn(Deferred.succeed(entry.done, undefined));
     }

@@ -23,14 +23,14 @@ describe("Payment Flow Pattern", () => {
 
   const PaymentState = State({
     Idle: {},
-    SelectingMethod: { amount: Schema.Number },
-    ProcessingPayment: { method: PaymentMethod, amount: Schema.Number, attempts: Schema.Number },
+    SelectingMethod: { amount: Schema.Finite },
+    ProcessingPayment: { method: PaymentMethod, amount: Schema.Finite, attempts: Schema.Finite },
     AwaitingBridgeConfirm: { transactionId: Schema.String },
     PaymentError: {
       error: Schema.String,
       canRetry: Schema.Boolean,
-      attempts: Schema.Number,
-      amount: Schema.Number,
+      attempts: Schema.Finite,
+      amount: Schema.Finite,
     },
     PaymentSuccess: { receiptId: Schema.String },
     PaymentCancelled: {},
@@ -38,7 +38,7 @@ describe("Payment Flow Pattern", () => {
   type PaymentState = typeof PaymentState.Type;
 
   const PaymentEvent = Event({
-    StartCheckout: { amount: Schema.Number },
+    StartCheckout: { amount: Schema.Finite },
     SelectMethod: { method: PaymentMethod },
     PaymentSucceeded: { receiptId: Schema.String },
     PaymentFailed: { error: Schema.String, canRetry: Schema.Boolean },

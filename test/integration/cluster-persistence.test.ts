@@ -16,18 +16,19 @@ import { Machine, State, Event, ActorSystemDefault } from "../../src/index.js";
 import {
   toEntity,
   EntityMachine,
+  makeEntityActorRef,
   makeInMemoryPersistenceAdapter,
   PersistenceAdapter,
 } from "../../src/cluster/index.js";
 import { PersistenceError } from "../../src/errors.js";
-import type { PersistenceAdapterInterface } from "../../src/cluster/index.js";
+import type { EntityActorRef, PersistenceAdapterInterface } from "../../src/cluster/index.js";
 
 // =============================================================================
 // Test machine: simple counter with same-tag transitions
 // =============================================================================
 
 const CounterState = State({
-  Active: { count: Schema.Number },
+  Active: { count: Schema.Finite },
   Done: {},
 });
 type CounterState = typeof CounterState.Type;
@@ -71,16 +72,14 @@ const TestShardingConfig = ShardingConfig.layer({
  * 2. Runs first activation (act1), then closes its scope (deactivation)
  * 3. Runs second activation (act2) using same adapter
  */
+/** Typed ref over the entity test client used across these persistence tests. */
+type CounterRef = EntityActorRef<CounterState, CounterEvent>;
+
 const runPersistenceTest = <A>(opts: {
   entityType: string;
   strategy: "snapshot" | "journal";
-  act1: (client: {
-    Send: (payload: { event: CounterEvent }) => Effect.Effect<CounterState>;
-  }) => Effect.Effect<void>;
-  act2: (client: {
-    Send: (payload: { event: CounterEvent }) => Effect.Effect<CounterState>;
-    GetState: () => Effect.Effect<CounterState>;
-  }) => Effect.Effect<A>;
+  act1: (ref: CounterRef) => Effect.Effect<void>;
+  act2: (ref: CounterRef) => Effect.Effect<A>;
 }): Effect.Effect<void> =>
   Effect.gen(function* () {
     const { layer: adapterLayer } = yield* makeInMemoryPersistenceAdapter;
@@ -100,9 +99,8 @@ const runPersistenceTest = <A>(opts: {
     yield* Effect.scoped(
       Effect.gen(function* () {
         const makeClient = yield* Entity.makeTestClient(entity, provideLayer);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const client = yield* makeClient("entity-1") as any;
-        yield* opts.act1(client);
+        const client = yield* makeClient("entity-1");
+        yield* opts.act1(makeEntityActorRef<CounterState, CounterEvent, never>(client, "entity-1"));
       }),
     ).pipe(Effect.provide(TestShardingConfig));
 
@@ -110,12 +108,11 @@ const runPersistenceTest = <A>(opts: {
     yield* Effect.scoped(
       Effect.gen(function* () {
         const makeClient = yield* Entity.makeTestClient(entity, provideLayer);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const client = yield* makeClient("entity-1") as any;
-        yield* opts.act2(client);
+        const client = yield* makeClient("entity-1");
+        yield* opts.act2(makeEntityActorRef<CounterState, CounterEvent, never>(client, "entity-1"));
       }),
     ).pipe(Effect.provide(TestShardingConfig));
-  }) as Effect.Effect<void>;
+  });
 
 // =============================================================================
 // Tests
@@ -129,16 +126,16 @@ describe("Entity Persistence", () => {
     runPersistenceTest({
       entityType: "SnapshotSurvive",
       strategy: "snapshot",
-      act1: (client) =>
+      act1: (ref) =>
         Effect.gen(function* () {
-          yield* client.Send({ event: CounterEvent.Increment });
-          yield* client.Send({ event: CounterEvent.Increment });
-          yield* client.Send({ event: CounterEvent.Increment });
+          yield* ref.send(CounterEvent.Increment);
+          yield* ref.send(CounterEvent.Increment);
+          yield* ref.send(CounterEvent.Increment);
           // State is Active({ count: 3 })
         }),
-      act2: (client) =>
+      act2: (ref) =>
         Effect.gen(function* () {
-          const state = yield* client.GetState();
+          const state = yield* ref.snapshot;
           expect(state._tag).toBe("Active");
           expect((state as { count: number }).count).toBe(3);
         }),
@@ -152,16 +149,16 @@ describe("Entity Persistence", () => {
     runPersistenceTest({
       entityType: "JournalReplay",
       strategy: "journal",
-      act1: (client) =>
+      act1: (ref) =>
         Effect.gen(function* () {
-          yield* client.Send({ event: CounterEvent.Increment });
-          yield* client.Send({ event: CounterEvent.Increment });
-          yield* client.Send({ event: CounterEvent.Decrement });
+          yield* ref.send(CounterEvent.Increment);
+          yield* ref.send(CounterEvent.Increment);
+          yield* ref.send(CounterEvent.Decrement);
           // State is Active({ count: 1 })
         }),
-      act2: (client) =>
+      act2: (ref) =>
         Effect.gen(function* () {
-          const state = yield* client.GetState();
+          const state = yield* ref.snapshot;
           expect(state._tag).toBe("Active");
           expect((state as { count: number }).count).toBe(1);
         }),
@@ -171,207 +168,197 @@ describe("Entity Persistence", () => {
   // ---------------------------------------------------------------------------
   // 3. Fresh activation — no stored state
   // ---------------------------------------------------------------------------
-  it.scopedLive(
-    "fresh activation uses initializeState when no stored data",
-    () =>
-      Effect.gen(function* () {
-        const { layer: adapterLayer } = yield* makeInMemoryPersistenceAdapter;
+  it.scopedLive("fresh activation uses initializeState when no stored data", () =>
+    Effect.gen(function* () {
+      const { layer: adapterLayer } = yield* makeInMemoryPersistenceAdapter;
 
-        const entity = toEntity(counterMachine, { type: "Fresh" });
-        const entityLayer = EntityMachine.layer(entity, counterMachine, {
-          initializeState: () => CounterState.Active({ count: 42 }),
-          persistence: { strategy: "snapshot" },
-        });
+      const entity = toEntity(counterMachine, { type: "Fresh" });
+      const entityLayer = EntityMachine.layer(entity, counterMachine, {
+        initializeState: () => CounterState.Active({ count: 42 }),
+        persistence: { strategy: "snapshot" },
+      });
 
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            const makeClient = yield* Entity.makeTestClient(
-              entity,
-              entityLayer.pipe(Layer.provide(ActorSystemDefault), Layer.provide(adapterLayer)),
-            );
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const client = (yield* makeClient("fresh-1")) as any;
-            const state = yield* client.GetState();
-            expect(state._tag).toBe("Active");
-            expect((state as { count: number }).count).toBe(42);
-          }),
-        ).pipe(Effect.provide(TestShardingConfig));
-      }) as Effect.Effect<void>,
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const makeClient = yield* Entity.makeTestClient(
+            entity,
+            entityLayer.pipe(Layer.provide(ActorSystemDefault), Layer.provide(adapterLayer)),
+          );
+          const client = yield* makeClient("fresh-1");
+          const ref = makeEntityActorRef<CounterState, CounterEvent, never>(client, "fresh-1");
+          const state = yield* ref.snapshot;
+          expect(state._tag).toBe("Active");
+          expect((state as { count: number }).count).toBe(42);
+        }),
+      ).pipe(Effect.provide(TestShardingConfig));
+    }),
   );
 
   // ---------------------------------------------------------------------------
   // 4. Same-tag transitions are journaled
   // ---------------------------------------------------------------------------
-  it.scopedLive(
-    "journal: same-tag transitions are captured (not skipped)",
-    () =>
-      Effect.gen(function* () {
-        const { storeRef, layer: adapterLayer } = yield* makeInMemoryPersistenceAdapter;
+  it.scopedLive("journal: same-tag transitions are captured (not skipped)", () =>
+    Effect.gen(function* () {
+      const { storeRef, layer: adapterLayer } = yield* makeInMemoryPersistenceAdapter;
 
-        const entity = toEntity(counterMachine, { type: "SameTag" });
-        const entityLayer = EntityMachine.layer(entity, counterMachine, {
-          initializeState: () => CounterState.Active({ count: 0 }),
-          persistence: { strategy: "journal" },
-        });
+      const entity = toEntity(counterMachine, { type: "SameTag" });
+      const entityLayer = EntityMachine.layer(entity, counterMachine, {
+        initializeState: () => CounterState.Active({ count: 0 }),
+        persistence: { strategy: "journal" },
+      });
 
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            const makeClient = yield* Entity.makeTestClient(
-              entity,
-              entityLayer.pipe(Layer.provide(ActorSystemDefault), Layer.provide(adapterLayer)),
-            );
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const client = (yield* makeClient("same-tag-1")) as any;
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const makeClient = yield* Entity.makeTestClient(
+            entity,
+            entityLayer.pipe(Layer.provide(ActorSystemDefault), Layer.provide(adapterLayer)),
+          );
+          const client = yield* makeClient("same-tag-1");
+          const ref = makeEntityActorRef<CounterState, CounterEvent, never>(client, "same-tag-1");
 
-            // 3 same-tag transitions (Active → Active)
-            yield* client.Send({ event: CounterEvent.Increment });
-            yield* client.Send({ event: CounterEvent.Increment });
-            yield* client.Send({ event: CounterEvent.Increment });
-          }),
-        ).pipe(Effect.provide(TestShardingConfig));
+          // 3 same-tag transitions (Active → Active)
+          yield* ref.send(CounterEvent.Increment);
+          yield* ref.send(CounterEvent.Increment);
+          yield* ref.send(CounterEvent.Increment);
+        }),
+      ).pipe(Effect.provide(TestShardingConfig));
 
-        // Check that all 3 events were journaled
-        const store = yield* Ref.get(storeRef);
-        const entry = store.get("SameTag/same-tag-1");
-        expect(entry).toBeDefined();
-        expect(entry?.events.length).toBe(3);
-      }) as Effect.Effect<void>,
+      // Check that all 3 events were journaled
+      const store = yield* Ref.get(storeRef);
+      const entry = store.get("SameTag/same-tag-1");
+      expect(entry).toBeDefined();
+      expect(entry?.events.length).toBe(3);
+    }),
   );
 
   // ---------------------------------------------------------------------------
   // 5. Deactivation saves snapshot
   // ---------------------------------------------------------------------------
-  it.scopedLive(
-    "deactivation saves final snapshot",
-    () =>
-      Effect.gen(function* () {
-        const { storeRef, layer: adapterLayer } = yield* makeInMemoryPersistenceAdapter;
+  it.scopedLive("deactivation saves final snapshot", () =>
+    Effect.gen(function* () {
+      const { storeRef, layer: adapterLayer } = yield* makeInMemoryPersistenceAdapter;
 
-        const entity = toEntity(counterMachine, { type: "DeactivSnap" });
-        const entityLayer = EntityMachine.layer(entity, counterMachine, {
-          initializeState: () => CounterState.Active({ count: 0 }),
-          persistence: { strategy: "snapshot" },
-        });
+      const entity = toEntity(counterMachine, { type: "DeactivSnap" });
+      const entityLayer = EntityMachine.layer(entity, counterMachine, {
+        initializeState: () => CounterState.Active({ count: 0 }),
+        persistence: { strategy: "snapshot" },
+      });
 
-        // Activate, transition, then deactivate (scope close)
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            const makeClient = yield* Entity.makeTestClient(
-              entity,
-              entityLayer.pipe(Layer.provide(ActorSystemDefault), Layer.provide(adapterLayer)),
-            );
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const client = (yield* makeClient("snap-1")) as any;
-            yield* client.Send({ event: CounterEvent.Increment });
-            yield* client.Send({ event: CounterEvent.Increment });
-          }),
-        ).pipe(Effect.provide(TestShardingConfig));
+      // Activate, transition, then deactivate (scope close)
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const makeClient = yield* Entity.makeTestClient(
+            entity,
+            entityLayer.pipe(Layer.provide(ActorSystemDefault), Layer.provide(adapterLayer)),
+          );
+          const client = yield* makeClient("snap-1");
+          const ref = makeEntityActorRef<CounterState, CounterEvent, never>(client, "snap-1");
+          yield* ref.send(CounterEvent.Increment);
+          yield* ref.send(CounterEvent.Increment);
+        }),
+      ).pipe(Effect.provide(TestShardingConfig));
 
-        // Check adapter has snapshot
-        const store = yield* Ref.get(storeRef);
-        const entry = store.get("DeactivSnap/snap-1");
-        expect(entry).toBeDefined();
-        expect(entry?.snapshot).toBeDefined();
-        const snapshotState = entry?.snapshot?.state as { count: number } | undefined;
-        expect(snapshotState?.count).toBe(2);
-      }) as Effect.Effect<void>,
+      // Check adapter has snapshot
+      const store = yield* Ref.get(storeRef);
+      const entry = store.get("DeactivSnap/snap-1");
+      expect(entry).toBeDefined();
+      expect(entry?.snapshot).toBeDefined();
+      const snapshotState = entry?.snapshot?.state as { count: number } | undefined;
+      expect(snapshotState?.count).toBe(2);
+    }),
   );
 
   // ---------------------------------------------------------------------------
   // 6. Version tracking
   // ---------------------------------------------------------------------------
-  it.scopedLive(
-    "journal: version increments on each transition",
-    () =>
-      Effect.gen(function* () {
-        const { storeRef, layer: adapterLayer } = yield* makeInMemoryPersistenceAdapter;
+  it.scopedLive("journal: version increments on each transition", () =>
+    Effect.gen(function* () {
+      const { storeRef, layer: adapterLayer } = yield* makeInMemoryPersistenceAdapter;
 
-        const entity = toEntity(counterMachine, { type: "VersionTrack" });
-        const entityLayer = EntityMachine.layer(entity, counterMachine, {
-          initializeState: () => CounterState.Active({ count: 0 }),
-          persistence: { strategy: "journal" },
-        });
+      const entity = toEntity(counterMachine, { type: "VersionTrack" });
+      const entityLayer = EntityMachine.layer(entity, counterMachine, {
+        initializeState: () => CounterState.Active({ count: 0 }),
+        persistence: { strategy: "journal" },
+      });
 
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            const makeClient = yield* Entity.makeTestClient(
-              entity,
-              entityLayer.pipe(Layer.provide(ActorSystemDefault), Layer.provide(adapterLayer)),
-            );
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const client = (yield* makeClient("ver-1")) as any;
-            yield* client.Send({ event: CounterEvent.Increment });
-            yield* client.Send({ event: CounterEvent.Increment });
-            yield* client.Send({ event: CounterEvent.Increment });
-          }),
-        ).pipe(Effect.provide(TestShardingConfig));
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const makeClient = yield* Entity.makeTestClient(
+            entity,
+            entityLayer.pipe(Layer.provide(ActorSystemDefault), Layer.provide(adapterLayer)),
+          );
+          const client = yield* makeClient("ver-1");
+          const ref = makeEntityActorRef<CounterState, CounterEvent, never>(client, "ver-1");
+          yield* ref.send(CounterEvent.Increment);
+          yield* ref.send(CounterEvent.Increment);
+          yield* ref.send(CounterEvent.Increment);
+        }),
+      ).pipe(Effect.provide(TestShardingConfig));
 
-        const store = yield* Ref.get(storeRef);
-        const entry = store.get("VersionTrack/ver-1");
-        expect(entry?.events.length).toBe(3);
-        expect(entry?.events[0]?.version).toBe(1);
-        expect(entry?.events[1]?.version).toBe(2);
-        expect(entry?.events[2]?.version).toBe(3);
-      }) as Effect.Effect<void>,
+      const store = yield* Ref.get(storeRef);
+      const entry = store.get("VersionTrack/ver-1");
+      expect(entry?.events.length).toBe(3);
+      expect(entry?.events[0]?.version).toBe(1);
+      expect(entry?.events[1]?.version).toBe(2);
+      expect(entry?.events[2]?.version).toBe(3);
+    }),
   );
 
   // ---------------------------------------------------------------------------
   // 7. Journal + snapshot: reactivation from snapshot + tail events
   // ---------------------------------------------------------------------------
-  it.scopedLive(
-    "journal: reactivation replays tail events after snapshot",
-    () =>
-      Effect.gen(function* () {
-        const { storeRef, layer: adapterLayer } = yield* makeInMemoryPersistenceAdapter;
+  it.scopedLive("journal: reactivation replays tail events after snapshot", () =>
+    Effect.gen(function* () {
+      const { storeRef, layer: adapterLayer } = yield* makeInMemoryPersistenceAdapter;
 
-        const entity = toEntity(counterMachine, { type: "JournalSnap" });
-        const entityLayer = EntityMachine.layer(entity, counterMachine, {
-          initializeState: () => CounterState.Active({ count: 0 }),
-          persistence: { strategy: "journal" },
-        });
+      const entity = toEntity(counterMachine, { type: "JournalSnap" });
+      const entityLayer = EntityMachine.layer(entity, counterMachine, {
+        initializeState: () => CounterState.Active({ count: 0 }),
+        persistence: { strategy: "journal" },
+      });
 
-        const provideLayer = entityLayer.pipe(
-          Layer.provide(ActorSystemDefault),
-          Layer.provide(adapterLayer),
-        );
+      const provideLayer = entityLayer.pipe(
+        Layer.provide(ActorSystemDefault),
+        Layer.provide(adapterLayer),
+      );
 
-        // First activation: increment 5 times
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            const makeClient = yield* Entity.makeTestClient(entity, provideLayer);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const client = (yield* makeClient("js-1")) as any;
-            for (let i = 0; i < 5; i++) {
-              yield* client.Send({ event: CounterEvent.Increment });
-            }
-          }),
-        ).pipe(Effect.provide(TestShardingConfig));
+      // First activation: increment 5 times
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const makeClient = yield* Entity.makeTestClient(entity, provideLayer);
+          const client = yield* makeClient("js-1");
+          const ref = makeEntityActorRef<CounterState, CounterEvent, never>(client, "js-1");
+          for (let i = 0; i < 5; i++) {
+            yield* ref.send(CounterEvent.Increment);
+          }
+        }),
+      ).pipe(Effect.provide(TestShardingConfig));
 
-        // Manually override snapshot at version 3 (simulating periodic snapshot)
-        // Directly mutate store since deactivation already saved at v5
-        const store = yield* Ref.get(storeRef);
-        const entry = store.get("JournalSnap/js-1");
-        if (entry !== undefined) {
-          const now = yield* Clock.currentTimeMillis;
-          entry.snapshot = {
-            state: CounterState.Active({ count: 3 }),
-            version: 3,
-            timestamp: now,
-          };
-        }
+      // Manually override snapshot at version 3 (simulating periodic snapshot)
+      // Directly mutate store since deactivation already saved at v5
+      const store = yield* Ref.get(storeRef);
+      const entry = store.get("JournalSnap/js-1");
+      if (entry !== undefined) {
+        const now = yield* Clock.currentTimeMillis;
+        entry.snapshot = {
+          state: CounterState.Active({ count: 3 }),
+          version: 3,
+          timestamp: now,
+        };
+      }
 
-        // Second activation: should load snapshot (v3, count=3) + replay events 4,5
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            const makeClient = yield* Entity.makeTestClient(entity, provideLayer);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const client = (yield* makeClient("js-1")) as any;
-            const state = yield* client.GetState();
-            expect(state._tag).toBe("Active");
-            expect((state as { count: number }).count).toBe(5);
-          }),
-        ).pipe(Effect.provide(TestShardingConfig));
-      }) as Effect.Effect<void>,
+      // Second activation: should load snapshot (v3, count=3) + replay events 4,5
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const makeClient = yield* Entity.makeTestClient(entity, provideLayer);
+          const client = yield* makeClient("js-1");
+          const ref = makeEntityActorRef<CounterState, CounterEvent, never>(client, "js-1");
+          const state = yield* ref.snapshot;
+          expect(state._tag).toBe("Active");
+          expect((state as { count: number }).count).toBe(5);
+        }),
+      ).pipe(Effect.provide(TestShardingConfig));
+    }),
   );
 
   // ---------------------------------------------------------------------------
@@ -388,7 +375,7 @@ describe("Entity Persistence", () => {
           appendCallCount++;
           // Fail on 3rd append
           if (appendCallCount >= 3) {
-            return Effect.fail(new PersistenceError({ message: "storage down" }));
+            return Effect.fail(PersistenceError.make({ message: "storage down" }));
           }
           return Effect.void;
         },
@@ -398,7 +385,6 @@ describe("Entity Persistence", () => {
       const failingAdapterLayer = Layer.succeed(PersistenceAdapter, failingAdapter);
 
       const entity = toEntity(counterMachine, { type: "FailAppend" });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const entityLayer = EntityMachine.layer(entity, counterMachine, {
         initializeState: () => CounterState.Active({ count: 0 }),
         persistence: { strategy: "journal" },
@@ -414,16 +400,16 @@ describe("Entity Persistence", () => {
             entity,
             entityLayer.pipe(Layer.provide(ActorSystemDefault), Layer.provide(failingAdapterLayer)),
           );
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const client = (yield* makeClient("fail-1")) as any;
+          const client = yield* makeClient("fail-1");
+          const ref = makeEntityActorRef<CounterState, CounterEvent, never>(client, "fail-1");
 
-          yield* client.Send({ event: CounterEvent.Increment });
-          yield* client.Send({ event: CounterEvent.Increment });
+          yield* ref.send(CounterEvent.Increment);
+          yield* ref.send(CounterEvent.Increment);
           // 3rd send triggers append failure → entity defect
-          const thirdResult = yield* Effect.exit(client.Send({ event: CounterEvent.Increment }));
+          const thirdResult = yield* Effect.exit(ref.send(CounterEvent.Increment));
           return thirdResult._tag;
         }),
-      ).pipe(Effect.provide(TestShardingConfig)) as Effect.Effect<string>;
+      ).pipe(Effect.provide(TestShardingConfig));
 
       // The send should fail (defect propagates through RPC)
       expect(result).toBe("Failure");
@@ -449,7 +435,7 @@ describe("Entity Persistence", () => {
           appendEvents: (key, events, expectedVersion) => {
             appendCallCount++;
             if (appendCallCount >= 4) {
-              return Effect.fail(new PersistenceError({ message: "storage down" }));
+              return Effect.fail(PersistenceError.make({ message: "storage down" }));
             }
             return realAdapter.appendEvents(key, events, expectedVersion);
           },
@@ -474,13 +460,13 @@ describe("Entity Persistence", () => {
         yield* Effect.scoped(
           Effect.gen(function* () {
             const makeClient = yield* Entity.makeTestClient(entity, provideLayer);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const client = (yield* makeClient("recover-1")) as any;
-            yield* client.Send({ event: CounterEvent.Increment });
-            yield* client.Send({ event: CounterEvent.Increment });
-            yield* client.Send({ event: CounterEvent.Increment });
+            const client = yield* makeClient("recover-1");
+            const ref = makeEntityActorRef<CounterState, CounterEvent, never>(client, "recover-1");
+            yield* ref.send(CounterEvent.Increment);
+            yield* ref.send(CounterEvent.Increment);
+            yield* ref.send(CounterEvent.Increment);
             // 4th send defects — ignore the error
-            yield* Effect.exit(client.Send({ event: CounterEvent.Increment }));
+            yield* Effect.exit(ref.send(CounterEvent.Increment));
           }),
         ).pipe(Effect.provide(TestShardingConfig));
 
@@ -493,69 +479,67 @@ describe("Entity Persistence", () => {
         yield* Effect.scoped(
           Effect.gen(function* () {
             const makeClient = yield* Entity.makeTestClient(entity, provideLayer);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const client = (yield* makeClient("recover-1")) as any;
-            const state = yield* client.GetState();
+            const client = yield* makeClient("recover-1");
+            const ref = makeEntityActorRef<CounterState, CounterEvent, never>(client, "recover-1");
+            const state = yield* ref.snapshot;
             expect(state._tag).toBe("Active");
             // Should recover to at least count=3 (journal) or count=4 (snapshot from defected state)
             expect((state as { count: number }).count).toBeGreaterThanOrEqual(3);
           }),
         ).pipe(Effect.provide(TestShardingConfig));
-      }) as Effect.Effect<void>,
+      }),
   );
 
   // ---------------------------------------------------------------------------
   // 10. Snapshot-only: version is consistent across deactivation
   // ---------------------------------------------------------------------------
-  it.scopedLive(
-    "snapshot: version is consistent after deactivation/reactivation",
-    () =>
-      Effect.gen(function* () {
-        const { storeRef, layer: adapterLayer } = yield* makeInMemoryPersistenceAdapter;
+  it.scopedLive("snapshot: version is consistent after deactivation/reactivation", () =>
+    Effect.gen(function* () {
+      const { storeRef, layer: adapterLayer } = yield* makeInMemoryPersistenceAdapter;
 
-        const entity = toEntity(counterMachine, { type: "SnapVersion" });
-        const entityLayer = EntityMachine.layer(entity, counterMachine, {
-          initializeState: () => CounterState.Active({ count: 0 }),
-          persistence: { strategy: "snapshot" },
-        });
+      const entity = toEntity(counterMachine, { type: "SnapVersion" });
+      const entityLayer = EntityMachine.layer(entity, counterMachine, {
+        initializeState: () => CounterState.Active({ count: 0 }),
+        persistence: { strategy: "snapshot" },
+      });
 
-        const provideLayer = entityLayer.pipe(
-          Layer.provide(ActorSystemDefault),
-          Layer.provide(adapterLayer),
-        );
+      const provideLayer = entityLayer.pipe(
+        Layer.provide(ActorSystemDefault),
+        Layer.provide(adapterLayer),
+      );
 
-        // Activate, do 5 transitions, deactivate
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            const makeClient = yield* Entity.makeTestClient(entity, provideLayer);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const client = (yield* makeClient("sv-1")) as any;
-            for (let i = 0; i < 5; i++) {
-              yield* client.Send({ event: CounterEvent.Increment });
-            }
-          }),
-        ).pipe(Effect.provide(TestShardingConfig));
+      // Activate, do 5 transitions, deactivate
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const makeClient = yield* Entity.makeTestClient(entity, provideLayer);
+          const client = yield* makeClient("sv-1");
+          const ref = makeEntityActorRef<CounterState, CounterEvent, never>(client, "sv-1");
+          for (let i = 0; i < 5; i++) {
+            yield* ref.send(CounterEvent.Increment);
+          }
+        }),
+      ).pipe(Effect.provide(TestShardingConfig));
 
-        // Check snapshot state and version are consistent
-        const store = yield* Ref.get(storeRef);
-        const entry = store.get("SnapVersion/sv-1");
-        expect(entry?.snapshot).toBeDefined();
-        const snap = entry?.snapshot;
-        expect((snap?.state as { count: number })?.count).toBe(5);
-        // Version should match (no tear)
-        expect(snap?.version).toBe(5);
+      // Check snapshot state and version are consistent
+      const store = yield* Ref.get(storeRef);
+      const entry = store.get("SnapVersion/sv-1");
+      expect(entry?.snapshot).toBeDefined();
+      const snap = entry?.snapshot;
+      expect((snap?.state as { count: number })?.count).toBe(5);
+      // Version should match (no tear)
+      expect(snap?.version).toBe(5);
 
-        // Reactivate and verify state
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            const makeClient = yield* Entity.makeTestClient(entity, provideLayer);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const client = (yield* makeClient("sv-1")) as any;
-            const state = yield* client.GetState();
-            expect(state._tag).toBe("Active");
-            expect((state as { count: number }).count).toBe(5);
-          }),
-        ).pipe(Effect.provide(TestShardingConfig));
-      }) as Effect.Effect<void>,
+      // Reactivate and verify state
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const makeClient = yield* Entity.makeTestClient(entity, provideLayer);
+          const client = yield* makeClient("sv-1");
+          const ref = makeEntityActorRef<CounterState, CounterEvent, never>(client, "sv-1");
+          const state = yield* ref.snapshot;
+          expect(state._tag).toBe("Active");
+          expect((state as { count: number }).count).toBe(5);
+        }),
+      ).pipe(Effect.provide(TestShardingConfig));
+    }),
   );
 });

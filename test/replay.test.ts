@@ -10,14 +10,14 @@ import { describe, expect, it, yieldFibers } from "effect-bun-test";
 
 const TestState = State({
   Idle: {},
-  Loading: { value: Schema.Number },
-  Active: { value: Schema.Number },
+  Loading: { value: Schema.Finite },
+  Active: { value: Schema.Finite },
   Done: {},
 });
 type TestState = typeof TestState.Type;
 
 const TestEvent = Event({
-  Start: { value: Schema.Number },
+  Start: { value: Schema.Finite },
   Complete: {},
   Increment: {},
   Finish: {},
@@ -115,10 +115,10 @@ describe("Machine.replay", () => {
     Effect.gen(function* () {
       const EffState = State({
         Initial: {},
-        Computed: { result: Schema.Number },
+        Computed: { result: Schema.Finite },
       });
       const EffEvent = Event({
-        Compute: { input: Schema.Number },
+        Compute: { input: Schema.Finite },
       });
 
       const machine = Machine.make({
@@ -145,7 +145,7 @@ describe("Machine.replay postpone", () => {
     Effect.gen(function* () {
       const PState = State({
         Waiting: {},
-        Ready: { count: Schema.Number },
+        Ready: { count: Schema.Finite },
         Done: {},
       });
       const PEvent = Event({

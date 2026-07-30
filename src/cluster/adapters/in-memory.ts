@@ -68,7 +68,7 @@ export const makeInMemoryPersistenceAdapter = Effect.gen(function* () {
 
         // Monotonic version check
         if (entry.snapshot !== undefined && snapshot.version < entry.snapshot.version) {
-          return yield* new VersionConflictError({
+          return yield* VersionConflictError.make({
             expected: snapshot.version,
             actual: entry.snapshot.version,
           });
@@ -96,7 +96,7 @@ export const makeInMemoryPersistenceAdapter = Effect.gen(function* () {
         }
 
         if (currentVersion !== expectedVersion) {
-          return yield* new VersionConflictError({
+          return yield* VersionConflictError.make({
             expected: expectedVersion,
             actual: currentVersion,
           });

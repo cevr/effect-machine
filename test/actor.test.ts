@@ -36,16 +36,16 @@ class ListenerBoomError extends Data.TaggedError(
 
 const TestState = State({
   Idle: {},
-  Loading: { value: Schema.Number },
-  Active: { value: Schema.Number },
+  Loading: { value: Schema.Finite },
+  Active: { value: Schema.Finite },
   Done: {},
 });
 type TestState = typeof TestState.Type;
 
 const TestEvent = Event({
-  Start: { value: Schema.Number },
+  Start: { value: Schema.Finite },
   Complete: {},
-  Update: { value: Schema.Number },
+  Update: { value: Schema.Finite },
   Stop: {},
 });
 type TestEvent = typeof TestEvent.Type;
@@ -925,11 +925,11 @@ describe("ActorRef", () => {
       Effect.gen(function* () {
         const TS = State({
           Idle: {},
-          Running: { value: Schema.Number },
+          Running: { value: Schema.Finite },
           Done: { result: Schema.String },
         });
         const TE = Event({
-          Start: { value: Schema.Number },
+          Start: { value: Schema.Finite },
           Completed: { result: Schema.String },
         });
 
@@ -996,7 +996,7 @@ describe("ActorRef", () => {
           const fiber = yield* Effect.forkDetach(
             svc.run(42).pipe(
               Effect.tap(() => Deferred.succeed(done, void 0)),
-              Effect.catchCause(() => Effect.void),
+              Effect.ignoreCause,
             ),
           );
 

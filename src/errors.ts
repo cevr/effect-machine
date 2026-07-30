@@ -85,5 +85,5 @@ export class SlotCodecError extends Schema.TaggedErrorClass<SlotCodecError>()("S
 /** Optimistic locking failure — stored version doesn't match expected */
 export class VersionConflictError extends Schema.TaggedErrorClass<VersionConflictError>()(
   "VersionConflictError",
-  { expected: Schema.Number, actual: Schema.Number },
+  { expected: Schema.Finite, actual: Schema.Finite },
 ) {}

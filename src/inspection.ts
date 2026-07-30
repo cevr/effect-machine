@@ -166,7 +166,7 @@ export const combineInspectors = <S, E>(
   onInspect: (event) =>
     Effect.forEach(
       inspectors,
-      (inspector) => inspectionEffect(inspector, event).pipe(Effect.catchCause(() => Effect.void)),
+      (inspector) => inspectionEffect(inspector, event).pipe(Effect.ignoreCause),
       { concurrency: "unbounded", discard: true },
     ),
 });

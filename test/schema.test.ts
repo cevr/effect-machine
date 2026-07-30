@@ -172,7 +172,7 @@ describe("State (schema-first)", () => {
 describe("State.with()", () => {
   test("same-state: preserves other fields, overrides specified", () => {
     const TS = State({
-      Editor: { text: Schema.String, cursor: Schema.Number },
+      Editor: { text: Schema.String, cursor: Schema.Finite },
     });
 
     const s = TS.Editor({ text: "hello", cursor: 0 });
@@ -185,7 +185,7 @@ describe("State.with()", () => {
 
   test("same-state: no partial returns copy", () => {
     const TS = State({
-      A: { x: Schema.Number, y: Schema.String },
+      A: { x: Schema.Finite, y: Schema.String },
     });
 
     const s = TS.A({ x: 10, y: "hi" });
@@ -198,8 +198,8 @@ describe("State.with()", () => {
 
   test("cross-state: picks only target fields from source", () => {
     const TS = State({
-      A: { x: Schema.Number, y: Schema.String },
-      B: { x: Schema.Number },
+      A: { x: Schema.Finite, y: Schema.String },
+      B: { x: Schema.Finite },
     });
 
     const a = TS.A({ x: 42, y: "hello" });
@@ -212,8 +212,8 @@ describe("State.with()", () => {
 
   test("cross-state: picks + overrides", () => {
     const TS = State({
-      A: { x: Schema.Number, y: Schema.String },
-      B: { x: Schema.Number, z: Schema.Boolean },
+      A: { x: Schema.Finite, y: Schema.String },
+      B: { x: Schema.Finite, z: Schema.Boolean },
     });
 
     const a = TS.A({ x: 1, y: "test" });
@@ -227,7 +227,7 @@ describe("State.with()", () => {
   test("empty variant: with returns tagged value", () => {
     const TS = State({
       Idle: {},
-      Active: { value: Schema.Number },
+      Active: { value: Schema.Finite },
     });
 
     const active = TS.Active({ value: 5 });
@@ -239,7 +239,7 @@ describe("State.with()", () => {
 
   test("partial overrides win over source fields", () => {
     const TS = State({
-      A: { x: Schema.Number, y: Schema.Number },
+      A: { x: Schema.Finite, y: Schema.Finite },
     });
 
     const s = TS.A({ x: 1, y: 2 });
@@ -251,8 +251,8 @@ describe("State.with()", () => {
 
   test("partial cannot override reserved _tag", () => {
     const TS = State({
-      A: { x: Schema.Number },
-      B: { x: Schema.Number },
+      A: { x: Schema.Finite },
+      B: { x: Schema.Finite },
     });
 
     const a = TS.A({ x: 1 });
@@ -264,8 +264,8 @@ describe("State.with()", () => {
 
   test("fields not in target are dropped", () => {
     const TS = State({
-      A: { x: Schema.Number, extra: Schema.String },
-      B: { x: Schema.Number },
+      A: { x: Schema.Finite, extra: Schema.String },
+      B: { x: Schema.Finite },
     });
 
     const a = TS.A({ x: 1, extra: "nope" });
@@ -469,8 +469,8 @@ describe("State/Event with Machine", () => {
 
   test("state constructors are compatible with Machine.on", () => {
     const TestState = State({
-      A: { value: Schema.Number },
-      B: { value: Schema.Number },
+      A: { value: Schema.Finite },
+      B: { value: Schema.Finite },
     });
     type TestState = typeof TestState.Type;
 

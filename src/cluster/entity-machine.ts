@@ -204,7 +204,7 @@ export const EntityMachine = {
                   version,
                   timestamp: now,
                 } satisfies Snapshot<S>);
-              }).pipe(Effect.catch(() => Effect.void)),
+              }).pipe(Effect.ignore),
             ),
             Effect.forkScoped,
           );
@@ -223,7 +223,7 @@ export const EntityMachine = {
               version,
               timestamp: now,
             } satisfies Snapshot<S>);
-          }).pipe(Effect.catch(() => Effect.void)),
+          }).pipe(Effect.ignore),
         );
       }
 
@@ -270,7 +270,9 @@ export const EntityMachine = {
               case "Ask": {
                 const event = (request as { readonly payload: { readonly event: E } }).payload
                   .event;
-                const reply = yield* runtime.ask(event);
+                // ask fails with NoReplyError on defect — orDie propagates to
+                // toLayerQueue infrastructure, matching the sendWait case above.
+                const reply = yield* runtime.ask(event).pipe(Effect.orDie);
 
                 if (journalCtx !== undefined) {
                   yield* persistEvent(journalCtx.adapter, journalCtx.key, versionRef, event);
@@ -307,7 +309,7 @@ export const EntityMachine = {
                 break;
             }
           }
-        }) as Effect.Effect<never>;
+        });
     });
 
     // Collect cluster options to forward
@@ -381,9 +383,11 @@ const hydratePersistence = <
     const key: PersistenceKey = { entityType, entityId };
 
     // Load snapshot
-    const maybeSnapshot = yield* adapter.loadSnapshot(key) as Effect.Effect<
-      Option.Option<Snapshot<S>>
-    >;
+    // The adapter persists opaque payloads, so snapshots come back as
+    // Snapshot<unknown>. Narrowing the decoded value (not the Effect) keeps the
+    // error and requirements channels intact.
+    const storedSnapshot = yield* adapter.loadSnapshot(key);
+    const maybeSnapshot = storedSnapshot as Option.Option<Snapshot<S>>;
 
     const strategy = persistence.strategy ?? "snapshot";
 

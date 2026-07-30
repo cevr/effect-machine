@@ -100,7 +100,7 @@ describe("Timeout Transitions via Task", () => {
 
 describe("Dynamic Timeout Duration via Task", () => {
   const WaitState = State({
-    Waiting: { timeout: Schema.Number },
+    Waiting: { timeout: Schema.Finite },
     TimedOut: {},
   });
   type WaitState = typeof WaitState.Type;
@@ -164,7 +164,7 @@ describe("Dynamic Timeout Duration via Task", () => {
   it.scoped("dynamic duration with different state values", () =>
     Effect.gen(function* () {
       const RetryState = State({
-        Retrying: { attempt: Schema.Number, backoff: Schema.Number },
+        Retrying: { attempt: Schema.Finite, backoff: Schema.Finite },
         Failed: {},
         Success: {},
       });

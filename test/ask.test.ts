@@ -6,15 +6,15 @@ import { describe, expect, it } from "effect-bun-test";
 
 const TestState = State({
   Idle: {},
-  Active: { count: Schema.Number },
+  Active: { count: Schema.Finite },
   Done: {},
 });
 
 const TestEvent = Event({
   Start: {},
   Increment: {},
-  GetCount: Event.reply({}, Schema.Number),
-  MultiplyCount: Event.reply({ factor: Schema.Number }, Schema.Number),
+  GetCount: Event.reply({}, Schema.Finite),
+  MultiplyCount: Event.reply({ factor: Schema.Finite }, Schema.Finite),
   GetNothing: Event.reply({}, Schema.Undefined),
   Stop: {},
 });
@@ -153,7 +153,7 @@ describe("ActorRef.ask", () => {
     Effect.gen(function* () {
       // Build a machine where the handler lies about the reply type
       const BadEvent = Event({
-        GetCount: Event.reply({}, Schema.Number),
+        GetCount: Event.reply({}, Schema.Finite),
       });
 
       const machine = Machine.make({

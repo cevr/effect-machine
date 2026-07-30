@@ -10,13 +10,13 @@ import { describe, expect, it, yieldFibers } from "effect-bun-test";
 
 const TestState = State({
   Idle: {},
-  Active: { value: Schema.Number },
+  Active: { value: Schema.Finite },
   Done: {},
 });
 
 const TestEvent = Event({
-  Start: { value: Schema.Number },
-  Update: { value: Schema.Number },
+  Start: { value: Schema.Finite },
+  Update: { value: Schema.Finite },
   Stop: {},
   Unknown: {},
 });

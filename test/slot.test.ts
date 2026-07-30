@@ -76,7 +76,7 @@ describe("Parameterized Slots (via Slot.define)", () => {
 
 describe("Parameterized Slots with Parameters", () => {
   const AuthState = State({
-    Idle: { role: Schema.String, age: Schema.Number },
+    Idle: { role: Schema.String, age: Schema.Finite },
     Allowed: {},
     Denied: {},
   });
@@ -87,7 +87,7 @@ describe("Parameterized Slots with Parameters", () => {
 
   const AuthSlots = Slot.define({
     isAdmin: Slot.fn({}, Schema.Boolean),
-    isAdult: Slot.fn({ minAge: Schema.Number }, Schema.Boolean),
+    isAdult: Slot.fn({ minAge: Schema.Finite }, Schema.Boolean),
     isModerator: Slot.fn({}, Schema.Boolean),
   });
 
@@ -198,9 +198,9 @@ describe("Parameterized Slots with Parameters", () => {
 
 describe("Slot schemas", () => {
   const MySlots = Slot.define({
-    canRetry: Slot.fn({ max: Schema.Number }, Schema.Boolean),
+    canRetry: Slot.fn({ max: Schema.Finite }, Schema.Boolean),
     fetchData: Slot.fn({ url: Schema.String }),
-    computeValue: Slot.fn({ input: Schema.Number }, Schema.Number),
+    computeValue: Slot.fn({ input: Schema.Finite }, Schema.Finite),
   });
 
   test("SlotFnDef has inputSchema and outputSchema", () => {
@@ -323,7 +323,7 @@ describe("Slot schemas", () => {
 describe("Slot runtime validation", () => {
   const ValState = State({
     Idle: {},
-    Done: { result: Schema.Number },
+    Done: { result: Schema.Finite },
   });
 
   const ValEvent = Event({
@@ -331,7 +331,7 @@ describe("Slot runtime validation", () => {
   });
 
   const ValSlots = Slot.define({
-    compute: Slot.fn({ input: Schema.Number }, Schema.Number),
+    compute: Slot.fn({ input: Schema.Finite }, Schema.Finite),
   });
 
   it.scopedLive("validates output — rejects wrong return type (defect)", () =>
@@ -360,10 +360,10 @@ describe("Slot runtime validation", () => {
       // Use a slot where the handler itself triggers input validation
       // by being called with wrong types at runtime
       const InputSlots = Slot.define({
-        lookup: Slot.fn({ id: Schema.Number }, Schema.String),
+        lookup: Slot.fn({ id: Schema.Finite }, Schema.String),
       });
       const InputState = State({ Idle: {}, Done: { name: Schema.String } });
-      const InputEvent = Event({ Go: { id: Schema.Number } });
+      const InputEvent = Event({ Go: { id: Schema.Finite } });
 
       const machine = Machine.make({
         state: InputState,
@@ -429,10 +429,10 @@ describe("Slot runtime validation", () => {
   it.scopedLive("plain object return works (not treated as Effect)", () =>
     Effect.gen(function* () {
       const ObjSlots = Slot.define({
-        getData: Slot.fn({}, Schema.Struct({ value: Schema.Number })),
+        getData: Slot.fn({}, Schema.Struct({ value: Schema.Finite })),
       });
 
-      const ObjState = State({ Idle: {}, Done: { value: Schema.Number } });
+      const ObjState = State({ Idle: {}, Done: { value: Schema.Finite } });
       const ObjEvent = Event({ Go: {} });
 
       const machine = Machine.make({

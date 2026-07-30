@@ -8,7 +8,7 @@ describe("Conditional Transitions (replaces choose combinator)", () => {
   it.scopedLive("first matching guard wins", () =>
     Effect.gen(function* () {
       const TestState = State({
-        Idle: { value: Schema.Number },
+        Idle: { value: Schema.Finite },
         High: {},
         Medium: {},
         Low: {},
@@ -69,7 +69,7 @@ describe("Conditional Transitions (replaces choose combinator)", () => {
   it.scopedLive("fallback branch catches all", () =>
     Effect.gen(function* () {
       const TestState = State({
-        Idle: { value: Schema.Number },
+        Idle: { value: Schema.Finite },
         High: {},
         Low: {},
       });

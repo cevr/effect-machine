@@ -23,10 +23,10 @@ describe("Menu Navigation Pattern", () => {
   const MenuState = State({
     Browsing: {
       pageId: Schema.String,
-      sectionIndex: Schema.Number,
-      itemIndex: Schema.NullOr(Schema.Number),
+      sectionIndex: Schema.Finite,
+      itemIndex: Schema.NullOr(Schema.Finite),
     },
-    ItemSelected: { pageId: Schema.String, sectionIndex: Schema.Number, itemId: Schema.String },
+    ItemSelected: { pageId: Schema.String, sectionIndex: Schema.Finite, itemId: Schema.String },
     Checkout: { items: Schema.Array(Schema.String) },
     Closed: {},
   });
@@ -34,7 +34,7 @@ describe("Menu Navigation Pattern", () => {
 
   const MenuEvent = Event({
     NavigateToPage: { pageId: Schema.String },
-    ScrollToSection: { sectionIndex: Schema.Number },
+    ScrollToSection: { sectionIndex: Schema.Finite },
     SelectItem: { itemId: Schema.String },
     AddToCart: {},
     GoToCheckout: {},

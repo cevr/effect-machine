@@ -303,9 +303,11 @@ const hydratePersistence = <
     const key: PersistenceKey = { entityType, entityId };
 
     // Load snapshot
-    const maybeSnapshot = yield* adapter.loadSnapshot(key) as Effect.Effect<
-      Option.Option<Snapshot<S>>
-    >;
+    // The adapter persists opaque payloads, so snapshots come back as
+    // Snapshot<unknown>. Narrowing the decoded value (not the Effect) keeps the
+    // error and requirements channels intact.
+    const storedSnapshot = yield* adapter.loadSnapshot(key);
+    const maybeSnapshot = storedSnapshot as Option.Option<Snapshot<S>>;
 
     const strategy = persistence.strategy ?? "snapshot";
 

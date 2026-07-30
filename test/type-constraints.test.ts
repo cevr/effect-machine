@@ -64,7 +64,7 @@ const _test3 = Machine.make({
   // @ts-expect-error - Handler cannot produce errors (MyError not assignable to never)
 }).on(MyState.Idle, MyEvent.Start, () =>
   Effect.gen(function* () {
-    return yield* new MyError({});
+    return yield* MyError.make({});
   }),
 );
 
@@ -92,13 +92,13 @@ const _test5 = Machine.make({
 // ============================================================================
 
 const ReplyEvent = Event({
-  GetCount: Event.reply({}, Schema.Number),
+  GetCount: Event.reply({}, Schema.Finite),
   GetName: Event.reply({}, Schema.String),
   Fire: {},
 });
 
 const ReplyState = State({
-  Active: { count: Schema.Number },
+  Active: { count: Schema.Finite },
   Done: {},
 });
 
@@ -139,7 +139,7 @@ const _test9 = Machine.make({
 
 // Test 9b: reply-bearing constructors accept plain payload fields, not hidden reply metadata
 const PayloadReplyEvent = Event({
-  GetById: Event.reply({ id: Schema.String }, Schema.Number),
+  GetById: Event.reply({ id: Schema.String }, Schema.Finite),
 });
 const _test9bPayload: Parameters<typeof PayloadReplyEvent.GetById>[0] = { id: "task-1" };
 const _test9b = PayloadReplyEvent.GetById(_test9bPayload);
@@ -150,9 +150,9 @@ const _test9bId: string = _test9b.id;
 // ============================================================================
 
 const MySlots = Slot.define({
-  canRetry: Slot.fn({ max: Schema.Number }, Schema.Boolean),
+  canRetry: Slot.fn({ max: Schema.Finite }, Schema.Boolean),
   fetchData: Slot.fn({ url: Schema.String }),
-  computeValue: Slot.fn({ input: Schema.Number }, Schema.Number),
+  computeValue: Slot.fn({ input: Schema.Finite }, Schema.Finite),
 });
 type MySlotsDef = typeof MySlots.definitions;
 
