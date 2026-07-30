@@ -329,12 +329,14 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
   }
 
   // Schema.Union requires at least 2 members, handle single variant case
-  const unionSchema =
-    variantArray.length === 1
-      ? // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- checked length above
-        variantArray[0]!
-      : // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic schema union
-        Schema.Union(variantArray as any);
+  let unionSchema: Schema.Top;
+  if (variantArray.length === 1) {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- checked length above
+    unionSchema = variantArray[0]!;
+  } else {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic schema union
+    unionSchema = Schema.Union(variantArray as any);
+  }
 
   // Type guard
   const $is =

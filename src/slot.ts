@@ -342,6 +342,15 @@ export const define = <D extends SlotsDef>(definitions: D): SlotsSchema<D> => {
  * // slots.mySlot({ param: 1 }) returns Effect<ReturnType>
  * ```
  */
+/**
+ * Narrow a handler result to a slot-shaped Effect.
+ *
+ * `Effect.isEffect` narrows to `Effect<any, any, any>`, which leaks `any` into
+ * the error and requirements channels. Slot handlers are already constrained by
+ * `ProvideSlots<D>`, so this guard restates that contract without `any`.
+ */
+const isSlotEffect = (u: unknown): u is Effect.Effect<unknown, never> => Effect.isEffect(u);
+
 const of = <D extends SlotsDef>(
   slotsSchema: SlotsSchema<D>,
   provided: ProvideSlots<D>,
@@ -352,10 +361,11 @@ const of = <D extends SlotsDef>(
     if (handler === undefined) continue;
     const call = (params: unknown): Effect.Effect<unknown, never> =>
       Effect.suspend((): Effect.Effect<unknown, never> => {
-        const result = handler(params);
-        return Effect.isEffect(result)
-          ? (result as Effect.Effect<unknown, never>)
-          : Effect.succeed(result);
+        const result: unknown = handler(params);
+        if (isSlotEffect(result)) {
+          return result;
+        }
+        return Effect.succeed(result);
       });
     Object.defineProperty(call, "_tag", { value: "Slot", enumerable: true });
     Object.defineProperty(call, "name", { value: name, enumerable: true });
