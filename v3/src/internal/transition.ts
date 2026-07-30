@@ -63,11 +63,14 @@ export const runTransitionHandler = Effect.fn("effect-machine.runTransitionHandl
   const handlerCtx: HandlerContext<S, E, SD> = { state, event, slots };
   const raw = transition.handler(handlerCtx);
 
-  const resolved = isEffect(raw)
-    ? yield* (
-        raw as Effect.Effect<S | ReplyResult<S, unknown> | DeferReplyResult<S>, never, R>
-      ).pipe(Effect.provideService(machine.Context, ctx))
-    : raw;
+  let resolved: S | ReplyResult<S, unknown> | DeferReplyResult<S>;
+  if (isEffect(raw)) {
+    resolved = yield* (
+      raw as Effect.Effect<S | ReplyResult<S, unknown> | DeferReplyResult<S>, never, R>
+    ).pipe(Effect.provideService(machine.Context, ctx));
+  } else {
+    resolved = raw;
+  }
 
   // Detect branded ReplyResult (created via Machine.reply())
   if (isReplyResult(resolved)) {
@@ -379,12 +382,15 @@ export const runSpawnEffects = Effect.fn("effect-machine.runSpawnEffects")(funct
           if (Cause.isInterruptedOnly(cause)) {
             return Effect.interrupt;
           }
-          const report =
-            reportError !== undefined
-              ? reportError({ phase: "spawn", state, event, cause })
-              : Effect.void;
+          let report: Effect.Effect<void> = Effect.void;
+          if (reportError !== undefined) {
+            report = reportError({ phase: "spawn", state, event, cause });
+          }
           // Signal spawn defect to runtime (if provided) so it can set exitDeferred
-          const signal = defectSignal !== undefined ? defectSignal(cause) : Effect.void;
+          let signal: Effect.Effect<void> = Effect.void;
+          if (defectSignal !== undefined) {
+            signal = defectSignal(cause);
+          }
           return report.pipe(
             Effect.andThen(signal),
             Effect.andThen(Effect.failCause(cause).pipe(Effect.orDie)),

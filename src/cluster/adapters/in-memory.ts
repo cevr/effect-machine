@@ -90,7 +90,10 @@ export const makeInMemoryPersistenceAdapter = Effect.gen(function* () {
         const k = makeKey(key);
         const entry = getOrCreate(s, k);
         const lastEvent = entry.events[entry.events.length - 1];
-        const currentVersion = lastEvent !== undefined ? lastEvent.version : 0;
+        let currentVersion = 0;
+        if (lastEvent !== undefined) {
+          currentVersion = lastEvent.version;
+        }
 
         if (currentVersion !== expectedVersion) {
           return yield* new VersionConflictError({
