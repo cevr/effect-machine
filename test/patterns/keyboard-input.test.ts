@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, it } from "effect-bun-test";
 
 import { assertPath, Event, Machine, simulate, State } from "../../src/index.js";
 
@@ -80,149 +80,131 @@ describe("Keyboard Input Pattern", () => {
       KeyboardState.Typing({ value: state.value, mode: "insert" }),
     );
 
-  test("basic value accumulation", async () => {
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const result = yield* simulate(keyboardMachine, [
-          KeyboardEvent.Focus,
-          KeyboardEvent.KeyPress({ key: "1" }),
-          KeyboardEvent.KeyPress({ key: "2" }),
-          KeyboardEvent.KeyPress({ key: "3" }),
-        ]);
+  it.scopedLive("basic value accumulation", () =>
+    Effect.gen(function* () {
+      const result = yield* simulate(keyboardMachine, [
+        KeyboardEvent.Focus,
+        KeyboardEvent.KeyPress({ key: "1" }),
+        KeyboardEvent.KeyPress({ key: "2" }),
+        KeyboardEvent.KeyPress({ key: "3" }),
+      ]);
 
-        expect(result.finalState._tag).toBe("Typing");
-        expect((result.finalState as KeyboardState & { _tag: "Typing" }).value).toBe("123");
-      }),
-    );
-  });
+      expect(result.finalState._tag).toBe("Typing");
+      expect((result.finalState as KeyboardState & { _tag: "Typing" }).value).toBe("123");
+    }),
+  );
 
-  test("backspace removes last character", async () => {
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const result = yield* simulate(keyboardMachine, [
-          KeyboardEvent.Focus,
-          KeyboardEvent.KeyPress({ key: "1" }),
-          KeyboardEvent.KeyPress({ key: "2" }),
-          KeyboardEvent.KeyPress({ key: "3" }),
-          KeyboardEvent.Backspace,
-        ]);
+  it.scopedLive("backspace removes last character", () =>
+    Effect.gen(function* () {
+      const result = yield* simulate(keyboardMachine, [
+        KeyboardEvent.Focus,
+        KeyboardEvent.KeyPress({ key: "1" }),
+        KeyboardEvent.KeyPress({ key: "2" }),
+        KeyboardEvent.KeyPress({ key: "3" }),
+        KeyboardEvent.Backspace,
+      ]);
 
-        expect((result.finalState as KeyboardState & { _tag: "Typing" }).value).toBe("12");
-      }),
-    );
-  });
+      expect((result.finalState as KeyboardState & { _tag: "Typing" }).value).toBe("12");
+    }),
+  );
 
-  test("multiple backspaces", async () => {
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const result = yield* simulate(keyboardMachine, [
-          KeyboardEvent.Focus,
-          KeyboardEvent.KeyPress({ key: "a" }),
-          KeyboardEvent.KeyPress({ key: "b" }),
-          KeyboardEvent.Backspace,
-          KeyboardEvent.Backspace,
-          KeyboardEvent.Backspace, // Extra backspace on empty string
-        ]);
+  it.scopedLive("multiple backspaces", () =>
+    Effect.gen(function* () {
+      const result = yield* simulate(keyboardMachine, [
+        KeyboardEvent.Focus,
+        KeyboardEvent.KeyPress({ key: "a" }),
+        KeyboardEvent.KeyPress({ key: "b" }),
+        KeyboardEvent.Backspace,
+        KeyboardEvent.Backspace,
+        KeyboardEvent.Backspace, // Extra backspace on empty string
+      ]);
 
-        expect((result.finalState as KeyboardState & { _tag: "Typing" }).value).toBe("");
-      }),
-    );
-  });
+      expect((result.finalState as KeyboardState & { _tag: "Typing" }).value).toBe("");
+    }),
+  );
 
-  test("clear resets value", async () => {
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const result = yield* simulate(keyboardMachine, [
-          KeyboardEvent.Focus,
-          KeyboardEvent.KeyPress({ key: "1" }),
-          KeyboardEvent.KeyPress({ key: "2" }),
-          KeyboardEvent.KeyPress({ key: "3" }),
-          KeyboardEvent.Clear,
-        ]);
+  it.scopedLive("clear resets value", () =>
+    Effect.gen(function* () {
+      const result = yield* simulate(keyboardMachine, [
+        KeyboardEvent.Focus,
+        KeyboardEvent.KeyPress({ key: "1" }),
+        KeyboardEvent.KeyPress({ key: "2" }),
+        KeyboardEvent.KeyPress({ key: "3" }),
+        KeyboardEvent.Clear,
+      ]);
 
-        expect((result.finalState as KeyboardState & { _tag: "Typing" }).value).toBe("");
-      }),
-    );
-  });
+      expect((result.finalState as KeyboardState & { _tag: "Typing" }).value).toBe("");
+    }),
+  );
 
-  test("mode switching - replace mode", async () => {
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const result = yield* simulate(keyboardMachine, [
-          KeyboardEvent.Focus,
-          KeyboardEvent.KeyPress({ key: "a" }),
-          KeyboardEvent.KeyPress({ key: "b" }),
-          KeyboardEvent.SwitchMode({ mode: "replace" }),
-          KeyboardEvent.KeyPress({ key: "X" }), // Should replace entire value
-        ]);
+  it.scopedLive("mode switching - replace mode", () =>
+    Effect.gen(function* () {
+      const result = yield* simulate(keyboardMachine, [
+        KeyboardEvent.Focus,
+        KeyboardEvent.KeyPress({ key: "a" }),
+        KeyboardEvent.KeyPress({ key: "b" }),
+        KeyboardEvent.SwitchMode({ mode: "replace" }),
+        KeyboardEvent.KeyPress({ key: "X" }), // Should replace entire value
+      ]);
 
-        expect((result.finalState as KeyboardState & { _tag: "Typing" }).value).toBe("X");
-        expect((result.finalState as KeyboardState & { _tag: "Typing" }).mode).toBe("replace");
-      }),
-    );
-  });
+      expect((result.finalState as KeyboardState & { _tag: "Typing" }).value).toBe("X");
+      expect((result.finalState as KeyboardState & { _tag: "Typing" }).mode).toBe("replace");
+    }),
+  );
 
-  test("submit flow", async () => {
-    await Effect.runPromise(
-      assertPath(
-        keyboardMachine,
-        [
-          KeyboardEvent.Focus,
-          KeyboardEvent.KeyPress({ key: "1" }),
-          KeyboardEvent.KeyPress({ key: "0" }),
-          KeyboardEvent.KeyPress({ key: "0" }),
-          KeyboardEvent.Submit,
-        ],
-        ["Idle", "Typing", "Typing", "Typing", "Typing", "Confirming"],
-      ),
-    );
-  });
+  it.scopedLive("submit flow", () =>
+    assertPath(
+      keyboardMachine,
+      [
+        KeyboardEvent.Focus,
+        KeyboardEvent.KeyPress({ key: "1" }),
+        KeyboardEvent.KeyPress({ key: "0" }),
+        KeyboardEvent.KeyPress({ key: "0" }),
+        KeyboardEvent.Submit,
+      ],
+      ["Idle", "Typing", "Typing", "Typing", "Typing", "Confirming"],
+    ),
+  );
 
-  test("cancel from typing returns to idle", async () => {
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const result = yield* simulate(keyboardMachine, [
-          KeyboardEvent.Focus,
-          KeyboardEvent.KeyPress({ key: "x" }),
-          KeyboardEvent.Cancel,
-        ]);
+  it.scopedLive("cancel from typing returns to idle", () =>
+    Effect.gen(function* () {
+      const result = yield* simulate(keyboardMachine, [
+        KeyboardEvent.Focus,
+        KeyboardEvent.KeyPress({ key: "x" }),
+        KeyboardEvent.Cancel,
+      ]);
 
-        expect(result.finalState._tag).toBe("Idle");
-        // Value is cleared on cancel
-        expect((result.finalState as KeyboardState & { _tag: "Idle" }).value).toBe("");
-      }),
-    );
-  });
+      expect(result.finalState._tag).toBe("Idle");
+      // Value is cleared on cancel
+      expect((result.finalState as KeyboardState & { _tag: "Idle" }).value).toBe("");
+    }),
+  );
 
-  test("cancel from confirming returns to typing", async () => {
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const result = yield* simulate(keyboardMachine, [
-          KeyboardEvent.Focus,
-          KeyboardEvent.KeyPress({ key: "1" }),
-          KeyboardEvent.Submit,
-          KeyboardEvent.Cancel,
-        ]);
+  it.scopedLive("cancel from confirming returns to typing", () =>
+    Effect.gen(function* () {
+      const result = yield* simulate(keyboardMachine, [
+        KeyboardEvent.Focus,
+        KeyboardEvent.KeyPress({ key: "1" }),
+        KeyboardEvent.Submit,
+        KeyboardEvent.Cancel,
+      ]);
 
-        expect(result.finalState._tag).toBe("Typing");
-        expect((result.finalState as KeyboardState & { _tag: "Typing" }).value).toBe("1");
-      }),
-    );
-  });
+      expect(result.finalState._tag).toBe("Typing");
+      expect((result.finalState as KeyboardState & { _tag: "Typing" }).value).toBe("1");
+    }),
+  );
 
-  test("preserves mode through operations", async () => {
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const result = yield* simulate(keyboardMachine, [
-          KeyboardEvent.Focus,
-          KeyboardEvent.SwitchMode({ mode: "append" }),
-          KeyboardEvent.KeyPress({ key: "a" }),
-          KeyboardEvent.Clear,
-          KeyboardEvent.KeyPress({ key: "b" }),
-        ]);
+  it.scopedLive("preserves mode through operations", () =>
+    Effect.gen(function* () {
+      const result = yield* simulate(keyboardMachine, [
+        KeyboardEvent.Focus,
+        KeyboardEvent.SwitchMode({ mode: "append" }),
+        KeyboardEvent.KeyPress({ key: "a" }),
+        KeyboardEvent.Clear,
+        KeyboardEvent.KeyPress({ key: "b" }),
+      ]);
 
-        expect((result.finalState as KeyboardState & { _tag: "Typing" }).mode).toBe("append");
-      }),
-    );
-  });
+      expect((result.finalState as KeyboardState & { _tag: "Typing" }).mode).toBe("append");
+    }),
+  );
 });

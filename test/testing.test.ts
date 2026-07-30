@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, it } from "effect-bun-test";
 
 import {
   assertNeverReaches,
@@ -42,161 +42,155 @@ const testMachine = Machine.make({
 
 describe("Testing", () => {
   describe("simulate", () => {
-    test("returns all intermediate states", async () => {
-      await Effect.runPromise(
-        Effect.gen(function* () {
-          const result = yield* simulate(testMachine, [
-            TestEvent.Fetch,
-            TestEvent.Resolve({ data: "hello" }),
-          ]);
+    it.scopedLive("returns all intermediate states", () =>
+      Effect.gen(function* () {
+        const result = yield* simulate(testMachine, [
+          TestEvent.Fetch,
+          TestEvent.Resolve({ data: "hello" }),
+        ]);
 
-          expect(result.states.map((s) => s._tag)).toEqual(["Idle", "Loading", "Success"]);
-          expect(result.finalState._tag).toBe("Success");
-        }),
-      );
-    });
+        expect(result.states.map((s) => s._tag)).toEqual(["Idle", "Loading", "Success"]);
+        expect(result.finalState._tag).toBe("Success");
+      }),
+    );
 
-    test("handles events that don't cause transitions", async () => {
-      await Effect.runPromise(
-        Effect.gen(function* () {
-          const result = yield* simulate(testMachine, [
-            TestEvent.Resolve({ data: "ignored" }), // No transition from Idle
-          ]);
+    it.scopedLive("handles events that don't cause transitions", () =>
+      Effect.gen(function* () {
+        const result = yield* simulate(testMachine, [
+          TestEvent.Resolve({ data: "ignored" }), // No transition from Idle
+        ]);
 
-          expect(result.finalState._tag).toBe("Idle");
-          expect(result.states).toHaveLength(1);
-        }),
-      );
-    });
+        expect(result.finalState._tag).toBe("Idle");
+        expect(result.states).toHaveLength(1);
+      }),
+    );
   });
 
   describe("createTestHarness", () => {
-    test("provides step-by-step testing", async () => {
-      await Effect.runPromise(
-        Effect.gen(function* () {
-          const harness = yield* createTestHarness(testMachine);
+    it.scopedLive("provides step-by-step testing", () =>
+      Effect.gen(function* () {
+        const harness = yield* createTestHarness(testMachine);
 
-          let current = yield* harness.getState;
-          expect(current._tag).toBe("Idle");
+        let current = yield* harness.getState;
+        expect(current._tag).toBe("Idle");
 
-          yield* harness.send(TestEvent.Fetch);
-          current = yield* harness.getState;
-          expect(current._tag).toBe("Loading");
+        yield* harness.send(TestEvent.Fetch);
+        current = yield* harness.getState;
+        expect(current._tag).toBe("Loading");
 
-          yield* harness.send(TestEvent.Resolve({ data: "test" }));
-          current = yield* harness.getState;
-          expect(current._tag).toBe("Success");
-        }),
-      );
-    });
+        yield* harness.send(TestEvent.Resolve({ data: "test" }));
+        current = yield* harness.getState;
+        expect(current._tag).toBe("Success");
+      }),
+    );
   });
 
   describe("assertReaches", () => {
-    test("passes when state is reached", async () => {
-      const result = await Effect.runPromise(
-        assertReaches(
+    it.scopedLive("passes when state is reached", () =>
+      Effect.gen(function* () {
+        const result = yield* assertReaches(
           testMachine,
           [TestEvent.Fetch, TestEvent.Resolve({ data: "ok" })],
           "Success",
-        ).pipe(Effect.result),
-      );
+        ).pipe(Effect.result);
 
-      expect(result._tag).toBe("Success");
-    });
+        expect(result._tag).toBe("Success");
+      }),
+    );
 
-    test("fails when state is not reached", async () => {
-      const result = await Effect.runPromise(
-        assertReaches(testMachine, [TestEvent.Fetch], "Success").pipe(Effect.result),
-      );
+    it.scopedLive("fails when state is not reached", () =>
+      Effect.gen(function* () {
+        const result = yield* assertReaches(testMachine, [TestEvent.Fetch], "Success").pipe(
+          Effect.result,
+        );
 
-      expect(result._tag).toBe("Failure");
-    });
+        expect(result._tag).toBe("Failure");
+      }),
+    );
   });
 
   describe("assertPath", () => {
-    test("passes when path matches", async () => {
-      const result = await Effect.runPromise(
-        assertPath(
+    it.scopedLive("passes when path matches", () =>
+      Effect.gen(function* () {
+        const result = yield* assertPath(
           testMachine,
           [TestEvent.Fetch, TestEvent.Resolve({ data: "ok" })],
           ["Idle", "Loading", "Success"],
-        ).pipe(Effect.result),
-      );
+        ).pipe(Effect.result);
 
-      expect(result._tag).toBe("Success");
-    });
+        expect(result._tag).toBe("Success");
+      }),
+    );
 
-    test("fails on path mismatch", async () => {
-      const result = await Effect.runPromise(
-        assertPath(
+    it.scopedLive("fails on path mismatch", () =>
+      Effect.gen(function* () {
+        const result = yield* assertPath(
           testMachine,
           [TestEvent.Fetch, TestEvent.Resolve({ data: "ok" })],
           ["Idle", "Success"], // Wrong path
-        ).pipe(Effect.result),
-      );
+        ).pipe(Effect.result);
 
-      expect(result._tag).toBe("Failure");
-    });
+        expect(result._tag).toBe("Failure");
+      }),
+    );
 
-    test("fails on wrong state in path", async () => {
-      const result = await Effect.runPromise(
-        assertPath(
+    it.scopedLive("fails on wrong state in path", () =>
+      Effect.gen(function* () {
+        const result = yield* assertPath(
           testMachine,
           [TestEvent.Fetch, TestEvent.Resolve({ data: "ok" })],
           ["Idle", "Loading", "Error"], // Wrong final state
-        ).pipe(Effect.result),
-      );
+        ).pipe(Effect.result);
 
-      expect(result._tag).toBe("Failure");
-    });
+        expect(result._tag).toBe("Failure");
+      }),
+    );
   });
 
   describe("assertNeverReaches", () => {
-    test("passes when forbidden state is not reached", async () => {
-      const result = await Effect.runPromise(
-        assertNeverReaches(
+    it.scopedLive("passes when forbidden state is not reached", () =>
+      Effect.gen(function* () {
+        const result = yield* assertNeverReaches(
           testMachine,
           [TestEvent.Fetch, TestEvent.Resolve({ data: "ok" })],
           "Error",
-        ).pipe(Effect.result),
-      );
+        ).pipe(Effect.result);
 
-      expect(result._tag).toBe("Success");
-    });
+        expect(result._tag).toBe("Success");
+      }),
+    );
 
-    test("fails when forbidden state is reached", async () => {
-      const result = await Effect.runPromise(
-        assertNeverReaches(
+    it.scopedLive("fails when forbidden state is reached", () =>
+      Effect.gen(function* () {
+        const result = yield* assertNeverReaches(
           testMachine,
           [TestEvent.Fetch, TestEvent.Reject({ message: "oops" })],
           "Error",
-        ).pipe(Effect.result),
-      );
+        ).pipe(Effect.result);
 
-      expect(result._tag).toBe("Failure");
-    });
+        expect(result._tag).toBe("Failure");
+      }),
+    );
   });
 
   describe("createTestHarness with onTransition", () => {
-    test("calls onTransition observer", async () => {
-      await Effect.runPromise(
-        Effect.gen(function* () {
-          const transitions: Array<{ from: string; event: string; to: string }> = [];
+    it.scopedLive("calls onTransition observer", () =>
+      Effect.gen(function* () {
+        const transitions: Array<{ from: string; event: string; to: string }> = [];
 
-          const harness = yield* createTestHarness(testMachine, {
-            onTransition: (from, event, to) =>
-              transitions.push({ from: from._tag, event: event._tag, to: to._tag }),
-          });
+        const harness = yield* createTestHarness(testMachine, {
+          onTransition: (from, event, to) =>
+            transitions.push({ from: from._tag, event: event._tag, to: to._tag }),
+        });
 
-          yield* harness.send(TestEvent.Fetch);
-          yield* harness.send(TestEvent.Resolve({ data: "test" }));
+        yield* harness.send(TestEvent.Fetch);
+        yield* harness.send(TestEvent.Resolve({ data: "test" }));
 
-          expect(transitions).toEqual([
-            { from: "Idle", event: "Fetch", to: "Loading" },
-            { from: "Loading", event: "Resolve", to: "Success" },
-          ]);
-        }),
-      );
-    });
+        expect(transitions).toEqual([
+          { from: "Idle", event: "Fetch", to: "Loading" },
+          { from: "Loading", event: "Resolve", to: "Success" },
+        ]);
+      }),
+    );
   });
 });
