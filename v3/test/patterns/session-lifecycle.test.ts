@@ -41,7 +41,7 @@ describe("Session Lifecycle Pattern", () => {
   // Helper to compute initial state based on token
   const makeSessionMachine = (token: string | null) => {
     // Initial state computed inline - no need for .always()
-    let initial: typeof SessionState.Type;
+    let initial: SessionState;
     if (token === null) {
       initial = SessionState.Guest;
     } else {

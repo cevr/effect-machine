@@ -903,7 +903,7 @@ describe("ActorRef", () => {
 
           const result = yield* Deferred.await(done).pipe(
             Effect.timeout("2 seconds"),
-            Effect.catchAll(() => Effect.succeed("timeout" as const)),
+            Effect.orElseSucceed(() => "timeout" as const),
           );
 
           if (result === "timeout") {
@@ -1002,7 +1002,7 @@ describe("ActorRef", () => {
 
           const result = yield* Deferred.await(done).pipe(
             Effect.timeout("2 seconds"),
-            Effect.catchAll(() => Effect.succeed("timeout" as const)),
+            Effect.orElseSucceed(() => "timeout" as const),
           );
 
           if (result === "timeout") {

@@ -21,6 +21,6 @@ export const emitWithTimestamp = Effect.fn("effect-machine.emitWithTimestamp")(f
     Effect.orElseSucceed(() => undefined),
   );
   if (Effect.isEffect(result)) {
-    yield* result.pipe(Effect.catchCause(() => Effect.void));
+    yield* result.pipe(Effect.ignoreCause);
   }
 });

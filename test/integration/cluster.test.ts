@@ -24,7 +24,7 @@ import {
   Event,
   Slot,
 } from "../../src/index.js";
-import { toEntity, EntityMachine } from "../../src/cluster/index.js";
+import { toEntity, EntityMachine, makeEntityActorRef } from "../../src/cluster/index.js";
 
 // =============================================================================
 // Schema-first definitions using MachineSchema
@@ -33,7 +33,7 @@ import { toEntity, EntityMachine } from "../../src/cluster/index.js";
 // State and Event defined once - schema IS the source of truth
 const OrderState = State({
   Pending: { orderId: Schema.String },
-  Processing: { orderId: Schema.String, startedAt: Schema.Number },
+  Processing: { orderId: Schema.String, startedAt: Schema.Finite },
   Shipped: { orderId: Schema.String, trackingId: Schema.String },
   Cancelled: { orderId: Schema.String, reason: Schema.String },
 });
@@ -228,8 +228,8 @@ describe("Cluster Integration with MachineSchema", () => {
 describe("Entity.makeTestClient with machine handler", () => {
   // Counter machine for guard testing
   const CounterState = State({
-    Counting: { count: Schema.Number },
-    Done: { count: Schema.Number },
+    Counting: { count: Schema.Finite },
+    Done: { count: Schema.Finite },
   });
   type CounterState = typeof CounterState.Type;
 
@@ -299,7 +299,6 @@ describe("Entity.makeTestClient with machine handler", () => {
                   return currentState;
                 }
 
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test helper
                 const handlerResult = transition.handler({
                   state: currentState,
                   event,
@@ -378,369 +377,361 @@ describe("EntityMachine.layer", () => {
   // ---------------------------------------------------------------------------
   // Test 1: Basic send through EntityMachine.layer
   // ---------------------------------------------------------------------------
-  it.scopedLive(
-    "basic send changes state via EntityMachine.layer",
-    () =>
-      Effect.gen(function* () {
-        const entity = toEntity(orderMachine, { type: "OrderSend" });
-        const entityLayer = EntityMachine.layer(entity, orderMachine, {
-          initializeState: (entityId) => OrderState.Pending({ orderId: entityId }),
-        });
+  it.scopedLive("basic send changes state via EntityMachine.layer", () =>
+    Effect.gen(function* () {
+      const entity = toEntity(orderMachine, { type: "OrderSend" });
+      const entityLayer = EntityMachine.layer(entity, orderMachine, {
+        initializeState: (entityId) => OrderState.Pending({ orderId: entityId }),
+      });
 
-        const makeClient = yield* Entity.makeTestClient(
-          entity,
-          entityLayer.pipe(Layer.provide(ActorSystemDefault)),
-        );
-        const client = yield* makeClient("order-1");
+      const makeClient = yield* Entity.makeTestClient(
+        entity,
+        entityLayer.pipe(Layer.provide(ActorSystemDefault)),
+      );
+      const client = yield* makeClient("order-1");
+      const ref = makeEntityActorRef<OrderState, OrderEvent, never>(client, "order-1");
 
-        const state = yield* client.Send({ event: OrderEvent.Process });
-        expect(state._tag).toBe("Processing");
-      }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)) as Effect.Effect<void>,
+      const state = yield* ref.send(OrderEvent.Process);
+      expect(state._tag).toBe("Processing");
+    }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)),
   );
 
   // ---------------------------------------------------------------------------
   // Test 2: Ask reply through EntityMachine.layer
   // ---------------------------------------------------------------------------
-  it.scopedLive(
-    "ask returns typed reply via EntityMachine.layer",
-    () =>
-      Effect.gen(function* () {
-        const AskState = State({
-          Active: { count: Schema.Number },
-        });
-        type AskState = typeof AskState.Type;
+  it.scopedLive("ask returns typed reply via EntityMachine.layer", () =>
+    Effect.gen(function* () {
+      const AskState = State({
+        Active: { count: Schema.Finite },
+      });
+      type AskState = typeof AskState.Type;
 
-        const AskEvent = Event({
-          GetCount: Event.reply({}, Schema.Number),
-          Increment: {},
-        });
-        type AskEvent = typeof AskEvent.Type;
+      const AskEvent = Event({
+        GetCount: Event.reply({}, Schema.Finite),
+        Increment: {},
+      });
+      type AskEvent = typeof AskEvent.Type;
 
-        const askMachine = Machine.make({
-          state: AskState,
-          event: AskEvent,
-          initial: AskState.Active({ count: 0 }),
-        })
-          .on(AskState.Active, AskEvent.Increment, ({ state }) =>
-            AskState.Active({ count: state.count + 1 }),
-          )
-          .on(AskState.Active, AskEvent.GetCount, ({ state }) => Machine.reply(state, state.count));
+      const askMachine = Machine.make({
+        state: AskState,
+        event: AskEvent,
+        initial: AskState.Active({ count: 0 }),
+      })
+        .on(AskState.Active, AskEvent.Increment, ({ state }) =>
+          AskState.Active({ count: state.count + 1 }),
+        )
+        .on(AskState.Active, AskEvent.GetCount, ({ state }) => Machine.reply(state, state.count));
 
-        const entity = toEntity(askMachine, { type: "AskReply" });
-        const entityLayer = EntityMachine.layer(entity, askMachine, {
-          initializeState: () => AskState.Active({ count: 42 }),
-        });
+      const entity = toEntity(askMachine, { type: "AskReply" });
+      const entityLayer = EntityMachine.layer(entity, askMachine, {
+        initializeState: () => AskState.Active({ count: 42 }),
+      });
 
-        const makeClient = yield* Entity.makeTestClient(
-          entity,
-          entityLayer.pipe(Layer.provide(ActorSystemDefault)),
-        );
-        const client = yield* makeClient("ask-1");
+      const makeClient = yield* Entity.makeTestClient(
+        entity,
+        entityLayer.pipe(Layer.provide(ActorSystemDefault)),
+      );
+      const client = yield* makeClient("ask-1");
+      const ref = makeEntityActorRef<AskState, AskEvent, never>(client, "ask-1");
 
-        const reply = yield* client.Ask({ event: AskEvent.GetCount });
-        expect(reply).toBe(42);
-      }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)) as Effect.Effect<void>,
+      const reply = yield* ref.ask(AskEvent.GetCount).pipe(Effect.orDie);
+      expect(reply).toBe(42);
+    }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)),
   );
 
   // ---------------------------------------------------------------------------
   // Test 3: Background effects run
   // BUG: entity-machine never iterates machine.backgroundEffects
   // ---------------------------------------------------------------------------
-  it.scopedLive(
-    "background effects run in entity context",
-    () =>
-      Effect.gen(function* () {
-        const BgState = State({
-          Idle: {},
-          Done: { value: Schema.String },
-        });
-        type BgState = typeof BgState.Type;
+  it.scopedLive("background effects run in entity context", () =>
+    Effect.gen(function* () {
+      const BgState = State({
+        Idle: {},
+        Done: { value: Schema.String },
+      });
+      type BgState = typeof BgState.Type;
 
-        const BgEvent = Event({
-          Complete: { value: Schema.String },
-        });
-        type BgEvent = typeof BgEvent.Type;
+      const BgEvent = Event({
+        Complete: { value: Schema.String },
+      });
+      type BgEvent = typeof BgEvent.Type;
 
-        const bgMachine = Machine.make({
-          state: BgState,
-          event: BgEvent,
-          initial: BgState.Idle,
-        })
-          .on(BgState.Idle, BgEvent.Complete, ({ event }) => BgState.Done({ value: event.value }))
-          .background(({ self }) => self.send(BgEvent.Complete({ value: "from-background" })))
-          .final(BgState.Done);
+      const bgMachine = Machine.make({
+        state: BgState,
+        event: BgEvent,
+        initial: BgState.Idle,
+      })
+        .on(BgState.Idle, BgEvent.Complete, ({ event }) => BgState.Done({ value: event.value }))
+        .background(({ self }) => self.send(BgEvent.Complete({ value: "from-background" })))
+        .final(BgState.Done);
 
-        const entity = toEntity(bgMachine, { type: "Background" });
-        const entityLayer = EntityMachine.layer(entity, bgMachine, {});
+      const entity = toEntity(bgMachine, { type: "Background" });
+      const entityLayer = EntityMachine.layer(entity, bgMachine, {});
 
-        const makeClient = yield* Entity.makeTestClient(
-          entity,
-          entityLayer.pipe(Layer.provide(ActorSystemDefault)),
-        );
-        const client = yield* makeClient("bg-1");
+      const makeClient = yield* Entity.makeTestClient(
+        entity,
+        entityLayer.pipe(Layer.provide(ActorSystemDefault)),
+      );
+      const client = yield* makeClient("bg-1");
+      const ref = makeEntityActorRef<BgState, BgEvent, never>(client, "bg-1");
 
-        // Give background effect time to fire
-        yield* Effect.sleep("100 millis");
+      // Give background effect time to fire
+      yield* Effect.sleep("100 millis");
 
-        const state = yield* client.GetState();
-        expect(state._tag).toBe("Done");
-        expect((state as { value: string }).value).toBe("from-background");
-      }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)) as Effect.Effect<void>,
+      const state = yield* ref.snapshot;
+      expect(state._tag).toBe("Done");
+      expect((state as { value: string }).value).toBe("from-background");
+    }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)),
   );
 
   // ---------------------------------------------------------------------------
   // Test 4: Final state stops accepting events
   // BUG: isFinal computed but never checked, entity keeps accepting RPCs
   // ---------------------------------------------------------------------------
-  it.scopedLive(
-    "final state rejects further events",
-    () =>
-      Effect.gen(function* () {
-        const entity = toEntity(orderMachine, { type: "OrderFinal" });
-        const entityLayer = EntityMachine.layer(entity, orderMachine, {
-          initializeState: (entityId) => OrderState.Pending({ orderId: entityId }),
-        });
+  it.scopedLive("final state rejects further events", () =>
+    Effect.gen(function* () {
+      const entity = toEntity(orderMachine, { type: "OrderFinal" });
+      const entityLayer = EntityMachine.layer(entity, orderMachine, {
+        initializeState: (entityId) => OrderState.Pending({ orderId: entityId }),
+      });
 
-        const makeClient = yield* Entity.makeTestClient(
-          entity,
-          entityLayer.pipe(Layer.provide(ActorSystemDefault)),
-        );
-        const client = yield* makeClient("final-1");
+      const makeClient = yield* Entity.makeTestClient(
+        entity,
+        entityLayer.pipe(Layer.provide(ActorSystemDefault)),
+      );
+      const client = yield* makeClient("final-1");
+      const ref = makeEntityActorRef<OrderState, OrderEvent, never>(client, "final-1");
 
-        // Drive to final state
-        yield* client.Send({ event: OrderEvent.Process });
-        const shipped = yield* client.Send({ event: OrderEvent.Ship({ trackingId: "T-1" }) });
-        expect(shipped._tag).toBe("Shipped");
+      // Drive to final state
+      yield* ref.send(OrderEvent.Process);
+      const shipped = yield* ref.send(OrderEvent.Ship({ trackingId: "T-1" }));
+      expect(shipped._tag).toBe("Shipped");
 
-        // After final, sending more events should not change state
-        // (at minimum, state should remain Shipped — not crash, not transition)
-        const afterFinal = yield* client.Send({ event: OrderEvent.Process });
-        expect(afterFinal._tag).toBe("Shipped");
-      }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)) as Effect.Effect<void>,
+      // After final, sending more events should not change state
+      // (at minimum, state should remain Shipped — not crash, not transition)
+      const afterFinal = yield* ref.send(OrderEvent.Process);
+      expect(afterFinal._tag).toBe("Shipped");
+    }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)),
   );
 
   // ---------------------------------------------------------------------------
   // Test 5: Spawn effects run on state entry
   // ---------------------------------------------------------------------------
-  it.scopedLive(
-    "spawn effects run on state entry and self.send delivers",
-    () =>
-      Effect.gen(function* () {
-        const SpawnState = State({
-          Start: {},
-          Working: {},
-          Done: { result: Schema.String },
-        });
-        type SpawnState = typeof SpawnState.Type;
+  it.scopedLive("spawn effects run on state entry and self.send delivers", () =>
+    Effect.gen(function* () {
+      const SpawnState = State({
+        Start: {},
+        Working: {},
+        Done: { result: Schema.String },
+      });
+      type SpawnState = typeof SpawnState.Type;
 
-        const SpawnEvent = Event({
-          Begin: {},
-          Finished: { result: Schema.String },
-        });
-        type SpawnEvent = typeof SpawnEvent.Type;
+      const SpawnEvent = Event({
+        Begin: {},
+        Finished: { result: Schema.String },
+      });
+      type SpawnEvent = typeof SpawnEvent.Type;
 
-        const spawnMachine = Machine.make({
-          state: SpawnState,
-          event: SpawnEvent,
-          initial: SpawnState.Start,
-        })
-          .on(SpawnState.Start, SpawnEvent.Begin, () => SpawnState.Working)
-          .on(SpawnState.Working, SpawnEvent.Finished, ({ event }) =>
-            SpawnState.Done({ result: event.result }),
-          )
-          .spawn(SpawnState.Working, ({ self }) =>
-            self.send(SpawnEvent.Finished({ result: "spawn-delivered" })),
-          )
-          .final(SpawnState.Done);
+      const spawnMachine = Machine.make({
+        state: SpawnState,
+        event: SpawnEvent,
+        initial: SpawnState.Start,
+      })
+        .on(SpawnState.Start, SpawnEvent.Begin, () => SpawnState.Working)
+        .on(SpawnState.Working, SpawnEvent.Finished, ({ event }) =>
+          SpawnState.Done({ result: event.result }),
+        )
+        .spawn(SpawnState.Working, ({ self }) =>
+          self.send(SpawnEvent.Finished({ result: "spawn-delivered" })),
+        )
+        .final(SpawnState.Done);
 
-        const entity = toEntity(spawnMachine, { type: "SpawnEffect" });
-        const entityLayer = EntityMachine.layer(entity, spawnMachine, {});
+      const entity = toEntity(spawnMachine, { type: "SpawnEffect" });
+      const entityLayer = EntityMachine.layer(entity, spawnMachine, {});
 
-        const makeClient = yield* Entity.makeTestClient(
-          entity,
-          entityLayer.pipe(Layer.provide(ActorSystemDefault)),
-        );
-        const client = yield* makeClient("spawn-1");
+      const makeClient = yield* Entity.makeTestClient(
+        entity,
+        entityLayer.pipe(Layer.provide(ActorSystemDefault)),
+      );
+      const client = yield* makeClient("spawn-1");
+      const ref = makeEntityActorRef<SpawnState, SpawnEvent, never>(client, "spawn-1");
 
-        yield* client.Send({ event: SpawnEvent.Begin });
+      yield* ref.send(SpawnEvent.Begin);
 
-        // Give spawn effect time to fire and internal event to process
-        yield* Effect.sleep("100 millis");
+      // Give spawn effect time to fire and internal event to process
+      yield* Effect.sleep("100 millis");
 
-        const state = yield* client.GetState();
-        expect(state._tag).toBe("Done");
-        expect((state as { result: string }).result).toBe("spawn-delivered");
-      }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)) as Effect.Effect<void>,
+      const state = yield* ref.snapshot;
+      expect(state._tag).toBe("Done");
+      expect((state as { result: string }).result).toBe("spawn-delivered");
+    }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)),
   );
 
   // ---------------------------------------------------------------------------
   // Test 6: Timeout fires
   // ---------------------------------------------------------------------------
-  it.scopedLive(
-    "timeout fires event after duration",
-    () =>
-      Effect.gen(function* () {
-        const TimeoutState = State({
-          Waiting: {},
-          TimedOut: {},
-        });
-        type TimeoutState = typeof TimeoutState.Type;
+  it.scopedLive("timeout fires event after duration", () =>
+    Effect.gen(function* () {
+      const TimeoutState = State({
+        Waiting: {},
+        TimedOut: {},
+      });
+      type TimeoutState = typeof TimeoutState.Type;
 
-        const TimeoutEvent = Event({
-          Start: {},
-          Expired: {},
-        });
-        type TimeoutEvent = typeof TimeoutEvent.Type;
+      const TimeoutEvent = Event({
+        Start: {},
+        Expired: {},
+      });
+      type TimeoutEvent = typeof TimeoutEvent.Type;
 
-        const timeoutMachine = Machine.make({
-          state: TimeoutState,
-          event: TimeoutEvent,
-          initial: TimeoutState.Waiting,
+      const timeoutMachine = Machine.make({
+        state: TimeoutState,
+        event: TimeoutEvent,
+        initial: TimeoutState.Waiting,
+      })
+        .on(TimeoutState.Waiting, TimeoutEvent.Start, () => TimeoutState.Waiting)
+        .on(TimeoutState.Waiting, TimeoutEvent.Expired, () => TimeoutState.TimedOut)
+        .timeout(TimeoutState.Waiting, {
+          duration: Duration.millis(50),
+          event: TimeoutEvent.Expired,
         })
-          .on(TimeoutState.Waiting, TimeoutEvent.Start, () => TimeoutState.Waiting)
-          .on(TimeoutState.Waiting, TimeoutEvent.Expired, () => TimeoutState.TimedOut)
-          .timeout(TimeoutState.Waiting, {
-            duration: Duration.millis(50),
-            event: TimeoutEvent.Expired,
-          })
-          .final(TimeoutState.TimedOut);
+        .final(TimeoutState.TimedOut);
 
-        const entity = toEntity(timeoutMachine, { type: "Timeout" });
-        const entityLayer = EntityMachine.layer(entity, timeoutMachine, {});
+      const entity = toEntity(timeoutMachine, { type: "Timeout" });
+      const entityLayer = EntityMachine.layer(entity, timeoutMachine, {});
 
-        const makeClient = yield* Entity.makeTestClient(
-          entity,
-          entityLayer.pipe(Layer.provide(ActorSystemDefault)),
-        );
-        const client = yield* makeClient("timeout-1");
+      const makeClient = yield* Entity.makeTestClient(
+        entity,
+        entityLayer.pipe(Layer.provide(ActorSystemDefault)),
+      );
+      const client = yield* makeClient("timeout-1");
+      const ref = makeEntityActorRef<TimeoutState, TimeoutEvent, never>(client, "timeout-1");
 
-        // Wait for timeout to fire
-        yield* Effect.sleep("200 millis");
+      // Wait for timeout to fire
+      yield* Effect.sleep("200 millis");
 
-        const state = yield* client.GetState();
-        expect(state._tag).toBe("TimedOut");
-      }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)) as Effect.Effect<void>,
+      const state = yield* ref.snapshot;
+      expect(state._tag).toBe("TimedOut");
+    }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)),
   );
 
   // ---------------------------------------------------------------------------
   // Test 7: Postpone semantics
   // BUG: shouldPostpone imported but never called in entity-machine
   // ---------------------------------------------------------------------------
-  it.scopedLive(
-    "postponed events drain after state change",
-    () =>
-      Effect.gen(function* () {
-        const PostponeState = State({
-          Connecting: {},
-          Connected: {},
-          Done: { data: Schema.String },
-        });
-        type PostponeState = typeof PostponeState.Type;
+  it.scopedLive("postponed events drain after state change", () =>
+    Effect.gen(function* () {
+      const PostponeState = State({
+        Connecting: {},
+        Connected: {},
+        Done: { data: Schema.String },
+      });
+      type PostponeState = typeof PostponeState.Type;
 
-        const PostponeEvent = Event({
-          Connect: {},
-          Data: { payload: Schema.String },
-        });
-        type PostponeEvent = typeof PostponeEvent.Type;
+      const PostponeEvent = Event({
+        Connect: {},
+        Data: { payload: Schema.String },
+      });
+      type PostponeEvent = typeof PostponeEvent.Type;
 
-        const postponeMachine = Machine.make({
-          state: PostponeState,
-          event: PostponeEvent,
-          initial: PostponeState.Connecting,
-        })
-          .on(PostponeState.Connecting, PostponeEvent.Connect, () => PostponeState.Connected)
-          .on(PostponeState.Connected, PostponeEvent.Data, ({ event }) =>
-            PostponeState.Done({ data: event.payload }),
-          )
-          .postpone(PostponeState.Connecting, PostponeEvent.Data)
-          .final(PostponeState.Done);
+      const postponeMachine = Machine.make({
+        state: PostponeState,
+        event: PostponeEvent,
+        initial: PostponeState.Connecting,
+      })
+        .on(PostponeState.Connecting, PostponeEvent.Connect, () => PostponeState.Connected)
+        .on(PostponeState.Connected, PostponeEvent.Data, ({ event }) =>
+          PostponeState.Done({ data: event.payload }),
+        )
+        .postpone(PostponeState.Connecting, PostponeEvent.Data)
+        .final(PostponeState.Done);
 
-        const entity = toEntity(postponeMachine, { type: "Postpone" });
-        const entityLayer = EntityMachine.layer(entity, postponeMachine, {});
+      const entity = toEntity(postponeMachine, { type: "Postpone" });
+      const entityLayer = EntityMachine.layer(entity, postponeMachine, {});
 
-        const makeClient = yield* Entity.makeTestClient(
-          entity,
-          entityLayer.pipe(Layer.provide(ActorSystemDefault)),
-        );
-        const client = yield* makeClient("postpone-1");
+      const makeClient = yield* Entity.makeTestClient(
+        entity,
+        entityLayer.pipe(Layer.provide(ActorSystemDefault)),
+      );
+      const client = yield* makeClient("postpone-1");
+      const ref = makeEntityActorRef<PostponeState, PostponeEvent, never>(client, "postpone-1");
 
-        // Send Data while in Connecting — should be postponed
-        yield* client.Send({ event: PostponeEvent.Data({ payload: "hello" }) });
+      // Send Data while in Connecting — should be postponed
+      yield* ref.send(PostponeEvent.Data({ payload: "hello" }));
 
-        // State should still be Connecting (Data was postponed)
-        const beforeConnect = yield* client.GetState();
-        expect(beforeConnect._tag).toBe("Connecting");
+      // State should still be Connecting (Data was postponed)
+      const beforeConnect = yield* ref.snapshot;
+      expect(beforeConnect._tag).toBe("Connecting");
 
-        // Connect — should transition, then drain postponed Data
-        yield* client.Send({ event: PostponeEvent.Connect });
+      // Connect — should transition, then drain postponed Data
+      yield* ref.send(PostponeEvent.Connect);
 
-        // Give time for postpone drain
-        yield* Effect.sleep("100 millis");
+      // Give time for postpone drain
+      yield* Effect.sleep("100 millis");
 
-        const finalState = yield* client.GetState();
-        expect(finalState._tag).toBe("Done");
-        expect((finalState as { data: string }).data).toBe("hello");
-      }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)) as Effect.Effect<void>,
+      const finalState = yield* ref.snapshot;
+      expect(finalState._tag).toBe("Done");
+      expect((finalState as { data: string }).data).toBe("hello");
+    }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)),
   );
 
   // ---------------------------------------------------------------------------
   // Test 8: Task success/failure routing
   // ---------------------------------------------------------------------------
-  it.scopedLive(
-    "task dispatches success event",
-    () =>
-      Effect.gen(function* () {
-        const TaskState = State({
-          Idle: {},
-          Running: {},
-          Done: { result: Schema.String },
-          Failed: { error: Schema.String },
-        });
-        type TaskState = typeof TaskState.Type;
+  it.scopedLive("task dispatches success event", () =>
+    Effect.gen(function* () {
+      const TaskState = State({
+        Idle: {},
+        Running: {},
+        Done: { result: Schema.String },
+        Failed: { error: Schema.String },
+      });
+      type TaskState = typeof TaskState.Type;
 
-        const TaskEvent = Event({
-          Start: {},
-          TaskSucceeded: { result: Schema.String },
-          TaskFailed: { error: Schema.String },
-        });
-        type TaskEvent = typeof TaskEvent.Type;
+      const TaskEvent = Event({
+        Start: {},
+        TaskSucceeded: { result: Schema.String },
+        TaskFailed: { error: Schema.String },
+      });
+      type TaskEvent = typeof TaskEvent.Type;
 
-        const taskMachine = Machine.make({
-          state: TaskState,
-          event: TaskEvent,
-          initial: TaskState.Idle,
+      const taskMachine = Machine.make({
+        state: TaskState,
+        event: TaskEvent,
+        initial: TaskState.Idle,
+      })
+        .on(TaskState.Idle, TaskEvent.Start, () => TaskState.Running)
+        .on(TaskState.Running, TaskEvent.TaskSucceeded, ({ event }) =>
+          TaskState.Done({ result: event.result }),
+        )
+        .on(TaskState.Running, TaskEvent.TaskFailed, ({ event }) =>
+          TaskState.Failed({ error: event.error }),
+        )
+        .task(TaskState.Running, () => Effect.succeed("task-result"), {
+          onSuccess: (result) => TaskEvent.TaskSucceeded({ result }),
         })
-          .on(TaskState.Idle, TaskEvent.Start, () => TaskState.Running)
-          .on(TaskState.Running, TaskEvent.TaskSucceeded, ({ event }) =>
-            TaskState.Done({ result: event.result }),
-          )
-          .on(TaskState.Running, TaskEvent.TaskFailed, ({ event }) =>
-            TaskState.Failed({ error: event.error }),
-          )
-          .task(TaskState.Running, () => Effect.succeed("task-result"), {
-            onSuccess: (result) => TaskEvent.TaskSucceeded({ result }),
-          })
-          .final(TaskState.Done)
-          .final(TaskState.Failed);
+        .final(TaskState.Done)
+        .final(TaskState.Failed);
 
-        const entity = toEntity(taskMachine, { type: "Task" });
-        const entityLayer = EntityMachine.layer(entity, taskMachine, {});
+      const entity = toEntity(taskMachine, { type: "Task" });
+      const entityLayer = EntityMachine.layer(entity, taskMachine, {});
 
-        const makeClient = yield* Entity.makeTestClient(
-          entity,
-          entityLayer.pipe(Layer.provide(ActorSystemDefault)),
-        );
-        const client = yield* makeClient("task-1");
+      const makeClient = yield* Entity.makeTestClient(
+        entity,
+        entityLayer.pipe(Layer.provide(ActorSystemDefault)),
+      );
+      const client = yield* makeClient("task-1");
+      const ref = makeEntityActorRef<TaskState, TaskEvent, never>(client, "task-1");
 
-        yield* client.Send({ event: TaskEvent.Start });
+      yield* ref.send(TaskEvent.Start);
 
-        // Give task time to complete and route success event
-        yield* Effect.sleep("200 millis");
+      // Give task time to complete and route success event
+      yield* Effect.sleep("200 millis");
 
-        const state = yield* client.GetState();
-        expect(state._tag).toBe("Done");
-        expect((state as { result: string }).result).toBe("task-result");
-      }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)) as Effect.Effect<void>,
+      const state = yield* ref.snapshot;
+      expect(state._tag).toBe("Done");
+      expect((state as { result: string }).result).toBe("task-result");
+    }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)),
   );
 
   // ---------------------------------------------------------------------------
@@ -749,210 +740,206 @@ describe("EntityMachine.layer", () => {
   // fibers/queues. Test verifies all events are counted. Will fail if internal
   // events are silently dropped or if state updates are lost.
   // ---------------------------------------------------------------------------
-  it.scopedLive(
-    "external sends and internal self.send both contribute to state",
-    () =>
-      Effect.gen(function* () {
-        const RaceState = State({
-          Active: { count: Schema.Number },
-          Done: { count: Schema.Number },
-        });
-        type RaceState = typeof RaceState.Type;
+  it.scopedLive("external sends and internal self.send both contribute to state", () =>
+    Effect.gen(function* () {
+      const RaceState = State({
+        Active: { count: Schema.Finite },
+        Done: { count: Schema.Finite },
+      });
+      type RaceState = typeof RaceState.Type;
 
-        const RaceEvent = Event({
-          ExternalIncrement: {},
-          InternalIncrement: {},
-          Finish: {},
-        });
-        type RaceEvent = typeof RaceEvent.Type;
+      const RaceEvent = Event({
+        ExternalIncrement: {},
+        InternalIncrement: {},
+        Finish: {},
+      });
+      type RaceEvent = typeof RaceEvent.Type;
 
-        // Spawn effect fires internal increments continuously
-        const raceMachine = Machine.make({
-          state: RaceState,
-          event: RaceEvent,
-          initial: RaceState.Active({ count: 0 }),
-        })
-          .on(RaceState.Active, RaceEvent.ExternalIncrement, ({ state }) =>
-            RaceState.Active({ count: state.count + 1 }),
-          )
-          .on(RaceState.Active, RaceEvent.InternalIncrement, ({ state }) =>
-            RaceState.Active({ count: state.count + 1 }),
-          )
-          .on(RaceState.Active, RaceEvent.Finish, ({ state }) =>
-            RaceState.Done({ count: state.count }),
-          )
-          .spawn(RaceState.Active, ({ self }) =>
-            // Fire internal increments — each goes through a separate queue/fiber
-            Effect.gen(function* () {
-              for (let i = 0; i < 10; i++) {
-                yield* self.send(RaceEvent.InternalIncrement);
-              }
-            }),
-          )
-          .final(RaceState.Done);
+      // Spawn effect fires internal increments continuously
+      const raceMachine = Machine.make({
+        state: RaceState,
+        event: RaceEvent,
+        initial: RaceState.Active({ count: 0 }),
+      })
+        .on(RaceState.Active, RaceEvent.ExternalIncrement, ({ state }) =>
+          RaceState.Active({ count: state.count + 1 }),
+        )
+        .on(RaceState.Active, RaceEvent.InternalIncrement, ({ state }) =>
+          RaceState.Active({ count: state.count + 1 }),
+        )
+        .on(RaceState.Active, RaceEvent.Finish, ({ state }) =>
+          RaceState.Done({ count: state.count }),
+        )
+        .spawn(RaceState.Active, ({ self }) =>
+          // Fire internal increments — each goes through a separate queue/fiber
+          Effect.gen(function* () {
+            for (let i = 0; i < 10; i++) {
+              yield* self.send(RaceEvent.InternalIncrement);
+            }
+          }),
+        )
+        .final(RaceState.Done);
 
-        const entity = toEntity(raceMachine, { type: "Race" });
-        const entityLayer = EntityMachine.layer(entity, raceMachine, {});
+      const entity = toEntity(raceMachine, { type: "Race" });
+      const entityLayer = EntityMachine.layer(entity, raceMachine, {});
 
-        const makeClient = yield* Entity.makeTestClient(
-          entity,
-          entityLayer.pipe(Layer.provide(ActorSystemDefault)),
-        );
-        const client = yield* makeClient("race-1");
+      const makeClient = yield* Entity.makeTestClient(
+        entity,
+        entityLayer.pipe(Layer.provide(ActorSystemDefault)),
+      );
+      const client = yield* makeClient("race-1");
+      const ref = makeEntityActorRef<RaceState, RaceEvent, never>(client, "race-1");
 
-        // Fire external increments concurrently — each hits processEvent directly
-        // while internal ones are being processed by the queue fiber
-        yield* Effect.all(
-          Array.from({ length: 10 }, () => client.Send({ event: RaceEvent.ExternalIncrement })),
-          { concurrency: "unbounded" },
-        );
+      // Fire external increments concurrently — each hits processEvent directly
+      // while internal ones are being processed by the queue fiber
+      yield* Effect.all(
+        Array.from({ length: 10 }, () => ref.send(RaceEvent.ExternalIncrement)),
+        { concurrency: "unbounded" },
+      );
 
-        // Give internal events time to finish
-        yield* Effect.sleep("200 millis");
+      // Give internal events time to finish
+      yield* Effect.sleep("200 millis");
 
-        yield* client.Send({ event: RaceEvent.Finish });
-        const state = yield* client.GetState();
-        expect(state._tag).toBe("Done");
+      yield* ref.send(RaceEvent.Finish);
+      const state = yield* ref.snapshot;
+      expect(state._tag).toBe("Done");
 
-        // If properly serialized: 10 external + 10 internal = 20
-        // With split-mailbox, external RPCs mutate stateRef directly while
-        // internal queue reads stale state — lost updates. Count will be < 20.
-        expect((state as { count: number }).count).toBe(20);
-      }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)) as Effect.Effect<void>,
+      // If properly serialized: 10 external + 10 internal = 20
+      // With split-mailbox, external RPCs mutate stateRef directly while
+      // internal queue reads stale state — lost updates. Count will be < 20.
+      expect((state as { count: number }).count).toBe(20);
+    }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)),
   );
 
   // ---------------------------------------------------------------------------
   // Test 10: self.spawn works in entity context (implicit ActorSystem)
   // ---------------------------------------------------------------------------
-  it.scopedLive(
-    "self.spawn works without explicit ActorSystem",
-    () =>
-      Effect.gen(function* () {
-        const SpawnChildState = State({
-          Idle: {},
-          HasChild: { childSpawned: Schema.Boolean },
-        });
-        type SpawnChildState = typeof SpawnChildState.Type;
+  it.scopedLive("self.spawn works without explicit ActorSystem", () =>
+    Effect.gen(function* () {
+      const SpawnChildState = State({
+        Idle: {},
+        HasChild: { childSpawned: Schema.Boolean },
+      });
+      type SpawnChildState = typeof SpawnChildState.Type;
 
-        const SpawnChildEvent = Event({
-          Go: {},
-          ChildReady: {},
-        });
-        type SpawnChildEvent = typeof SpawnChildEvent.Type;
+      const SpawnChildEvent = Event({
+        Go: {},
+        ChildReady: {},
+      });
+      type SpawnChildEvent = typeof SpawnChildEvent.Type;
 
-        // Simple child machine
-        const childState = State({ Running: {} });
-        const childEvent = Event({ Ping: {} });
-        const childMachine = Machine.make({
-          state: childState,
-          event: childEvent,
-          initial: childState.Running,
-        });
+      // Simple child machine
+      const childState = State({ Running: {} });
+      const childEvent = Event({ Ping: {} });
+      const childMachine = Machine.make({
+        state: childState,
+        event: childEvent,
+        initial: childState.Running,
+      });
 
-        const spawnChildMachine = Machine.make({
-          state: SpawnChildState,
-          event: SpawnChildEvent,
-          initial: SpawnChildState.Idle,
-        })
-          .on(SpawnChildState.Idle, SpawnChildEvent.Go, () =>
-            SpawnChildState.HasChild({ childSpawned: false }),
-          )
-          .on(SpawnChildState.HasChild, SpawnChildEvent.ChildReady, () =>
-            SpawnChildState.HasChild({ childSpawned: true }),
-          )
-          .spawn(SpawnChildState.HasChild, ({ self }) =>
-            Effect.gen(function* () {
-              yield* self.spawn("child-1", childMachine).pipe(Effect.orDie);
-              yield* self.send(SpawnChildEvent.ChildReady);
-            }),
-          );
+      const spawnChildMachine = Machine.make({
+        state: SpawnChildState,
+        event: SpawnChildEvent,
+        initial: SpawnChildState.Idle,
+      })
+        .on(SpawnChildState.Idle, SpawnChildEvent.Go, () =>
+          SpawnChildState.HasChild({ childSpawned: false }),
+        )
+        .on(SpawnChildState.HasChild, SpawnChildEvent.ChildReady, () =>
+          SpawnChildState.HasChild({ childSpawned: true }),
+        )
+        .spawn(SpawnChildState.HasChild, ({ self }) =>
+          Effect.gen(function* () {
+            yield* self.spawn("child-1", childMachine).pipe(Effect.orDie);
+            yield* self.send(SpawnChildEvent.ChildReady);
+          }),
+        );
 
-        const entity = toEntity(spawnChildMachine, { type: "SpawnChild" });
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const entityLayer = EntityMachine.layer(entity, spawnChildMachine, {});
+      const entity = toEntity(spawnChildMachine, { type: "SpawnChild" });
+      const entityLayer = EntityMachine.layer(entity, spawnChildMachine, {});
 
-        // No ActorSystemDefault provided — implicit system should be created
-        const makeClient = yield* Entity.makeTestClient(entity, entityLayer);
-        const client = yield* makeClient("spawn-child-1");
+      // No ActorSystemDefault provided — implicit system should be created
+      const makeClient = yield* Entity.makeTestClient(entity, entityLayer);
+      const client = yield* makeClient("spawn-child-1");
+      const ref = makeEntityActorRef<SpawnChildState, SpawnChildEvent, never>(
+        client,
+        "spawn-child-1",
+      );
 
-        yield* client.Send({ event: SpawnChildEvent.Go });
-        yield* Effect.sleep("100 millis");
+      yield* ref.send(SpawnChildEvent.Go);
+      yield* Effect.sleep("100 millis");
 
-        const state = yield* client.GetState();
-        expect(state._tag).toBe("HasChild");
-        expect((state as { childSpawned: boolean }).childSpawned).toBe(true);
-      }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)) as Effect.Effect<void>,
+      const state = yield* ref.snapshot;
+      expect(state._tag).toBe("HasChild");
+      expect((state as { childSpawned: boolean }).childSpawned).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)),
   );
 
   // ---------------------------------------------------------------------------
   // Test 11: WatchState streaming RPC delivers state changes
-  it.scopedLive(
-    "WatchState streams state changes",
-    () =>
-      Effect.gen(function* () {
-        const WatchState = State({
-          A: {},
-          B: {},
-          C: {},
-        });
-        type WatchState = typeof WatchState.Type;
+  it.scopedLive("WatchState streams state changes", () =>
+    Effect.gen(function* () {
+      const WatchState = State({
+        A: {},
+        B: {},
+        C: {},
+      });
+      type WatchState = typeof WatchState.Type;
 
-        const WatchEvent = Event({
-          GoB: {},
-          GoC: {},
-        });
-        type WatchEvent = typeof WatchEvent.Type;
+      const WatchEvent = Event({
+        GoB: {},
+        GoC: {},
+      });
+      type WatchEvent = typeof WatchEvent.Type;
 
-        const watchMachine = Machine.make({
-          state: WatchState,
-          event: WatchEvent,
-          initial: WatchState.A,
-        })
-          .on(WatchState.A, WatchEvent.GoB, () => WatchState.B)
-          .on(WatchState.B, WatchEvent.GoC, () => WatchState.C)
-          .final(WatchState.C);
+      const watchMachine = Machine.make({
+        state: WatchState,
+        event: WatchEvent,
+        initial: WatchState.A,
+      })
+        .on(WatchState.A, WatchEvent.GoB, () => WatchState.B)
+        .on(WatchState.B, WatchEvent.GoC, () => WatchState.C)
+        .final(WatchState.C);
 
-        const entity = toEntity(watchMachine, { type: "Watch" });
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const entityLayer = EntityMachine.layer(entity, watchMachine, {});
+      const entity = toEntity(watchMachine, { type: "Watch" });
+      const entityLayer = EntityMachine.layer(entity, watchMachine, {});
 
-        const makeClient = yield* Entity.makeTestClient(
-          entity,
-          entityLayer.pipe(Layer.provide(ActorSystemDefault)),
-        );
-        const client = yield* makeClient("watch-1");
+      const makeClient = yield* Entity.makeTestClient(
+        entity,
+        entityLayer.pipe(Layer.provide(ActorSystemDefault)),
+      );
+      const client = yield* makeClient("watch-1");
+      const ref = makeEntityActorRef<WatchState, WatchEvent, never>(client, "watch-1");
 
-        // Collect state changes in background via WatchState streaming RPC
-        const collected: string[] = [];
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const watchStream = (client as any).WatchState() as Stream.Stream<WatchState>;
+      // Collect state changes in background via WatchState streaming RPC
+      const collected: string[] = [];
 
-        const collectFiber = yield* Effect.forkScoped(
-          watchStream.pipe(
-            Stream.take(3),
-            Stream.runForEach((s: WatchState) =>
-              Effect.sync(() => {
-                collected.push(s._tag);
-              }),
-            ),
+      const collectFiber = yield* Effect.forkScoped(
+        ref.watch.pipe(
+          Stream.take(3),
+          Stream.runForEach((s: WatchState) =>
+            Effect.sync(() => {
+              collected.push(s._tag);
+            }),
           ),
-        );
+        ),
+      );
 
-        // Give stream subscription time to establish
-        yield* Effect.sleep("50 millis");
+      // Give stream subscription time to establish
+      yield* Effect.sleep("50 millis");
 
-        // Drive state changes
-        yield* client.Send({ event: WatchEvent.GoB });
-        yield* client.Send({ event: WatchEvent.GoC });
+      // Drive state changes
+      yield* ref.send(WatchEvent.GoB);
+      yield* ref.send(WatchEvent.GoC);
 
-        // Wait for stream to collect
-        yield* Effect.sleep("200 millis");
-        yield* Fiber.interrupt(collectFiber);
+      // Wait for stream to collect
+      yield* Effect.sleep("200 millis");
+      yield* Fiber.interrupt(collectFiber);
 
-        // Stream includes initial state A, then transitions B, C
-        expect(collected).toContain("A");
-        expect(collected).toContain("B");
-        expect(collected).toContain("C");
-      }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)) as Effect.Effect<void>,
+      // Stream includes initial state A, then transitions B, C
+      expect(collected).toContain("A");
+      expect(collected).toContain("B");
+      expect(collected).toContain("C");
+    }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)),
   );
 });

@@ -6,9 +6,9 @@ import { Machine, simulate, State, Event, Slot } from "../src/index.js";
 import { materializeMachine } from "../src/machine.js";
 
 const CounterState = State({
-  Idle: { count: Schema.Number },
-  Counting: { count: Schema.Number },
-  Done: { count: Schema.Number },
+  Idle: { count: Schema.Finite },
+  Counting: { count: Schema.Finite },
+  Done: { count: Schema.Finite },
 });
 type CounterState = typeof CounterState.Type;
 
@@ -64,7 +64,7 @@ describe("Machine", () => {
   it.scopedLive("supports slots via Slot.define", () =>
     Effect.gen(function* () {
       const CounterSlots = Slot.define({
-        belowLimit: Slot.fn({ limit: Schema.Number }, Schema.Boolean),
+        belowLimit: Slot.fn({ limit: Schema.Finite }, Schema.Boolean),
       });
 
       const machine = Machine.make({
@@ -219,8 +219,8 @@ describe("multi-state .on()", () => {
 describe("multi-state .reenter()", () => {
   test("reenter with array registers for each state", () => {
     const RState = State({
-      A: { value: Schema.Number },
-      B: { value: Schema.Number },
+      A: { value: Schema.Finite },
+      B: { value: Schema.Finite },
     });
     const REvent = Event({ Reset: {} });
 

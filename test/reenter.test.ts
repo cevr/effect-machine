@@ -14,7 +14,7 @@ import { describe, expect, it, yieldFibers } from "effect-bun-test";
 
 describe("Same-state Transitions", () => {
   const FormState = State({
-    Form: { name: Schema.String, count: Schema.Number },
+    Form: { name: Schema.String, count: Schema.Finite },
     Submitted: {},
   });
   type FormState = typeof FormState.Type;
@@ -110,7 +110,7 @@ describe("Same-state Transitions", () => {
 
 describe("Reenter Transitions", () => {
   const PollState = State({
-    Polling: { attempts: Schema.Number },
+    Polling: { attempts: Schema.Finite },
     Done: {},
   });
   type PollState = typeof PollState.Type;

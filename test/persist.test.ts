@@ -16,12 +16,12 @@ import { describe, expect, it, yieldFibers } from "effect-bun-test";
 
 const PState = State({
   Idle: {},
-  Active: { count: Schema.Number },
+  Active: { count: Schema.Finite },
   Done: {},
 });
 
 const PEvent = Event({
-  Activate: { count: Schema.Number },
+  Activate: { count: Schema.Finite },
   Increment: {},
   Finish: {},
 });
@@ -167,10 +167,10 @@ describe("Machine.spawn with lifecycle", () => {
     Effect.gen(function* () {
       const CrashState = State({
         Idle: {},
-        Active: { count: Schema.Number },
+        Active: { count: Schema.Finite },
       });
       const CrashEvent = Event({
-        Activate: { count: Schema.Number },
+        Activate: { count: Schema.Finite },
         Crash: {},
       });
 

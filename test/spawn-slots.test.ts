@@ -12,13 +12,13 @@ import { test } from "bun:test";
 
 const SimpleState = State({
   Idle: {},
-  Active: { count: Schema.Number },
+  Active: { count: Schema.Finite },
   Done: {},
 });
 type SimpleState = typeof SimpleState.Type;
 
 const SimpleEvent = Event({
-  Start: { count: Schema.Number },
+  Start: { count: Schema.Finite },
   Increment: {},
   Finish: {},
 });

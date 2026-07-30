@@ -77,7 +77,7 @@ export const toEntity = <
   const eventSchema = machine.eventSchema;
 
   if (stateSchema === undefined || eventSchema === undefined) {
-    throw new MissingSchemaError({ operation: "toEntity" });
+    throw MissingSchemaError.make({ operation: "toEntity" });
   }
 
   return Entity.make(options.type, [

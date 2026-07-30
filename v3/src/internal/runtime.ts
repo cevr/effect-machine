@@ -764,7 +764,12 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
 
     // queued is narrowed: drain is handled above, so it's always an event-bearing variant here
     const eventQueued = queued;
-    const processInner = processQueued(eventQueued) as Effect.Effect<ProcessQueuedResult<S>>;
+    // processQueued carries the machine's R, but createRuntime provides
+    // MachineContextTag and Scope before the loop is forked, so R is already
+    // satisfied at this point. wrapProcess is declared context-free to match.
+    const processInner: Effect.Effect<ProcessQueuedResult<S>> = processQueued(
+      eventQueued,
+    ) as Effect.Effect<ProcessQueuedResult<S>>;
     let wrapped: Effect.Effect<ProcessQueuedResult<S>>;
     if (wrapProcess !== undefined) {
       wrapped = Effect.gen(function* () {

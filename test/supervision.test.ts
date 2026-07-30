@@ -16,10 +16,10 @@ import { describe, expect, it, yieldFibers } from "effect-bun-test";
 // Fixtures
 // ============================================================================
 
-const S = State({ Idle: {}, Active: { count: Schema.Number }, Done: {} });
+const S = State({ Idle: {}, Active: { count: Schema.Finite }, Done: {} });
 type S = typeof S.Type;
 
-const E = Event({ Start: { count: Schema.Number }, Increment: {}, Finish: {}, Crash: {} });
+const E = Event({ Start: { count: Schema.Finite }, Increment: {}, Finish: {}, Crash: {} });
 type E = typeof E.Type;
 
 const machine = Machine.make({ state: S, event: E, initial: S.Idle })
@@ -340,8 +340,8 @@ describe("supervision: pending requests", () => {
     Effect.gen(function* () {
       // Machine with a reply event and a crash event
       const ReplyE = Event({
-        GetCount: Event.reply({}, Schema.Number),
-        SetCount: { count: Schema.Number },
+        GetCount: Event.reply({}, Schema.Finite),
+        SetCount: { count: Schema.Finite },
         CrashNow: {},
       });
 

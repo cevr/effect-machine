@@ -158,7 +158,7 @@ export const assertReaches = Effect.fn("effect-machine.assertReaches")(function*
 ) {
   const result = yield* simulate(input, events, options);
   if (result.finalState._tag !== expectedTag) {
-    return yield* new AssertionError({
+    return yield* AssertionError.make({
       message:
         `Expected final state "${expectedTag}" but got "${result.finalState._tag}". ` +
         `States visited: ${result.states.map((s) => s._tag).join(" -> ")}`,
@@ -195,7 +195,7 @@ export const assertPath = Effect.fn("effect-machine.assertPath")(function* <
   const actualPath = result.states.map((s) => s._tag);
 
   if (actualPath.length !== expectedPath.length) {
-    return yield* new AssertionError({
+    return yield* AssertionError.make({
       message:
         `Path length mismatch. Expected ${expectedPath.length} states but got ${actualPath.length}.\n` +
         `Expected: ${expectedPath.join(" -> ")}\n` +
@@ -205,7 +205,7 @@ export const assertPath = Effect.fn("effect-machine.assertPath")(function* <
 
   for (let i = 0; i < expectedPath.length; i++) {
     if (actualPath[i] !== expectedPath[i]) {
-      return yield* new AssertionError({
+      return yield* AssertionError.make({
         message:
           `Path mismatch at position ${i}. Expected "${expectedPath[i]}" but got "${actualPath[i]}".\n` +
           `Expected: ${expectedPath.join(" -> ")}\n` +
@@ -246,7 +246,7 @@ export const assertNeverReaches = Effect.fn("effect-machine.assertNeverReaches")
 
   const visitedIndex = result.states.findIndex((s) => s._tag === forbiddenTag);
   if (visitedIndex !== -1) {
-    return yield* new AssertionError({
+    return yield* AssertionError.make({
       message:
         `Machine reached forbidden state "${forbiddenTag}" at position ${visitedIndex}.\n` +
         `States visited: ${result.states.map((s) => s._tag).join(" -> ")}`,

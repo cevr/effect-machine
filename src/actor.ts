@@ -425,7 +425,7 @@ export const buildActorRefCore = <
   const ask = Effect.fn("effect-machine.actor.ask")(function* (event: E) {
     const stopped = yield* Ref.get(stoppedRef);
     if (stopped) {
-      return yield* new ActorStoppedError({ actorId: id });
+      return yield* ActorStoppedError.make({ actorId: id });
     }
     const reply = yield* Deferred.make<unknown, NoReplyError | ActorStoppedError>();
     pendingReplies.add(reply as Deferred.Deferred<unknown, unknown>);
@@ -1079,7 +1079,7 @@ export const settlePendingReplies = (
   actorId: string,
 ) =>
   Effect.sync(() => {
-    const error = new ActorStoppedError({ actorId });
+    const error = ActorStoppedError.make({ actorId });
     for (const deferred of pendingReplies) {
       // Deferred.fail returns false if already completed — safe to double-settle
       Effect.runFork(Deferred.fail(deferred, error));
@@ -1139,7 +1139,7 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     if (MutableHashMap.has(actorsMap, id)) {
       // Stop the newly created actor to avoid leaks
       yield* actor.stop;
-      return yield* new DuplicateActorError({ actorId: id });
+      return yield* DuplicateActorError.make({ actorId: id });
     }
 
     const actorRef = actor as unknown as ActorRef<AnyState, unknown>;
@@ -1192,7 +1192,7 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     },
   ) {
     if (MutableHashMap.has(actorsMap, id)) {
-      return yield* new DuplicateActorError({ actorId: id });
+      return yield* DuplicateActorError.make({ actorId: id });
     }
     // Materialize slots if provided
     let materialized = machine;

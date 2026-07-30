@@ -325,7 +325,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
   // Build union schema from all variants
   const variantArray = Object.values(variants);
   if (variantArray.length === 0) {
-    throw new InvalidSchemaError({ message: "Schema must have at least one variant" });
+    throw InvalidSchemaError.make({ message: "Schema must have at least one variant" });
   }
 
   // Schema.Union requires at least 2 members, handle single variant case
@@ -352,7 +352,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
       const cases = maybeCases as Record<string, (v: unknown) => unknown>;
       const handler = cases[value._tag];
       if (handler === undefined) {
-        throw new MissingMatchHandlerError({ tag: value._tag });
+        throw MissingMatchHandlerError.make({ tag: value._tag });
       }
       return handler(value);
     }
@@ -361,7 +361,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
     return (value: { _tag: string }): unknown => {
       const handler = cases[value._tag];
       if (handler === undefined) {
-        throw new MissingMatchHandlerError({ tag: value._tag });
+        throw MissingMatchHandlerError.make({ tag: value._tag });
       }
       return handler(value);
     };
@@ -389,11 +389,11 @@ const createMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(def
   const withFn = (source: { _tag: string }, partial?: Record<string, unknown>) => {
     const ctor = constructors[source._tag];
     if (ctor === undefined) {
-      throw new MissingMatchHandlerError({ tag: source._tag });
+      throw MissingMatchHandlerError.make({ tag: source._tag });
     }
     const fn = (ctor as { with?: (s: object, p?: object) => object }).with;
     if (fn === undefined) {
-      throw new MissingMatchHandlerError({ tag: source._tag });
+      throw MissingMatchHandlerError.make({ tag: source._tag });
     }
     return fn(source, partial);
   };

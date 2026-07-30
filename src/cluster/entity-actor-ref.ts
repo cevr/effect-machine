@@ -100,7 +100,7 @@ export const makeEntityActorRef = <
           Stream.runHead,
         );
         if (Option.isSome(result)) return result.value;
-        return yield* new ActorStoppedError({ actorId: entityId });
+        return yield* ActorStoppedError.make({ actorId: entityId });
       }),
   };
 };

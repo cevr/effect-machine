@@ -89,7 +89,7 @@ describe(".timeout()", () => {
   it.scoped("same-tag .on() transition does not restart the timer", () =>
     Effect.gen(function* () {
       const CountState = State({
-        Active: { count: Schema.Number },
+        Active: { count: Schema.Finite },
         TimedOut: {},
       });
 
@@ -136,7 +136,7 @@ describe(".timeout()", () => {
   it.scoped("reenter restarts the timer", () =>
     Effect.gen(function* () {
       const RetryState = State({
-        Waiting: { attempt: Schema.Number },
+        Waiting: { attempt: Schema.Finite },
         TimedOut: {},
       });
 
@@ -187,7 +187,7 @@ describe(".timeout()", () => {
   it.scoped("dynamic duration computed from state", () =>
     Effect.gen(function* () {
       const DynState = State({
-        Waiting: { timeoutMs: Schema.Number },
+        Waiting: { timeoutMs: Schema.Finite },
         TimedOut: {},
       });
 

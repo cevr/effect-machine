@@ -19,7 +19,7 @@ describe("Session Lifecycle Pattern", () => {
 
   const SessionState = State({
     Guest: {},
-    Active: { userId: Schema.String, role: UserRole, lastActivity: Schema.Number },
+    Active: { userId: Schema.String, role: UserRole, lastActivity: Schema.Finite },
     Maintenance: { message: Schema.String, previousState: Schema.Literals(["Guest", "Active"]) },
     SessionExpired: {},
     LoggedOut: {},
@@ -42,7 +42,7 @@ describe("Session Lifecycle Pattern", () => {
   // Helper to compute initial state based on token
   const makeSessionMachine = (token: string | null) => {
     // Initial state computed inline - no need for .always()
-    let initial: typeof SessionState.Type;
+    let initial: SessionState;
     if (token === null) {
       initial = SessionState.Guest;
     } else {
