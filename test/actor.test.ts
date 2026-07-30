@@ -30,7 +30,9 @@ import { describe, expect, it, yieldFibers } from "effect-bun-test";
 // ============================================================================
 
 /** Thrown by a deliberately-failing listener to prove it does not crash the actor. */
-class ListenerBoomError extends Data.TaggedError("effect-machine/test/actor.test/ListenerBoomError")<{ readonly message: string }> {}
+class ListenerBoomError extends Data.TaggedError(
+  "effect-machine/test/actor.test/ListenerBoomError",
+)<{ readonly message: string }> {}
 
 const TestState = State({
   Idle: {},

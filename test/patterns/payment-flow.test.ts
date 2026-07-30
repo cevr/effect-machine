@@ -66,15 +66,16 @@ describe("Payment Flow Pattern", () => {
       PaymentState.SelectingMethod({ amount: event.amount }),
     )
     // Selecting method - route to appropriate processing
-    .on(PaymentState.SelectingMethod, PaymentEvent.SelectMethod, ({ state, event }) =>
-      event.method === "bridge"
-        ? PaymentState.AwaitingBridgeConfirm({ transactionId: "pending" })
-        : PaymentState.ProcessingPayment({
-            method: event.method,
-            amount: state.amount,
-            attempts: 1,
-          }),
-    )
+    .on(PaymentState.SelectingMethod, PaymentEvent.SelectMethod, ({ state, event }) => {
+      if (event.method === "bridge") {
+        return PaymentState.AwaitingBridgeConfirm({ transactionId: "pending" });
+      }
+      return PaymentState.ProcessingPayment({
+        method: event.method,
+        amount: state.amount,
+        attempts: 1,
+      });
+    })
     // Processing payment results
     .on(PaymentState.ProcessingPayment, PaymentEvent.PaymentSucceeded, ({ event }) =>
       PaymentState.PaymentSuccess({ receiptId: event.receiptId }),

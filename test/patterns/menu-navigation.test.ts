@@ -157,9 +157,13 @@ describe("Menu Navigation Pattern", () => {
 
   it.scopedLive("page navigation with valid page", () =>
     Effect.gen(function* () {
-      const result = yield* simulate(menuMachine, [MenuEvent.NavigateToPage({ pageId: "drinks" })], {
-        slots: menuSlots,
-      });
+      const result = yield* simulate(
+        menuMachine,
+        [MenuEvent.NavigateToPage({ pageId: "drinks" })],
+        {
+          slots: menuSlots,
+        },
+      );
 
       expect(result.finalState._tag).toBe("Browsing");
       expect((result.finalState as BrowsingState).pageId).toBe("drinks");
@@ -198,9 +202,13 @@ describe("Menu Navigation Pattern", () => {
 
   it.scopedLive("section scrolling with valid index", () =>
     Effect.gen(function* () {
-      const result = yield* simulate(menuMachine, [MenuEvent.ScrollToSection({ sectionIndex: 1 })], {
-        slots: menuSlots,
-      });
+      const result = yield* simulate(
+        menuMachine,
+        [MenuEvent.ScrollToSection({ sectionIndex: 1 })],
+        {
+          slots: menuSlots,
+        },
+      );
 
       expect((result.finalState as BrowsingState).sectionIndex).toBe(1);
     }),

@@ -6,7 +6,9 @@ import type { SystemEvent } from "../src/index.js";
 import { describe, expect, it, yieldFibers } from "effect-bun-test";
 
 /** Thrown by deliberately-failing listeners to prove they do not crash the system. */
-class ListenerBoomError extends Data.TaggedError("effect-machine/test/actor-system-observation.test/ListenerBoomError")<{ readonly message: string }> {}
+class ListenerBoomError extends Data.TaggedError(
+  "effect-machine/test/actor-system-observation.test/ListenerBoomError",
+)<{ readonly message: string }> {}
 
 // ============================================================================
 // Test machines

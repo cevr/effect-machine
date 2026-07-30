@@ -46,7 +46,11 @@ describe("Session Lifecycle Pattern", () => {
     if (token === null) {
       initial = SessionState.Guest;
     } else {
-      initial = SessionState.Active({ userId: "from-token", role: "user", lastActivity: FIXTURE_NOW });
+      initial = SessionState.Active({
+        userId: "from-token",
+        role: "user",
+        lastActivity: FIXTURE_NOW,
+      });
     }
 
     return Machine.make({
@@ -73,7 +77,11 @@ describe("Session Lifecycle Pattern", () => {
       })
       .on(SessionState.Maintenance, SessionEvent.MaintenanceEnded, ({ state }) => {
         if (state.previousState === "Active") {
-          return SessionState.Active({ userId: "restored", role: "user", lastActivity: FIXTURE_NOW });
+          return SessionState.Active({
+            userId: "restored",
+            role: "user",
+            lastActivity: FIXTURE_NOW,
+          });
         }
         return SessionState.Guest;
       })
@@ -126,7 +134,11 @@ describe("Session Lifecycle Pattern", () => {
       )
       .on(SessionState.Maintenance, SessionEvent.MaintenanceEnded, ({ state }) => {
         if (state.previousState === "Active") {
-          return SessionState.Active({ userId: "restored", role: "user", lastActivity: FIXTURE_NOW });
+          return SessionState.Active({
+            userId: "restored",
+            role: "user",
+            lastActivity: FIXTURE_NOW,
+          });
         }
         return SessionState.Guest;
       });

@@ -189,10 +189,7 @@ export const EntityMachine = {
       let journalCtx:
         | { readonly adapter: PersistenceAdapter; readonly key: PersistenceKey }
         | undefined = undefined;
-      if (
-        persistCtx.adapter !== undefined &&
-        (persistence?.strategy ?? "snapshot") === "journal"
-      ) {
+      if (persistCtx.adapter !== undefined && (persistence?.strategy ?? "snapshot") === "journal") {
         journalCtx = { adapter: persistCtx.adapter, key: persistCtx.key };
       }
 

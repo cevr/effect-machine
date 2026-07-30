@@ -47,13 +47,16 @@ type OrderEvent = typeof OrderEvent.Type;
 // Machine definition (same pattern as before)
 // =============================================================================
 
+// Fixed timestamp: startedAt is inert fixture data, never asserted on.
+const FIXTURE_STARTED_AT = 1_700_000_000_000;
+
 const orderMachine = Machine.make({
   state: OrderState,
   event: OrderEvent,
   initial: OrderState.Pending({ orderId: "" }),
 })
   .on(OrderState.Pending, OrderEvent.Process, ({ state }) =>
-    OrderState.Processing({ orderId: state.orderId, startedAt: Date.now() }),
+    OrderState.Processing({ orderId: state.orderId, startedAt: FIXTURE_STARTED_AT }),
   )
   .on(OrderState.Processing, OrderEvent.Ship, ({ state, event }) =>
     OrderState.Shipped({ orderId: state.orderId, trackingId: event.trackingId }),
@@ -304,9 +307,10 @@ describe("Entity.makeTestClient with machine handler", () => {
                   event,
                   slots: {} as any,
                 });
-                const newState = Effect.isEffect(handlerResult)
-                  ? yield* handlerResult
-                  : handlerResult;
+                let newState: OrderState = handlerResult as OrderState;
+                if (Effect.isEffect(handlerResult)) {
+                  newState = (yield* handlerResult) as OrderState;
+                }
                 yield* Ref.set(stateRef, newState);
                 return newState;
               }),

@@ -428,7 +428,12 @@ describe("Inspection", () => {
 
       const taskEvents = events.filter((event) => event.type === "@machine.task");
       expect(
-        taskEvents.map((event) => (event.type === "@machine.task" ? event.phase : "bad")),
+        taskEvents.map((event) => {
+          if (event.type === "@machine.task") {
+            return event.phase;
+          }
+          return "bad";
+        }),
       ).toEqual(["start", "success"]);
       for (const event of taskEvents) {
         if (event.type === "@machine.task") {

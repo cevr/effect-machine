@@ -242,7 +242,12 @@ describe(".timeout()", () => {
         .on(EvState.Active, EvEvent.Complete, () => EvState.Done)
         .timeout(EvState.Active, {
           duration: Duration.seconds(1),
-          event: (state) => (state.shouldTimeout ? EvEvent.Timeout : EvEvent.Complete),
+          event: (state) => {
+            if (state.shouldTimeout) {
+              return EvEvent.Timeout;
+            }
+            return EvEvent.Complete;
+          },
         })
         .final(EvState.TimedOut)
         .final(EvState.Done);
