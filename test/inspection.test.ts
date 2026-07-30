@@ -18,7 +18,9 @@ import {
 import { describe, expect, it, yieldFibers } from "effect-bun-test";
 
 /** Thrown by a deliberately-failing inspector to prove it does not crash the machine. */
-class InspectorBoomError extends Data.TaggedError("effect-machine/test/inspection.test/InspectorBoomError")<{
+class InspectorBoomError extends Data.TaggedError(
+  "effect-machine/test/inspection.test/InspectorBoomError",
+)<{
   readonly message: string;
 }> {}
 
@@ -428,7 +430,12 @@ describe("Inspection", () => {
 
       const taskEvents = events.filter((event) => event.type === "@machine.task");
       expect(
-        taskEvents.map((event) => (event.type === "@machine.task" ? event.phase : "bad")),
+        taskEvents.map((event) => {
+          if (event.type === "@machine.task") {
+            return event.phase;
+          }
+          return "bad";
+        }),
       ).toEqual(["start", "success"]);
       for (const event of taskEvents) {
         if (event.type === "@machine.task") {

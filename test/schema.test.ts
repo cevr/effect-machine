@@ -448,7 +448,9 @@ describe("State/Event with Machine", () => {
         event: OrderEvent,
         initial: OrderState.Pending({ orderId: "test-order" }),
       })
-        .on(OrderState.Pending, OrderEvent.Process, ({ state }) => OrderState.Processing.with(state))
+        .on(OrderState.Pending, OrderEvent.Process, ({ state }) =>
+          OrderState.Processing.with(state),
+        )
         .on(OrderState.Processing, OrderEvent.Ship, ({ state, event }) =>
           OrderState.Shipped.with(state, { trackingId: event.trackingId }),
         )
