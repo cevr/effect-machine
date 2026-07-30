@@ -91,8 +91,16 @@ export const fn: {
   returnSchema?: Schema.Schema<Return>,
 ): SlotFnDef<F, Return> => {
   const hasFields = Object.keys(fields).length > 0;
+  // FieldsToParams<F> is a conditional type that stays unresolved while F is
+  // generic, so neither branch is provably assignable to the declared field
+  // type. The public `fn` overloads above pin the caller-visible types.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const inputSchema = hasFields ? Schema.Struct(fields) : (Schema.Void as any);
+  let inputSchema: any;
+  if (hasFields) {
+    inputSchema = Schema.Struct(fields);
+  } else {
+    inputSchema = Schema.Void;
+  }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const outputSchema = returnSchema ?? (Schema.Void as any);
   return {
@@ -298,8 +306,10 @@ export const define = <D extends SlotsDef>(definitions: D): SlotsSchema<D> => {
     );
   }
 
-  const buildUnion = <T>(schemas: Array<Schema.Schema<any>>): Schema.Codec<T> =>
-    schemas.length === 0 ? (Schema.Never as any) : (Schema.Union(schemas as any) as any);
+  const buildUnion = <T>(schemas: Array<Schema.Schema<any>>): Schema.Codec<T> => {
+    if (schemas.length === 0) return Schema.Never as any;
+    return Schema.Union(schemas as any) as any;
+  };
 
   const requestSchema = buildUnion<SlotRequest<D>>(requestSchemas);
   const resultSchema = buildUnion<SlotResult<D>>(resultSchemas);

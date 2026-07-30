@@ -114,12 +114,17 @@ export const EntityMachine = {
     const build = Effect.gen(function* () {
       // Get entity ID from context (provided by Entity activation)
       const entityId = yield* Effect.serviceOption(Entity.CurrentAddress).pipe(
-        Effect.map((opt) => (opt._tag === "Some" ? opt.value.entityId : "")),
+        Effect.map(
+          Option.match({
+            onNone: () => "",
+            onSome: (address) => address.entityId,
+          }),
+        ),
       );
 
       // Resolve actor system from context, or use stub
       const existingSystem = yield* Effect.serviceOption(ActorSystemTag);
-      const system: ActorSystem = Option.isSome(existingSystem) ? existingSystem.value : stubSystem;
+      const system: ActorSystem = Option.getOrElse(existingSystem, () => stubSystem);
 
       // ----------------------------------------------------------------
       // Persistence: hydration
@@ -133,16 +138,19 @@ export const EntityMachine = {
       );
 
       // Compute final initial state: hydrated > initializeState > machine.initial
-      const initialState =
-        persistCtx.hydratedState ??
-        (options?.initializeState !== undefined ? options.initializeState(entityId) : undefined);
+      let initialState: S | undefined = persistCtx.hydratedState;
+      if (initialState === undefined && options?.initializeState !== undefined) {
+        initialState = options.initializeState(entityId);
+      }
 
-      const machineWithState =
-        initialState !== undefined
-          ? Object.create(machine, {
-              initial: { value: initialState, enumerable: true },
-            })
-          : machine;
+      let machineWithState: typeof machine;
+      if (initialState !== undefined) {
+        machineWithState = Object.create(machine, {
+          initial: { value: initialState, enumerable: true },
+        });
+      } else {
+        machineWithState = machine;
+      }
 
       // Version tracking
       const versionRef = yield* Ref.make(persistCtx.initialVersion);
@@ -178,10 +186,15 @@ export const EntityMachine = {
 
       // Compute journal context for RPC handlers
       const hasPersistence = persistCtx.adapter !== undefined;
-      const journalCtx =
-        hasPersistence && (persistence?.strategy ?? "snapshot") === "journal"
-          ? { adapter: persistCtx.adapter, key: persistCtx.key }
-          : undefined;
+      let journalCtx:
+        | { readonly adapter: PersistenceAdapter; readonly key: PersistenceKey }
+        | undefined = undefined;
+      if (
+        persistCtx.adapter !== undefined &&
+        (persistence?.strategy ?? "snapshot") === "journal"
+      ) {
+        journalCtx = { adapter: persistCtx.adapter, key: persistCtx.key };
+      }
 
       // Return RPC handlers backed by the runtime kernel
       return entity.of({
@@ -240,11 +253,16 @@ export const EntityMachine = {
     if (options?.defectRetryPolicy !== undefined)
       clusterOptions.defectRetryPolicy = options.defectRetryPolicy;
 
+    let toLayerOptions: typeof clusterOptions | undefined = undefined;
+    if (Object.keys(clusterOptions).length > 0) {
+      toLayerOptions = clusterOptions;
+    }
+
     return entity.toLayer(
       // Cast needed: createRuntime error channel is `never` when runtime.ts types are sound,
       // but cascading inference issues may widen it. toLayer requires E=never.
       build.pipe(Effect.orDie) as Effect.Effect<Parameters<typeof entity.of>[0], never, unknown>,
-      Object.keys(clusterOptions).length > 0 ? clusterOptions : undefined,
+      toLayerOptions,
     ) as unknown as Layer.Layer<never, never, R>;
   },
 };
@@ -295,12 +313,19 @@ const hydratePersistence = <
     const strategy = persistence.strategy ?? "snapshot";
 
     if (strategy === "journal") {
-      const baseState: S = Option.isSome(maybeSnapshot)
-        ? maybeSnapshot.value.state
-        : initializeState !== undefined
-          ? initializeState(entityId)
-          : machine.initial;
-      const snapshotVersion = Option.isSome(maybeSnapshot) ? maybeSnapshot.value.version : 0;
+      let baseState: S;
+      if (Option.isSome(maybeSnapshot)) {
+        baseState = maybeSnapshot.value.state;
+      } else if (initializeState !== undefined) {
+        baseState = initializeState(entityId);
+      } else {
+        baseState = machine.initial;
+      }
+
+      let snapshotVersion = 0;
+      if (Option.isSome(maybeSnapshot)) {
+        snapshotVersion = maybeSnapshot.value.version;
+      }
 
       const events = (yield* adapter.loadEvents(key, snapshotVersion)) as ReadonlyArray<
         PersistedEvent<E>
@@ -310,14 +335,22 @@ const hydratePersistence = <
         const eventValues = events.map((e: PersistedEvent<E>) => e.event);
         const hydratedState = yield* replay(machine, eventValues, { from: baseState });
         const lastEvent = events[events.length - 1];
-        const initialVersion = lastEvent !== undefined ? lastEvent.version : snapshotVersion;
+        let initialVersion = snapshotVersion;
+        if (lastEvent !== undefined) {
+          initialVersion = lastEvent.version;
+        }
         return { adapter, key, hydratedState, initialVersion };
+      }
+
+      let hydratedState: S | undefined = undefined;
+      if (Option.isSome(maybeSnapshot)) {
+        hydratedState = maybeSnapshot.value.state;
       }
 
       return {
         adapter,
         key,
-        hydratedState: Option.isSome(maybeSnapshot) ? maybeSnapshot.value.state : undefined,
+        hydratedState,
         initialVersion: snapshotVersion,
       };
     }

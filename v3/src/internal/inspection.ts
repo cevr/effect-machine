@@ -15,13 +15,11 @@ export const emitWithTimestamp = Effect.fn("effect-machine.emitWithTimestamp")(f
   }
   const timestamp = yield* Clock.currentTimeMillis;
   const event = makeEvent(timestamp);
-  const result = yield* Effect.sync(() => {
-    try {
-      return inspector.onInspect(event);
-    } catch {
-      return undefined;
-    }
-  });
+  // onInspect is user-supplied and may throw; a failing inspector must never
+  // break the machine it observes.
+  const result = yield* Effect.try(() => inspector.onInspect(event)).pipe(
+    Effect.orElseSucceed(() => undefined),
+  );
   if (Effect.isEffect(result)) {
     yield* result.pipe(Effect.catchAllCause(() => Effect.void));
   }

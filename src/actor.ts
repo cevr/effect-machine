@@ -459,10 +459,12 @@ export const buildActorRefCore = <
   const waitFor = Effect.fn("effect-machine.actor.waitFor")(function* (
     predicateOrState: ((state: S) => boolean) | { readonly _tag: S["_tag"] },
   ) {
-    const predicate =
-      typeof predicateOrState === "function" && !("_tag" in predicateOrState)
-        ? predicateOrState
-        : (s: S) => s._tag === (predicateOrState as { readonly _tag: string })._tag;
+    let predicate: (state: S) => boolean;
+    if (typeof predicateOrState === "function" && !("_tag" in predicateOrState)) {
+      predicate = predicateOrState;
+    } else {
+      predicate = (s: S) => s._tag === (predicateOrState as { readonly _tag: string })._tag;
+    }
 
     // Check current state first — SubscriptionRef.get acquires/releases
     // the semaphore quickly (read-only), no deadlock risk.
@@ -510,6 +512,11 @@ export const buildActorRefCore = <
     return yield* awaitFinal;
   });
 
+  let transitions: Stream.Stream<TransitionInfo<S, E>> = Stream.empty;
+  if (transitionsPubSub !== undefined) {
+    transitions = Stream.fromPubSub(transitionsPubSub);
+  }
+
   return {
     id,
     send,
@@ -523,8 +530,7 @@ export const buildActorRefCore = <
     matches,
     can,
     changes: SubscriptionRef.changes(stateRef),
-    transitions:
-      transitionsPubSub !== undefined ? Stream.fromPubSub(transitionsPubSub) : Stream.empty,
+    transitions,
     waitFor,
     awaitFinal,
     sendAndWait,
@@ -706,12 +712,12 @@ const runSupervisionLoop = <
       yield* Ref.set(params.stoppedRef, false);
       params.childrenMap.clear();
 
-      const machineForRestart =
-        restartState !== params.machine.initial
-          ? (Object.create(params.machine, {
-              initial: { value: restartState, enumerable: true },
-            }) as typeof params.machine)
-          : params.machine;
+      let machineForRestart = params.machine;
+      if (restartState !== params.machine.initial) {
+        machineForRestart = Object.create(params.machine, {
+          initial: { value: restartState, enumerable: true },
+        }) as typeof params.machine;
+      }
       const newRuntime = yield* params.spawnGeneration(machineForRestart);
       params.runtimeRef.current = newRuntime;
       yield* newRuntime.start;
@@ -767,15 +773,18 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   const transitionsPubSub = yield* PubSub.unbounded<TransitionInfo<S, E>>();
 
   // Build hooks from inspector
-  const hooks = inspectorValue !== undefined ? buildInspectionHooks(id, inspectorValue) : undefined;
+  let hooks: ReturnType<typeof buildInspectionHooks<S, E>> | undefined = undefined;
+  if (inspectorValue !== undefined) {
+    hooks = buildInspectionHooks(id, inspectorValue);
+  }
 
   // Use initial state override if provided
-  const machineWithState =
-    initial !== machine.initial
-      ? (Object.create(machine, {
-          initial: { value: initial, enumerable: true },
-        }) as typeof machine)
-      : machine;
+  let machineWithState = machine;
+  if (initial !== machine.initial) {
+    machineWithState = Object.create(machine, {
+      initial: { value: initial, enumerable: true },
+    }) as typeof machine;
+  }
 
   // Cell-owned resources: stable across generations (supervision)
   const stateRef = yield* SubscriptionRef.make<S>(initial);
@@ -804,18 +813,43 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   /** Build lifecycle hooks for a generation */
   const buildRuntimeLifecycle = (): RuntimeLifecycleHooks<S, E> => {
     stopEmitted = false;
+    let onEvent: RuntimeLifecycleHooks<S, E>["onEvent"] = undefined;
+    if (inspectorValue !== undefined) {
+      onEvent = (state: S, event: E) =>
+        emitWithTimestamp(inspectorValue, (timestamp) => ({
+          type: "@machine.event",
+          actorId: id,
+          state,
+          event,
+          timestamp,
+        }));
+    }
+    let onFinal: RuntimeLifecycleHooks<S, E>["onFinal"] = undefined;
+    if (inspectorValue !== undefined) {
+      onFinal = (state: S) =>
+        Effect.gen(function* () {
+          stopEmitted = true;
+          yield* emitWithTimestamp(inspectorValue, (timestamp) => ({
+            type: "@machine.stop",
+            actorId: id,
+            finalState: state,
+            timestamp,
+          }));
+        });
+    }
+    let onInitialSpawnEffects: RuntimeLifecycleHooks<S, E>["onInitialSpawnEffects"] = undefined;
+    if (inspectorValue !== undefined) {
+      onInitialSpawnEffects = (state: S) =>
+        emitWithTimestamp(inspectorValue, (timestamp) => ({
+          type: "@machine.effect",
+          actorId: id,
+          effectType: "spawn",
+          state,
+          timestamp,
+        }));
+    }
     return {
-      onEvent:
-        inspectorValue !== undefined
-          ? (state: S, event: E) =>
-              emitWithTimestamp(inspectorValue, (timestamp) => ({
-                type: "@machine.event",
-                actorId: id,
-                state,
-                event,
-                timestamp,
-              }))
-          : undefined,
+      onEvent,
       onStateChange: (result, event) =>
         Effect.gen(function* () {
           notifyListeners(listeners, result.newState);
@@ -844,27 +878,15 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
             yield* Effect.annotateCurrentSpan("effect_machine.state.to", result.newState._tag);
           }
         }),
-      onProcessed: (result, event) =>
-        result.transitioned
-          ? PubSub.publish(transitionsPubSub, {
-              fromState: result.previousState,
-              toState: result.newState,
-              event,
-            }).pipe(Effect.asVoid)
-          : Effect.void,
-      onFinal:
-        inspectorValue !== undefined
-          ? (state: S) =>
-              Effect.gen(function* () {
-                stopEmitted = true;
-                yield* emitWithTimestamp(inspectorValue, (timestamp) => ({
-                  type: "@machine.stop",
-                  actorId: id,
-                  finalState: state,
-                  timestamp,
-                }));
-              })
-          : undefined,
+      onProcessed: (result, event) => {
+        if (!result.transitioned) return Effect.void;
+        return PubSub.publish(transitionsPubSub, {
+          fromState: result.previousState,
+          toState: result.newState,
+          event,
+        }).pipe(Effect.asVoid);
+      },
+      onFinal,
       onShutdown: () =>
         Effect.gen(function* () {
           if (!stopEmitted) {
@@ -878,17 +900,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
           }
           yield* settlePendingReplies(pendingReplies, id);
         }),
-      onInitialSpawnEffects:
-        inspectorValue !== undefined
-          ? (state: S) =>
-              emitWithTimestamp(inspectorValue, (timestamp) => ({
-                type: "@machine.effect",
-                actorId: id,
-                effectType: "spawn",
-                state,
-                timestamp,
-              }))
-          : undefined,
+      onInitialSpawnEffects,
     };
   };
 
@@ -1183,27 +1195,33 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
       return yield* new DuplicateActorError({ actorId: id });
     }
     // Materialize slots if provided
-    const materialized =
-      spawnOptions?.slots !== undefined ? materializeMachine(machine, spawnOptions.slots) : machine;
+    let materialized = machine;
+    if (spawnOptions?.slots !== undefined) {
+      materialized = materializeMachine(machine, spawnOptions.slots);
+    }
     // Mutable ref for the actor �� onRestart closure needs it, but actor isn't registered yet
     let actorRef: ActorRef<AnyState, unknown> | undefined;
+    let onRestart:
+      | ((generation: number, exit: ActorExit<unknown>) => Effect.Effect<void>)
+      | undefined = undefined;
+    if (spawnOptions?.supervision !== undefined) {
+      onRestart = (generation, exit) => {
+        const currentActor = actorRef;
+        if (currentActor === undefined) return Effect.void;
+        return emitSystemEvent({
+          _tag: "ActorRestarted",
+          id,
+          actor: currentActor,
+          generation,
+          exit,
+        });
+      };
+    }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const actor = yield* createActor(id, materialized as Machine<S, E, never, any, any, any>, {
       supervision: spawnOptions?.supervision,
       lifecycle: spawnOptions?.lifecycle,
-      onRestart:
-        spawnOptions?.supervision !== undefined
-          ? (generation, exit) =>
-              actorRef !== undefined
-                ? emitSystemEvent({
-                    _tag: "ActorRestarted",
-                    id,
-                    actor: actorRef,
-                    generation,
-                    exit,
-                  })
-                : Effect.void
-          : undefined,
+      onRestart,
     });
     actorRef = actor as unknown as ActorRef<AnyState, unknown>;
     // Register before start — actor is in the map before lifecycle hooks fire

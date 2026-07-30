@@ -122,14 +122,20 @@ export const EntityMachine = {
     const build = Effect.gen(function* () {
       // Get entity ID from context (provided by Entity activation)
       const entityId = yield* Effect.serviceOption(Entity.CurrentAddress).pipe(
-        Effect.map((opt) => (opt._tag === "Some" ? opt.value.entityId : "")),
+        Effect.map((opt) => {
+          if (opt._tag === "Some") return opt.value.entityId;
+          return "";
+        }),
       );
 
       // Resolve actor system from context, or create implicit one
       const existingSystem = yield* Effect.serviceOption(ActorSystemTag);
-      const system: ActorSystemService = Option.isSome(existingSystem)
-        ? existingSystem.value
-        : yield* makeSystem();
+      let system: ActorSystemService;
+      if (Option.isSome(existingSystem)) {
+        system = existingSystem.value;
+      } else {
+        system = yield* makeSystem();
+      }
 
       // ----------------------------------------------------------------
       // Persistence: hydration
@@ -143,16 +149,17 @@ export const EntityMachine = {
       );
 
       // Compute final initial state: hydrated > initializeState > machine.initial
-      const initialState =
-        persistCtx.hydratedState ??
-        (options?.initializeState !== undefined ? options.initializeState(entityId) : undefined);
+      let initialState: S | undefined = persistCtx.hydratedState;
+      if (initialState === undefined && options?.initializeState !== undefined) {
+        initialState = options.initializeState(entityId);
+      }
 
-      const machineWithState =
-        initialState !== undefined
-          ? Object.create(machine, {
-              initial: { value: initialState, enumerable: true },
-            })
-          : machine;
+      let machineWithState = machine;
+      if (initialState !== undefined) {
+        machineWithState = Object.create(machine, {
+          initial: { value: initialState, enumerable: true },
+        });
+      }
 
       // Version tracking
       const versionRef = yield* Ref.make(persistCtx.initialVersion);
@@ -182,8 +189,12 @@ export const EntityMachine = {
 
         if (strategy === "snapshot") {
           // Snapshot-only mode: background scheduler is safe (no journal to tear against)
+          let applySchedule: (s: Stream.Stream<S>) => Stream.Stream<S> = (s) => s;
+          if (schedule !== undefined) {
+            applySchedule = Stream.schedule(schedule);
+          }
           yield* SubscriptionRef.changes(runtime.stateRef).pipe(
-            schedule !== undefined ? Stream.schedule(schedule) : (s: Stream.Stream<S>) => s,
+            applySchedule,
             Stream.runForEach((state) =>
               Effect.gen(function* () {
                 const version = yield* Ref.get(versionRef);
@@ -219,11 +230,14 @@ export const EntityMachine = {
       // Return the queue-draining loop function
       return (mailbox: Queue.Dequeue<Envelope.Request<Rpcs>>, replier: Entity.Replier<Rpcs>) =>
         Effect.gen(function* () {
-          const hasPersistence = persistCtx.adapter !== undefined;
-          const journalCtx =
-            hasPersistence && (persistence?.strategy ?? "snapshot") === "journal"
-              ? { adapter: persistCtx.adapter, key: persistCtx.key }
-              : undefined;
+          const adapter = persistCtx.adapter;
+          const hasPersistence = adapter !== undefined;
+          let journalCtx:
+            | { adapter: PersistenceAdapterService; key: typeof persistCtx.key }
+            | undefined = undefined;
+          if (adapter !== undefined && (persistence?.strategy ?? "snapshot") === "journal") {
+            journalCtx = { adapter, key: persistCtx.key };
+          }
 
           // eslint-disable-next-line no-constant-condition
           while (true) {
@@ -312,10 +326,14 @@ export const EntityMachine = {
     if (options?.defectRetryPolicy !== undefined)
       clusterOptions.defectRetryPolicy = options.defectRetryPolicy;
 
+    let resolvedClusterOptions: typeof clusterOptions | undefined = undefined;
+    if (Object.keys(clusterOptions).length > 0) {
+      resolvedClusterOptions = clusterOptions;
+    }
     return entity.toLayerQueue(
       // orDie: persistence failures during activation are defects (entity retry handles them)
       build.pipe(Effect.orDie),
-      Object.keys(clusterOptions).length > 0 ? clusterOptions : undefined,
+      resolvedClusterOptions,
     ) as unknown as Layer.Layer<never, never, R>;
   },
 };
@@ -370,12 +388,18 @@ const hydratePersistence = <
     const strategy = persistence.strategy ?? "snapshot";
 
     if (strategy === "journal") {
-      const baseState: S = Option.isSome(maybeSnapshot)
-        ? maybeSnapshot.value.state
-        : initializeState !== undefined
-          ? initializeState(entityId)
-          : machine.initial;
-      const snapshotVersion = Option.isSome(maybeSnapshot) ? maybeSnapshot.value.version : 0;
+      let baseState: S;
+      if (Option.isSome(maybeSnapshot)) {
+        baseState = maybeSnapshot.value.state;
+      } else if (initializeState !== undefined) {
+        baseState = initializeState(entityId);
+      } else {
+        baseState = machine.initial;
+      }
+      let snapshotVersion = 0;
+      if (Option.isSome(maybeSnapshot)) {
+        snapshotVersion = maybeSnapshot.value.version;
+      }
 
       const events = (yield* adapter.loadEvents(key, snapshotVersion)) as ReadonlyArray<
         PersistedEvent<E>
@@ -385,14 +409,21 @@ const hydratePersistence = <
         const eventValues = events.map((e: PersistedEvent<E>) => e.event);
         const hydratedState = yield* replay(machine, eventValues, { from: baseState });
         const lastEvent = events[events.length - 1];
-        const initialVersion = lastEvent !== undefined ? lastEvent.version : snapshotVersion;
+        let initialVersion = snapshotVersion;
+        if (lastEvent !== undefined) {
+          initialVersion = lastEvent.version;
+        }
         return { adapter, key, hydratedState, initialVersion };
       }
 
+      let snapshotState: S | undefined = undefined;
+      if (Option.isSome(maybeSnapshot)) {
+        snapshotState = maybeSnapshot.value.state;
+      }
       return {
         adapter,
         key,
-        hydratedState: Option.isSome(maybeSnapshot) ? maybeSnapshot.value.state : undefined,
+        hydratedState: snapshotState,
         initialVersion: snapshotVersion,
       };
     }
