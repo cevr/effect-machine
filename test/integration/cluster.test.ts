@@ -271,68 +271,66 @@ describe("Entity.makeTestClient with machine handler", () => {
     Rpc.make("GetState", { success: OrderState }),
   ]);
 
-  test("Entity.makeTestClient works with MachineSchema", async () => {
-    const OrderEntityWithMachine = OrderEntityManual.toLayer(
-      Effect.gen(function* () {
-        const stateRef = yield* Ref.make<OrderState>(
-          OrderState.Pending({ orderId: "will-be-set" }),
-        );
+  it.scopedLive("Entity.makeTestClient works with MachineSchema", () =>
+    Effect.gen(function* () {
+      const OrderEntityWithMachine = OrderEntityManual.toLayer(
+        Effect.gen(function* () {
+          const stateRef = yield* Ref.make<OrderState>(
+            OrderState.Pending({ orderId: "will-be-set" }),
+          );
 
-        return OrderEntityManual.of({
-          Send: (envelope) =>
-            Effect.gen(function* () {
-              const currentState = yield* Ref.get(stateRef);
-              const event = envelope.payload.event as unknown as OrderEvent;
+          return OrderEntityManual.of({
+            Send: (envelope) =>
+              Effect.gen(function* () {
+                const currentState = yield* Ref.get(stateRef);
+                const event = envelope.payload.event as unknown as OrderEvent;
 
-              const transitions = Machine.findTransitions(
-                orderMachine,
-                currentState._tag,
-                event._tag,
-              );
+                const transitions = Machine.findTransitions(
+                  orderMachine,
+                  currentState._tag,
+                  event._tag,
+                );
 
-              const transition = transitions[0];
-              if (transition === undefined) {
-                return currentState;
-              }
+                const transition = transitions[0];
+                if (transition === undefined) {
+                  return currentState;
+                }
 
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test helper
-              const handlerResult = transition.handler({
-                state: currentState,
-                event,
-                slots: {} as any,
-              });
-              const newState = Effect.isEffect(handlerResult)
-                ? yield* handlerResult
-                : handlerResult;
-              yield* Ref.set(stateRef, newState);
-              return newState;
-            }),
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test helper
+                const handlerResult = transition.handler({
+                  state: currentState,
+                  event,
+                  slots: {} as any,
+                });
+                const newState = Effect.isEffect(handlerResult)
+                  ? yield* handlerResult
+                  : handlerResult;
+                yield* Ref.set(stateRef, newState);
+                return newState;
+              }),
 
-          GetState: () => Ref.get(stateRef),
-        });
-      }),
-    );
+            GetState: () => Ref.get(stateRef),
+          });
+        }),
+      );
 
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const makeClient = yield* Entity.makeTestClient(OrderEntityManual, OrderEntityWithMachine);
-        const client = yield* makeClient("order-123");
+      const makeClient = yield* Entity.makeTestClient(OrderEntityManual, OrderEntityWithMachine);
+      const client = yield* makeClient("order-123");
 
-        const initialState = yield* client.GetState();
-        expect(initialState._tag).toBe("Pending");
+      const initialState = yield* client.GetState();
+      expect(initialState._tag).toBe("Pending");
 
-        const processingState = yield* client.Send({ event: OrderEvent.Process });
-        expect(processingState._tag).toBe("Processing");
+      const processingState = yield* client.Send({ event: OrderEvent.Process });
+      expect(processingState._tag).toBe("Processing");
 
-        const shippedState = yield* client.Send({
-          event: OrderEvent.Ship({ trackingId: "TRACK-789" }),
-        });
-        expect(shippedState._tag).toBe("Shipped");
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test assertion
-        expect((shippedState as any).trackingId).toBe("TRACK-789");
-      }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)),
-    );
-  });
+      const shippedState = yield* client.Send({
+        event: OrderEvent.Ship({ trackingId: "TRACK-789" }),
+      });
+      expect(shippedState._tag).toBe("Shipped");
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test assertion
+      expect((shippedState as any).trackingId).toBe("TRACK-789");
+    }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)),
+  );
 
   it.scopedLive("guards work with simulate", () =>
     Effect.gen(function* () {

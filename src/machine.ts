@@ -225,6 +225,23 @@ export interface TimeoutConfig<State, Event> {
 // Internal helpers
 // ============================================================================
 
+type SlotValidators = Map<
+  string,
+  {
+    readonly decodeInput: (input: unknown) => Effect.Effect<unknown, Schema.SchemaError>;
+    readonly decodeOutput: (input: unknown) => Effect.Effect<unknown, Schema.SchemaError>;
+  }
+>;
+
+/**
+ * Turn a slot codec failure into a defect. A schema mismatch means the slot
+ * contract itself is wrong, which callers cannot meaningfully recover from.
+ */
+const dieAsSlotCodecError =
+  (slotName: string, phase: "input" | "output") =>
+  (cause: Cause.Cause<Schema.SchemaError>): Effect.Effect<never> =>
+    Effect.die(new SlotCodecError({ slotName, phase, message: Cause.pretty(cause) }));
+
 /**
  * `Array.isArray` widens to `any[]` and does not narrow a
  * `T | ReadonlyArray<T>` union, so the normalization below needs an explicit
@@ -476,16 +493,14 @@ export class Machine<
     this.eventSchema = eventSchema;
 
     // Precompile slot validators (decode input, decode output) if validation enabled
-    let validators:
-      | Map<string, { decodeInput: (u: unknown) => unknown; decodeOutput: (u: unknown) => unknown }>
-      | undefined = undefined;
+    let validators: SlotValidators | undefined = undefined;
     if (slotValidation && slotsSchema !== undefined) {
       validators = new Map(
         Object.entries(slotsSchema.definitions).map(([name, def]) => [
           name,
           {
-            decodeInput: Schema.decodeUnknownSync(def.inputSchema),
-            decodeOutput: Schema.decodeUnknownSync(def.outputSchema),
+            decodeInput: Schema.decodeUnknownEffect(def.inputSchema),
+            decodeOutput: Schema.decodeUnknownEffect(def.outputSchema),
           },
         ]),
       );
@@ -503,73 +518,44 @@ export class Machine<
           return Effect.die(new SlotProvisionError({ slotName: name, slotType: "slot" }));
         }
 
-        // Validate input
-        let validatedParams: unknown = params;
-        if (validators !== undefined) {
-          try {
-            const v = validators.get(name);
-            if (v !== undefined) {
-              validatedParams = v.decodeInput(params);
-            }
-          } catch (e) {
-            let message: string;
-            if (e instanceof Error) {
-              message = e.message;
-            } else {
-              message = String(e);
-            }
-            validatedParams = Effect.die(
-              new SlotCodecError({ slotName: name, phase: "input", message }),
+        const validator = validators?.get(name);
+
+        // Validate input. A codec failure is a programmer error in the slot
+        // contract, so it stays a defect rather than a typed failure.
+        let validatedParamsEffect: Effect.Effect<unknown> = Effect.succeed(params);
+        if (validator !== undefined) {
+          validatedParamsEffect = validator
+            .decodeInput(params)
+            .pipe(Effect.catchCause(dieAsSlotCodecError(name, "input")));
+        }
+
+        return Effect.flatMap(validatedParamsEffect, (validatedParams) => {
+          // Invoke handler
+          const result = handler(validatedParams);
+
+          // Wrap result into Effect
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          let resultEffect: Effect.Effect<any>;
+          if (result === undefined || result === null) {
+            resultEffect = Effect.void;
+          } else if (Effect.isEffect(result)) {
+            // @effect-diagnostics anyUnknownInErrorContext:off
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            resultEffect = result as Effect.Effect<any>;
+          } else {
+            resultEffect = Effect.succeed(result);
+          }
+
+          // Validate output
+          if (validator !== undefined) {
+            return Effect.flatMap(resultEffect, (value) =>
+              validator
+                .decodeOutput(value)
+                .pipe(Effect.catchCause(dieAsSlotCodecError(name, "output"))),
             );
           }
-        }
-
-        // If decodeInput returned an Effect.die, short-circuit
-        if (Effect.isEffect(validatedParams)) {
-          // @effect-diagnostics anyUnknownInErrorContext:off
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          return validatedParams as Effect.Effect<any>;
-        }
-
-        // Invoke handler
-        const result = handler(validatedParams);
-
-        // Wrap result into Effect
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        let resultEffect: Effect.Effect<any>;
-        if (result === undefined || result === null) {
-          resultEffect = Effect.void;
-        } else if (Effect.isEffect(result)) {
-          // @effect-diagnostics anyUnknownInErrorContext:off
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          resultEffect = result as Effect.Effect<any>;
-        } else {
-          resultEffect = Effect.succeed(result);
-        }
-
-        // Validate output
-        if (validators !== undefined) {
-          const v = validators.get(name);
-          if (v !== undefined) {
-            return Effect.flatMap(resultEffect, (value) => {
-              try {
-                const decoded = v.decodeOutput(value);
-                return Effect.succeed(decoded);
-              } catch (e) {
-                let message: string;
-                if (e instanceof Error) {
-                  message = e.message;
-                } else {
-                  message = String(e);
-                }
-                return Effect.die(
-                  new SlotCodecError({ slotName: name, phase: "output", message }),
-                );
-              }
-            });
-          }
-        }
-        return resultEffect;
+          return resultEffect;
+        });
       });
 
     if (this._slotsSchema !== undefined) {

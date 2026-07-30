@@ -9,6 +9,10 @@ import { describe, expect, it, yieldFibers } from "effect-bun-test/v3";
  * Tests: initial state calculation, maintenance interrupt, session timeout
  */
 describe("Session Lifecycle Pattern", () => {
+  // Fixed timestamp: lastActivity is inert fixture data, never asserted on.
+  // A constant keeps these synchronous machine definitions deterministic.
+  const FIXTURE_NOW = 1_700_000_000_000;
+
   const UserRole = Schema.Literal("guest", "user", "admin");
   type UserRole = typeof UserRole.Type;
 
@@ -37,10 +41,12 @@ describe("Session Lifecycle Pattern", () => {
   // Helper to compute initial state based on token
   const makeSessionMachine = (token: string | null) => {
     // Initial state computed inline - no need for .always()
-    const initial =
-      token === null
-        ? SessionState.Guest
-        : SessionState.Active({ userId: "from-token", role: "user", lastActivity: Date.now() });
+    let initial: typeof SessionState.Type;
+    if (token === null) {
+      initial = SessionState.Guest;
+    } else {
+      initial = SessionState.Active({ userId: "from-token", role: "user", lastActivity: FIXTURE_NOW });
+    }
 
     return Machine.make({
       state: SessionState,
@@ -49,7 +55,7 @@ describe("Session Lifecycle Pattern", () => {
       initial,
     })
       .on(SessionState.Guest, SessionEvent.Login, ({ event }) =>
-        SessionState.Active({ userId: event.userId, role: event.role, lastActivity: Date.now() }),
+        SessionState.Active({ userId: event.userId, role: event.role, lastActivity: FIXTURE_NOW }),
       )
       .on(
         [SessionState.Active, SessionState.Guest],
@@ -64,11 +70,12 @@ describe("Session Lifecycle Pattern", () => {
       .task(SessionState.Active, ({ slots }) => slots.scheduleTimeout(), {
         onSuccess: () => SessionEvent.SessionTimeout,
       })
-      .on(SessionState.Maintenance, SessionEvent.MaintenanceEnded, ({ state }) =>
-        state.previousState === "Active"
-          ? SessionState.Active({ userId: "restored", role: "user", lastActivity: Date.now() })
-          : SessionState.Guest,
-      )
+      .on(SessionState.Maintenance, SessionEvent.MaintenanceEnded, ({ state }) => {
+        if (state.previousState === "Active") {
+          return SessionState.Active({ userId: "restored", role: "user", lastActivity: FIXTURE_NOW });
+        }
+        return SessionState.Guest;
+      })
       .on(SessionState.Active, SessionEvent.Logout, () => SessionState.LoggedOut)
       .final(SessionState.SessionExpired)
       .final(SessionState.LoggedOut);
@@ -111,16 +118,17 @@ describe("Session Lifecycle Pattern", () => {
     const machine = Machine.make({
       state: SessionState,
       event: SessionEvent,
-      initial: SessionState.Active({ userId: "user-1", role: "user", lastActivity: Date.now() }),
+      initial: SessionState.Active({ userId: "user-1", role: "user", lastActivity: FIXTURE_NOW }),
     })
       .on(SessionState.Active, SessionEvent.MaintenanceStarted, ({ event }) =>
         SessionState.Maintenance({ message: event.message, previousState: "Active" }),
       )
-      .on(SessionState.Maintenance, SessionEvent.MaintenanceEnded, ({ state }) =>
-        state.previousState === "Active"
-          ? SessionState.Active({ userId: "restored", role: "user", lastActivity: Date.now() })
-          : SessionState.Guest,
-      );
+      .on(SessionState.Maintenance, SessionEvent.MaintenanceEnded, ({ state }) => {
+        if (state.previousState === "Active") {
+          return SessionState.Active({ userId: "restored", role: "user", lastActivity: FIXTURE_NOW });
+        }
+        return SessionState.Guest;
+      });
 
     return assertPath(
       machine,
@@ -197,7 +205,7 @@ describe("Session Lifecycle Pattern", () => {
         .on(SessionState.Active, SessionEvent.SessionTimeout, () => SessionState.SessionExpired)
         // Use reenter to reenter the state, resetting the task timer
         .reenter(SessionState.Active, SessionEvent.Activity, ({ state }) =>
-          SessionState.Active.with(state, { lastActivity: Date.now() }),
+          SessionState.Active.with(state, { lastActivity: FIXTURE_NOW }),
         )
         .final(SessionState.SessionExpired);
 
@@ -235,7 +243,7 @@ describe("Session Lifecycle Pattern", () => {
     const activeMachine = Machine.make({
       state: SessionState,
       event: SessionEvent,
-      initial: SessionState.Active({ userId: "user-1", role: "user", lastActivity: Date.now() }),
+      initial: SessionState.Active({ userId: "user-1", role: "user", lastActivity: FIXTURE_NOW }),
     })
       .on(SessionState.Active, SessionEvent.Logout, () => SessionState.LoggedOut)
       .final(SessionState.LoggedOut);
