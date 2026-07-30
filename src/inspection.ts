@@ -156,7 +156,8 @@ const inspectionEffect = <S, E>(
   event: InspectionEvent<S, E>,
 ): Effect.Effect<void> => {
   const result = inspector.onInspect(event);
-  return Effect.isEffect(result) ? result : Effect.void;
+  if (Effect.isEffect(result)) return result;
+  return Effect.void;
 };
 
 export const combineInspectors = <S, E>(
@@ -217,8 +218,13 @@ const inspectionTraceName = <
       return `machine.transition ${event.fromState._tag}->${event.toState._tag}`;
     case "@machine.effect":
       return `machine.effect ${event.effectType}`;
-    case "@machine.task":
-      return `machine.task ${event.phase}${event.taskName === undefined ? "" : ` ${event.taskName}`}`;
+    case "@machine.task": {
+      let taskSuffix = "";
+      if (event.taskName !== undefined) {
+        taskSuffix = ` ${event.taskName}`;
+      }
+      return `machine.task ${event.phase}${taskSuffix}`;
+    }
     case "@machine.error":
       return `machine.error ${event.phase}`;
     case "@machine.stop":
@@ -259,13 +265,18 @@ const inspectionAttributes = <
         "machine.state.current": event.state._tag,
         "machine.effect.kind": event.effectType,
       };
-    case "@machine.task":
+    case "@machine.task": {
+      const taskNameAttribute: Record<string, string> = {};
+      if (event.taskName !== undefined) {
+        taskNameAttribute["machine.task.name"] = event.taskName;
+      }
       return {
         ...shared,
         "machine.state.current": event.state._tag,
         "machine.task.phase": event.phase,
-        ...(event.taskName === undefined ? {} : { "machine.task.name": event.taskName }),
+        ...taskNameAttribute,
       };
+    }
     case "@machine.error":
       return {
         ...shared,
@@ -284,8 +295,12 @@ export const tracingInspector = <
   options?: TracingInspectorOptions<S, E>,
 ): InspectorService<S, E> => ({
   onInspect: (event) => {
-    const spanName =
-      typeof options?.spanName === "function" ? options.spanName(event) : options?.spanName;
+    let spanName: string | undefined = undefined;
+    if (typeof options?.spanName === "function") {
+      spanName = options.spanName(event);
+    } else {
+      spanName = options?.spanName;
+    }
     const traceName = options?.eventName?.(event) ?? inspectionTraceName(event);
     const attributes = {
       ...inspectionAttributes(event),

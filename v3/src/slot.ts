@@ -95,8 +95,13 @@ export const fn: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): SlotFnDef<F, any> => {
   const hasFields = Object.keys(fields).length > 0;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const inputSchema = hasFields ? Schema.Struct(fields) : (Schema.Void as any);
+  let inputSchema: Schema.Schema.Any;
+  if (hasFields) {
+    inputSchema = Schema.Struct(fields);
+  } else {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    inputSchema = Schema.Void as any;
+  }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const outputSchema = returnSchema ?? (Schema.Void as any);
   return {
@@ -300,11 +305,14 @@ export const define = <D extends SlotsDef>(definitions: D): SlotsSchema<D> => {
     );
   }
 
-  const buildUnion = <T>(schemas: Array<Schema.Schema.Any>): Schema.Schema<T> =>
+  const buildUnion = <T>(schemas: Array<Schema.Schema.Any>): Schema.Schema<T> => {
+    if (schemas.length === 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return Schema.Never as any;
+    }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    schemas.length === 0
-      ? (Schema.Never as any)
-      : (Schema.Union(...(schemas as [any, any])) as any);
+    return Schema.Union(...(schemas as [any, any])) as any;
+  };
 
   const requestSchema = buildUnion<SlotRequest<D>>(requestSchemas);
   const resultSchema = buildUnion<SlotResult<D>>(resultSchemas);

@@ -252,16 +252,17 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
       .spawn(`${childPrefix}${childId}`, childMachine)
       .pipe(Effect.provideService(ActorSystemTag, system));
   const onChildSpawned = config.onChildSpawned;
+  let spawn: MachineRef<E>["spawn"] = defaultSpawn;
+  if (onChildSpawned !== undefined) {
+    spawn = (childId, childMachine) =>
+      defaultSpawn(childId, childMachine).pipe(
+        Effect.tap((child) => onChildSpawned(childId, child)),
+      );
+  }
   const self: MachineRef<E> = {
     send: selfSend,
     cast: selfSend,
-    spawn:
-      onChildSpawned !== undefined
-        ? (childId, childMachine) =>
-            defaultSpawn(childId, childMachine).pipe(
-              Effect.tap((child) => onChildSpawned(childId, child)),
-            )
-        : defaultSpawn,
+    spawn,
     reply: (value: unknown) =>
       Effect.sync(() => {
         const deferred = deferredReplyRef.current;
@@ -337,11 +338,11 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
       Deferred.succeed(exitDeferred, ActorExit.Defect(cause, "initial-spawn")).pipe(
         Effect.andThen(Ref.set(stoppedRef, true)),
         Effect.andThen(
-          Effect.suspend(() =>
-            loopFiberRef.current !== undefined
-              ? Fiber.interrupt(loopFiberRef.current)
-              : Effect.void,
-          ),
+          Effect.suspend(() => {
+            const loopFiber = loopFiberRef.current;
+            if (loopFiber !== undefined) return Fiber.interrupt(loopFiber);
+            return Effect.void;
+          }),
         ),
         Effect.asVoid,
       );
@@ -387,11 +388,11 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
         Deferred.succeed(exitDeferred, ActorExit.Defect(cause, "spawn")).pipe(
           Effect.andThen(Ref.set(stoppedRef, true)),
           Effect.andThen(
-            Effect.suspend(() =>
-              loopFiberRef.current !== undefined
-                ? Fiber.interrupt(loopFiberRef.current)
-                : Effect.void,
-            ),
+            Effect.suspend(() => {
+              const loopFiber = loopFiberRef.current;
+              if (loopFiber !== undefined) return Fiber.interrupt(loopFiber);
+              return Effect.void;
+            }),
           ),
           Effect.asVoid,
         ),
@@ -757,13 +758,13 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
     // queued is narrowed: drain is handled above, so it's always an event-bearing variant here
     const eventQueued = queued;
     const processInner = processQueued(eventQueued) as Effect.Effect<ProcessQueuedResult<S>>;
-    const wrapped =
-      wrapProcess !== undefined
-        ? Effect.gen(function* () {
-            const currentState = yield* SubscriptionRef.get(stateRef);
-            return yield* wrapProcess(currentState, eventQueued.event, processInner);
-          })
-        : processInner;
+    let wrapped: Effect.Effect<ProcessQueuedResult<S>> = processInner;
+    if (wrapProcess !== undefined) {
+      wrapped = Effect.gen(function* () {
+        const currentState = yield* SubscriptionRef.get(stateRef);
+        return yield* wrapProcess(currentState, eventQueued.event, processInner);
+      });
+    }
 
     const { shouldStop, stateChanged } = yield* wrapped.pipe(
       Effect.catchCause((cause) => {

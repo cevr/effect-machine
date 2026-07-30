@@ -221,6 +221,34 @@ export interface TimeoutConfig<State, Event> {
 // Internal helpers
 // ============================================================================
 
+/* eslint-disable @typescript-eslint/no-explicit-any -- v3 Schema.Any context mismatch */
+type SlotValidators = Map<
+  string,
+  {
+    readonly decodeInput: (input: unknown) => any;
+    readonly decodeOutput: (input: unknown) => any;
+  }
+>;
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
+const describeThrown = (e: unknown): string => {
+  if (e instanceof Error) {
+    return e.message;
+  }
+  return String(e);
+};
+
+/** Normalize a single value or a readonly array of values into a readonly array. */
+const toReadonlyArray = <T>(valueOrValues: T | ReadonlyArray<T>): ReadonlyArray<T> => {
+  if (isReadonlyArray<T>(valueOrValues)) {
+    return valueOrValues;
+  }
+  return [valueOrValues];
+};
+
+const isReadonlyArray = <T>(value: T | ReadonlyArray<T>): value is ReadonlyArray<T> =>
+  Array.isArray(value);
+
 const emitTaskInspection = <S extends { readonly _tag: string }>(input: {
   readonly actorId: string;
   readonly state: S;
@@ -228,10 +256,12 @@ const emitTaskInspection = <S extends { readonly _tag: string }>(input: {
   readonly phase: "start" | "success" | "failure" | "interrupt";
   readonly error?: string;
 }) =>
-  Effect.flatMap(Effect.serviceOption(InspectorTag), (inspector) =>
-    Option.isNone(inspector)
-      ? Effect.void
-      : emitWithTimestamp(inspector.value, (timestamp) => ({
+  Effect.flatMap(
+    Effect.serviceOption(InspectorTag),
+    Option.match({
+      onNone: () => Effect.void,
+      onSome: (inspector) =>
+        emitWithTimestamp(inspector, (timestamp) => ({
           type: "@machine.task",
           actorId: input.actorId,
           state: input.state,
@@ -240,6 +270,7 @@ const emitTaskInspection = <S extends { readonly _tag: string }>(input: {
           error: input.error,
           timestamp,
         })),
+    }),
   );
 
 // ============================================================================
@@ -460,20 +491,20 @@ export class Machine<
     this.eventSchema = eventSchema;
 
     // Precompile slot validators (decode input, decode output) if validation enabled
-    const validators =
-      slotValidation && slotsSchema !== undefined
-        ? new Map(
-            Object.entries(slotsSchema.definitions).map(([name, def]) => [
-              name,
-              {
-                /* eslint-disable @typescript-eslint/no-explicit-any -- v3 Schema.Any context mismatch */
-                decodeInput: Schema.decodeUnknownSync(def.inputSchema as Schema.Schema<any, any>),
-                decodeOutput: Schema.decodeUnknownSync(def.outputSchema as Schema.Schema<any, any>),
-                /* eslint-enable @typescript-eslint/no-explicit-any */
-              },
-            ]),
-          )
-        : undefined;
+    let validators: SlotValidators | undefined = undefined;
+    if (slotValidation && slotsSchema !== undefined) {
+      validators = new Map(
+        Object.entries(slotsSchema.definitions).map(([name, def]) => [
+          name,
+          {
+            /* eslint-disable @typescript-eslint/no-explicit-any -- v3 Schema.Any context mismatch */
+            decodeInput: Schema.decodeUnknownSync(def.inputSchema as Schema.Schema<any, any>),
+            decodeOutput: Schema.decodeUnknownSync(def.outputSchema as Schema.Schema<any, any>),
+            /* eslint-enable @typescript-eslint/no-explicit-any */
+          },
+        ]),
+      );
+    }
 
     // Create slot closures — unified single map
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -488,23 +519,23 @@ export class Machine<
         }
 
         // Validate input
-        const validatedParams =
-          validators !== undefined
-            ? (() => {
-                try {
-                  const v = validators.get(name);
-                  return v !== undefined ? v.decodeInput(params) : params;
-                } catch (e) {
-                  return Effect.die(
-                    new SlotCodecError({
-                      slotName: name,
-                      phase: "input",
-                      message: e instanceof Error ? e.message : String(e),
-                    }),
-                  );
-                }
-              })()
-            : params;
+        let validatedParams: unknown = params;
+        if (validators !== undefined) {
+          try {
+            const validator = validators.get(name);
+            if (validator !== undefined) {
+              validatedParams = validator.decodeInput(params);
+            }
+          } catch (e) {
+            validatedParams = Effect.die(
+              new SlotCodecError({
+                slotName: name,
+                phase: "input",
+                message: describeThrown(e),
+              }),
+            );
+          }
+        }
 
         // If decodeInput returned an Effect.die, short-circuit
         if (Effect.isEffect(validatedParams)) {
@@ -542,7 +573,7 @@ export class Machine<
                   new SlotCodecError({
                     slotName: name,
                     phase: "output",
-                    message: e instanceof Error ? e.message : String(e),
+                    message: describeThrown(e),
                   }),
                 );
               }
@@ -552,10 +583,11 @@ export class Machine<
         return resultEffect;
       });
 
-    this._slots =
-      this._slotsSchema !== undefined
-        ? this._slotsSchema._createSlots(resolve)
-        : ({} as SlotCalls<SD>);
+    if (this._slotsSchema !== undefined) {
+      this._slots = this._slotsSchema._createSlots(resolve);
+    } else {
+      this._slots = {} as SlotCalls<SD>;
+    }
   }
 
   // ---- on ----
@@ -588,7 +620,7 @@ export class Machine<
       scope: TransitionScope<State, Event, R, _SD, _ED, SD, VariantsUnion<_SD> & BrandedState>,
     ) => unknown,
   ) {
-    const states = Array.isArray(stateOrStates) ? stateOrStates : [stateOrStates];
+    const states = toReadonlyArray(stateOrStates);
     build(new TransitionScope(this, states));
     return this;
   }
@@ -644,7 +676,7 @@ export class Machine<
   ): Machine<State, Event, R, _SD, _ED, SD>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   on(stateOrStates: any, event: any, handler: any): Machine<State, Event, R, _SD, _ED, SD> {
-    const states = Array.isArray(stateOrStates) ? stateOrStates : [stateOrStates];
+    const states = toReadonlyArray(stateOrStates);
     for (const s of states) {
       this.addTransition(s, event, handler, false);
     }
@@ -687,7 +719,7 @@ export class Machine<
   /* eslint-disable @typescript-eslint/no-explicit-any */
   reenter(stateOrStates: any, event: any, handler: any): Machine<State, Event, R, _SD, _ED, SD> {
     /* eslint-enable @typescript-eslint/no-explicit-any */
-    const states = Array.isArray(stateOrStates) ? stateOrStates : [stateOrStates];
+    const states = toReadonlyArray(stateOrStates);
     for (const s of states) {
       this.addTransition(s, event, handler, true);
     }
@@ -774,7 +806,7 @@ export class Machine<
   ): Machine<State, Event, R, _SD, _ED, SD>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   spawn(stateOrStates: any, handler: any): Machine<State, Event, R, _SD, _ED, SD> {
-    const states = Array.isArray(stateOrStates) ? stateOrStates : [stateOrStates];
+    const states = toReadonlyArray(stateOrStates);
     for (const s of states) {
       const stateTag = getTag(s);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -861,8 +893,10 @@ export class Machine<
           taskName: options.name,
           phase: "success",
         });
-        const successEvent =
-          options.onSuccess !== undefined ? options.onSuccess(exit.value, ctx) : exit.value;
+        let successEvent: unknown = exit.value;
+        if (options.onSuccess !== undefined) {
+          successEvent = options.onSuccess(exit.value, ctx);
+        }
         yield* ctx.self.send(successEvent);
         yield* Effect.yieldNow();
         return;
@@ -926,14 +960,19 @@ export class Machine<
     config: TimeoutConfig<NS, VariantsUnion<_ED> & BrandedEvent>,
   ): Machine<State, Event, R, _SD, _ED, SD> {
     const stateTag = getTag(state);
-    const resolveDuration =
-      typeof config.duration === "function"
-        ? (config.duration as (state: NS) => Duration.DurationInput)
-        : () => config.duration as Duration.DurationInput;
-    const resolveEvent =
-      typeof config.event === "function"
-        ? (config.event as (state: NS) => VariantsUnion<_ED> & BrandedEvent)
-        : () => config.event as VariantsUnion<_ED> & BrandedEvent;
+    let resolveDuration: (state: NS) => Duration.DurationInput;
+    if (typeof config.duration === "function") {
+      resolveDuration = config.duration as (state: NS) => Duration.DurationInput;
+    } else {
+      resolveDuration = () => config.duration as Duration.DurationInput;
+    }
+
+    let resolveEvent: (state: NS) => VariantsUnion<_ED> & BrandedEvent;
+    if (typeof config.event === "function") {
+      resolveEvent = config.event as (state: NS) => VariantsUnion<_ED> & BrandedEvent;
+    } else {
+      resolveEvent = () => config.event as VariantsUnion<_ED> & BrandedEvent;
+    }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return (this as any).task(state, (ctx: any) => Effect.sleep(resolveDuration(ctx.state)), {
@@ -993,7 +1032,7 @@ export class Machine<
       | ReadonlyArray<TaggedOrConstructor<VariantsUnion<_ED> & BrandedEvent>>,
   ): Machine<State, Event, R, _SD, _ED, SD> {
     const stateTag = getTag(state);
-    const eventList = Array.isArray(events) ? events : [events];
+    const eventList = toReadonlyArray(events);
     for (const ev of eventList) {
       const eventTag = getTag(ev);
       this._postponeRules.push({ stateTag, eventTag });
@@ -1128,7 +1167,12 @@ const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
         lifecycle?: Lifecycle<S, E>;
       },
 ) {
-  const opts = typeof idOrOptions === "string" ? { id: idOrOptions } : idOrOptions;
+  let opts: Exclude<typeof idOrOptions, string>;
+  if (typeof idOrOptions === "string") {
+    opts = { id: idOrOptions };
+  } else {
+    opts = idOrOptions;
+  }
   const actorId = opts?.id ?? `actor-${(yield* Random.next).toString(36).slice(2)}`;
   const materialized = materializeMachine(machine, opts?.slots);
   const actor = yield* createActor(actorId, materialized as AnyMachine<S, E, never>, {
