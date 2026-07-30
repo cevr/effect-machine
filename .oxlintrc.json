@@ -56,6 +56,49 @@
         "typescript/no-non-null-assertion": "off",
         "typescript/no-explicit-any": "off"
       }
+    },
+    {
+      // Synchronous builder and validation APIs. State(), Event(), $match,
+      // materializeMachine, and toEntity are called at module scope, outside any
+      // Effect, so a schema or provisioning mistake can only surface as a throw.
+      // The errors are already Schema.TaggedErrorClass, and the throw is the
+      // tested contract (see the toThrow assertions in the listed test files).
+      // FOLLOW-UP: return Either/Effect from these constructors and add
+      // *OrThrow variants. That is a breaking major, tracked separately.
+      "files": [
+        "src/schema.ts",
+        "src/machine.ts",
+        "src/cluster/to-entity.ts",
+        "v3/src/schema.ts",
+        "v3/src/machine.ts",
+        "v3/src/cluster/to-entity.ts",
+        "test/actor-system-observation.test.ts",
+        "test/actor.test.ts",
+        "test/inspection.test.ts",
+        "v3/test/actor-system-observation.test.ts",
+        "v3/test/actor.test.ts",
+        "v3/test/inspection.test.ts"
+      ],
+      "rules": {
+        "effect/noThrowStatement": "off"
+      }
+    },
+    {
+      // Synchronous callback boundaries. These guard user-supplied non-Effect
+      // callbacks — listener loops and getTag probing an unknown constructor —
+      // where a throwing callback must not crash the actor loop. There is no
+      // Effect context to route the failure through.
+      // FOLLOW-UP: type listeners as (s: S) => Effect<void> so failures are
+      // catchable. That is a breaking change to subscribe, tracked separately.
+      "files": [
+        "src/actor.ts",
+        "src/internal/utils.ts",
+        "v3/src/actor.ts",
+        "v3/src/internal/utils.ts"
+      ],
+      "rules": {
+        "effect/noTryCatch": "off"
+      }
     }
   ]
 }
