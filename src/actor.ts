@@ -7,7 +7,6 @@
  * - Actor creation and event loop
  */
 import {
-  Cause,
   Deferred,
   Effect,
   Exit,
@@ -33,7 +32,7 @@ import type { InspectorService } from "./inspection.js";
 import { Inspector as InspectorTag } from "./inspection.js";
 import { resolveTransition } from "./internal/transition.js";
 import type { ProcessEventHooks, ProcessEventResult } from "./internal/transition.js";
-import { emitWithTimestamp } from "./internal/inspection.js";
+import { emitWithTimestamp, makeInspectionHooks } from "./internal/inspection.js";
 import type { NoReplyError } from "./errors.js";
 import { DuplicateActorError, ActorStoppedError } from "./errors.js";
 import {
@@ -43,20 +42,14 @@ import {
   type RuntimeHandle,
 } from "./internal/runtime.js";
 
-// Re-export for external use (cluster)
-export { resolveTransition, runSpawnEffects, processEventCore } from "./internal/transition.js";
-export type {
-  ProcessEventError,
-  ProcessEventHooks,
-  ProcessEventResult,
-} from "./internal/transition.js";
+export type { ProcessEventResult } from "./internal/transition.js";
 
 // ============================================================================
 // QueuedEvent — re-export from runtime kernel
 // ============================================================================
 
 /** Discriminated mailbox request — alias for RuntimeQueuedEvent */
-export type QueuedEvent<S, E> = RuntimeQueuedEvent<S, E>;
+type QueuedEvent<S, E> = RuntimeQueuedEvent<S, E>;
 
 // ============================================================================
 // ActorRef Interface
@@ -310,12 +303,12 @@ export class ActorScope extends Context.Service<ActorScope, Scope.Scope>()(
 // ============================================================================
 
 /** Listener set for sync subscriptions */
-export type Listeners<S> = Set<(state: S) => void>;
+type Listeners<S> = Set<(state: S) => void>;
 
 /**
  * Notify all listeners of state change.
  */
-export const notifyListeners = <S>(listeners: Listeners<S>, state: S): void => {
+const notifyListeners = <S>(listeners: Listeners<S>, state: S): void => {
   for (const listener of listeners) {
     try {
       listener(state);
@@ -511,43 +504,6 @@ const buildActorRefCore = <
 // Actor Creation — delegates to runtime kernel with actor-specific hooks
 // ============================================================================
 
-/** Build ProcessEventHooks from an inspector */
-const buildInspectionHooks = <
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
->(
-  actorId: string,
-  inspector: InspectorService<S, E>,
-): ProcessEventHooks<S, E> => ({
-  onSpawnEffect: (state) =>
-    emitWithTimestamp(inspector, (timestamp) => ({
-      type: "@machine.effect",
-      actorId,
-      effectType: "spawn",
-      state,
-      timestamp,
-    })),
-  onTransition: (from, to, ev) =>
-    emitWithTimestamp(inspector, (timestamp) => ({
-      type: "@machine.transition",
-      actorId,
-      fromState: from,
-      toState: to,
-      event: ev,
-      timestamp,
-    })),
-  onError: (info) =>
-    emitWithTimestamp(inspector, (timestamp) => ({
-      type: "@machine.error",
-      actorId,
-      phase: info.phase,
-      state: info.state,
-      event: info.event,
-      error: Cause.pretty(info.cause),
-      timestamp,
-    })),
-});
-
 /**
  * Resolve actor system from context, creating an implicit one if none exists.
  * @internal
@@ -696,9 +652,9 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   const transitionsPubSub = yield* PubSub.unbounded<TransitionInfo<S, E>>();
 
   // Build hooks from inspector
-  let hooks: ReturnType<typeof buildInspectionHooks<S, E>> | undefined = undefined;
+  let hooks: ProcessEventHooks<S, E> | undefined = undefined;
   if (inspectorValue !== undefined) {
-    hooks = buildInspectionHooks(id, inspectorValue);
+    hooks = makeInspectionHooks(id, inspectorValue);
   }
 
   // Use initial state override if provided

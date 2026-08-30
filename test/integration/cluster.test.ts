@@ -18,7 +18,9 @@ import { describe, expect, it, test } from "effect-bun-test";
 import {
   ActorSystemDefault,
   ActorSystemService,
+  InspectorService,
   Machine,
+  makeInspector,
   simulate,
   State,
   Event,
@@ -340,6 +342,29 @@ describe("EntityMachine.layer", () => {
 
       const state = yield* ref.send(OrderEvent.Process);
       expect(state._tag).toBe("Processing");
+    }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)),
+  );
+
+  it.scopedLive("uses the Inspector service for transition events", () =>
+    Effect.gen(function* () {
+      const events: string[] = [];
+      const inspector = makeInspector<OrderState, OrderEvent>((event) => {
+        events.push(event.type);
+      });
+      const entity = toEntity(orderMachine, { type: "OrderInspection" });
+      const entityLayer = EntityMachine.layer(entity, orderMachine, {
+        initializeState: (entityId) => OrderState.Pending({ orderId: entityId }),
+      }).pipe(
+        Layer.provide(Layer.merge(ActorSystemDefault, Layer.succeed(InspectorService, inspector))),
+      );
+
+      const makeClient = yield* Entity.makeTestClient(entity, entityLayer);
+      const client = yield* makeClient("inspected-1");
+      const ref = makeEntityActorRef<OrderState, OrderEvent, never>(client, "inspected-1");
+
+      yield* ref.send(OrderEvent.Process);
+
+      expect(events).toContain("@machine.transition");
     }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)),
   );
 
