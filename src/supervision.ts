@@ -5,7 +5,6 @@
  * - `ActorExit<S>` — why an actor stopped (final, explicit stop, or defect)
  * - `DefectPhase` — where in the lifecycle a defect occurred
  * - `Supervision.Policy` — Schedule-based restart policy
- * - `CellPhase<S>` — internal phase machine for serializing stop/restart/drain
  *
  * @module
  */
@@ -47,26 +46,6 @@ export const ActorExit = {
     phase,
   }),
 } as const;
-
-// ============================================================================
-// CellPhase — internal phase machine for supervised actors
-// ============================================================================
-
-/**
- * Phase state for supervised actors. Serializes concurrent stop/restart/drain.
- *
- * Transitions:
- * - `Running` → crash → `Restarting` → new runtime → `Running`
- * - `Running` → explicit stop/drain → `Stopping` → `Terminated`
- * - `Restarting` → explicit stop → `Stopping` → `Terminated`
- *
- * @internal
- */
-export type CellPhase<S> =
-  | { readonly _tag: "Running"; readonly generation: number }
-  | { readonly _tag: "Restarting"; readonly generation: number }
-  | { readonly _tag: "Stopping" }
-  | { readonly _tag: "Terminated"; readonly exit: ActorExit<S> };
 
 // ============================================================================
 // Supervision Policy

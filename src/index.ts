@@ -57,7 +57,7 @@ export {
 
 // Supervision
 export { ActorExit, Supervision } from "./supervision.js";
-export type { DefectPhase, CellPhase } from "./supervision.js";
+export type { DefectPhase } from "./supervision.js";
 
 // Testing utilities
 export {

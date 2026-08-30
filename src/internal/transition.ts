@@ -15,22 +15,6 @@ import type { ActorSystemService } from "../actor.js";
 import { isEffect, isReplyResult, isDeferReplyResult, INTERNAL_ENTER_EVENT } from "./utils.js";
 import type { ReplyResult, DeferReplyResult } from "./utils.js";
 
-// ============================================================================
-// Transition Execution
-// ============================================================================
-
-/**
- * Result of executing a transition.
- */
-export interface TransitionExecutionResult<S> {
-  /** New state after transition (or current state if no transition matched) */
-  readonly newState: S;
-  /** Whether a transition was executed */
-  readonly transitioned: boolean;
-  /** Whether reenter was specified on the transition */
-  readonly reenter: boolean;
-}
-
 /**
  * Run a transition handler and return the new state.
  * Shared logic for executing handlers with proper context.
