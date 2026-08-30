@@ -372,7 +372,7 @@ const buildActorRefCore = <
       reply: undefined,
       postponed: false,
       lifecycleRan: false,
-      isFinal: machine.finalStates.has(currentState._tag),
+      isFinal: machine._isFinal(currentState._tag),
     } satisfies ProcessEventResult<S>;
   });
 
@@ -437,7 +437,7 @@ const buildActorRefCore = <
     return result;
   });
 
-  const awaitFinal = waitFor((state) => machine.finalStates.has(state._tag)).pipe(
+  const awaitFinal = waitFor((state) => machine._isFinal(state._tag)).pipe(
     Effect.withSpan("effect-machine.actor.awaitFinal"),
   );
 
@@ -594,9 +594,7 @@ const runSupervisionLoop = <
 
       let machineForRestart = cell.machine;
       if (restartState !== cell.machine.initial) {
-        machineForRestart = Object.create(cell.machine, {
-          initial: { value: restartState, enumerable: true },
-        }) as typeof cell.machine;
+        machineForRestart = cell.machine._withInitial(restartState);
       }
       const newRuntime = yield* options.spawnGeneration(machineForRestart);
       cell.runtimeRef.current = newRuntime;
@@ -660,9 +658,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   // Use initial state override if provided
   let machineWithState = machine;
   if (initial !== machine.initial) {
-    machineWithState = Object.create(machine, {
-      initial: { value: initial, enumerable: true },
-    }) as typeof machine;
+    machineWithState = machine._withInitial(initial);
   }
 
   // Cell-owned resources: stable across generations (supervision)
@@ -871,9 +867,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
         yield* SubscriptionRef.set(stateRef, resolved.value);
         // Runtime was created with cold initial — recreate with recovered state.
         // The runtime reads machine.initial for background/spawn effects.
-        const recoveredMachine = Object.create(machine, {
-          initial: { value: resolved.value, enumerable: true },
-        }) as typeof machine;
+        const recoveredMachine = machine._withInitial(resolved.value);
         const newRuntime = yield* spawnGeneration(recoveredMachine);
         runtimeRef.current = newRuntime;
       }

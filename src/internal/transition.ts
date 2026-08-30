@@ -181,14 +181,7 @@ export const shouldPostpone = <
   machine: Machine<S, E, R, any, any>,
   stateTag: string,
   eventTag: string,
-): boolean => {
-  for (const rule of machine._postponeRules) {
-    if (rule.stateTag === stateTag && rule.eventTag === eventTag) {
-      return true;
-    }
-  }
-  return false;
-};
+): boolean => machine._shouldPostpone(stateTag, eventTag);
 
 /**
  * Process a single event through the machine.
@@ -291,7 +284,7 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
     previousState: currentState,
     transitioned: true,
     lifecycleRan: runLifecycle,
-    isFinal: machine.finalStates.has(newState._tag),
+    isFinal: machine._isFinal(newState._tag),
     hasReply: result.hasReply,
     deferReply: result.deferReply,
     reply: result.reply,

@@ -260,7 +260,7 @@ const OrderEntityLayer = EntityMachine.layer(OrderEntity, orderMachine, {
 - **snapshot**: background scheduler + deactivation finalizer. No journal.
 - **journal**: inline event append on each RPC, replay on reactivation. Deactivation snapshot as fallback.
 
-**EntityMachineOptions:** `initializeState`, `hooks`, `maxIdleTime`, `mailboxCapacity`, `disableFatalDefects`, `defectRetryPolicy`, `persistence`
+**EntityMachineOptions:** `initializeState`, `maxIdleTime`, `mailboxCapacity`, `disableFatalDefects`, `defectRetryPolicy`, `persistence`
 
 ## Files
 

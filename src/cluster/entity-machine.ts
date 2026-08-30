@@ -157,9 +157,7 @@ export const EntityMachine = {
 
       let machineWithState = machine;
       if (initialState !== undefined) {
-        machineWithState = Object.create(machine, {
-          initial: { value: initialState, enumerable: true },
-        });
+        machineWithState = machine._withInitial(initialState);
       }
 
       // Version tracking

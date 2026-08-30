@@ -284,7 +284,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
     // Fork background effects under actorScope
     const backgroundFibers: Fiber.Fiber<void>[] = [];
 
-    for (const bg of machine._backgroundEffects) {
+    for (const bg of machine._backgroundEffectEntries()) {
       const fiber = yield* bg
         .handler({
           actorId,
@@ -341,7 +341,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
     );
 
     // Check if initial state is final — if so, clean up and signal done
-    if (machine.finalStates.has(machine.initial._tag)) {
+    if (machine._isFinal(machine.initial._tag)) {
       if (lifecycle?.onFinal !== undefined) yield* lifecycle.onFinal(machine.initial);
       yield* Ref.set(stoppedRef, true);
       yield* Scope.close(stateScopeRef.current, Exit.void);
@@ -665,7 +665,7 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
         break;
       case "ask":
         if (result.hasReply) {
-          const replySchema = machine._replySchemas?.get(event._tag);
+          const replySchema = machine._replySchema(event._tag);
           if (replySchema !== undefined) {
             const decoded = yield* Schema.decodeUnknownEffect(replySchema)(result.reply).pipe(
               Effect.catch((decodeError) =>
@@ -710,7 +710,7 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
   const initialState = yield* SubscriptionRef.get(stateRef);
   const advancement = makeEventAdvancement({
     initial: initialState,
-    isFinal: (state: S) => machine.finalStates.has(state._tag),
+    isFinal: (state: S) => machine._isFinal(state._tag),
     shouldPostpone: (state: S, queued: EventQueued) =>
       shouldPostpone(machine, state._tag, queued.event._tag),
     postpone: postponeQueued,
@@ -780,7 +780,7 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
               previousState: currentState,
               transitioned: false,
               lifecycleRan: false,
-              isFinal: machine.finalStates.has(currentState._tag),
+              isFinal: machine._isFinal(currentState._tag),
               hasReply: false,
               deferReply: false,
               reply: undefined,

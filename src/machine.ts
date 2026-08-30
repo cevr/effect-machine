@@ -293,23 +293,20 @@ export class Machine<
   _ED extends Record<string, Schema.Struct.Fields> = Record<string, Schema.Struct.Fields>,
 > {
   readonly initial: State;
-  /** @internal */ readonly _backgroundEffects: Array<BackgroundEffect<State, Event, R>>;
-  /** @internal */ readonly _finalStates: Set<string>;
-  /** @internal */ readonly _postponeRules: Array<{
+  readonly #backgroundEffects: Array<BackgroundEffect<State, Event, R>>;
+  readonly #finalStates: Set<string>;
+  readonly #postponeRules: Array<{
     readonly stateTag: string;
     readonly eventTag: string;
   }>;
   readonly stateSchema?: Schema.Schema<State>;
   readonly eventSchema?: Schema.Schema<Event>;
-  /** @internal */ readonly _replySchemas: ReadonlyMap<string, Schema.Decoder<unknown>>;
-  /** @internal */ readonly _transitionIndex: Map<
-    string,
-    Map<string, Array<Transition<State, Event, never>>>
-  >;
-  /** @internal */ readonly _spawnIndex: Map<string, Array<SpawnEffect<State, Event, R>>>;
+  readonly #replySchemas: ReadonlyMap<string, Schema.Decoder<unknown>>;
+  readonly #transitionIndex: Map<string, Map<string, Array<Transition<State, Event, never>>>>;
+  readonly #spawnIndex: Map<string, Array<SpawnEffect<State, Event, R>>>;
 
   get finalStates(): ReadonlySet<string> {
-    return this._finalStates;
+    return new Set(this.#finalStates);
   }
 
   /** @internal */
@@ -319,16 +316,16 @@ export class Machine<
     eventSchema?: Schema.Schema<Event>,
   ) {
     this.initial = initial;
-    this._backgroundEffects = [];
-    this._finalStates = new Set();
-    this._postponeRules = [];
-    this._transitionIndex = new Map();
-    this._spawnIndex = new Map();
+    this.#backgroundEffects = [];
+    this.#finalStates = new Set();
+    this.#postponeRules = [];
+    this.#transitionIndex = new Map();
+    this.#spawnIndex = new Map();
     let replySchemas: ReadonlyMap<string, Schema.Decoder<unknown>> = new Map();
     if (eventSchema !== undefined && hasReplySchemas(eventSchema)) {
       replySchemas = eventSchema._replySchemas;
     }
-    this._replySchemas = replySchemas;
+    this.#replySchemas = replySchemas;
     this.stateSchema = stateSchema;
     this.eventSchema = eventSchema;
   }
@@ -554,9 +551,9 @@ export class Machine<
         stateTag,
         handler: handler as unknown as SpawnEffect<State, Event, R>["handler"],
       };
-      const effects = this._spawnIndex.get(stateTag) ?? [];
+      const effects = this.#spawnIndex.get(stateTag) ?? [];
       effects.push(spawnEffect);
-      this._spawnIndex.set(stateTag, effects);
+      this.#spawnIndex.set(stateTag, effects);
     }
     return this;
   }
@@ -566,22 +563,67 @@ export class Machine<
     stateTag: string,
     eventTag: string,
   ): ReadonlyArray<Transition<State, Event, never>> {
-    const specific = this._transitionIndex.get(stateTag)?.get(eventTag) ?? [];
+    const specific = this.#transitionIndex.get(stateTag)?.get(eventTag) ?? [];
     if (specific.length > 0) return specific;
-    return this._transitionIndex.get("*")?.get(eventTag) ?? [];
+    return this.#transitionIndex.get("*")?.get(eventTag) ?? [];
   }
 
   /** @internal */
   _findSpawnEffects(stateTag: string): ReadonlyArray<SpawnEffect<State, Event, R>> {
-    return this._spawnIndex.get(stateTag) ?? [];
+    return this.#spawnIndex.get(stateTag) ?? [];
+  }
+
+  /** @internal */
+  _backgroundEffectEntries(): Iterable<BackgroundEffect<State, Event, R>> {
+    return this.#backgroundEffects.values();
+  }
+
+  /** @internal */
+  _isFinal(stateTag: string): boolean {
+    return this.#finalStates.has(stateTag);
+  }
+
+  /** @internal */
+  _shouldPostpone(stateTag: string, eventTag: string): boolean {
+    return this.#postponeRules.some(
+      (rule) => rule.stateTag === stateTag && rule.eventTag === eventTag,
+    );
+  }
+
+  /** @internal */
+  _replySchema(eventTag: string): Schema.Decoder<unknown> | undefined {
+    return this.#replySchemas.get(eventTag);
+  }
+
+  /** @internal */
+  _withInitial(initial: State): Machine<State, Event, R, _SD, _ED> {
+    const copy = new Machine<State, Event, R, _SD, _ED>(
+      initial,
+      this.stateSchema,
+      this.eventSchema,
+    );
+    copy.#backgroundEffects.push(...this.#backgroundEffects);
+    for (const stateTag of this.#finalStates) copy.#finalStates.add(stateTag);
+    copy.#postponeRules.push(...this.#postponeRules);
+    for (const [stateTag, events] of this.#transitionIndex) {
+      const eventCopy = new Map<string, Array<Transition<State, Event, never>>>();
+      for (const [eventTag, transitions] of events) {
+        eventCopy.set(eventTag, transitions.slice());
+      }
+      copy.#transitionIndex.set(stateTag, eventCopy);
+    }
+    for (const [stateTag, effects] of this.#spawnIndex) {
+      copy.#spawnIndex.set(stateTag, effects.slice());
+    }
+    return copy;
   }
 
   private registerTransition(transition: Transition<State, Event, never>): void {
-    const events = this._transitionIndex.get(transition.stateTag) ?? new Map();
+    const events = this.#transitionIndex.get(transition.stateTag) ?? new Map();
     const transitions = events.get(transition.eventTag) ?? [];
     transitions.push(transition);
     events.set(transition.eventTag, transitions);
-    this._transitionIndex.set(transition.stateTag, events);
+    this.#transitionIndex.set(transition.stateTag, events);
   }
 
   // ---- task ----
@@ -762,7 +804,7 @@ export class Machine<
     handler: StateEffectHandler<State, Event, Scope.Scope | R1>,
   ): Machine<State, Event, R | R1, _SD, _ED> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (this._backgroundEffects as any[]).push({
+    (this.#backgroundEffects as any[]).push({
       handler: handler as unknown as BackgroundEffect<State, Event, R>["handler"],
     });
     return this;
@@ -797,7 +839,7 @@ export class Machine<
     const eventList = toReadonlyArray(events);
     for (const ev of eventList) {
       const eventTag = getTag(ev);
-      this._postponeRules.push({ stateTag, eventTag });
+      this.#postponeRules.push({ stateTag, eventTag });
     }
     return this;
   }
@@ -808,7 +850,7 @@ export class Machine<
     state: TaggedOrConstructor<NS>,
   ): Machine<State, Event, R, _SD, _ED> {
     const stateTag = getTag(state);
-    this._finalStates.add(stateTag);
+    this.#finalStates.add(stateTag);
     return this;
   }
 
@@ -1032,7 +1074,7 @@ const replayImpl = Effect.fn("effect-machine.replay")(function* <
   const machine = input;
   const advancement = makeEventAdvancement({
     initial: options?.from ?? machine.initial,
-    isFinal: (state: S) => machine.finalStates.has(state._tag),
+    isFinal: (state: S) => machine._isFinal(state._tag),
     shouldPostpone: (state: S, event: E) => shouldPostpone(machine, state._tag, event._tag),
     postpone: (_state: S, event: E) => Effect.succeed({ input: event, value: undefined }),
     process: (state: S, event: E) =>
@@ -1042,7 +1084,7 @@ const replayImpl = Effect.fn("effect-machine.replay")(function* <
           transitioned: result.transitioned,
           stateChanged:
             result.transitioned && (result.newState._tag !== state._tag || result.reenter),
-          shouldStop: result.transitioned && machine.finalStates.has(result.newState._tag),
+          shouldStop: result.transitioned && machine._isFinal(result.newState._tag),
           value: undefined,
         })),
       ),

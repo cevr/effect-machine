@@ -46,7 +46,7 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
   const states: S[] = [machine.initial];
   const advancement = makeEventAdvancement({
     initial: machine.initial,
-    isFinal: (state: S) => machine.finalStates.has(state._tag),
+    isFinal: (state: S) => machine._isFinal(state._tag),
     shouldPostpone: (state: S, event: E) => shouldPostpone(machine, state._tag, event._tag),
     postpone: (_state: S, event: E) => Effect.succeed({ input: event, value: undefined }),
     process: (state: S, event: E) =>
@@ -58,7 +58,7 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
             transitioned: result.transitioned,
             stateChanged:
               result.transitioned && (result.newState._tag !== state._tag || result.reenter),
-            shouldStop: result.transitioned && machine.finalStates.has(result.newState._tag),
+            shouldStop: result.transitioned && machine._isFinal(result.newState._tag),
             value: undefined,
           };
         }),
@@ -219,7 +219,7 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
   const stateRef = yield* SubscriptionRef.make(machine.initial);
   const advancement = makeEventAdvancement({
     initial: machine.initial,
-    isFinal: (state: S) => machine.finalStates.has(state._tag),
+    isFinal: (state: S) => machine._isFinal(state._tag),
     shouldPostpone: (state: S, event: E) => shouldPostpone(machine, state._tag, event._tag),
     postpone: (state: S, event: E) => Effect.succeed({ input: event, value: state }),
     process: (state: S, event: E) =>
@@ -229,7 +229,7 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
           transitioned: result.transitioned,
           stateChanged:
             result.transitioned && (result.newState._tag !== state._tag || result.reenter),
-          shouldStop: result.transitioned && machine.finalStates.has(result.newState._tag),
+          shouldStop: result.transitioned && machine._isFinal(result.newState._tag),
           value: result.newState,
         })),
       ),

@@ -14,8 +14,7 @@ What are you building?
 ├─ Running actors                   → §Actors
 ├─ Typed ask/reply                  → §Ask / Reply
 ├─ Recovery/durability              → §Lifecycle
-├─ Timeouts / postpone              → §Timeouts, §Postpone
-└─ Slots (guards/effects)           → §Slots
+└─ Timeouts / postpone              → §Timeouts, §Postpone
 ```
 
 ## Schema-First
