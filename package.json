@@ -5,9 +5,6 @@
     "type": "git",
     "url": "https://github.com/cevr/effect-machine.git"
   },
-  "workspaces": [
-    "examples/*"
-  ],
   "files": [
     "dist"
   ],
@@ -43,9 +40,9 @@
     "fmt:check": "oxfmt --check",
     "test": "bun test --tsconfig-override=tsconfig.json",
     "test:watch": "bun test --watch",
-    "example:react": "bun run --filter effect-machine-example-react dev",
-    "example:solid": "bun run --filter effect-machine-example-solid dev",
-    "examples:gate": "bun run --filter effect-machine-example-react gate && bun run --filter effect-machine-example-solid gate",
+    "example:react": "bun run --cwd examples/react dev",
+    "example:solid": "bun run --cwd examples/solid dev",
+    "examples:gate": "bun run --cwd examples/react gate && bun run --cwd examples/solid gate",
     "bench": "bun benchmark/core.ts",
     "gate": "concurrently -n type,lint,fmt,test,build,examples -c blue,yellow,magenta,green,cyan,white \"bun run typecheck\" \"bun run lint:fix\" \"bun run fmt\" \"bun run test\" \"bun run build\" \"bun run examples:gate\"",
     "prepare": "lefthook install && effect-tsgo patch",
@@ -56,17 +53,33 @@
   "devDependencies": {
     "@changesets/changelog-github": "1.0.0",
     "@changesets/cli": "3.0.1",
+    "@effect/atom-react": "4.0.0-rc.112",
+    "@effect/atom-solid": "4.0.0-rc.112",
     "@effect/tsgo": "0.38.0",
+    "@solidjs/testing-library": "0.8.10",
+    "@testing-library/react": "16.3.3",
     "@types/bun": "1.4.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "@vitejs/plugin-react": "6.1.1",
     "concurrently": "10.0.5",
     "effect": "4.0.0-rc.112",
     "effect-bun-test": "0.3.0",
+    "jsdom": "30.0.1",
     "lefthook": "2.1.12",
+    "motion": "13.1.1",
     "oxfmt": "0.65.0",
     "oxlint": "1.80.0",
     "oxlint-plugin-effect": "0.11.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "solid-js": "1.9.15",
+    "solid-transition-group": "0.3.0",
     "tsdown": "0.22.14",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "vite": "8.2.2",
+    "vite-plugin-solid": "2.11.14",
+    "vitest": "4.1.11"
   },
   "peerDependencies": {
     "effect": ">=4.0.0-rc.112 <5"
