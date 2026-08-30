@@ -168,7 +168,7 @@ export const EntityMachine = {
       const computedInitial = initialState ?? machine.initial;
       const stateRef = yield* SubscriptionRef.make(computedInitial);
       const stoppedRef = yield* Ref.make(false);
-      const eventQueue = yield* Queue.unbounded<RuntimeQueuedEvent<E>>();
+      const eventQueue = yield* Queue.unbounded<RuntimeQueuedEvent<S, E>>();
 
       // Create runtime kernel — single queue, sequential processing
       const runtime = yield* createRuntime(machineWithState, system, {

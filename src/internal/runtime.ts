@@ -37,7 +37,7 @@ import { ActorSystem as ActorSystemTag } from "../actor.js";
 import type { ProcessEventHooks, ProcessEventResult } from "./transition.js";
 import { processEventCore, runSpawnEffects, shouldPostpone } from "./transition.js";
 import { makeEventAdvancement } from "./event-advancement.js";
-import { NoReplyError } from "../errors.js";
+import { ActorStoppedError, NoReplyError } from "../errors.js";
 import { INTERNAL_INIT_EVENT } from "./utils.js";
 import { ActorExit, type DefectPhase } from "../supervision.js";
 
@@ -46,7 +46,7 @@ import { ActorExit, type DefectPhase } from "../supervision.js";
 // ============================================================================
 
 /** @internal */
-export type RuntimeQueuedEvent<E> =
+export type RuntimeQueuedEvent<S, E> =
   | { readonly _tag: "send"; readonly event: E }
   | {
       readonly _tag: "sendWait";
@@ -56,12 +56,12 @@ export type RuntimeQueuedEvent<E> =
   | {
       readonly _tag: "call";
       readonly event: E;
-      readonly reply: Deferred.Deferred<ProcessEventResult<{ readonly _tag: string }>, unknown>;
+      readonly reply: Deferred.Deferred<ProcessEventResult<S>, ActorStoppedError>;
     }
   | {
       readonly _tag: "ask";
       readonly event: E;
-      readonly reply: Deferred.Deferred<unknown, NoReplyError>;
+      readonly reply: Deferred.Deferred<unknown, NoReplyError | ActorStoppedError>;
     }
   | {
       readonly _tag: "drain";
@@ -79,7 +79,7 @@ export type RuntimeQueuedEvent<E> =
  */
 export interface RuntimeCellResources<S, E> {
   readonly stateRef: SubscriptionRef.SubscriptionRef<S>;
-  readonly eventQueue: Queue.Queue<RuntimeQueuedEvent<E>>;
+  readonly eventQueue: Queue.Queue<RuntimeQueuedEvent<S, E>>;
   readonly stoppedRef: Ref.Ref<boolean>;
 }
 
@@ -93,8 +93,14 @@ export interface RuntimeHandle<S, E> {
   readonly send: (event: E) => Effect.Effect<void>;
   /** Enqueue event and wait for processing to complete (for RPC Send). Fails on defect. */
   readonly sendWait: (event: E) => Effect.Effect<void, unknown>;
+  /** Enqueue an event and return its processing result. */
+  readonly call: (event: E) => Effect.Effect<ProcessEventResult<S>, ActorStoppedError>;
   /** Enqueue an ask event, returns the reply value */
-  readonly ask: (event: E) => Effect.Effect<unknown, NoReplyError>;
+  readonly ask: (event: E) => Effect.Effect<unknown, NoReplyError | ActorStoppedError>;
+  /** Process queued events and stop. */
+  readonly drain: Effect.Effect<void>;
+  /** Enqueue an event from a synchronous adapter. */
+  readonly sendSync: (event: E) => void;
   /** Get current state */
   readonly getState: Effect.Effect<S>;
   /** SubscriptionRef for state observation (WatchState streaming) */
@@ -109,10 +115,8 @@ export interface RuntimeHandle<S, E> {
    * Events sent before start() are queued and processed when start() runs.
    */
   readonly start: Effect.Effect<void>;
-  /** @internal — raw event queue for direct enqueue (actor.ts uses this for pendingReplies tracking) */
-  readonly _queue: Queue.Queue<RuntimeQueuedEvent<E>>;
-  /** @internal — stopped ref for direct access */
-  readonly _stoppedRef: Ref.Ref<boolean>;
+  /** Fail pending requests for this runtime generation. */
+  readonly settlePendingRequests: Effect.Effect<void>;
   /**
    * Exit deferred — set exactly once with the exit reason when the runtime stops.
    * Final state → ActorExit.Final, explicit stop → ActorExit.Stopped, defect → ActorExit.Defect.
@@ -164,7 +168,7 @@ export interface RuntimeConfig<S, E> {
    * Use `Queue.sliding(n)` or `Queue.dropping(n)` for bounded queues.
    * Ignored when cellResources is provided.
    */
-  readonly queueFactory?: Effect.Effect<Queue.Queue<RuntimeQueuedEvent<E>>>;
+  readonly queueFactory?: Effect.Effect<Queue.Queue<RuntimeQueuedEvent<S, E>>>;
   /** Lifecycle callbacks for actor-specific concerns */
   readonly lifecycle?: RuntimeLifecycleHooks<S, E>;
   /** Wrap each processQueued invocation — actor uses for span annotations */
@@ -228,7 +232,8 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
   const stoppedRef = config.cellResources?.stoppedRef ?? (yield* Ref.make(false));
   const eventQueue =
     config.cellResources?.eventQueue ??
-    (yield* config.queueFactory ?? Queue.unbounded<RuntimeQueuedEvent<E>>());
+    (yield* config.queueFactory ?? Queue.unbounded<RuntimeQueuedEvent<S, E>>());
+  const pendingRequests = new Set<(error: ActorStoppedError) => Effect.Effect<void>>();
 
   // Exit deferred — set exactly once with the exit reason
   const exitDeferred = yield* Deferred.make<ActorExit<S>>();
@@ -238,7 +243,9 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
 
   // Pending deferred reply — stored when handler returns Machine.deferReply()
   // Settled by self.reply() from spawn handler
-  const deferredReplyRef: { current: Deferred.Deferred<unknown, NoReplyError> | undefined } = {
+  const deferredReplyRef: {
+    current: Deferred.Deferred<unknown, NoReplyError | ActorStoppedError> | undefined;
+  } = {
     current: undefined,
   };
 
@@ -398,6 +405,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
         machine,
         stateRef,
         eventQueue,
+        pendingRequests,
         stoppedRef,
         self,
         stateScopeRef,
@@ -463,6 +471,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
     const alreadyStopped = yield* Ref.get(stoppedRef);
     if (alreadyStopped) return;
     if (lifecycle?.onShutdown !== undefined) yield* lifecycle.onShutdown();
+    yield* settlePendingRequests(pendingRequests, actorId);
     yield* Ref.set(stoppedRef, true);
     const loopFiber = loopFiberRef.current;
     if (loopFiber !== undefined) {
@@ -480,7 +489,15 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
   }
 
   return {
-    ...makeHandle(stateRef, stoppedRef, eventQueue, exitDeferred, actorScope),
+    ...makeHandle(
+      actorId,
+      stateRef,
+      stoppedRef,
+      eventQueue,
+      pendingRequests,
+      exitDeferred,
+      actorScope,
+    ),
     stop: stop.pipe(Effect.provide(services)),
     start: start.pipe(Effect.provide(services)),
   };
@@ -491,48 +508,92 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
  * Shared between initial-final and normal paths.
  */
 const makeHandle = <S extends { readonly _tag: string }, E extends { readonly _tag: string }>(
+  actorId: string,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
   stoppedRef: Ref.Ref<boolean>,
-  eventQueue: Queue.Queue<RuntimeQueuedEvent<E>>,
+  eventQueue: Queue.Queue<RuntimeQueuedEvent<S, E>>,
+  pendingRequests: Set<(error: ActorStoppedError) => Effect.Effect<void>>,
   exitDeferred: Deferred.Deferred<ActorExit<S>>,
   actorScope: Scope.Closeable,
-): RuntimeHandle<S, E> => ({
-  send: (event: E) =>
+): RuntimeHandle<S, E> => {
+  const track = <A, RequestError>(
+    deferred: Deferred.Deferred<A, RequestError>,
+    settle: (error: ActorStoppedError) => Effect.Effect<void>,
+  ) => {
+    pendingRequests.add(settle);
+    return Deferred.await(deferred).pipe(
+      Effect.ensuring(Effect.sync(() => pendingRequests.delete(settle))),
+    );
+  };
+
+  const send = (event: E) =>
     Effect.gen(function* () {
       const stopped = yield* Ref.get(stoppedRef);
       if (!stopped) {
         yield* Queue.offer(eventQueue, { _tag: "send", event });
       }
-    }),
-  sendWait: (event: E) =>
-    Effect.gen(function* () {
+    });
+
+  return {
+    send,
+    sendWait: (event: E) =>
+      Effect.gen(function* () {
+        const stopped = yield* Ref.get(stoppedRef);
+        if (!stopped) {
+          const done = yield* Deferred.make<void, unknown>();
+          yield* Queue.offer(eventQueue, { _tag: "sendWait", event, done });
+          yield* track(done, (error) => Deferred.fail(done, error).pipe(Effect.asVoid));
+        }
+      }),
+    call: (event: E) =>
+      Effect.gen(function* () {
+        const stopped = yield* Ref.get(stoppedRef);
+        if (stopped) return yield* ActorStoppedError.make({ actorId });
+        const reply = yield* Deferred.make<ProcessEventResult<S>, ActorStoppedError>();
+        yield* Queue.offer(eventQueue, { _tag: "call", event, reply });
+        return yield* track(reply, (error) => Deferred.fail(reply, error).pipe(Effect.asVoid));
+      }),
+    ask: (event: E) =>
+      Effect.gen(function* () {
+        const stopped = yield* Ref.get(stoppedRef);
+        if (stopped) {
+          return yield* ActorStoppedError.make({ actorId });
+        }
+        const reply = yield* Deferred.make<unknown, NoReplyError | ActorStoppedError>();
+        yield* Queue.offer(eventQueue, { _tag: "ask", event, reply });
+        return yield* track(reply, (error) => Deferred.fail(reply, error).pipe(Effect.asVoid));
+      }),
+    drain: Effect.gen(function* () {
       const stopped = yield* Ref.get(stoppedRef);
-      if (!stopped) {
-        const done = yield* Deferred.make<void, unknown>();
-        yield* Queue.offer(eventQueue, { _tag: "sendWait", event, done });
-        yield* Deferred.await(done);
-      }
-    }),
-  ask: (event: E) =>
-    Effect.gen(function* () {
-      const stopped = yield* Ref.get(stoppedRef);
-      if (stopped) {
-        return yield* NoReplyError.make({ actorId: "stopped", eventTag: event._tag });
-      }
-      const reply = yield* Deferred.make<unknown, NoReplyError>();
-      yield* Queue.offer(eventQueue, { _tag: "ask", event, reply });
-      return yield* Deferred.await(reply);
-    }),
-  getState: SubscriptionRef.get(stateRef),
-  stateRef,
-  isStopped: Ref.get(stoppedRef),
-  stop: Effect.void,
-  start: Effect.void,
-  _queue: eventQueue,
-  _stoppedRef: stoppedRef,
-  exitDeferred,
-  actorScope,
-});
+      if (stopped) return;
+      const done = yield* Deferred.make<void>();
+      yield* Queue.offer(eventQueue, { _tag: "drain", done });
+      yield* Deferred.await(done);
+    }).pipe(Effect.asVoid),
+    sendSync: (event: E) => {
+      const stopped = Effect.runSync(Ref.get(stoppedRef));
+      if (!stopped) Effect.runSync(Queue.offer(eventQueue, { _tag: "send", event }));
+    },
+    getState: SubscriptionRef.get(stateRef),
+    stateRef,
+    isStopped: Ref.get(stoppedRef),
+    stop: Effect.void,
+    start: Effect.void,
+    settlePendingRequests: settlePendingRequests(pendingRequests, actorId),
+    exitDeferred,
+    actorScope,
+  };
+};
+
+const settlePendingRequests = (
+  pendingRequests: Set<(error: ActorStoppedError) => Effect.Effect<void>>,
+  actorId: string,
+) =>
+  Effect.gen(function* () {
+    const error = ActorStoppedError.make({ actorId });
+    for (const settle of pendingRequests) yield* settle(error);
+    pendingRequests.clear();
+  });
 
 // ============================================================================
 // Event loop
@@ -546,7 +607,8 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- wide acceptance
   machine: Machine<S, E, R, any, any>,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
-  eventQueue: Queue.Queue<RuntimeQueuedEvent<E>>,
+  eventQueue: Queue.Queue<RuntimeQueuedEvent<S, E>>,
+  pendingRequests: Set<(error: ActorStoppedError) => Effect.Effect<void>>,
   stoppedRef: Ref.Ref<boolean>,
   self: MachineRef<E>,
   stateScopeRef: { current: Scope.Closeable },
@@ -555,7 +617,9 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
   services: Context.Context<R>,
   exitDeferred: Deferred.Deferred<ActorExit<S>>,
   hooks?: ProcessEventHooks<S, E>,
-  deferredReplyRef?: { current: Deferred.Deferred<unknown, NoReplyError> | undefined },
+  deferredReplyRef?: {
+    current: Deferred.Deferred<unknown, NoReplyError | ActorStoppedError> | undefined;
+  },
   lifecycle?: RuntimeLifecycleHooks<S, E>,
   wrapProcess?: (
     state: S,
@@ -569,7 +633,7 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
   const forkEffect = fork ?? Effect.runFork;
 
   // Event-bearing queue variants (excludes drain sentinel)
-  type EventQueued = Exclude<RuntimeQueuedEvent<E>, { readonly _tag: "drain" }>;
+  type EventQueued = Exclude<RuntimeQueuedEvent<S, E>, { readonly _tag: "drain" }>;
 
   /** Set the exit deferred exactly once. */
   const setExit = (exit: ActorExit<S>) => Deferred.succeed(exitDeferred, exit).pipe(Effect.asVoid);
@@ -640,10 +704,7 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
     // Settle reply/done Deferreds
     switch (queued._tag) {
       case "call":
-        yield* Deferred.succeed(
-          queued.reply,
-          result as ProcessEventResult<{ readonly _tag: string }>,
-        );
+        yield* Deferred.succeed(queued.reply, result);
         break;
       case "sendWait":
         yield* Deferred.succeed(queued.done, undefined);
