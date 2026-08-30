@@ -293,8 +293,6 @@ export class Machine<
   _ED extends Record<string, Schema.Struct.Fields> = Record<string, Schema.Struct.Fields>,
 > {
   readonly initial: State;
-  /** @internal */ readonly _transitions: Array<Transition<State, Event, never>>;
-  /** @internal */ readonly _spawnEffects: Array<SpawnEffect<State, Event, R>>;
   /** @internal */ readonly _backgroundEffects: Array<BackgroundEffect<State, Event, R>>;
   /** @internal */ readonly _finalStates: Set<string>;
   /** @internal */ readonly _postponeRules: Array<{
@@ -321,8 +319,6 @@ export class Machine<
     eventSchema?: Schema.Schema<Event>,
   ) {
     this.initial = initial;
-    this._transitions = [];
-    this._spawnEffects = [];
     this._backgroundEffects = [];
     this._finalStates = new Set();
     this._postponeRules = [];
@@ -558,7 +554,6 @@ export class Machine<
         stateTag,
         handler: handler as unknown as SpawnEffect<State, Event, R>["handler"],
       };
-      this._spawnEffects.push(spawnEffect);
       const effects = this._spawnIndex.get(stateTag) ?? [];
       effects.push(spawnEffect);
       this._spawnIndex.set(stateTag, effects);
@@ -582,7 +577,6 @@ export class Machine<
   }
 
   private registerTransition(transition: Transition<State, Event, never>): void {
-    this._transitions.push(transition);
     const events = this._transitionIndex.get(transition.stateTag) ?? new Map();
     const transitions = events.get(transition.eventTag) ?? [];
     transitions.push(transition);
