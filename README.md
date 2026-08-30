@@ -17,17 +17,16 @@ Use it when a feature has:
 bun add effect-machine effect
 ```
 
-`effect` is a peer dependency. The repository validates both the v4 entrypoint
-and the `effect-machine/v3` mirror with `@effect/tsgo`, the latest Effect beta,
-type-aware oxlint, and Bun tests.
+`effect` is a peer dependency. The repository validates the package with
+`@effect/tsgo`, the latest Effect release candidate, type-aware oxlint, and Bun tests.
 
 ## Core Pattern
 
 States and events are schemas. Types, validation, and serialization from one place.
 
 ```ts
-import { Schema } from "effect";
-import { Event, Machine, Slot, State } from "effect-machine";
+import { Cause, Context, Effect, Schema } from "effect";
+import { Event, Machine, State } from "effect-machine";
 
 const CheckoutState = State({
   ReviewingCart: { cartId: Schema.String, totalCents: Schema.Number },
@@ -43,14 +42,19 @@ const CheckoutEvent = Event({
   Cancel: {},
 });
 
-const CheckoutSlots = Slot.define({
-  chargeCard: Slot.fn({ cartId: Schema.String, totalCents: Schema.Number }),
-});
+class PaymentService extends Context.Service<
+  PaymentService,
+  {
+    readonly chargeCard: (
+      cartId: string,
+      totalCents: number,
+    ) => Effect.Effect<{ readonly receiptId: string }>;
+  }
+>()("app/PaymentService") {}
 
 const checkoutMachine = Machine.make({
   state: CheckoutState,
   event: CheckoutEvent,
-  slots: CheckoutSlots,
   initial: CheckoutState.ReviewingCart({ cartId: "cart_123", totalCents: 4200 }),
 })
   .on(CheckoutState.ReviewingCart, CheckoutEvent.Submit, ({ state }) =>
@@ -65,8 +69,16 @@ const checkoutMachine = Machine.make({
   .onAny(CheckoutEvent.Cancel, ({ state }) =>
     CheckoutState.Failed.derive(state, { reason: "cancelled" }),
   )
-  .spawn(CheckoutState.ChargingCard, ({ slots, state }) =>
-    slots.chargeCard({ cartId: state.cartId, totalCents: state.totalCents }),
+  .task(
+    CheckoutState.ChargingCard,
+    ({ state }) =>
+      Effect.flatMap(PaymentService, (payment) =>
+        payment.chargeCard(state.cartId, state.totalCents),
+      ),
+    {
+      onSuccess: ({ receiptId }) => CheckoutEvent.Charged({ receiptId }),
+      onFailure: (cause) => CheckoutEvent.Declined({ reason: Cause.pretty(cause) }),
+    },
   )
   .final(CheckoutState.Confirmed)
   .final(CheckoutState.Failed);
@@ -81,36 +93,24 @@ A few things to notice:
 
 The builder also supports `.timeout(state, { duration, event })`, `.postpone(state, event)` for buffering, and `.reenter(...)` for re-running lifecycle on same-state transitions.
 
-## Slots
+## Effect Services
 
-Slots separate what a machine needs from how the app provides it. Declare them on the machine, provide implementations where you run it.
+Task, spawn, and background handlers can use standard Effect services. The machine type records each service requirement.
 
 ```ts
 const actor =
   yield *
-  Machine.spawn(checkoutMachine, {
-    slots: {
-      chargeCard: ({ cartId, totalCents }) =>
-        Effect.gen(function* () {
-          const ctx = yield* checkoutMachine.Context;
-          const result = yield* PaymentService.charge(cartId, totalCents);
-          yield* ctx.self.send(
-            result.ok
-              ? CheckoutEvent.Charged({ receiptId: result.receiptId })
-              : CheckoutEvent.Declined({ reason: result.error }),
-          );
-        }),
-    },
-  });
+  Machine.spawn(checkoutMachine).pipe(
+    Effect.provideService(PaymentService, {
+      chargeCard: (cartId) => Effect.succeed({ receiptId: `rcpt_${cartId}` }),
+    }),
+  );
 yield * actor.start;
 ```
 
-The same machine can run with different slot implementations in tests, local apps, or production. Slots are accepted everywhere the machine runs:
+`Machine.spawn` captures the current Effect context. A later `actor.start` keeps those services. Use a different layer or service value in each test or runtime.
 
-- `Machine.spawn(machine, { slots })`
-- `Machine.replay(machine, events, { slots })`
-- `simulate(machine, events, { slots })`
-- `createTestHarness(machine, { slots })`
+Transition handlers in `.on()` and `.reenter()` stay pure. Use services only in `.task()`, `.spawn()`, and `.background()`.
 
 ## Running Actors
 
@@ -118,23 +118,20 @@ The same machine can run with different slot implementations in tests, local app
 
 ```ts
 const program = Effect.gen(function* () {
-  const actor = yield* Machine.spawn(checkoutMachine, {
-    slots: {
-      chargeCard: ({ cartId }) =>
-        checkoutMachine.Context.pipe(
-          Effect.flatMap((ctx) =>
-            ctx.self.send(CheckoutEvent.Charged({ receiptId: `rcpt_${cartId}` })),
-          ),
-        ),
-    },
-  });
+  const actor = yield* Machine.spawn(checkoutMachine);
   yield* actor.start;
 
   yield* actor.send(CheckoutEvent.Submit);
   const finalState = yield* actor.awaitFinal;
 });
 
-Effect.runPromise(Effect.scoped(program));
+Effect.runPromise(
+  Effect.scoped(program).pipe(
+    Effect.provideService(PaymentService, {
+      chargeCard: (cartId) => Effect.succeed({ receiptId: `rcpt_${cartId}` }),
+    }),
+  ),
+);
 ```
 
 Key actor operations:
@@ -182,11 +179,10 @@ import { simulate } from "effect-machine";
 
 const result =
   yield *
-  simulate(
-    checkoutMachine,
-    [CheckoutEvent.Submit, CheckoutEvent.Charged({ receiptId: "rcpt_123" })],
-    { slots: { chargeCard: () => Effect.void } },
-  );
+  simulate(checkoutMachine, [
+    CheckoutEvent.Submit,
+    CheckoutEvent.Charged({ receiptId: "rcpt_123" }),
+  ]);
 
 expect(result.states.map((s) => s._tag)).toEqual(["ReviewingCart", "ChargingCard", "Confirmed"]);
 ```

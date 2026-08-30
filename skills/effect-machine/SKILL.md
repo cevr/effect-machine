@@ -119,45 +119,28 @@ machine.background(({ self }) =>
 );
 ```
 
-## Slots
+## Effect Services
 
-Unified parameterized slots via `Slot.define` + `Slot.fn`. Handlers take only params:
+Task, spawn, and background handlers can use standard Effect services:
 
 ```ts
-import { Slot } from "effect-machine";
+class Notifier extends Context.Service<
+  Notifier,
+  { readonly notify: (message: string) => Effect.Effect<void> }
+>()("app/Notifier") {}
 
-const MySlots = Slot.define({
-  canRetry: Slot.fn({ max: Schema.Number }, Schema.Boolean),
-  notify: Slot.fn({ msg: Schema.String }),
-});
+const machine = Machine.make({ state: S, event: E, initial: S.Idle }).spawn(S.Done, ({ state }) =>
+  Effect.flatMap(Notifier, (notifier) => notifier.notify(`Done: ${state.id}`)),
+);
 
-const machine = Machine.make({
-  state: S,
-  event: E,
-  slots: MySlots,
-  initial: S.Idle,
-})
-  .on(S.Error, E.Retry, ({ slots, state }) =>
-    Effect.gen(function* () {
-      if (yield* slots.canRetry({ max: 3 })) return S.Loading.derive(state);
-      return S.Failed;
-    }),
-  )
-  .spawn(S.Done, ({ slots, state }) => slots.notify({ msg: `Done: ${state.id}` }));
-
-// Provide at spawn time — handlers take only params
 const actor =
-  yield *
-  Machine.spawn(machine, {
-    slots: {
-      canRetry: ({ max }) => attempts < max,
-      notify: ({ msg }) => Effect.log(msg),
-    },
-  });
+  yield * Machine.spawn(machine).pipe(Effect.provideService(Notifier, { notify: Effect.log }));
 yield * actor.start;
 ```
 
-Slots are accepted everywhere: `Machine.spawn`, `Machine.replay`, `simulate`, `createTestHarness`.
+`Machine.spawn` captures the current Effect context. A later `actor.start` keeps those services.
+
+Keep `.on()` and `.reenter()` pure. These handlers cannot require services.
 
 ## Ask / Reply
 
@@ -360,7 +343,7 @@ Both `simulate` and `createTestHarness` accept `Machine` directly.
 ## Gotchas
 
 - **`Machine.spawn` returns unstarted actor** — must call `yield* actor.start`. `system.spawn` auto-starts.
-- **Slots are provided at spawn time** — `Machine.spawn(machine, { slots: { ... } })`
+- **Services are provided through Effect** — provide them when `Machine.spawn` allocates the actor
 - **Empty state = value, non-empty = constructor** — `S.Idle` vs `S.Loading({ url })`
 - **Spawn effects re-run on hydrate** — `Machine.spawn({ hydrate })` re-runs spawn effects for the hydrated state (timers, scoped resources)
 - **`hydrate` overrides recovery** — `resolve()` is never called when `hydrate` is set
@@ -368,4 +351,3 @@ Both `simulate` and `createTestHarness` accept `Machine` directly.
 - **Effectful handlers in replay** — replay runs handlers but stubs `self`/`system`. Side effects through `self.send` are no-ops.
 - **`ask()` requires reply schema** — only events with `Event.reply()` accepted; non-reply events are type errors
 - **Reply decode failure = defect** — if handler returns wrong type, actor dies (broken handler, not business logic)
-- **v3 compat** — import from `"effect-machine/v3"` for Effect v3 projects

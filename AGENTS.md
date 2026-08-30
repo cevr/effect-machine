@@ -7,7 +7,7 @@ Type-safe state machines for Effect.
 ```bash
 bun run gate          # typecheck + lint + test + build
 bun test              # Run tests
-bun run typecheck     # tsgo --noEmit for v4 and v3, patched by @effect/tsgo
+bun run typecheck     # tsgo --noEmit, patched by @effect/tsgo
 bun run lint          # type-aware oxlint; Effect diagnostics run through tsgo plugin
 bun run fmt           # oxfmt
 ```
@@ -31,7 +31,7 @@ const machine = Machine.make({ state, event, initial })
   .on(State.Idle, Event.Start, () => State.Running)
   .on([State.Draft, State.Review], Event.Cancel, () => State.Cancelled) // multi-state
   .onAny(Event.Reset, () => State.Idle) // wildcard (any state)
-  .spawn(State.Running, ({ slots }) => slots.poll())
+  .spawn(State.Running, () => Effect.flatMap(Poller, (poller) => poller.poll()))
   .timeout(State.Loading, { duration: Duration.seconds(30), event: Event.Timeout })
   .postpone(State.Connecting, Event.Data)
   .final(State.Done);
@@ -77,46 +77,28 @@ const updated = MyState.derive(state, { queue: newQueue });
 // Partial keys not in target variant are silently dropped
 ```
 
-## Slots
+## Effect Services
 
-Unified parameterized slots via `Slot.define` + `Slot.fn`. Handlers take only params (no ctx parameter):
+Use standard Effect services in task, spawn, and background handlers:
 
 ```ts
-const MySlots = Slot.define({
-  canRetry: Slot.fn({ max: Schema.Number }, Schema.Boolean),
-  fetch: Slot.fn({ url: Schema.String }),
-});
+class Api extends Context.Service<Api, { readonly fetch: (url: string) => Effect.Effect<Data> }>()(
+  "app/Api",
+) {}
 
-const machine = Machine.make({ state, event, slots: MySlots, initial }).on(
-  State.X,
-  Event.Y,
-  ({ slots }) =>
-    Effect.gen(function* () {
-      if (yield* slots.canRetry({ max: 3 })) {
-        yield* slots.fetch({ url: "/api" });
-      }
-      return State.Z;
-    }),
+const machine = Machine.make({ state, event, initial }).task(
+  State.Loading,
+  ({ state }) => Effect.flatMap(Api, (api) => api.fetch(state.url)),
+  { onSuccess: (data) => Event.Loaded({ data }) },
 );
 
-// Provide slot implementations at spawn time — handlers take only params
-const actor =
-  yield *
-  Machine.spawn(machine, {
-    slots: {
-      canRetry: ({ max }) => attempts < max,
-      fetch: ({ url }) => Http.get(url),
-    },
-  });
+const actor = yield * Machine.spawn(machine).pipe(Effect.provideService(Api, { fetch: Http.get }));
 yield * actor.start;
-
-// When a handler needs machine state, access via service
-Machine.spawn(machine, {
-  slots: {
-    canRetry: ({ max }) => machine.Context.pipe(Effect.map((ctx) => ctx.state.attempts < max)),
-  },
-});
 ```
+
+`Machine.spawn` captures the current Effect context. The actor keeps that context when `actor.start` runs later.
+
+Keep `.on()` and `.reenter()` pure. These handlers cannot require services.
 
 ## Running Machines
 
@@ -277,13 +259,14 @@ const count = yield* actor.ask(Event.GetCount);  // number
 
 ## Handler Type Constraints
 
-| Method                       | Allowed R | Why                                   |
-| ---------------------------- | --------- | ------------------------------------- |
-| `.on()` / `.reenter()`       | `never`   | Pure transitions, no services         |
-| `.spawn()` / `.background()` | `Scope`   | Finalizers allowed                    |
-| `spawn(..., { slots })`      | Any R     | Slot implementations can use services |
+| Method                       | Allowed R | Why                                |
+| ---------------------------- | --------- | ---------------------------------- |
+| `.on()` / `.reenter()`       | `never`   | Pure transitions, no services      |
+| `.spawn()` / `.background()` | `Scope`   | Finalizers allowed                 |
+| `.task()`                    | Any R     | Async work can use Effect services |
 
-- Handlers cannot require arbitrary services — use slots
+- Transition handlers cannot require services
+- Task, spawn, and background handlers can require services
 - Handlers cannot produce errors — error channel fixed to `never`
 - Handlers must return machine's state schema — wrong states rejected at compile time
 
