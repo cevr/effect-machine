@@ -14,5 +14,5 @@
       "effect-machine/atom": ["../../src/atom.ts"]
     }
   },
-  "include": ["src", "vite.config.ts", "../counter.ts"]
+  "include": ["src", "vite.config.ts"]
 }

@@ -38,7 +38,7 @@ import type { Duration, Schema } from "effect";
 import { Cause, Effect, Exit, Option, Random, Scope } from "effect";
 
 import type { TransitionResult } from "./internal/utils.js";
-import { getTag, makeReply, makeDeferReply } from "./internal/utils.js";
+import { getTag, INTERNAL_INIT_EVENT, makeReply, makeDeferReply } from "./internal/utils.js";
 import type {
   TaggedOrConstructor,
   BrandedState,
@@ -47,10 +47,14 @@ import type {
 } from "./internal/brands.js";
 import { getReplySchemas } from "./schema.js";
 import type { MachineStateSchema, MachineEventSchema, VariantsUnion } from "./schema.js";
-import type { DuplicateActorError } from "./errors.js";
+import type { ActorStoppedError, DuplicateActorError } from "./errors.js";
 import { makeEventAdvancement } from "./internal/event-advancement.js";
 import { executeTransition, shouldPostpone } from "./internal/transition.js";
 import { emitWithTimestamp } from "./internal/inspection.js";
+import {
+  MachineInitialization,
+  type MachineInitialization as MachineInitializationType,
+} from "./internal/machine-initialization.js";
 import type { BackgroundEffect, SpawnEffect, Transition } from "./internal/machine-definition.js";
 import type { ActorRef, ActorSystemService } from "./actor.js";
 import { Inspector as InspectorTag } from "./inspection.js";
@@ -94,6 +98,7 @@ export interface HandlerContext<State, Event> {
  */
 export interface StateHandlerContext<State, Event> {
   readonly actorId: string;
+  readonly generation: number;
   readonly state: State;
   readonly event: Event;
   readonly self: MachineRef<Event>;
@@ -116,13 +121,18 @@ export type StateEffectHandler<S, E, R> = (
   ctx: StateHandlerContext<S, E>,
 ) => Effect.Effect<void, never, R>;
 
+/** A condition for a transition candidate. Its error channel must be `never`. */
+export type GuardPredicate<State, Event, R = never> = (
+  ctx: HandlerContext<State, Event>,
+) => boolean | Effect.Effect<boolean, never, R>;
+
 // ============================================================================
 // Options types
 // ============================================================================
 
 export interface TaskOptions<State, Event, A, E1, ES, EF> {
   readonly onSuccess?: (value: A, ctx: StateHandlerContext<State, Event>) => ES;
-  readonly onFailure?: (cause: Cause.Cause<E1>, ctx: StateHandlerContext<State, Event>) => EF;
+  readonly onFailure?: (error: E1, ctx: StateHandlerContext<State, Event>) => EF;
   readonly name?: string;
 }
 
@@ -205,9 +215,10 @@ const toReadonlyArray = <T>(valueOrValues: T | ReadonlyArray<T>): ReadonlyArray<
 
 const emitTaskInspection = <S extends { readonly _tag: string }>(input: {
   readonly actorId: string;
+  readonly generation: number;
   readonly state: S;
   readonly taskName: string | undefined;
-  readonly phase: "start" | "success" | "failure" | "interrupt";
+  readonly phase: "start" | "success" | "failure" | "defect" | "interrupt";
   readonly error?: string;
 }) =>
   Effect.flatMap(Effect.serviceOption(InspectorTag), (inspector) => {
@@ -215,6 +226,7 @@ const emitTaskInspection = <S extends { readonly _tag: string }>(input: {
     return emitWithTimestamp(inspector.value, (timestamp) => ({
       type: "@machine.task",
       actorId: input.actorId,
+      generation: input.generation,
       state: input.state,
       taskName: input.taskName,
       phase: input.phase,
@@ -238,6 +250,28 @@ export interface MakeConfig<
   readonly initial: S;
 }
 
+export interface InputMakeConfig<
+  SD extends Record<string, Schema.Struct.Fields>,
+  ED extends Record<string, Schema.Struct.Fields>,
+  S extends BrandedState,
+  E extends BrandedEvent,
+  Input,
+> {
+  readonly state: MachineStateSchema<SD> & { Type: S };
+  readonly event: MachineEventSchema<ED> & { Type: E };
+  readonly initial: (input: Input) => S;
+}
+
+export interface FinalContext<State> {
+  readonly state: State;
+}
+
+type TaggedValue<Union, Tagged> = Tagged extends (...args: never[]) => infer Value
+  ? Value
+  : Tagged extends { readonly _tag: infer Tag }
+    ? Extract<Union, { readonly _tag: Tag }>
+    : never;
+
 // ============================================================================
 // Machine class
 // ============================================================================
@@ -258,10 +292,14 @@ export class Machine<
   R = never,
   _SD extends Record<string, Schema.Struct.Fields> = Record<string, Schema.Struct.Fields>,
   _ED extends Record<string, Schema.Struct.Fields> = Record<string, Schema.Struct.Fields>,
+  Input = void,
+  Output = State,
 > {
-  readonly initial: State;
+  readonly initial: Input extends void ? State : undefined;
+  readonly #initialization: MachineInitializationType<Input, State>;
   readonly #backgroundEffects: Array<BackgroundEffect<State, Event, R>>;
   readonly #finalStates: Set<string>;
+  readonly #finalOutputs: Map<string, (state: State) => unknown>;
   readonly #postponeRules: Array<{
     readonly stateTag: string;
     readonly eventTag: string;
@@ -270,19 +308,25 @@ export class Machine<
   readonly eventSchema: MachineEventSchema<_ED> & { readonly Type: Event };
   readonly #replySchemas: ReadonlyMap<string, Schema.Decoder<unknown>>;
   readonly #transitionIndex: Map<string, Map<string, Array<Transition<State, Event, never>>>>;
+  readonly #immediateIndex: Map<string, Array<Transition<State, Event, never>>>;
   readonly #spawnIndex: Map<string, Array<SpawnEffect<State, Event, R>>>;
 
   /** @internal */
   constructor(
-    initial: State,
+    initial: State | ((input: Input) => State),
     stateSchema: MachineStateSchema<_SD> & { readonly Type: State },
     eventSchema: MachineEventSchema<_ED> & { readonly Type: Event },
   ) {
-    this.initial = initial;
+    this.#initialization = MachineInitialization.make(initial);
+    this.initial = MachineInitialization.staticValue(this.#initialization) as Input extends void
+      ? State
+      : undefined;
     this.#backgroundEffects = [];
     this.#finalStates = new Set();
+    this.#finalOutputs = new Map();
     this.#postponeRules = [];
     this.#transitionIndex = new Map();
+    this.#immediateIndex = new Map();
     this.#spawnIndex = new Map();
     this.#replySchemas = getReplySchemas(eventSchema) ?? new Map();
     this.stateSchema = stateSchema;
@@ -293,8 +337,10 @@ export class Machine<
 
   from<NS extends VariantsUnion<_SD> & BrandedState, R1>(
     state: TaggedOrConstructor<NS>,
-    build: (scope: TransitionScope<State, Event, R, _SD, _ED, NS>) => R1,
-  ): Machine<State, Event, R, _SD, _ED>;
+    build: (
+      scope: TransitionScope<State, Event, R, _SD, _ED, NS, Input, Output>,
+    ) => TransitionScope<State, Event, R, _SD, _ED, NS, Input, Output, R1>,
+  ): Machine<State, Event, R | R1, _SD, _ED, Input, Output>;
   from<NS extends ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>, R1>(
     states: NS,
     build: (
@@ -306,17 +352,50 @@ export class Machine<
         _ED,
         NS[number] extends TaggedOrConstructor<infer S extends VariantsUnion<_SD> & BrandedState>
           ? S
-          : never
+          : never,
+        Input,
+        Output
       >,
-    ) => R1,
-  ): Machine<State, Event, R, _SD, _ED>;
+    ) => TransitionScope<
+      State,
+      Event,
+      R,
+      _SD,
+      _ED,
+      NS[number] extends TaggedOrConstructor<infer S extends VariantsUnion<_SD> & BrandedState>
+        ? S
+        : never,
+      Input,
+      Output,
+      R1
+    >,
+  ): Machine<State, Event, R | R1, _SD, _ED, Input, Output>;
   from(
     stateOrStates:
       | TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>
       | ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>,
     build: (
-      scope: TransitionScope<State, Event, R, _SD, _ED, VariantsUnion<_SD> & BrandedState>,
-    ) => unknown,
+      scope: TransitionScope<
+        State,
+        Event,
+        R,
+        _SD,
+        _ED,
+        VariantsUnion<_SD> & BrandedState,
+        Input,
+        Output
+      >,
+    ) => TransitionScope<
+      State,
+      Event,
+      R,
+      _SD,
+      _ED,
+      VariantsUnion<_SD> & BrandedState,
+      Input,
+      Output,
+      unknown
+    >,
   ) {
     const states = toReadonlyArray(stateOrStates);
     build(new TransitionScope(this, states));
@@ -328,18 +407,22 @@ export class Machine<
     NS extends VariantsUnion<_SD> & BrandedState,
     NE extends VariantsUnion<_ED> & BrandedEvent,
     RS extends VariantsUnion<_SD> & BrandedState,
+    R1,
+    RG = never,
   >(
     states: ReadonlyArray<TaggedOrConstructor<NS>>,
     event: TaggedOrConstructor<NE>,
-    handler: TransitionHandler<NS, NE, RS, never, ExtractReply<NE>>,
+    handler: TransitionHandler<NS, NE, RS, R1, ExtractReply<NE>>,
     reenter: boolean,
-  ): Machine<State, Event, R, _SD, _ED> {
+    guard?: GuardPredicate<NS, NE, RG>,
+  ): Machine<State, Event, R | R1 | RG, _SD, _ED, Input, Output> {
     for (const state of states) {
       this.addTransition(
         state,
         event,
         handler as unknown as TransitionHandler<NS, NE, BrandedState, never>,
         reenter,
+        guard,
       );
     }
     return this;
@@ -350,16 +433,18 @@ export class Machine<
     NS extends VariantsUnion<_SD> & BrandedState,
     NE extends VariantsUnion<_ED> & BrandedEvent,
     RS extends VariantsUnion<_SD> & BrandedState,
+    R1 = never,
   >(
     state: TaggedOrConstructor<NS>,
     event: TaggedOrConstructor<NE>,
-    handler: TransitionHandler<NS, NE, RS, never, ExtractReply<NE>>,
-  ): Machine<State, Event, R, _SD, _ED>;
+    handler: TransitionHandler<NS, NE, RS, R1, ExtractReply<NE>>,
+  ): Machine<State, Event, R | R1, _SD, _ED, Input, Output>;
   /** Register transition for multiple states (handler receives union of state types) */
   on<
     NS extends ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>,
     NE extends VariantsUnion<_ED> & BrandedEvent,
     RS extends VariantsUnion<_SD> & BrandedState,
+    R1 = never,
   >(
     states: NS,
     event: TaggedOrConstructor<NE>,
@@ -367,18 +452,72 @@ export class Machine<
       NS[number] extends TaggedOrConstructor<infer S> ? S : never,
       NE,
       RS,
-      never,
+      R1,
       ExtractReply<NE>
     >,
-  ): Machine<State, Event, R, _SD, _ED>;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  on(stateOrStates: any, event: any, handler: any): Machine<State, Event, R, _SD, _ED> {
+  ): Machine<State, Event, R | R1, _SD, _ED, Input, Output>;
+  /* eslint-disable @typescript-eslint/no-explicit-any -- overload implementation */
+  on(
+    stateOrStates: any,
+    event: any,
+    handler: any,
+  ): Machine<State, Event, R, _SD, _ED, Input, Output> {
     const states = toReadonlyArray(stateOrStates);
     for (const s of states) {
       this.addTransition(s, event, handler, false);
     }
     return this;
   }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+
+  // ---- when ----
+
+  /** Register a conditional transition for a single state. */
+  when<
+    NS extends VariantsUnion<_SD> & BrandedState,
+    NE extends VariantsUnion<_ED> & BrandedEvent,
+    RS extends VariantsUnion<_SD> & BrandedState,
+    RG = never,
+    R1 = never,
+  >(
+    state: TaggedOrConstructor<NS>,
+    event: TaggedOrConstructor<NE>,
+    predicate: GuardPredicate<NS, NE, RG>,
+    handler: TransitionHandler<NS, NE, RS, R1, ExtractReply<NE>>,
+  ): Machine<State, Event, R | RG | R1, _SD, _ED, Input, Output>;
+  /** Register a conditional transition for multiple states. */
+  when<
+    NS extends ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>,
+    NE extends VariantsUnion<_ED> & BrandedEvent,
+    RS extends VariantsUnion<_SD> & BrandedState,
+    RG = never,
+    R1 = never,
+  >(
+    states: NS,
+    event: TaggedOrConstructor<NE>,
+    predicate: GuardPredicate<NS[number] extends TaggedOrConstructor<infer S> ? S : never, NE, RG>,
+    handler: TransitionHandler<
+      NS[number] extends TaggedOrConstructor<infer S> ? S : never,
+      NE,
+      RS,
+      R1,
+      ExtractReply<NE>
+    >,
+  ): Machine<State, Event, R | RG | R1, _SD, _ED, Input, Output>;
+  /* eslint-disable @typescript-eslint/no-explicit-any -- overload implementation */
+  when(
+    stateOrStates: any,
+    event: any,
+    predicate: any,
+    handler: any,
+  ): Machine<State, Event, R, _SD, _ED, Input, Output> {
+    const states = toReadonlyArray(stateOrStates);
+    for (const state of states) {
+      this.addTransition(state, event, handler, false, predicate);
+    }
+    return this;
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
 
   // ---- reenter ----
 
@@ -391,16 +530,18 @@ export class Machine<
     NS extends VariantsUnion<_SD> & BrandedState,
     NE extends VariantsUnion<_ED> & BrandedEvent,
     RS extends VariantsUnion<_SD> & BrandedState,
+    R1 = never,
   >(
     state: TaggedOrConstructor<NS>,
     event: TaggedOrConstructor<NE>,
-    handler: TransitionHandler<NS, NE, RS, never, ExtractReply<NE>>,
-  ): Machine<State, Event, R, _SD, _ED>;
+    handler: TransitionHandler<NS, NE, RS, R1, ExtractReply<NE>>,
+  ): Machine<State, Event, R | R1, _SD, _ED, Input, Output>;
   /** Multiple states */
   reenter<
     NS extends ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>,
     NE extends VariantsUnion<_ED> & BrandedEvent,
     RS extends VariantsUnion<_SD> & BrandedState,
+    R1 = never,
   >(
     states: NS,
     event: TaggedOrConstructor<NE>,
@@ -408,12 +549,16 @@ export class Machine<
       NS[number] extends TaggedOrConstructor<infer S> ? S : never,
       NE,
       RS,
-      never,
+      R1,
       ExtractReply<NE>
     >,
-  ): Machine<State, Event, R, _SD, _ED>;
+  ): Machine<State, Event, R | R1, _SD, _ED, Input, Output>;
   /* eslint-disable @typescript-eslint/no-explicit-any */
-  reenter(stateOrStates: any, event: any, handler: any): Machine<State, Event, R, _SD, _ED> {
+  reenter(
+    stateOrStates: any,
+    event: any,
+    handler: any,
+  ): Machine<State, Event, R, _SD, _ED, Input, Output> {
     let states: any[];
     /* eslint-enable @typescript-eslint/no-explicit-any */
     if (Array.isArray(stateOrStates)) {
@@ -427,16 +572,67 @@ export class Machine<
     return this;
   }
 
+  /** Register a conditional reenter transition for a single state. */
+  reenterWhen<
+    NS extends VariantsUnion<_SD> & BrandedState,
+    NE extends VariantsUnion<_ED> & BrandedEvent,
+    RS extends VariantsUnion<_SD> & BrandedState,
+    RG = never,
+    R1 = never,
+  >(
+    state: TaggedOrConstructor<NS>,
+    event: TaggedOrConstructor<NE>,
+    predicate: GuardPredicate<NS, NE, RG>,
+    handler: TransitionHandler<NS, NE, RS, R1, ExtractReply<NE>>,
+  ): Machine<State, Event, R | RG | R1, _SD, _ED, Input, Output>;
+  /** Register a conditional reenter transition for multiple states. */
+  reenterWhen<
+    NS extends ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>,
+    NE extends VariantsUnion<_ED> & BrandedEvent,
+    RS extends VariantsUnion<_SD> & BrandedState,
+    RG = never,
+    R1 = never,
+  >(
+    states: NS,
+    event: TaggedOrConstructor<NE>,
+    predicate: GuardPredicate<NS[number] extends TaggedOrConstructor<infer S> ? S : never, NE, RG>,
+    handler: TransitionHandler<
+      NS[number] extends TaggedOrConstructor<infer S> ? S : never,
+      NE,
+      RS,
+      R1,
+      ExtractReply<NE>
+    >,
+  ): Machine<State, Event, R | RG | R1, _SD, _ED, Input, Output>;
+  /* eslint-disable @typescript-eslint/no-explicit-any -- overload implementation */
+  reenterWhen(
+    stateOrStates: any,
+    event: any,
+    predicate: any,
+    handler: any,
+  ): Machine<State, Event, R, _SD, _ED, Input, Output> {
+    const states = toReadonlyArray(stateOrStates);
+    for (const state of states) {
+      this.addTransition(state, event, handler, true, predicate);
+    }
+    return this;
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+
   // ---- onAny ----
 
   /**
    * Register a wildcard transition that fires from any state when no specific transition matches.
    * Specific `.on()` transitions always take priority over `.onAny()`.
    */
-  onAny<NE extends VariantsUnion<_ED> & BrandedEvent, RS extends VariantsUnion<_SD> & BrandedState>(
+  onAny<
+    NE extends VariantsUnion<_ED> & BrandedEvent,
+    RS extends VariantsUnion<_SD> & BrandedState,
+    R1 = never,
+  >(
     event: TaggedOrConstructor<NE>,
-    handler: TransitionHandler<VariantsUnion<_SD> & BrandedState, NE, RS, never>,
-  ): Machine<State, Event, R, _SD, _ED> {
+    handler: TransitionHandler<VariantsUnion<_SD> & BrandedState, NE, RS, R1>,
+  ): Machine<State, Event, R | R1, _SD, _ED, Input, Output> {
     const eventTag = getTag(event);
     const transition: Transition<State, Event, never> = {
       stateTag: "*",
@@ -448,13 +644,37 @@ export class Machine<
     return this;
   }
 
+  /** Register a conditional wildcard transition. */
+  whenAny<
+    NE extends VariantsUnion<_ED> & BrandedEvent,
+    RS extends VariantsUnion<_SD> & BrandedState,
+    RG = never,
+    R1 = never,
+  >(
+    event: TaggedOrConstructor<NE>,
+    predicate: GuardPredicate<VariantsUnion<_SD> & BrandedState, NE, RG>,
+    handler: TransitionHandler<VariantsUnion<_SD> & BrandedState, NE, RS, R1>,
+  ): Machine<State, Event, R | RG | R1, _SD, _ED, Input, Output> {
+    const eventTag = getTag(event);
+    const transition: Transition<State, Event, never> = {
+      stateTag: "*",
+      eventTag,
+      handler: handler as unknown as Transition<State, Event, never>["handler"],
+      reenter: false,
+      guard: predicate as unknown as GuardPredicate<State, Event, never>,
+    };
+    this.registerTransition(transition);
+    return this;
+  }
+
   /** @internal */
-  private addTransition<NS extends BrandedState, NE extends BrandedEvent>(
+  private addTransition<NS extends BrandedState, NE extends BrandedEvent, RG = never>(
     state: TaggedOrConstructor<NS>,
     event: TaggedOrConstructor<NE>,
-    handler: TransitionHandler<NS, NE, BrandedState, never>,
+    handler: TransitionHandler<NS, NE, BrandedState, unknown, ExtractReply<NE>>,
     reenter: boolean,
-  ): Machine<State, Event, R, _SD, _ED> {
+    guard?: GuardPredicate<NS, NE, RG>,
+  ): Machine<State, Event, R, _SD, _ED, Input, Output> {
     const stateTag = getTag(state);
     const eventTag = getTag(event);
 
@@ -463,12 +683,105 @@ export class Machine<
       eventTag,
       handler: handler as unknown as Transition<State, Event, never>["handler"],
       reenter,
+      guard: guard as unknown as GuardPredicate<State, Event, never> | undefined,
     };
 
     this.registerTransition(transition);
 
     return this;
   }
+
+  // ---- immediate ----
+
+  /**
+   * Register an eventless transition. The actor runs immediate transitions until stable.
+   * UI observers see only the stable state.
+   */
+  immediate<
+    NS extends VariantsUnion<_SD> & BrandedState,
+    RS extends VariantsUnion<_SD> & BrandedState,
+    R1 = never,
+  >(
+    state: TaggedOrConstructor<NS>,
+    handler: TransitionHandler<NS, VariantsUnion<_ED> & BrandedEvent, RS, R1>,
+  ): Machine<State, Event, R | R1, _SD, _ED, Input, Output>;
+  immediate<
+    NS extends ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>,
+    RS extends VariantsUnion<_SD> & BrandedState,
+    R1 = never,
+  >(
+    states: NS,
+    handler: TransitionHandler<
+      NS[number] extends TaggedOrConstructor<infer S> ? S : never,
+      VariantsUnion<_ED> & BrandedEvent,
+      RS,
+      R1
+    >,
+  ): Machine<State, Event, R | R1, _SD, _ED, Input, Output>;
+  /* eslint-disable @typescript-eslint/no-explicit-any -- overload implementation */
+  immediate(stateOrStates: any, handler: any): Machine<State, Event, R, _SD, _ED, Input, Output> {
+    const states = toReadonlyArray(stateOrStates);
+    for (const state of states) {
+      const stateTag = getTag(state);
+      const transitions = this.#immediateIndex.get(stateTag) ?? [];
+      transitions.push({
+        stateTag,
+        eventTag: "",
+        handler,
+      });
+      this.#immediateIndex.set(stateTag, transitions);
+    }
+    return this;
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+
+  /** Register a conditional eventless transition for a single state. */
+  immediateWhen<
+    NS extends VariantsUnion<_SD> & BrandedState,
+    RS extends VariantsUnion<_SD> & BrandedState,
+    RG = never,
+    R1 = never,
+  >(
+    state: TaggedOrConstructor<NS>,
+    predicate: GuardPredicate<NS, VariantsUnion<_ED> & BrandedEvent, RG>,
+    handler: TransitionHandler<NS, VariantsUnion<_ED> & BrandedEvent, RS, R1>,
+  ): Machine<State, Event, R | RG | R1, _SD, _ED, Input, Output>;
+  /** Register a conditional eventless transition for multiple states. */
+  immediateWhen<
+    NS extends ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>,
+    RS extends VariantsUnion<_SD> & BrandedState,
+    RG = never,
+    R1 = never,
+  >(
+    states: NS,
+    predicate: GuardPredicate<
+      NS[number] extends TaggedOrConstructor<infer S> ? S : never,
+      VariantsUnion<_ED> & BrandedEvent,
+      RG
+    >,
+    handler: TransitionHandler<
+      NS[number] extends TaggedOrConstructor<infer S> ? S : never,
+      VariantsUnion<_ED> & BrandedEvent,
+      RS,
+      R1
+    >,
+  ): Machine<State, Event, R | RG | R1, _SD, _ED, Input, Output>;
+  /* eslint-disable @typescript-eslint/no-explicit-any -- overload implementation */
+  immediateWhen(
+    stateOrStates: any,
+    predicate: any,
+    handler: any,
+  ): Machine<State, Event, R, _SD, _ED, Input, Output> {
+    const states = toReadonlyArray(stateOrStates);
+    for (const state of states) {
+      const stateTag = getTag(state);
+      const transitions = this.#immediateIndex.get(stateTag) ?? [];
+      transitions.push({ stateTag, eventTag: "", handler, guard: predicate });
+      this.#immediateIndex.set(stateTag, transitions);
+    }
+    return this;
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
 
   // ---- spawn ----
 
@@ -490,7 +803,7 @@ export class Machine<
   spawn<NS extends VariantsUnion<_SD> & BrandedState, R1>(
     state: TaggedOrConstructor<NS>,
     handler: StateEffectHandler<NS, VariantsUnion<_ED> & BrandedEvent, Scope.Scope | R1>,
-  ): Machine<State, Event, R | R1, _SD, _ED>;
+  ): Machine<State, Event, R | R1, _SD, _ED, Input, Output>;
   /** Multiple states */
   spawn<NS extends ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>, R1>(
     states: NS,
@@ -499,9 +812,9 @@ export class Machine<
       VariantsUnion<_ED> & BrandedEvent,
       Scope.Scope | R1
     >,
-  ): Machine<State, Event, R | R1, _SD, _ED>;
+  ): Machine<State, Event, R | R1, _SD, _ED, Input, Output>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  spawn(stateOrStates: any, handler: any): Machine<State, Event, R, _SD, _ED> {
+  spawn(stateOrStates: any, handler: any): Machine<State, Event, R, _SD, _ED, Input, Output> {
     const states = toReadonlyArray(stateOrStates);
     for (const s of states) {
       const stateTag = getTag(s);
@@ -523,13 +836,20 @@ export class Machine<
     eventTag: string,
   ): ReadonlyArray<Transition<State, Event, never>> {
     const specific = this.#transitionIndex.get(stateTag)?.get(eventTag) ?? [];
-    if (specific.length > 0) return specific;
-    return this.#transitionIndex.get("*")?.get(eventTag) ?? [];
+    const wildcard = this.#transitionIndex.get("*")?.get(eventTag) ?? [];
+    if (specific.length === 0) return wildcard;
+    if (wildcard.length === 0) return specific;
+    return [...specific, ...wildcard];
   }
 
   /** @internal */
   _findSpawnEffects(stateTag: string): ReadonlyArray<SpawnEffect<State, Event, R>> {
     return this.#spawnIndex.get(stateTag) ?? [];
+  }
+
+  /** @internal */
+  _findImmediateTransitions(stateTag: string): ReadonlyArray<Transition<State, Event, never>> {
+    return this.#immediateIndex.get(stateTag) ?? [];
   }
 
   /** @internal */
@@ -540,6 +860,18 @@ export class Machine<
   /** @internal */
   _isFinal(stateTag: string): boolean {
     return this.#finalStates.has(stateTag);
+  }
+
+  /** @internal */
+  _initial(input?: unknown): State {
+    return MachineInitialization.resolve(this.#initialization, input);
+  }
+
+  /** @internal */
+  _output(state: State): Output {
+    const resolve = this.#finalOutputs.get((state as { readonly _tag: string })._tag);
+    if (resolve === undefined) return state as unknown as Output;
+    return resolve(state) as Output;
   }
 
   /** @internal */
@@ -557,29 +889,6 @@ export class Machine<
   /** @internal */
   _replySchema(eventTag: string): Schema.Decoder<unknown> | undefined {
     return this.#replySchemas.get(eventTag);
-  }
-
-  /** @internal */
-  _withInitial(initial: State): Machine<State, Event, R, _SD, _ED> {
-    const copy = new Machine<State, Event, R, _SD, _ED>(
-      initial,
-      this.stateSchema,
-      this.eventSchema,
-    );
-    copy.#backgroundEffects.push(...this.#backgroundEffects);
-    for (const stateTag of this.#finalStates) copy.#finalStates.add(stateTag);
-    copy.#postponeRules.push(...this.#postponeRules);
-    for (const [stateTag, events] of this.#transitionIndex) {
-      const eventCopy = new Map<string, Array<Transition<State, Event, never>>>();
-      for (const [eventTag, transitions] of events) {
-        eventCopy.set(eventTag, transitions.slice());
-      }
-      copy.#transitionIndex.set(stateTag, eventCopy);
-    }
-    for (const [stateTag, effects] of this.#spawnIndex) {
-      copy.#spawnIndex.set(stateTag, effects.slice());
-    }
-    return copy;
   }
 
   private registerTransition(transition: Transition<State, Event, never>): void {
@@ -615,7 +924,7 @@ export class Machine<
       ctx: StateHandlerContext<NS, VariantsUnion<_ED> & BrandedEvent>,
     ) => Effect.Effect<A, E1, Scope.Scope | R1>,
     options: TaskOptions<NS, VariantsUnion<_ED> & BrandedEvent, A, E1, ES, EF>,
-  ): Machine<State, Event, R | R1, _SD, _ED>;
+  ): Machine<State, Event, R | R1, _SD, _ED, Input, Output>;
   /** Multiple states, explicit onSuccess */
   task<
     NS extends ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>,
@@ -640,15 +949,20 @@ export class Machine<
       ES,
       EF
     >,
-  ): Machine<State, Event, R | R1, _SD, _ED>;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  task(stateOrStates: any, run: any, options: any): Machine<State, Event, R, _SD, _ED> {
+  ): Machine<State, Event, R | R1, _SD, _ED, Input, Output>;
+  /* eslint-disable @typescript-eslint/no-explicit-any -- overload implementation */
+  task(
+    stateOrStates: any,
+    run: any,
+    options: any,
+  ): Machine<State, Event, R, _SD, _ED, Input, Output> {
     const handler = Effect.fn("effect-machine.task")(function* (
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ctx: StateHandlerContext<any, any>,
     ) {
       yield* emitTaskInspection({
         actorId: ctx.actorId,
+        generation: ctx.generation,
         state: ctx.state,
         taskName: options.name,
         phase: "start",
@@ -660,6 +974,7 @@ export class Machine<
       if (Exit.isSuccess(exit)) {
         yield* emitTaskInspection({
           actorId: ctx.actorId,
+          generation: ctx.generation,
           state: ctx.state,
           taskName: options.name,
           phase: "success",
@@ -677,21 +992,36 @@ export class Machine<
       if (Cause.hasInterruptsOnly(cause)) {
         yield* emitTaskInspection({
           actorId: ctx.actorId,
+          generation: ctx.generation,
           state: ctx.state,
           taskName: options.name,
           phase: "interrupt",
         });
         return;
       }
+      if (Cause.hasDies(cause) || Cause.hasInterrupts(cause)) {
+        yield* emitTaskInspection({
+          actorId: ctx.actorId,
+          generation: ctx.generation,
+          state: ctx.state,
+          taskName: options.name,
+          phase: "defect",
+          error: Cause.pretty(cause),
+        });
+        // @effect-diagnostics anyUnknownInErrorContext:off
+        return yield* Effect.failCause(cause).pipe(Effect.orDie);
+      }
+      const error = Option.getOrThrow(Cause.findErrorOption(cause));
       yield* emitTaskInspection({
         actorId: ctx.actorId,
+        generation: ctx.generation,
         state: ctx.state,
         taskName: options.name,
         phase: "failure",
         error: Cause.pretty(cause),
       });
       if (options.onFailure !== undefined) {
-        yield* ctx.self.send(options.onFailure(cause, ctx));
+        yield* ctx.self.send(options.onFailure(error, ctx));
         yield* Effect.yieldNow;
         return;
       }
@@ -702,6 +1032,7 @@ export class Machine<
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return this.spawn(stateOrStates, handler as any);
   }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
 
   // ---- timeout ----
 
@@ -729,7 +1060,7 @@ export class Machine<
   timeout<NS extends VariantsUnion<_SD> & BrandedState>(
     state: TaggedOrConstructor<NS>,
     config: TimeoutConfig<NS, VariantsUnion<_ED> & BrandedEvent>,
-  ): Machine<State, Event, R, _SD, _ED> {
+  ): Machine<State, Event, R, _SD, _ED, Input, Output> {
     const stateTag = getTag(state);
     const duration = config.duration;
     const event = config.event;
@@ -766,14 +1097,13 @@ export class Machine<
    */
   background<R1>(
     handler: StateEffectHandler<State, Event, Scope.Scope | R1>,
-  ): Machine<State, Event, R | R1, _SD, _ED> {
+  ): Machine<State, Event, R | R1, _SD, _ED, Input, Output> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (this.#backgroundEffects as any[]).push({
       handler: handler as unknown as BackgroundEffect<State, Event, R>["handler"],
     });
     return this;
   }
-
   // ---- postpone ----
 
   /**
@@ -798,7 +1128,7 @@ export class Machine<
     events:
       | TaggedOrConstructor<VariantsUnion<_ED> & BrandedEvent>
       | ReadonlyArray<TaggedOrConstructor<VariantsUnion<_ED> & BrandedEvent>>,
-  ): Machine<State, Event, R, _SD, _ED> {
+  ): Machine<State, Event, R, _SD, _ED, Input, Output> {
     const stateTag = getTag(state);
     const eventList = toReadonlyArray(events);
     for (const ev of eventList) {
@@ -810,12 +1140,27 @@ export class Machine<
 
   // ---- final ----
 
-  final<NS extends VariantsUnion<_SD> & BrandedState>(
+  final<Tagged extends TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>(
+    state: Tagged,
+  ): Machine<State, Event, R, _SD, _ED, Input, Output | TaggedValue<State, Tagged>>;
+  final<Tagged extends TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>, O>(
+    state: Tagged,
+    output: (ctx: FinalContext<TaggedValue<State, Tagged>>) => O,
+  ): Machine<State, Event, R, _SD, _ED, Input, Output | O>;
+  final<NS extends VariantsUnion<_SD> & BrandedState, O>(
     state: TaggedOrConstructor<NS>,
-  ): Machine<State, Event, R, _SD, _ED> {
+    output?: (ctx: FinalContext<NS>) => O,
+  ): Machine<State, Event, R, _SD, _ED, Input, Output | NS | O> {
     const stateTag = getTag(state);
     this.#finalStates.add(stateTag);
-    return this;
+    if (output === undefined) {
+      this.#finalOutputs.set(stateTag, (finalState) => finalState);
+    } else {
+      this.#finalOutputs.set(stateTag, (finalState) =>
+        output({ state: finalState as unknown as NS }),
+      );
+    }
+    return this as Machine<State, Event, R, _SD, _ED, Input, Output | NS | O>;
   }
 
   // ---- build ----
@@ -827,8 +1172,28 @@ export class Machine<
     ED extends Record<string, Schema.Struct.Fields>,
     S extends BrandedState,
     E extends BrandedEvent,
-  >(config: MakeConfig<SD, ED, S, E>): Machine<S, E, never, SD, ED> {
-    return new Machine<S, E, never, SD, ED>(config.initial, config.state, config.event);
+  >(config: MakeConfig<SD, ED, S, E>): Machine<S, E, never, SD, ED, void, never>;
+  static make<
+    SD extends Record<string, Schema.Struct.Fields>,
+    ED extends Record<string, Schema.Struct.Fields>,
+    S extends BrandedState,
+    E extends BrandedEvent,
+    Input,
+  >(config: InputMakeConfig<SD, ED, S, E, Input>): Machine<S, E, never, SD, ED, Input, never>;
+  static make<
+    SD extends Record<string, Schema.Struct.Fields>,
+    ED extends Record<string, Schema.Struct.Fields>,
+    S extends BrandedState,
+    E extends BrandedEvent,
+    Input,
+  >(
+    config: MakeConfig<SD, ED, S, E> | InputMakeConfig<SD, ED, S, E, Input>,
+  ): Machine<S, E, never, SD, ED, Input, never> {
+    return new Machine<S, E, never, SD, ED, Input, never>(
+      config.initial,
+      config.state,
+      config.event,
+    );
   }
 }
 
@@ -839,29 +1204,105 @@ class TransitionScope<
   _SD extends Record<string, Schema.Struct.Fields>,
   _ED extends Record<string, Schema.Struct.Fields>,
   SelectedState extends VariantsUnion<_SD> & BrandedState,
+  Input,
+  Output,
+  RAdded = never,
 > {
   constructor(
-    private readonly machine: Machine<State, Event, R, _SD, _ED>,
+    private readonly machine: Machine<State, Event, R, _SD, _ED, Input, Output>,
     private readonly states: ReadonlyArray<TaggedOrConstructor<SelectedState>>,
   ) {}
 
-  on<NE extends VariantsUnion<_ED> & BrandedEvent, RS extends VariantsUnion<_SD> & BrandedState>(
+  on<
+    NE extends VariantsUnion<_ED> & BrandedEvent,
+    RS extends VariantsUnion<_SD> & BrandedState,
+    R1 = never,
+  >(
     event: TaggedOrConstructor<NE>,
-    handler: TransitionHandler<SelectedState, NE, RS, never, ExtractReply<NE>>,
-  ): TransitionScope<State, Event, R, _SD, _ED, SelectedState> {
+    handler: TransitionHandler<SelectedState, NE, RS, R1, ExtractReply<NE>>,
+  ): TransitionScope<State, Event, R, _SD, _ED, SelectedState, Input, Output, RAdded | R1> {
     this.machine.scopeTransition(this.states, event, handler, false);
-    return this;
+    return this as TransitionScope<
+      State,
+      Event,
+      R,
+      _SD,
+      _ED,
+      SelectedState,
+      Input,
+      Output,
+      RAdded | R1
+    >;
   }
 
   reenter<
     NE extends VariantsUnion<_ED> & BrandedEvent,
     RS extends VariantsUnion<_SD> & BrandedState,
+    R1 = never,
   >(
     event: TaggedOrConstructor<NE>,
-    handler: TransitionHandler<SelectedState, NE, RS, never, ExtractReply<NE>>,
-  ): TransitionScope<State, Event, R, _SD, _ED, SelectedState> {
+    handler: TransitionHandler<SelectedState, NE, RS, R1, ExtractReply<NE>>,
+  ): TransitionScope<State, Event, R, _SD, _ED, SelectedState, Input, Output, RAdded | R1> {
     this.machine.scopeTransition(this.states, event, handler, true);
-    return this;
+    return this as TransitionScope<
+      State,
+      Event,
+      R,
+      _SD,
+      _ED,
+      SelectedState,
+      Input,
+      Output,
+      RAdded | R1
+    >;
+  }
+
+  when<
+    NE extends VariantsUnion<_ED> & BrandedEvent,
+    RS extends VariantsUnion<_SD> & BrandedState,
+    RG = never,
+    R1 = never,
+  >(
+    event: TaggedOrConstructor<NE>,
+    predicate: GuardPredicate<SelectedState, NE, RG>,
+    handler: TransitionHandler<SelectedState, NE, RS, R1, ExtractReply<NE>>,
+  ): TransitionScope<State, Event, R, _SD, _ED, SelectedState, Input, Output, RAdded | RG | R1> {
+    this.machine.scopeTransition(this.states, event, handler, false, predicate);
+    return this as TransitionScope<
+      State,
+      Event,
+      R,
+      _SD,
+      _ED,
+      SelectedState,
+      Input,
+      Output,
+      RAdded | RG | R1
+    >;
+  }
+
+  reenterWhen<
+    NE extends VariantsUnion<_ED> & BrandedEvent,
+    RS extends VariantsUnion<_SD> & BrandedState,
+    RG = never,
+    R1 = never,
+  >(
+    event: TaggedOrConstructor<NE>,
+    predicate: GuardPredicate<SelectedState, NE, RG>,
+    handler: TransitionHandler<SelectedState, NE, RS, R1, ExtractReply<NE>>,
+  ): TransitionScope<State, Event, R, _SD, _ED, SelectedState, Input, Output, RAdded | RG | R1> {
+    this.machine.scopeTransition(this.states, event, handler, true, predicate);
+    return this as TransitionScope<
+      State,
+      Event,
+      R,
+      _SD,
+      _ED,
+      SelectedState,
+      Input,
+      Output,
+      RAdded | RG | R1
+    >;
   }
 }
 
@@ -907,32 +1348,35 @@ import type { Supervision } from "./supervision.js";
  * ```
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyMachine<S, E, R> = Machine<S, E, R, any, any>;
+type AnyMachine<S, E, R, Input = void, Output = S> = Machine<S, E, R, any, any, Input, Output>;
+
+export type SpawnOptions<S, E, Input> = {
+  readonly id?: string;
+  readonly hydrate?: S;
+  readonly supervision?: Supervision.Policy;
+  readonly lifecycle?: Lifecycle<S, E>;
+} & ([Input] extends [void] ? { readonly input?: never } : { readonly input: Input });
 
 const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
->(
-  machine: AnyMachine<S, E, R>,
-  idOrOptions?:
-    | string
-    | {
-        id?: string;
-        hydrate?: S;
-        supervision?: Supervision.Policy;
-        lifecycle?: Lifecycle<S, E>;
-      },
-) {
-  let opts: Exclude<typeof idOrOptions, string>;
+  Input,
+  Output,
+>(machine: AnyMachine<S, E, R, Input, Output>, idOrOptions?: string | SpawnOptions<S, E, Input>) {
+  let opts: SpawnOptions<S, E, Input> | undefined;
   if (typeof idOrOptions === "string") {
-    opts = { id: idOrOptions };
+    opts = { id: idOrOptions } as SpawnOptions<S, E, Input>;
   } else {
     opts = idOrOptions;
   }
   const actorId = opts?.id ?? `actor-${(yield* Random.next).toString(36).slice(2)}`;
+  const machineInitial = machine._initial(opts?.input);
+  const initialState = opts?.hydrate ?? machineInitial;
   const actor = yield* createActor(actorId, machine, {
-    initialState: opts?.hydrate,
+    initialState,
+    machineInitial,
+    hydrated: opts?.hydrate !== undefined,
     supervision: opts?.supervision,
     lifecycle: opts?.lifecycle,
   });
@@ -962,18 +1406,44 @@ const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
  * });
  * ```
  */
-export const spawn: <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  machine: Machine<S, E, R, any, any>,
-  options?:
-    | string
-    | {
-        id?: string;
-        hydrate?: S;
-        supervision?: Supervision.Policy;
-        lifecycle?: Lifecycle<S, E>;
-      },
-) => Effect.Effect<ActorRef<S, E>, never, R> = spawnImpl;
+export const spawn: {
+  <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R, Output>(
+    machine: AnyMachine<S, E, R, void, Output>,
+    options?: string | SpawnOptions<S, E, void>,
+  ): Effect.Effect<ActorRef<S, E, Output>, never, R>;
+  <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R, Input, Output>(
+    machine: AnyMachine<S, E, R, Input, Output>,
+    options: SpawnOptions<S, E, Input>,
+  ): Effect.Effect<ActorRef<S, E, Output>, never, R>;
+} = spawnImpl;
+
+const runImpl = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+  Input,
+  Output,
+>(
+  machine: AnyMachine<S, E, R, Input, Output>,
+  options?: string | SpawnOptions<S, E, Input>,
+): Effect.Effect<Output, ActorStoppedError, R> =>
+  Effect.acquireUseRelease(
+    spawnImpl(machine, options),
+    (actor) => actor.start.pipe(Effect.andThen(actor.awaitOutput)),
+    (actor) => actor.stop,
+  );
+
+/** Run one actor to final output and always release its resources. */
+export const run: {
+  <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R, Output>(
+    machine: AnyMachine<S, E, R, void, Output>,
+    options?: string | SpawnOptions<S, E, void>,
+  ): Effect.Effect<Output, ActorStoppedError, R>;
+  <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R, Input, Output>(
+    machine: AnyMachine<S, E, R, Input, Output>,
+    options: SpawnOptions<S, E, Input>,
+  ): Effect.Effect<Output, ActorStoppedError, R>;
+} = runImpl;
 
 /**
  * Wrap an effect to provide an `ActorScope` from the current `Scope`.
@@ -1030,10 +1500,17 @@ const replayImpl = Effect.fn("effect-machine.replay")(function* <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
->(input: AnyMachine<S, E, R>, events: ReadonlyArray<E>, options?: { from?: S }) {
+  Input,
+>(
+  input: AnyMachine<S, E, R, Input, unknown>,
+  events: ReadonlyArray<E>,
+  options?: ReplayOptions<S, Input>,
+) {
   const machine = input;
+  const from = options?.from ?? machine._initial(options?.input);
+  const initial = yield* executeTransition(machine, from, { _tag: INTERNAL_INIT_EVENT } as E);
   const advancement = makeEventAdvancement({
-    initial: options?.from ?? machine.initial,
+    initial: initial.newState,
     isFinal: (state: S) => machine._isFinal(state._tag),
     shouldPostpone: (state: S, event: E) => shouldPostpone(machine, state._tag, event._tag),
     postpone: (_state: S, event: E) => Effect.succeed({ input: event, value: undefined }),
@@ -1057,19 +1534,31 @@ const replayImpl = Effect.fn("effect-machine.replay")(function* <
   return advancement.state;
 });
 
+export type ReplayOptions<S, Input> =
+  | { readonly from: S; readonly input?: never }
+  | ([Input] extends [void]
+      ? { readonly from?: never; readonly input?: never }
+      : { readonly from?: never; readonly input: Input });
+
 export const replay: {
   <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    machine: Machine<S, E, R, any, any>,
+    machine: Machine<S, E, R, any, any, void, any>,
     events: ReadonlyArray<E>,
-    options?: { from?: S },
+    options?: ReplayOptions<S, void>,
+  ): Effect.Effect<S, never, R>;
+  <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R, Input>(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    machine: Machine<S, E, R, any, any, Input, any>,
+    events: ReadonlyArray<E>,
+    options: ReplayOptions<S, Input>,
   ): Effect.Effect<S, never, R>;
 } = replayImpl;
 
 // Reply helpers
 export const reply = makeReply;
 export const deferReply = makeDeferReply;
-export type { ReplyResult, DeferReplyResult } from "./internal/utils.js";
+export type { DeferReplyResult, ReplyResult } from "./internal/utils.js";
 
 // Supervision (Machine.supervise) deferred to a dedicated PR — requires
 // deeper integration with the runtime kernel for defect detection and

@@ -112,3 +112,61 @@ it.scopedLive("select supports a custom equality function", () =>
     yield* actor.stop;
   }),
 );
+
+it.scopedLive("lifecycle and latest transition atoms retain terminal values", () =>
+  Effect.gen(function* () {
+    const FinalState = State({ Idle: {}, Done: {} });
+    const FinalEvent = Event({ Finish: {} });
+    const finalMachine = Machine.make({
+      state: FinalState,
+      event: FinalEvent,
+      initial: FinalState.Idle,
+    })
+      .on(FinalState.Idle, FinalEvent.Finish, () => FinalState.Done)
+      .final(FinalState.Done);
+    const actor = yield* Machine.spawn(finalMachine);
+    yield* actor.start;
+
+    const registry = AtomRegistry.make();
+    const lifecycleAtom = ActorAtom.lifecycle(actor);
+    const transitionAtom = ActorAtom.latestTransition(actor);
+    yield* actor.send(FinalEvent.Finish);
+    yield* actor.awaitExit;
+    yield* Effect.yieldNow;
+
+    expect(registry.get(lifecycleAtom)._tag).toBe("Final");
+    expect(registry.get(transitionAtom)?.event._tag).toBe("Finish");
+    expect(registry.get(transitionAtom)?.toState._tag).toBe("Done");
+
+    registry.dispose();
+  }),
+);
+
+it.scopedLive("can reevaluates guarded transitions when actor state changes", () =>
+  Effect.gen(function* () {
+    const LimitedState = State({ Active: { count: Schema.Finite } });
+    const LimitedEvent = Event({ Increment: {} });
+    const limitedMachine = Machine.make({
+      state: LimitedState,
+      event: LimitedEvent,
+      initial: LimitedState.Active({ count: 0 }),
+    }).when(
+      LimitedState.Active,
+      LimitedEvent.Increment,
+      ({ state }) => state.count < 1,
+      ({ state }) => LimitedState.Active({ count: state.count + 1 }),
+    );
+    const actor = yield* Machine.spawn(limitedMachine);
+    yield* actor.start;
+
+    const registry = AtomRegistry.make();
+    const canIncrementAtom = ActorAtom.can(actor, LimitedEvent.Increment);
+
+    expect(yield* AtomRegistry.getResult(registry, canIncrementAtom)).toBe(true);
+    yield* actor.call(LimitedEvent.Increment);
+    expect(yield* AtomRegistry.getResult(registry, canIncrementAtom)).toBe(false);
+
+    registry.dispose();
+    yield* actor.stop;
+  }),
+);

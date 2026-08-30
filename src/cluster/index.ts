@@ -41,7 +41,11 @@
  */
 
 export { toEntity, type ToEntityOptions, type EntityRpcs } from "./to-entity.js";
-export { EntityMachine, type EntityMachineOptions } from "./entity-machine.js";
+export {
+  EntityMachine,
+  type EntityMachineBaseOptions,
+  type EntityMachineOptions,
+} from "./entity-machine.js";
 export { type EntityActorRef, makeEntityActorRef } from "./entity-actor-ref.js";
 export {
   type PersistenceKey,

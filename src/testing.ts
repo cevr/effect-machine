@@ -3,17 +3,17 @@ import { Effect, SubscriptionRef } from "effect";
 import type { Machine } from "./machine.js";
 import { AssertionError } from "./errors.js";
 import { makeEventAdvancement } from "./internal/event-advancement.js";
-import {
-  executeTransition,
-  executeTransitionImmediate,
-  shouldPostpone,
-} from "./internal/transition.js";
-import { isEffect } from "./internal/utils.js";
+import { executeTransition, shouldPostpone } from "./internal/transition.js";
+import { INTERNAL_INIT_EVENT } from "./internal/utils.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type MachineInput<S, E, R> =
+type MachineInput<S, E, R, Input = void> =
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  Machine<S, E, R, any, any>;
+  Machine<S, E, R, any, any, Input, any>;
+
+export type SimulationOptions<Input> = [Input] extends [void]
+  ? { readonly input?: never }
+  : { readonly input: Input };
 
 /**
  * Result of simulating events through a machine
@@ -42,24 +42,28 @@ export interface SimulationResult<S> {
  * expect(result.states).toHaveLength(3) // Idle -> Loading -> Success
  * ```
  */
-export const simulate = Effect.fn("effect-machine.simulate")(function* <
+const simulateImpl = Effect.fn("effect-machine.simulate")(function* <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
->(input: MachineInput<S, E, R>, events: ReadonlyArray<E>) {
+  Input,
+>(
+  input: MachineInput<S, E, R, Input>,
+  events: ReadonlyArray<E>,
+  options?: SimulationOptions<Input>,
+) {
   const machine = input;
-  const states: S[] = [machine.initial];
+  const machineInitial = machine._initial(options?.input);
+  // eslint-disable-next-line effect/noAs -- internal eventless-transition sentinel
+  const initial = yield* executeTransition(machine, machineInitial, {
+    _tag: INTERNAL_INIT_EVENT,
+  } as E);
+  const states: S[] = [initial.newState];
   if (!machine._hasPostponeRules()) {
-    let state = machine.initial;
+    let state = initial.newState;
     for (const event of events) {
       if (machine._isFinal(state._tag)) break;
-      const execution = executeTransitionImmediate(machine, state, event);
-      let result;
-      if (isEffect(execution)) {
-        result = yield* execution;
-      } else {
-        result = execution;
-      }
+      const result = yield* executeTransition(machine, state, event);
       if (result.transitioned) {
         state = result.newState;
         states.push(state);
@@ -69,7 +73,7 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
   }
 
   const advancement = makeEventAdvancement({
-    initial: machine.initial,
+    initial: initial.newState,
     isFinal: (state: S) => machine._isFinal(state._tag),
     shouldPostpone: (state: S, event: E) => shouldPostpone(machine, state._tag, event._tag),
     postpone: (_state: S, event: E) => Effect.succeed({ input: event, value: undefined }),
@@ -95,6 +99,21 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
 
   return { states, finalState: advancement.state };
 });
+
+// @effect-diagnostics missingPipeableSignature:off -- conditional input overloads are data-first
+export const simulate: {
+  <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
+    input: MachineInput<S, E, R, void>,
+    events: ReadonlyArray<E>,
+    options?: SimulationOptions<void>,
+  ): Effect.Effect<SimulationResult<S>, never, R>;
+  <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R, Input>(
+    input: MachineInput<S, E, R, Input>,
+    events: ReadonlyArray<E>,
+    options: SimulationOptions<Input>,
+  ): Effect.Effect<SimulationResult<S>, never, R>;
+} = simulateImpl;
+// @effect-diagnostics missingPipeableSignature:on
 
 // AssertionError is exported from errors.ts
 export { AssertionError } from "./errors.js";
@@ -213,6 +232,9 @@ export interface TestHarnessOptions<S, E> {
   readonly onTransition?: (from: S, event: E, to: S) => void;
 }
 
+export type InputTestHarnessOptions<S, E, Input> = TestHarnessOptions<S, E> &
+  ([Input] extends [void] ? { readonly input?: never } : { readonly input: Input });
+
 /**
  * Create a test harness for step-by-step testing.
  * Does not run task, spawn, or background effects.
@@ -233,16 +255,21 @@ export interface TestHarnessOptions<S, E> {
  * })
  * ```
  */
-export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(function* <
+const createTestHarnessImpl = Effect.fn("effect-machine.createTestHarness")(function* <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
->(input: MachineInput<S, E, R>, options?: TestHarnessOptions<S, E>) {
+  Input,
+>(input: MachineInput<S, E, R, Input>, options?: InputTestHarnessOptions<S, E, Input>) {
   const machine = input;
-
-  const stateRef = yield* SubscriptionRef.make(machine.initial);
+  const machineInitial = machine._initial(options?.input);
+  // eslint-disable-next-line effect/noAs -- internal eventless-transition sentinel
+  const initial = yield* executeTransition(machine, machineInitial, {
+    _tag: INTERNAL_INIT_EVENT,
+  } as E);
+  const stateRef = yield* SubscriptionRef.make(initial.newState);
   const advancement = makeEventAdvancement({
-    initial: machine.initial,
+    initial: initial.newState,
     isFinal: (state: S) => machine._isFinal(state._tag),
     shouldPostpone: (state: S, event: E) => shouldPostpone(machine, state._tag, event._tag),
     postpone: (state: S, event: E) => Effect.succeed({ input: event, value: state }),
@@ -275,3 +302,16 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
     getState: SubscriptionRef.get(stateRef),
   };
 });
+
+// @effect-diagnostics missingPipeableSignature:off -- conditional input overloads are data-first
+export const createTestHarness: {
+  <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
+    input: MachineInput<S, E, R, void>,
+    options?: InputTestHarnessOptions<S, E, void>,
+  ): Effect.Effect<TestHarness<S, E>, never, R>;
+  <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R, Input>(
+    input: MachineInput<S, E, R, Input>,
+    options: InputTestHarnessOptions<S, E, Input>,
+  ): Effect.Effect<TestHarness<S, E>, never, R>;
+} = createTestHarnessImpl;
+// @effect-diagnostics missingPipeableSignature:on

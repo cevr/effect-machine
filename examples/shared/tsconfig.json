@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "skipLibCheck": true,
+    "noEmit": true,
+    "paths": {
+      "effect-machine": ["../../src/index.ts"],
+      "effect-machine/atom": ["../../src/atom.ts"]
+    }
+  },
+  "include": ["src"]
+}

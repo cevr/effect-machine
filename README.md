@@ -2,14 +2,9 @@
 
 Type-safe state machines for [Effect](https://effect.website).
 
-Complex workflows usually fail the same way: one `status` field, a few side booleans, and effects scattered across callbacks. `effect-machine` gives you one typed model for state, events, and transitions, then runs it as a real actor.
+Effect Machine gives one actor a schema-first state model, a typed event mailbox, scoped Effect work, typed input and output, supervision, persistence hooks, inspection, and framework-neutral Atom integration.
 
-Use it when a feature has:
-
-- multiple valid and invalid states
-- async work tied to state entry
-- retries, timeouts, cancellation, or backpressure
-- logic you want to reuse in-process, in tests, and in distributed systems
+Use it when a feature has several valid states, invalid transitions, state-owned async work, timeouts, cancellation, actor coordination, or UI views that need precise subscriptions.
 
 ## Install
 
@@ -17,244 +12,247 @@ Use it when a feature has:
 bun add effect-machine effect
 ```
 
-`effect` is a peer dependency. The repository validates the package with
-`@effect/tsgo`, the latest Effect release candidate, type-aware oxlint, and Bun tests.
+`effect` is a required peer dependency.
 
-## Core Pattern
-
-States and events are schemas. Types, validation, and serialization from one place.
+## Imports
 
 ```ts
-import { Cause, Context, Effect, Schema } from "effect";
+import { Event, Machine, State } from "effect-machine";
+import * as ActorAtom from "effect-machine/atom";
+import { EntityMachine, toEntity } from "effect-machine/cluster";
+```
+
+Use `effect-machine` for local machines and actors. Use `effect-machine/atom` for React, Solid, or another Effect Atom binding. Use `effect-machine/cluster` for distributed entity machines.
+
+## First machine
+
+States and events are Effect schemas.
+
+```ts
+import { Effect, Schema } from "effect";
 import { Event, Machine, State } from "effect-machine";
 
-const CheckoutState = State({
-  ReviewingCart: { cartId: Schema.String, totalCents: Schema.Number },
-  ChargingCard: { cartId: Schema.String, totalCents: Schema.Number },
-  Confirmed: { cartId: Schema.String, receiptId: Schema.String },
-  Failed: { cartId: Schema.String, reason: Schema.String },
+const DownloadState = State({
+  Idle: {},
+  Downloading: { url: Schema.String },
+  Done: { url: Schema.String, bytes: Schema.Finite },
+  Failed: { url: Schema.String, message: Schema.String },
 });
 
-const CheckoutEvent = Event({
-  Submit: {},
-  Charged: { receiptId: Schema.String },
-  Declined: { reason: Schema.String },
-  Cancel: {},
+const DownloadEvent = Event({
+  Start: { url: Schema.String },
+  Completed: { bytes: Schema.Finite },
+  Failed: { message: Schema.String },
 });
 
-class PaymentService extends Context.Service<
-  PaymentService,
-  {
-    readonly chargeCard: (
-      cartId: string,
-      totalCents: number,
-    ) => Effect.Effect<{ readonly receiptId: string }>;
-  }
->()("app/PaymentService") {}
-
-const checkoutMachine = Machine.make({
-  state: CheckoutState,
-  event: CheckoutEvent,
-  initial: CheckoutState.ReviewingCart({ cartId: "cart_123", totalCents: 4200 }),
+const downloadMachine = Machine.make({
+  state: DownloadState,
+  event: DownloadEvent,
+  initial: DownloadState.Idle,
 })
-  .on(CheckoutState.ReviewingCart, CheckoutEvent.Submit, ({ state }) =>
-    CheckoutState.ChargingCard.with(state),
+  .on(DownloadState.Idle, DownloadEvent.Start, ({ event }) =>
+    DownloadState.Downloading({ url: event.url }),
   )
-  .on(CheckoutState.ChargingCard, CheckoutEvent.Charged, ({ state, event }) =>
-    CheckoutState.Confirmed.with(state, { receiptId: event.receiptId }),
+  .on(DownloadState.Downloading, DownloadEvent.Completed, ({ state, event }) =>
+    DownloadState.Done.with(state, { bytes: event.bytes }),
   )
-  .on(CheckoutState.ChargingCard, CheckoutEvent.Declined, ({ state, event }) =>
-    CheckoutState.Failed.with(state, { reason: event.reason }),
+  .on(DownloadState.Downloading, DownloadEvent.Failed, ({ state, event }) =>
+    DownloadState.Failed.with(state, { message: event.message }),
   )
-  .onAny(CheckoutEvent.Cancel, ({ state }) =>
-    CheckoutState.Failed.with(state, { reason: "cancelled" }),
-  )
-  .task(
-    CheckoutState.ChargingCard,
-    ({ state }) =>
-      Effect.flatMap(PaymentService, (payment) =>
-        payment.chargeCard(state.cartId, state.totalCents),
-      ),
-    {
-      onSuccess: ({ receiptId }) => CheckoutEvent.Charged({ receiptId }),
-      onFailure: (cause) => CheckoutEvent.Declined({ reason: Cause.pretty(cause) }),
-    },
-  )
-  .final(CheckoutState.Confirmed)
-  .final(CheckoutState.Failed);
-```
+  .final(DownloadState.Done, ({ state }) => state.bytes)
+  .final(DownloadState.Failed, () => 0);
 
-A few things to notice:
-
-- Empty variants are values: `State.Idle`. Non-empty are constructors: `State.Loading({ url })`.
-- `State.with(source, overrides)` carries overlapping fields forward without manual copying.
-- `.onAny(...)` is a fallback; a specific `.on(...)` wins.
-- `.spawn(...)` runs work on state entry and cancels it on state exit.
-
-The builder also supports `.timeout(state, { duration, event })`, `.postpone(state, event)` for buffering, and `.reenter(...)` for re-running lifecycle on same-state transitions.
-
-## Effect Services
-
-Task, spawn, and background handlers can use standard Effect services. The machine type records each service requirement.
-
-```ts
-const actor =
-  yield *
-  Machine.spawn(checkoutMachine).pipe(
-    Effect.provideService(PaymentService, {
-      chargeCard: (cartId) => Effect.succeed({ receiptId: `rcpt_${cartId}` }),
-    }),
-  );
-yield * actor.start;
-```
-
-`Machine.spawn` captures the current Effect context. A later `actor.start` keeps those services. Use a different layer or service value in each test or runtime.
-
-Transition handlers in `.on()` and `.reenter()` stay pure. Use services only in `.task()`, `.spawn()`, and `.background()`.
-
-## Running Actors
-
-`Machine.spawn` allocates an actor but does not start it. Call `actor.start` to fork the event loop, background effects, and spawn effects. Events sent before `start()` are queued.
-
-```ts
-const program = Effect.gen(function* () {
-  const actor = yield* Machine.spawn(checkoutMachine);
-  yield* actor.start;
-
-  yield* actor.send(CheckoutEvent.Submit);
-  const finalState = yield* actor.awaitFinal;
-});
-
-Effect.runPromise(
-  Effect.scoped(program).pipe(
-    Effect.provideService(PaymentService, {
-      chargeCard: (cartId) => Effect.succeed({ receiptId: `rcpt_${cartId}` }),
+const program = Effect.scoped(
+  Machine.scoped(
+    Effect.gen(function* () {
+      const actor = yield* Machine.spawn(downloadMachine);
+      yield* actor.start;
+      yield* actor.send(DownloadEvent.Start({ url: "/report.pdf" }));
+      yield* actor.send(DownloadEvent.Completed({ bytes: 1024 }));
+      return yield* actor.awaitOutput;
     }),
   ),
 );
 ```
 
-Key actor operations:
+An empty variant is a value such as `DownloadState.Idle`. A non-empty variant is a constructor such as `DownloadState.Downloading({ url })`.
 
-- `start` forks the event loop (idempotent, required after `Machine.spawn`)
-- `send(event)` queues and returns immediately
-- `call(event)` returns full transition info
-- `ask(event)` returns a typed domain reply (requires `Event.reply(...)`)
-- `waitFor(...)` / `awaitFinal` for coordination
-- `stop` interrupts now; `drain` processes the remaining queue first
-- `awaitExit` completes when the actor stops
+`State.with(source, fields)` copies matching fields into the target variant. It prevents manual context spreading across different states.
 
-For named actors or shared lookup, use an actor system. `system.spawn` auto-starts — no `actor.start` needed:
+## Effect is the composition layer
+
+Effect Machine does not add an action queue or a second context system.
+
+| Work                                  | API                                          |
+| ------------------------------------- | -------------------------------------------- |
+| Unconditional state change            | `.on`, `.reenter`, or `.immediate`           |
+| Conditional state change              | `.when`, `.reenterWhen`, or `.immediateWhen` |
+| Work that produces a completion event | `.task`                                      |
+| State-owned stream or resource        | `.spawn`                                     |
+| Actor-owned stream or resource        | `.background`                                |
+| Autonomous machine sequence           | `Machine.run` with `Effect.flatMap`          |
+| Interactive multi-phase flow          | Parent machine with child actors             |
+
+Effect requirements remain in `R`. A machine cannot start until the application provides every required service. Effectful transition handlers must have `never` in their error channel. Convert expected failures to states or events.
+
+Read [the Effect model](./docs/effect-model.md) and [async work ownership](./docs/async-work.md).
+
+## Guards and stable state
+
+Register ordered candidates for one state and event. The first passing guard wins. An unguarded candidate is the fallback.
 
 ```ts
-import { ActorSystemDefault, ActorSystemService } from "effect-machine";
-
-const program = Effect.gen(function* () {
-  const system = yield* ActorSystemService;
-  const actor = yield* system.spawn("checkout-123", checkoutMachine);
-  yield* actor.send(CheckoutEvent.Submit);
-}).pipe(Effect.provide(ActorSystemDefault));
+machine
+  .when(
+    State.Checking,
+    Event.Continue,
+    function hasStock({ state }) {
+      return state.stock > 0;
+    },
+    () => State.Accepted,
+  )
+  .on(State.Checking, Event.Continue, () => State.Rejected)
+  .immediate(State.Accepted, ({ state }) => State.Ready.with(state));
 ```
 
-### Typed Replies
+The predicate can return a Boolean or `Effect<boolean, never, R>`. Its requirements flow into the machine type. `actor.can(event)` evaluates the same predicate with the actor's captured context. `ActorAtom.can(actor, event)` exposes the result to React and Solid. The inspector uses the predicate function name.
 
-Events can declare typed reply schemas:
+Immediate transitions run until the state is stable. Subscribers see only the stable state. The runtime stops an accidental eventless loop after 100 edges.
+
+## Effect services and tasks
 
 ```ts
-const CartEvent = Event({
-  GetTotal: Event.reply({}, Schema.Number),
+class Api extends Context.Service<
+  Api,
+  { readonly load: (id: string) => Effect.Effect<Data, ApiError> }
+>()("app/Api") {}
+
+machine.task(State.Loading, ({ state }) => Effect.flatMap(Api, (api) => api.load(state.id)), {
+  name: "load-data",
+  onSuccess: (data) => Event.Loaded({ data }),
+  onFailure: (error) => Event.LoadFailed({ message: String(error) }),
 });
 
-machine.on(State.Active, CartEvent.GetTotal, ({ state }) => Machine.reply(state, state.totalCents));
-
-const total = yield * actor.ask(CartEvent.GetTotal); // number
+const actor = yield * Machine.spawn(machine).pipe(Effect.provide(ApiLive));
+yield * actor.start;
 ```
 
-## Testing
+The actor captures the Effect context during allocation. It keeps those services when it starts later.
 
-Test transitions without spawning actors:
+`onFailure` receives the typed Effect error. A defect does not enter `onFailure`. It stops the actor or starts supervision.
 
-```ts
-import { simulate } from "effect-machine";
-
-const result =
-  yield *
-  simulate(checkoutMachine, [
-    CheckoutEvent.Submit,
-    CheckoutEvent.Charged({ receiptId: "rcpt_123" }),
-  ]);
-
-expect(result.states.map((s) => s._tag)).toEqual(["ReviewingCart", "ChargingCard", "Confirmed"]);
-```
-
-`simulate` and `createTestHarness` test transition logic. They do not run `.spawn()` or `.background()` effects.
-
-## React, Solid, and Vue
-
-Use the Effect Atom adapter to connect one actor to any Effect Atom framework binding. The actor remains the state owner. Atom writes send typed events.
+## Input, output, and composition
 
 ```ts
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import * as ActorAtom from "effect-machine/atom";
+const checkoutMachine = Machine.make({
+  state: CheckoutState,
+  event: CheckoutEvent,
+  initial: (input: CheckoutInput) => CheckoutState.Reviewing(input),
+}).final(CheckoutState.Done, ({ state }) => ({ receiptId: state.receiptId }));
 
-const checkoutAtom = ActorAtom.make(actor);
-
-function CheckoutTotal() {
-  const totalCents = useAtomValue(checkoutAtom, (state) =>
-    "totalCents" in state ? state.totalCents : 0,
-  );
-  const send = useAtomSet(checkoutAtom);
-
-  return <button onClick={() => send(CheckoutEvent.Submit)}>Pay {totalCents}</button>;
-}
-```
-
-`useAtomValue` subscribes to the selected value. It does not render again when another state field changes. Use `ActorAtom.select` when you need a reusable selector or a custom equality function:
-
-```ts
-const totalAtom = ActorAtom.select(
-  checkoutAtom,
-  (state) => ("totalCents" in state ? { cents: state.totalCents } : { cents: 0 }),
-  (value, next) => value.cents === next.cents,
+const program = Machine.run(cartMachine).pipe(
+  Effect.flatMap((cart) => Machine.run(checkoutMachine, { input: cart })),
 );
 ```
 
-The selected Atom stays writable. `useAtomSet(totalAtom)` still sends checkout events. Solid uses the same Atom with `@effect/atom-solid`. Vue uses the same Atom with `@effect/atom-vue`.
+`Machine.run` starts one actor, waits for output, and always stops it. Interruption releases actor resources. The final actor state remains available when you use `Machine.spawn` and retain the actor reference.
 
-Runnable React and Solid package examples are in `examples/react` and `examples/solid`.
+Use a parent machine when a UI must route between phases, keep shared values, or support back navigation. Read [Actors and systems](./docs/actors.md).
+
+## ActorRef
+
+| Member                      | Use                                                |
+| --------------------------- | -------------------------------------------------- |
+| `start`                     | Start a direct actor                               |
+| `send(event)`               | Queue an event                                     |
+| `call(event)`               | Process an event and return transition information |
+| `ask(event)`                | Return a typed reply from an `Event.reply` event   |
+| `waitFor(state)`            | Wait for a state constructor or predicate          |
+| `sendAndWait(event, state)` | Send and wait for a state                          |
+| `snapshot`                  | Read the current state as an Effect                |
+| `awaitFinal`                | Wait for the final state                           |
+| `awaitOutput`               | Wait for typed output                              |
+| `awaitExit`                 | Wait for `Final`, `Stopped`, or `Defect`           |
+| `drain`                     | Process queued events and stop                     |
+| `subscribe`                 | Observe state with a host callback                 |
+| `client`                    | Use the actor outside Effect                       |
+| `system`                    | Access named actors                                |
+| `children`                  | Read direct child actors                           |
+
+`Machine.spawn` returns an unstarted actor. `system.spawn` starts the actor.
+
+Use `actor.client` in a JavaScript callback or application that does not run inside Effect. `client.can(event)` returns a Promise and supports Effect predicates. `client.canSync(event)` supports Boolean predicates only. React and Solid should use Actor Atoms.
+
+## Atom, React, and Solid
+
+```ts
+import * as ActorAtom from "effect-machine/atom";
+
+const stateAtom = ActorAtom.make(actor);
+const countAtom = ActorAtom.select(stateAtom, (state) => state.count);
+```
+
+The selected Atom stays writable. Writes send machine events. A selector publishes only when its selected value changes.
+
+The React example uses `useAtomSuspense` and Motion. The Solid example uses `useAtomResource`, Suspense, and `solid-transition-group`. Both include performance tests. Both retain exit-animation data in the terminal machine state.
+
+Read [Atom and UI integration](./docs/atom-and-ui.md) and browse [all examples](./examples/README.md).
+
+## Persistence, supervision, and inspection
+
+- Recovery resolves state during actor startup.
+- Durability saves committed transitions.
+- Supervision restarts defects within an Effect `Schedule` budget.
+- Inspection reports events, named transition operations, transitions, named guards, tasks, Effects, errors, stops, and actor generations.
+
+Read [Persistence and supervision](./docs/persistence-and-supervision.md) and [Inspection](./docs/inspection.md).
+
+## Testing
+
+Use `simulate` or `createTestHarness` for transition paths. Spawn a real actor for tasks, services, resources, persistence, supervision, inspection, and actor topology.
+
+```ts
+const result = yield * simulate(machine, events, { input });
+yield * assertPath(machine, events, ["Idle", "Loading", "Done"]);
+yield * assertNeverReaches(machine, events, "Failed");
+```
+
+Read [Testing](./docs/testing.md).
+
+## XState migration
+
+The [migration guide](./docs/xstate-migration.md) covers context, assign, actions, invoked promise and callback actors, root routers, actor registries, selectors, inspection, persistence, and exit animation values. Its patterns come from a large XState kiosk application.
+
+## Cluster entities
+
+Use `effect-machine/cluster` to expose a machine through Effect Cluster. It supports typed send, ask, state reads, state watches, input adapters, snapshot persistence, and journal persistence.
+
+Read [Cluster entities](./docs/cluster.md).
+
+## Examples
+
+The examples directory is a Bun workspace.
 
 ```bash
+bun run examples:gate
 bun run example:react
 bun run example:solid
 ```
 
-Each example creates the actor through `Atom.make(Machine.scoped(...))`. React reads it with `useAtomSuspense`. Solid reads it with `useAtomResource` inside a Suspense boundary. The Atom scope owns actor cleanup.
+The [example matrix](./examples/README.md) links every pattern to executable code.
 
-Each example has a framework performance test. The React test counts component renders. The Solid test counts reactive computations. Both tests prove that an unrelated selector does not update.
+## Documentation
 
-The React example uses Motion `AnimatePresence`. The Solid example uses `solid-transition-group`. Both examples keep the old screen mounted for a 200 ms exit after the machine enters `Done`.
-
-The terminal `Done` state keeps the displayed `count` and `label`. The old screen stays valid without a local retained-value hook. Keep exit data in the terminal state or handle the terminal variant in the selector. Do not cache the last non-null selector value.
-
-## Cluster
-
-When the same machine needs to run behind `@effect/cluster`, turn it into an entity:
-
-```ts
-import { EntityMachine, toEntity } from "effect-machine/cluster";
-
-const CheckoutEntity = toEntity(checkoutMachine, { type: "Checkout" });
-
-const CheckoutEntityLayer = EntityMachine.layer(CheckoutEntity, checkoutMachine, {
-  initializeState: (entityId) => CheckoutState.ReviewingCart({ cartId: entityId, totalCents: 0 }),
-  persistence: { strategy: "journal" },
-});
-```
-
-Persistence strategies:
-
-- **Snapshot** — saves state periodically, restores on reactivation
-- **Journal** — appends events on each RPC, replays on reactivation
+- [Effect model](./docs/effect-model.md)
+- [Async work](./docs/async-work.md)
+- [Actors and systems](./docs/actors.md)
+- [Atom and UI integration](./docs/atom-and-ui.md)
+- [Persistence and supervision](./docs/persistence-and-supervision.md)
+- [Inspection](./docs/inspection.md)
+- [Testing](./docs/testing.md)
+- [Migration from XState](./docs/xstate-migration.md)
+- [Cluster entities](./docs/cluster.md)
+- [AI agent reference](./SKILL.md)
 
 ## License
 

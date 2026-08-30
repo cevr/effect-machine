@@ -1,5 +1,5 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Data, Effect, Schema } from "effect";
+import { Data, Duration, Effect, Schema } from "effect";
 
 import {
   ActorSystemDefault,
@@ -12,6 +12,7 @@ import {
   InspectorService,
   Machine,
   State,
+  Supervision,
   tracingInspector,
   Event,
 } from "../src/index.js";
@@ -113,6 +114,64 @@ describe("Inspection", () => {
       Effect.provide(ActorSystemDefault),
       Effect.provideService(InspectorService, collectingInspector(events)),
     );
+  });
+
+  it.scopedLive("reports named transition operations with actor generation", () => {
+    const events: InspectionEvent<TestState, TestEvent>[] = [];
+    const beginFetch = ({ event }: { readonly event: Extract<TestEvent, { _tag: "Fetch" }> }) =>
+      TestState.Loading({ url: event.url });
+
+    return Effect.gen(function* () {
+      const machine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle,
+      }).on(TestState.Idle, TestEvent.Fetch, beginFetch);
+
+      const system = yield* ActorSystemService;
+      const actor = yield* system.spawn("operation", machine);
+      yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
+      yield* yieldFibers;
+
+      const operation = events.find((event) => event.type === "@machine.operation");
+      expect(operation).toMatchObject({
+        actorId: "operation",
+        generation: 0,
+        operation: "beginFetch",
+      });
+      expect(events.every((event) => event.generation === 0)).toBe(true);
+    }).pipe(
+      Effect.provide(ActorSystemDefault),
+      Effect.provideService(InspectorService, collectingInspector(events)),
+    );
+  });
+
+  it.scopedLive("reports the new generation after supervision restarts", () => {
+    const events: Array<InspectionEvent<TestState, TestEvent>> = [];
+    return Effect.gen(function* () {
+      const machine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle,
+      })
+        .on(TestState.Idle, TestEvent.Fetch, () => Effect.die("restart"))
+        .on(TestState.Idle, TestEvent.Reset, () => TestState.Idle);
+
+      const actor = yield* Machine.spawn(machine, {
+        id: "supervised-inspection",
+        supervision: Supervision.restart({ maxRestarts: 1 }),
+      });
+      yield* actor.start;
+      yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
+      yield* Effect.sleep(Duration.millis(50));
+      yield* actor.send(TestEvent.Reset);
+      yield* yieldFibers;
+
+      const resetEvent = events.find(
+        (event) => event.type === "@machine.event" && event.event._tag === "Reset",
+      );
+      expect(resetEvent?.generation).toBe(1);
+    }).pipe(Effect.provideService(InspectorService, collectingInspector(events)));
   });
 
   it.scopedLive("emits spawn effect events", () => {
@@ -382,11 +441,12 @@ describe("Inspection", () => {
       // Filter to events between spawn and stop (the transition events)
       const transitionEvents = events.slice(1, -1); // Remove spawn at start and stop at end
 
-      // Expected order: spawn effect -> event received -> transition -> spawn effect
+      // Expected order: spawn effect -> event -> operation -> transition -> spawn effect
       const types = transitionEvents.map((e) => e.type);
       expect(types).toEqual([
         "@machine.effect", // spawn on Idle entry
         "@machine.event",
+        "@machine.operation",
         "@machine.transition",
         "@machine.effect", // spawn on Loading entry
       ]);

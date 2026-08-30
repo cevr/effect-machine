@@ -323,6 +323,34 @@ describe("Entity.makeTestClient with machine handler", () => {
 // =============================================================================
 
 describe("EntityMachine.layer", () => {
+  it.scopedLive("maps entity ID to required machine input", () =>
+    Effect.gen(function* () {
+      const InputState = State({ Active: { id: Schema.String } });
+      const InputEvent = Event({ Refresh: {} });
+      const inputMachine = Machine.make({
+        state: InputState,
+        event: InputEvent,
+        initial: (input: { readonly id: string }) => InputState.Active(input),
+      });
+      const entity = toEntity(inputMachine, { type: "MachineInput" });
+      const entityLayer = EntityMachine.layer(entity, inputMachine, {
+        input: (entityId) => ({ id: `input-${entityId}` }),
+      });
+
+      const makeClient = yield* Entity.makeTestClient(
+        entity,
+        entityLayer.pipe(Layer.provide(ActorSystemDefault)),
+      );
+      const client = yield* makeClient("entity-1");
+      const ref = makeEntityActorRef<typeof InputState.Type, typeof InputEvent.Type>(
+        client,
+        "entity-1",
+      );
+
+      expect(yield* ref.snapshot).toEqual(InputState.Active({ id: "input-entity-1" }));
+    }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)),
+  );
+
   // ---------------------------------------------------------------------------
   // Test 1: Basic send through EntityMachine.layer
   // ---------------------------------------------------------------------------

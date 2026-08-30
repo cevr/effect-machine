@@ -6,14 +6,22 @@
  * Type-level tests for handler constraints.
  *
  * These tests verify that handlers:
- * 1. Cannot require arbitrary services (only Scope for spawn/background)
+ * 1. Can require arbitrary services in Effectful transition handlers
  * 2. Cannot produce errors
  * 3. Must return machine-scoped state schema
  *
  * All "bad" tests use @ts-expect-error on the handler return expression.
  */
 import { Effect, Schema, Context } from "effect";
-import { Machine, State, Event } from "../src/index.js";
+import {
+  ActorSystemDefault,
+  ActorSystemService,
+  Machine,
+  State,
+  Event,
+  simulate,
+} from "../src/index.js";
+import { EntityMachine, toEntity } from "../src/cluster/index.js";
 
 const MyState = State({
   Idle: {},
@@ -26,14 +34,13 @@ const MyEvent = Event({
   Complete: {},
 });
 
-// Test 1: Handler cannot require arbitrary services
+// Test 1: Effectful transition handlers can require arbitrary services
 class MyService extends Context.Service<MyService, { foo: string }>()("@test/MyService") {}
 
 const _test1 = Machine.make({
   state: MyState,
   event: MyEvent,
   initial: MyState.Idle,
-  // @ts-expect-error - Handler cannot require arbitrary services (MyService not in R=never)
 }).on(MyState.Idle, MyEvent.Start, () =>
   Effect.gen(function* () {
     const svc = yield* MyService;
@@ -85,6 +92,18 @@ const _test5 = Machine.make({
   .on(MyState.Idle, MyEvent.Start, () => MyState.Loading({ url: "/" }))
   .spawn(MyState.Loading, () => MyService);
 
+// Test 6: task failure handlers receive the typed Effect error, not Cause
+const _testTaskFailureError = Machine.make({
+  state: MyState,
+  event: MyEvent,
+  initial: MyState.Idle,
+}).task(MyState.Loading, () => Effect.fail(MyError.make({})), {
+  onFailure: (error) => {
+    const _typedError: MyError = error;
+    return MyEvent.Complete;
+  },
+});
+
 // ============================================================================
 // Reply Schema Type Constraints
 // ============================================================================
@@ -93,6 +112,154 @@ const ReplyEvent = Event({
   GetCount: Event.reply({}, Schema.Finite),
   GetName: Event.reply({}, Schema.String),
   Fire: {},
+});
+
+// Test 3b: Every Effectful transition builder rejects typed errors
+const transitionFailure = Effect.fail(MyError.make({}));
+
+Machine.make({ state: MyState, event: MyEvent, initial: MyState.Idle })
+  // @ts-expect-error - reenter Effect error must be never
+  .reenter(MyState.Idle, MyEvent.Start, () => transitionFailure)
+  // @ts-expect-error - onAny Effect error must be never
+  .onAny(MyEvent.Complete, () => transitionFailure)
+  // @ts-expect-error - immediate Effect error must be never
+  .immediate(MyState.Idle, () => transitionFailure);
+
+Machine.make({ state: MyState, event: MyEvent, initial: MyState.Idle }).from(
+  MyState.Idle,
+  (scope) =>
+    scope.on(
+      MyEvent.Start,
+      // @ts-expect-error - scoped transition Effect error must be never
+      () => transitionFailure,
+    ),
+);
+
+// Test 3c: Every Effectful transition builder records service requirements
+const transitionWithService = Effect.map(MyService, () => MyState.Done);
+const _test3c = Machine.make({ state: MyState, event: MyEvent, initial: MyState.Idle })
+  .reenter(MyState.Idle, MyEvent.Start, () => transitionWithService)
+  .onAny(MyEvent.Complete, () => transitionWithService)
+  .immediate(MyState.Idle, () => transitionWithService)
+  .from(MyState.Idle, (scope) => scope.on(MyEvent.Start, () => transitionWithService));
+
+// Test 3c.1: Conditional transition predicates reject errors and record requirements
+const predicateFailure = Effect.fail(MyError.make({})).pipe(Effect.as(true));
+const predicateBaseMachine = Machine.make({
+  state: MyState,
+  event: MyEvent,
+  initial: MyState.Idle,
+});
+const _invalidPredicateMachine = predicateBaseMachine.when(
+  // @ts-expect-error - when predicate Effect error must be never
+  MyState.Idle,
+  MyEvent.Start,
+  () => predicateFailure,
+  () => MyState.Done,
+);
+
+const predicateWithService = Effect.map(MyService, () => true);
+const _predicateMachine = Machine.make({
+  state: MyState,
+  event: MyEvent,
+  initial: MyState.Idle,
+}).when(
+  MyState.Idle,
+  MyEvent.Start,
+  () => predicateWithService,
+  () => MyState.Done,
+);
+
+const _predicateRequirements = () => {
+  // @ts-expect-error - MyService is still required by the predicate
+  Effect.runPromise(Machine.spawn(_predicateMachine));
+  Effect.runPromise(
+    Machine.spawn(_predicateMachine).pipe(Effect.provideService(MyService, { foo: "ready" })),
+  );
+};
+
+// Test 3d: A machine cannot spawn until all transition requirements are provided
+const _test3d = () => {
+  // @ts-expect-error - MyService is still required
+  Effect.runPromise(Machine.spawn(_test3c));
+  Effect.runPromise(
+    Machine.spawn(_test3c).pipe(Effect.provideService(MyService, { foo: "ready" })),
+  );
+
+  const systemSpawn = Effect.gen(function* () {
+    const system = yield* ActorSystemService;
+    return yield* system.spawn("requires-service", _test3c);
+  });
+  // @ts-expect-error - ActorSystemDefault does not provide MyService
+  Effect.runPromise(systemSpawn.pipe(Effect.provide(ActorSystemDefault)));
+  Effect.runPromise(
+    systemSpawn.pipe(
+      Effect.provide(ActorSystemDefault),
+      Effect.provideService(MyService, { foo: "ready" }),
+    ),
+  );
+};
+
+// Test 3e: Machine input is required at every spawn seam
+const inputMachine = Machine.make({
+  state: MyState,
+  event: MyEvent,
+  initial: (input: { readonly url: string }) => MyState.Loading(input),
+});
+const inputEntity = toEntity(inputMachine, { type: "InputTypeConstraint" });
+const _inputMachineHasNoStaticInitial: undefined = inputMachine.initial;
+
+const _test3e = () => {
+  // @ts-expect-error - input machine requires input
+  const missingInput = Machine.spawn(inputMachine);
+  const hasInput = Machine.spawn(inputMachine, { input: { url: "/ready" } });
+  // @ts-expect-error - run also requires machine input
+  const missingRunInput = Machine.run(inputMachine);
+  const run = Machine.run(inputMachine, { input: { url: "/ready" } });
+  // @ts-expect-error - simulation requires input
+  const missingSimulationInput = simulate(inputMachine, []);
+  const simulation = simulate(inputMachine, [], { input: { url: "/ready" } });
+  // @ts-expect-error - replay requires input or a starting snapshot
+  const missingReplayInput = Machine.replay(inputMachine, []);
+  const replay = Machine.replay(inputMachine, [], { input: { url: "/ready" } });
+  // @ts-expect-error - entity input machine requires an entity ID input adapter
+  const missingEntityInput = EntityMachine.layer(inputEntity, inputMachine);
+  const entityLayer = EntityMachine.layer(inputEntity, inputMachine, {
+    input: (entityId) => ({ url: entityId }),
+  });
+
+  const systemSpawn = Effect.gen(function* () {
+    const system = yield* ActorSystemService;
+    // @ts-expect-error - system spawn also requires input
+    yield* system.spawn("missing-input", inputMachine);
+    yield* system.spawn("has-input", inputMachine, { input: { url: "/ready" } });
+  });
+  return {
+    missingInput,
+    hasInput,
+    missingRunInput,
+    run,
+    missingSimulationInput,
+    simulation,
+    missingReplayInput,
+    replay,
+    missingEntityInput,
+    entityLayer,
+    systemSpawn,
+  };
+};
+
+// Test 3f: Final output is inferred independently from final state
+const outputMachine = Machine.make({
+  state: MyState,
+  event: MyEvent,
+  initial: MyState.Idle,
+}).final(MyState.Loading, ({ state }) => ({ requestedUrl: state.url }));
+
+const _test3f = Effect.gen(function* () {
+  const actor = yield* Machine.spawn(outputMachine);
+  const output: { readonly requestedUrl: string } = yield* actor.awaitOutput;
+  return output;
 });
 
 const ReplyState = State({

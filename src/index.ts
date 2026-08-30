@@ -22,7 +22,10 @@ export type {
   Machine as MachineType,
   MachineRef,
   MakeConfig,
+  InputMakeConfig,
+  FinalContext,
   HandlerContext,
+  GuardPredicate,
   StateHandlerContext,
   TaskOptions,
   TimeoutConfig,
@@ -33,17 +36,22 @@ export type {
   Durability,
   DurabilityCommit,
   Lifecycle,
+  SpawnOptions,
+  ReplayOptions,
 } from "./machine.js";
 
 // Actor types and system
 export type {
   ActorRef,
+  ActorClient,
   ActorRefSync,
+  ActorLifecycle,
   ActorSystemService as ActorSystem,
   ProcessEventResult,
   SystemEvent,
   SystemEventListener,
   TransitionInfo,
+  SystemSpawnOptions,
 } from "./actor.js";
 export {
   ActorSystem as ActorSystemService,
@@ -53,7 +61,7 @@ export {
 
 // Supervision
 export { ActorExit, Supervision } from "./supervision.js";
-export type { DefectPhase } from "./supervision.js";
+export type { ActorExit as ActorExitType, DefectPhase } from "./supervision.js";
 
 // Testing utilities
 export {
@@ -63,17 +71,25 @@ export {
   createTestHarness,
   simulate,
 } from "./testing.js";
-export type { SimulationResult, TestHarness, TestHarnessOptions } from "./testing.js";
+export type {
+  InputTestHarnessOptions,
+  SimulationOptions,
+  SimulationResult,
+  TestHarness,
+  TestHarnessOptions,
+} from "./testing.js";
 
 // Inspection
 export type {
   AnyInspectionEvent,
   EffectEvent,
   ErrorEvent,
+  GuardEvent,
   EventReceivedEvent,
   InspectionEvent,
   InspectorService as Inspector,
   InspectorHandler,
+  OperationEvent,
   SpawnEvent,
   StopEvent,
   TaskEvent,

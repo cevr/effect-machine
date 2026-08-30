@@ -9,6 +9,7 @@ export const CounterState = State({
   Done: { count: Schema.Finite, label: Schema.String },
 });
 export type CounterState = typeof CounterState.Type;
+export type CounterOutput = Extract<CounterState, { readonly _tag: "Done" }>;
 
 export const CounterEvent = Event({
   Increment: {},
@@ -22,8 +23,11 @@ const counterMachine = Machine.make({
   event: CounterEvent,
   initial: CounterState.Active({ count: 0, label: "Counter" }),
 })
-  .on(CounterState.Active, CounterEvent.Increment, ({ state }) =>
-    CounterState.Active.with(state, { count: state.count + 1 }),
+  .when(
+    CounterState.Active,
+    CounterEvent.Increment,
+    ({ state }) => state.count < 2,
+    ({ state }) => CounterState.Active.with(state, { count: state.count + 1 }),
   )
   .on(CounterState.Active, CounterEvent.Rename, ({ state, event }) =>
     CounterState.Active.with(state, { label: event.label }),
@@ -31,9 +35,8 @@ const counterMachine = Machine.make({
   .on(CounterState.Active, CounterEvent.Finish, ({ state }) => CounterState.Done.with(state))
   .final(CounterState.Done);
 
-export const spawnCounter: Effect.Effect<ActorRef<CounterState, CounterEvent>> = Machine.spawn(
-  counterMachine,
-).pipe(Effect.tap((actor) => actor.start));
+export const spawnCounter: Effect.Effect<ActorRef<CounterState, CounterEvent, CounterOutput>> =
+  Machine.spawn(counterMachine).pipe(Effect.tap((actor) => actor.start));
 
 export const makeCounterActorAtom = () => Atom.make(Machine.scoped(spawnCounter));
 export type CounterActorAtom = ReturnType<typeof makeCounterActorAtom>;
@@ -43,14 +46,18 @@ export interface CounterAtoms {
   readonly count: ActorAtom.ActorAtom<number, CounterEvent>;
   readonly label: ActorAtom.ActorAtom<string, CounterEvent>;
   readonly status: ActorAtom.ActorAtom<CounterState["_tag"], CounterEvent>;
+  readonly canIncrement: ActorAtom.CanAtom;
 }
 
-export const makeCounterAtoms = (actor: ActorRef<CounterState, CounterEvent>): CounterAtoms => {
+export const makeCounterAtoms = (
+  actor: ActorRef<CounterState, CounterEvent, CounterOutput>,
+): CounterAtoms => {
   const state = ActorAtom.make(actor);
   return {
     state,
     count: ActorAtom.select(state, (value) => value.count),
     label: ActorAtom.select(state, (value) => value.label),
     status: ActorAtom.select(state, (value) => value._tag),
+    canIncrement: ActorAtom.can(actor, CounterEvent.Increment),
   };
 };

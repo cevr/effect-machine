@@ -419,7 +419,7 @@ describe("ActorRef", () => {
         const actor = yield* Machine.spawn(machine, { id: "test" });
         yield* actor.start;
 
-        const state = actor.sync.snapshot();
+        const state = actor.client.getSnapshot();
         expect(state._tag).toBe("Idle");
       }).pipe(Effect.provide(ActorSystemDefault)),
     );
@@ -458,8 +458,8 @@ describe("ActorRef", () => {
         const actor = yield* Machine.spawn(machine, { id: "test" });
         yield* actor.start;
 
-        expect(actor.sync.matches("Idle")).toBe(true);
-        expect(actor.sync.matches("Loading")).toBe(false);
+        expect(actor.client.matches("Idle")).toBe(true);
+        expect(actor.client.matches("Loading")).toBe(false);
       }).pipe(Effect.provide(ActorSystemDefault)),
     );
 
@@ -499,8 +499,8 @@ describe("ActorRef", () => {
         const actor = yield* Machine.spawn(machine, { id: "test" });
         yield* actor.start;
 
-        expect(actor.sync.can(TestEvent.Start({ value: 1 }))).toBe(true);
-        expect(actor.sync.can(TestEvent.Complete)).toBe(false);
+        expect(actor.client.canSync(TestEvent.Start({ value: 1 }))).toBe(true);
+        expect(actor.client.canSync(TestEvent.Complete)).toBe(false);
       }).pipe(Effect.provide(ActorSystemDefault)),
     );
 
@@ -736,9 +736,9 @@ describe("ActorRef", () => {
           .on(TaskState.Running, TaskEvent.Fail, ({ event }) =>
             TaskState.Failed({ message: event.message }),
           )
-          .task(TaskState.Running, () => Effect.fail("boom"), {
+          .task(TaskState.Running, () => Effect.fail({ message: "boom" }), {
             onSuccess: () => TaskEvent.Success,
-            onFailure: () => TaskEvent.Fail({ message: "boom" }),
+            onFailure: (error) => TaskEvent.Fail({ message: error.message }),
           })
           .final(TaskState.Failed);
 
@@ -754,6 +754,34 @@ describe("ActorRef", () => {
         }
       }).pipe(Effect.provide(ActorSystemDefault)),
     );
+
+    it.scopedLive("task defects stop the actor and do not run onFailure", () => {
+      let handled = false;
+      const machine = Machine.make({
+        state: TaskState,
+        event: TaskEvent,
+        initial: TaskState.Idle,
+      })
+        .on(TaskState.Idle, TaskEvent.Start, () => TaskState.Running)
+        .task(TaskState.Running, () => Effect.die("task-defect"), {
+          onSuccess: () => TaskEvent.Success,
+          onFailure: () => {
+            handled = true;
+            return TaskEvent.Fail({ message: "handled" });
+          },
+        });
+
+      return Effect.gen(function* () {
+        const system = yield* ActorSystemService;
+        const actor = yield* system.spawn("task-defect", machine);
+
+        yield* actor.send(TaskEvent.Start);
+        const exit = yield* actor.awaitExit;
+
+        expect(exit._tag).toBe("Defect");
+        expect(handled).toBe(false);
+      }).pipe(Effect.provide(ActorSystemDefault));
+    });
   });
 
   describe("waitFor race (fast-failing task)", () => {
@@ -793,9 +821,10 @@ describe("ActorRef", () => {
         const LoopLive = Layer.effect(
           LoopTag,
           Effect.gen(function* () {
-            const actorRef = yield* Ref.make<ActorRef<typeof TS.Type, typeof TE.Type> | undefined>(
-              undefined,
-            );
+            const actorRef = yield* Ref.make<
+              | ActorRef<typeof TS.Type, typeof TE.Type, Extract<typeof TS.Type, { _tag: "Done" }>>
+              | undefined
+            >(undefined);
 
             // Machine.spawn no longer requires Scope.Scope — scope detection
             // auto-attaches cleanup when a scope exists in context (Layer.scoped provides one)
@@ -886,7 +915,11 @@ describe("ActorRef", () => {
           )
           .final(TS.Done);
 
-        type Actor = ActorRef<typeof TS.Type, typeof TE.Type>;
+        type Actor = ActorRef<
+          typeof TS.Type,
+          typeof TE.Type,
+          Extract<typeof TS.Type, { _tag: "Done" }>
+        >;
 
         interface LoopService {
           readonly run: (value: number) => Effect.Effect<void>;
@@ -1037,7 +1070,7 @@ describe("ActorRef", () => {
 
         const actor = yield* Machine.spawn(machine);
         yield* actor.start;
-        actor.sync.send(TestEvent.Start({ value: 7 }));
+        actor.client.send(TestEvent.Start({ value: 7 }));
         yield* yieldFibers;
 
         const state = yield* actor.snapshot;
@@ -1063,7 +1096,7 @@ describe("ActorRef", () => {
         yield* actor.stop;
 
         // Should not throw
-        actor.sync.send(TestEvent.Start({ value: 1 }));
+        actor.client.send(TestEvent.Start({ value: 1 }));
 
         const state = yield* actor.snapshot;
         expect(state._tag).toBe("Idle");

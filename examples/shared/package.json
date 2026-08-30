@@ -1,0 +1,18 @@
+{
+  "name": "@effect-machine/examples-shared",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./counter": "./src/counter.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "gate": "bun run typecheck"
+  },
+  "dependencies": {
+    "effect": "4.0.0-rc.112"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

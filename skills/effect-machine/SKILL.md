@@ -1,6 +1,6 @@
 ---
 name: effect-machine
-description: Type-safe state machines for Effect. Use when building state machines with effect-machine — defining states/events, transition handlers, spawn effects, timeouts, postpone, actors, typed ask/reply, testing, recovery/durability lifecycle. Triggers on effect-machine imports, Machine.make, Machine.spawn, actor.start, Machine.replay, Machine.reply, Event.reply, State/Event definitions, ActorRef usage, Recovery, Durability, Lifecycle.
+description: Type-safe state machines for Effect. Use when defining schema-first state and events, Effectful transitions, tasks, actors, typed input and output, Atom selectors, inspection, recovery, durability, supervision, or cluster entities with effect-machine.
 ---
 
 ## Navigation
@@ -10,6 +10,8 @@ What are you building?
 ├─ Defining states/events           → §Schema-First
 ├─ Writing transition handlers      → §Transitions
 ├─ Adding side effects              → §Effects
+├─ Composing input and output       → §Input and Output
+├─ Connecting a UI                  → §Effect Atom
 ├─ Testing machines                 → §Testing
 ├─ Running actors                   → §Actors
 ├─ Typed ask/reply                  → §Ask / Reply
@@ -73,6 +75,24 @@ const machine = Machine.make({ state: S, event: E, initial: S.Idle })
   .final(S.Cancelled);
 ```
 
+Register repeated candidates for guarded edges. The first passing guard wins. An unguarded candidate is the fallback. `actor.can(event)` evaluates the same guards.
+
+```ts
+machine
+  .when(
+    S.Checking,
+    E.Continue,
+    ({ state }) => state.stock > 0,
+    () => S.Accepted,
+  )
+  .on(S.Checking, E.Continue, () => S.Rejected)
+  .immediate(S.Accepted, ({ state }) => S.Ready.with(state));
+```
+
+The `.when()` predicate can return a Boolean or `Effect<boolean, never, R>`. Predicate requirements flow into the machine type. Use `actor.can(event)` inside Effect. Use `actor.client.can(event)` outside Effect. Use `actor.client.canSync(event)` only when the candidate predicates are synchronous.
+
+Immediate transitions settle before subscribers see state.
+
 **Handler return types:**
 
 ```ts
@@ -104,9 +124,11 @@ machine.spawn(S.Loading, ({ state, self }) =>
 ```ts
 machine.task(S.Loading, ({ state }) => fetchData(state.url), {
   onSuccess: (data) => E.Done({ data }),
-  onFailure: () => E.Error,
+  onFailure: (_error) => E.Error,
 });
 ```
+
+`onFailure` receives only the typed Effect error. A defect stops the actor or starts supervision.
 
 ### background — machine-lifetime (not state-scoped)
 
@@ -120,7 +142,7 @@ machine.background(({ self }) =>
 
 ## Effect Services
 
-Task, spawn, and background handlers can use standard Effect services:
+Task, spawn, background, and Effectful transition handlers can use standard Effect services:
 
 ```ts
 class Notifier extends Context.Service<
@@ -137,9 +159,28 @@ const actor =
 yield * actor.start;
 ```
 
-`Machine.spawn` captures the current Effect context. A later `actor.start` keeps those services.
+`Machine.spawn` captures the current Effect context. A later `actor.start` keeps those services. All handler requirements remain in the machine type until the caller provides them.
 
-Keep `.on()` and `.reenter()` pure. These handlers cannot require services.
+The `.when()` predicate can return a Boolean or an Effect that returns a Boolean. A transition handler can return a state or an Effect that returns a state. Both error channels must be `never`.
+
+## Input and Output
+
+```ts
+const machine = Machine.make({
+  state: S,
+  event: E,
+  initial: (input: { readonly id: string }) => S.Loading(input),
+}).final(S.Done, ({ state }) => state.value);
+
+const output = yield * Machine.run(machine, { input: { id: "item-1" } });
+```
+
+- Input creates initial state. It does not replace Effect context.
+- Output is separate from the retained final state.
+- `Machine.run` starts, awaits output, and always stops one autonomous actor.
+- Compose autonomous runs with `Effect.flatMap` or `Effect.gen`.
+- Use a parent machine for an interactive multi-phase UI.
+- Do not add an action queue. Use Effect handlers.
 
 ## Ask / Reply
 
@@ -229,6 +270,7 @@ Call `actor.stop` when you manage the actor lifetime. Use `Machine.scoped(effect
 | `waitFor(S.X)`         | Wait for state                                                      |
 | `sendAndWait(ev, S.X)` | Send + wait                                                         |
 | `awaitFinal`           | Wait for final state                                                |
+| `awaitOutput`          | Wait for typed machine output                                       |
 | `awaitExit`            | Wait for terminal exit                                              |
 | `sync.*`               | Sync variants for non-Effect boundaries                             |
 
@@ -340,6 +382,26 @@ expect(harness.state._tag).toBe("Loading");
 
 Both `simulate` and `createTestHarness` accept `Machine` directly.
 
+## Effect Atom
+
+```ts
+import * as ActorAtom from "effect-machine/atom";
+
+const stateAtom = ActorAtom.make(actor);
+const countAtom = ActorAtom.select(stateAtom, (state) => state.count);
+const lifecycleAtom = ActorAtom.lifecycle(actor);
+const transitionAtom = ActorAtom.latestTransition(actor);
+const canStartAtom = ActorAtom.can(actor, E.Start);
+```
+
+The actor owns state. Atom writes send events. Selected Atoms publish only when their selected value changes. Capability Atoms publish only when the Boolean answer changes. React uses `useAtomSuspense`. Solid uses `useAtomResource` inside Suspense. Keep exit-animation data in the next or final machine state.
+
+## Inspection
+
+Provide `InspectorService` when the actor is allocated. Inspection reports actor spawn, event receipt, named guard results, named transition operations, transitions, state-owned Effects, task phases, defects, actor stop, and actor generation.
+
+Use `consoleInspector()` for Effect logs, `tracingInspector()` for traces, and `collectingInspector(events)` for tests.
+
 ## Gotchas
 
 - **`Machine.spawn` returns unstarted actor** — must call `yield* actor.start`. `system.spawn` auto-starts.
@@ -351,3 +413,6 @@ Both `simulate` and `createTestHarness` accept `Machine` directly.
 - **Effectful handlers in replay** — replay runs handlers but stubs `self`/`system`. Side effects through `self.send` are no-ops.
 - **`ask()` requires reply schema** — only events with `Event.reply()` accepted; non-reply events are type errors
 - **Reply decode failure = defect** — if handler returns wrong type, actor dies (broken handler, not business logic)
+- **Effectful transition errors are `never`** — convert expected failures to states or events
+- **No machine action API** — use transitions, tasks, scoped Effects, and Effect composition
+- **Examples** — use the runnable workspace under `examples/`
