@@ -10,3 +10,7 @@ pre-commit:
       run: bun run build
     - name: test
       run: bun run test
+pre-push:
+  jobs:
+    - name: format
+      run: bun run fmt:check
