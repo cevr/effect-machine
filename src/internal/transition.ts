@@ -10,27 +10,11 @@
  */
 import { Cause, Effect, Exit, Scope } from "effect";
 
-import type { Machine, MachineRef, Transition, SpawnEffect, HandlerContext } from "../machine.js";
+import type { Machine, MachineRef, HandlerContext } from "../machine.js";
 import type { ActorSystemService } from "../actor.js";
-import type { SlotsDef, MachineContext } from "../slot.js";
+import type { Transition } from "./machine-definition.js";
 import { isEffect, isReplyResult, isDeferReplyResult, INTERNAL_ENTER_EVENT } from "./utils.js";
 import type { ReplyResult, DeferReplyResult } from "./utils.js";
-
-// ============================================================================
-// Transition Execution
-// ============================================================================
-
-/**
- * Result of executing a transition.
- */
-export interface TransitionExecutionResult<S> {
-  /** New state after transition (or current state if no transition matched) */
-  readonly newState: S;
-  /** Whether a transition was executed */
-  readonly transitioned: boolean;
-  /** Whether reenter was specified on the transition */
-  readonly reenter: boolean;
-}
 
 /**
  * Run a transition handler and return the new state.
@@ -45,29 +29,17 @@ export interface TransitionExecutionResult<S> {
 export const runTransitionHandler = Effect.fn("effect-machine.runTransitionHandler")(function* <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
-  R,
-  SD extends SlotsDef,
->(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  machine: Machine<S, E, R, any, any, SD>,
-  transition: Transition<S, E, SD, R>,
-  state: S,
-  event: E,
-  self: MachineRef<E>,
-  system: ActorSystemService,
-  actorId: string,
-) {
-  const ctx: MachineContext<S, E, MachineRef<E>> = { actorId, state, event, self, system };
-  const slots = machine._slots;
-
-  const handlerCtx: HandlerContext<S, E, SD> = { state, event, slots };
+>(transition: Transition<S, E, never>, state: S, event: E) {
+  const handlerCtx: HandlerContext<S, E> = { state, event };
   const raw = transition.handler(handlerCtx);
 
   let resolved: S | ReplyResult<S, unknown> | DeferReplyResult<S>;
   if (isEffect(raw)) {
-    resolved = yield* (
-      raw as Effect.Effect<S | ReplyResult<S, unknown> | DeferReplyResult<S>, never, R>
-    ).pipe(Effect.provideService(machine.Context, ctx));
+    // SAFETY: The handler type fixes the state and error domains.
+    resolved = yield* raw as Effect.Effect<
+      S | ReplyResult<S, unknown> | DeferReplyResult<S>,
+      never
+    >;
   } else {
     resolved = raw;
   }
@@ -97,7 +69,7 @@ export const runTransitionHandler = Effect.fn("effect-machine.runTransitionHandl
 
 /**
  * Execute a transition for a given state and event.
- * Handles transition resolution, handler invocation, and guard/effect slot creation.
+ * Handles transition resolution and handler invocation.
  *
  * Used by:
  * - processEvent in actor.ts (actual actor event loop)
@@ -110,15 +82,11 @@ export const executeTransition = Effect.fn("effect-machine.executeTransition")(f
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
-  SD extends SlotsDef,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  machine: Machine<S, E, R, any, any, SD>,
+  machine: Machine<S, E, R, any, any>,
   currentState: S,
   event: E,
-  self: MachineRef<E>,
-  system: ActorSystemService,
-  actorId: string,
 ) {
   const transition = resolveTransition(machine, currentState, event);
 
@@ -134,13 +102,9 @@ export const executeTransition = Effect.fn("effect-machine.executeTransition")(f
   }
 
   const { newState, hasReply, deferReply, reply } = yield* runTransitionHandler(
-    machine,
     transition,
     currentState,
     event,
-    self,
-    system,
-    actorId,
   );
 
   return {
@@ -215,17 +179,10 @@ export const shouldPostpone = <
   R,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  machine: Machine<S, E, R, any, any, any>,
+  machine: Machine<S, E, R, any, any>,
   stateTag: string,
   eventTag: string,
-): boolean => {
-  for (const rule of machine.postponeRules) {
-    if (rule.stateTag === stateTag && rule.eventTag === eventTag) {
-      return true;
-    }
-  }
-  return false;
-};
+): boolean => machine._shouldPostpone(stateTag, eventTag);
 
 /**
  * Process a single event through the machine.
@@ -243,10 +200,9 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
-  SD extends SlotsDef,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  machine: Machine<S, E, R, any, any, SD>,
+  machine: Machine<S, E, R, any, any>,
   currentState: S,
   event: E,
   self: MachineRef<E>,
@@ -256,7 +212,7 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
   hooks?: ProcessEventHooks<S, E>,
 ) {
   // Execute transition (defect-aware)
-  const result = yield* executeTransition(machine, currentState, event, self, system, actorId).pipe(
+  const result = yield* executeTransition(machine, currentState, event).pipe(
     Effect.catchCause((cause) => {
       if (Cause.hasInterruptsOnly(cause)) {
         return Effect.interrupt;
@@ -329,7 +285,7 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
     previousState: currentState,
     transitioned: true,
     lifecycleRan: runLifecycle,
-    isFinal: machine.finalStates.has(newState._tag),
+    isFinal: machine._isFinal(newState._tag),
     hasReply: result.hasReply,
     deferReply: result.deferReply,
     reply: result.reply,
@@ -346,10 +302,9 @@ export const runSpawnEffects = Effect.fn("effect-machine.runSpawnEffects")(funct
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
-  SD extends SlotsDef,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  machine: Machine<S, E, R, any, any, SD>,
+  machine: Machine<S, E, R, any, any>,
   state: S,
   event: E,
   self: MachineRef<E>,
@@ -359,9 +314,7 @@ export const runSpawnEffects = Effect.fn("effect-machine.runSpawnEffects")(funct
   onError?: (info: ProcessEventError<S, E>) => Effect.Effect<void>,
   onSpawnDefect?: (cause: Cause.Cause<unknown>) => Effect.Effect<void>,
 ) {
-  const spawnEffects = findSpawnEffects(machine, state._tag);
-  const ctx: MachineContext<S, E, MachineRef<E>> = { actorId, state, event, self, system };
-  const slots = machine._slots;
+  const spawnEffects = machine._findSpawnEffects(state._tag);
   const reportError = onError;
   const defectSignal = onSpawnDefect;
 
@@ -373,11 +326,9 @@ export const runSpawnEffects = Effect.fn("effect-machine.runSpawnEffects")(funct
         state,
         event,
         self,
-        slots,
         system,
       })
       .pipe(
-        Effect.provideService(machine.Context, ctx),
         Effect.catchCause((cause) => {
           if (Cause.hasInterruptsOnly(cause)) {
             return Effect.interrupt;
@@ -412,172 +363,10 @@ export const resolveTransition = <
   R,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-  machine: Machine<S, E, R, any, any, any>,
+  machine: Machine<S, E, R, any, any>,
   currentState: S,
   event: E,
-): (typeof machine.transitions)[number] | undefined => {
-  const candidates = findTransitions(machine, currentState._tag, event._tag);
+): Transition<S, E, never> | undefined => {
+  const candidates = machine._findTransitions(currentState._tag, event._tag);
   return candidates[0];
-};
-
-// ============================================================================
-// Transition Index (O(1) Lookup)
-// ============================================================================
-
-/**
- * Index structure: stateTag -> eventTag -> transitions[]
- * Array preserves registration order for guard cascade evaluation.
- */
-type TransitionIndex<S, E, SD extends SlotsDef, R> = Map<
-  string,
-  Map<string, Array<Transition<S, E, SD, R>>>
->;
-
-/**
- * Index for spawn effects: stateTag -> effects[]
- */
-type SpawnIndex<S, E, SD extends SlotsDef, R> = Map<string, Array<SpawnEffect<S, E, SD, R>>>;
-
-/**
- * Combined index for a machine
- */
-interface MachineIndex<S, E, SD extends SlotsDef, R> {
-  readonly transitions: TransitionIndex<S, E, SD, R>;
-  readonly spawn: SpawnIndex<S, E, SD, R>;
-}
-
-// Module-level cache - WeakMap allows GC of unreferenced machines
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const indexCache = new WeakMap<object, MachineIndex<any, any, any, any>>();
-
-/**
- * Invalidate cached index for a machine (call after mutation).
- */
-export const invalidateIndex = (machine: object): void => {
-  indexCache.delete(machine);
-};
-
-/**
- * Build transition index from machine definition.
- * O(n) where n = number of transitions.
- */
-const buildTransitionIndex = <
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
-  SD extends SlotsDef,
-  R,
->(
-  transitions: ReadonlyArray<Transition<S, E, SD, R>>,
-): TransitionIndex<S, E, SD, R> => {
-  const index: TransitionIndex<S, E, SD, R> = new Map();
-
-  for (const t of transitions) {
-    let stateMap = index.get(t.stateTag);
-    if (stateMap === undefined) {
-      stateMap = new Map();
-      index.set(t.stateTag, stateMap);
-    }
-
-    let eventList = stateMap.get(t.eventTag);
-    if (eventList === undefined) {
-      eventList = [];
-      stateMap.set(t.eventTag, eventList);
-    }
-
-    eventList.push(t);
-  }
-
-  return index;
-};
-
-/**
- * Build spawn index from machine definition.
- */
-const buildSpawnIndex = <
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
-  SD extends SlotsDef,
-  R,
->(
-  effects: ReadonlyArray<SpawnEffect<S, E, SD, R>>,
-): SpawnIndex<S, E, SD, R> => {
-  const index: SpawnIndex<S, E, SD, R> = new Map();
-
-  for (const e of effects) {
-    let stateList = index.get(e.stateTag);
-    if (stateList === undefined) {
-      stateList = [];
-      index.set(e.stateTag, stateList);
-    }
-    stateList.push(e);
-  }
-
-  return index;
-};
-
-/**
- * Get or build index for a machine.
- */
-const getIndex = <
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
-  R,
-  SD extends SlotsDef,
->(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-  machine: Machine<S, E, R, any, any, SD>,
-): MachineIndex<S, E, SD, R> => {
-  let index = indexCache.get(machine) as MachineIndex<S, E, SD, R> | undefined;
-  if (index === undefined) {
-    index = {
-      transitions: buildTransitionIndex(machine.transitions),
-      spawn: buildSpawnIndex(machine.spawnEffects),
-    };
-    indexCache.set(machine, index);
-  }
-  return index;
-};
-
-/**
- * Find all transitions matching a state/event pair.
- * Returns empty array if no matches.
- *
- * O(1) lookup after first access (index is lazily built).
- */
-export const findTransitions = <
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
-  R,
-  SD extends SlotsDef = Record<string, never>,
->(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-  machine: Machine<S, E, R, any, any, SD>,
-  stateTag: string,
-  eventTag: string,
-): ReadonlyArray<Transition<S, E, SD, R>> => {
-  const index = getIndex(machine);
-  const specific = index.transitions.get(stateTag)?.get(eventTag) ?? [];
-  if (specific.length > 0) return specific;
-  // Fallback to wildcard transitions
-  return index.transitions.get("*")?.get(eventTag) ?? [];
-};
-
-/**
- * Find all spawn effects for a state.
- * Returns empty array if no matches.
- *
- * O(1) lookup after first access (index is lazily built).
- */
-export const findSpawnEffects = <
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
-  R,
-  SD extends SlotsDef = Record<string, never>,
->(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-  machine: Machine<S, E, R, any, any, SD>,
-  stateTag: string,
-): ReadonlyArray<SpawnEffect<S, E, SD, R>> => {
-  const index = getIndex(machine);
-  return index.spawn.get(stateTag) ?? [];
 };

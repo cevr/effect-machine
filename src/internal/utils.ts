@@ -6,31 +6,6 @@ import { Effect, Stream } from "effect";
 import type { ActorSystemService } from "../actor.js";
 
 // ============================================================================
-// Type Helpers
-// ============================================================================
-
-/**
- * Extracts _tag from a tagged union member
- */
-export type TagOf<T> = T extends { readonly _tag: infer Tag } ? Tag : never;
-
-/**
- * Extracts args type from a Data.taggedEnum constructor
- */
-export type ArgsOf<C> = C extends (args: infer A) => unknown ? A : never;
-
-/**
- * Extracts return type from a Data.taggedEnum constructor
- * @internal
- */
-export type InstanceOf<C> = C extends (...args: unknown[]) => infer R ? R : never;
-
-/**
- * A tagged union constructor (from Data.taggedEnum)
- */
-export type TaggedConstructor<T extends { readonly _tag: string }> = (args: Omit<T, "_tag">) => T;
-
-// ============================================================================
 // Reply Result (branded replacement for duck-typed { state, reply })
 // ============================================================================
 
@@ -126,8 +101,8 @@ export const INTERNAL_ENTER_EVENT = "$enter" as const;
  * Extract _tag from a tagged value or constructor.
  *
  * Supports:
- * - Plain values with `_tag` (MachineSchema empty structs)
- * - Constructors with static `_tag` (MachineSchema non-empty structs)
+ * - Plain values with `_tag` (`State` and `Event` empty structs)
+ * - Constructors with static `_tag` (`State` and `Event` non-empty structs)
  * - Data.taggedEnum constructors (fallback via instantiation)
  */
 export const getTag = (

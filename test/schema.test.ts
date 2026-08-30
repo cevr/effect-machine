@@ -93,7 +93,7 @@ describe("State (schema-first)", () => {
     });
 
     // Decode valid data
-    const decoded = Schema.decodeUnknownSync(OrderState)({
+    const decoded = Schema.decodeSync(OrderState)({
       _tag: "Pending",
       orderId: "test-order",
     });
@@ -101,7 +101,7 @@ describe("State (schema-first)", () => {
     expect((decoded as { orderId: string }).orderId).toBe("test-order");
 
     // Decode another variant
-    const decoded2 = Schema.decodeUnknownSync(OrderState)({
+    const decoded2 = Schema.decodeSync(OrderState)({
       _tag: "Shipped",
       trackingId: "abc",
     });
@@ -126,14 +126,13 @@ describe("State (schema-first)", () => {
       Shipped: { trackingId: Schema.String },
     });
 
-    // Invalid _tag
-    expect(() => Schema.decodeUnknownSync(OrderState)({ _tag: "Invalid" })).toThrow();
+    const invalidTag: unknown = { _tag: "Invalid" };
+    const missingField: unknown = { _tag: "Pending" };
+    const wrongFieldType: unknown = { _tag: "Pending", orderId: 123 };
 
-    // Missing required field
-    expect(() => Schema.decodeUnknownSync(OrderState)({ _tag: "Pending" })).toThrow();
-
-    // Wrong field type
-    expect(() => Schema.decodeUnknownSync(OrderState)({ _tag: "Pending", orderId: 123 })).toThrow();
+    expect(() => Schema.decodeUnknownSync(OrderState)(invalidTag)).toThrow();
+    expect(() => Schema.decodeUnknownSync(OrderState)(missingField)).toThrow();
+    expect(() => Schema.decodeUnknownSync(OrderState)(wrongFieldType)).toThrow();
   });
 
   test("variants property provides per-variant schemas", () => {
@@ -147,7 +146,7 @@ describe("State (schema-first)", () => {
     expect(OrderState.variants.Shipped).toBeDefined();
 
     // Can decode individual variant
-    const pending = Schema.decodeUnknownSync(OrderState.variants.Pending)({
+    const pending = Schema.decodeSync(OrderState.variants.Pending)({
       _tag: "Pending",
       orderId: "test",
     });
@@ -467,27 +466,24 @@ describe("State/Event with Machine", () => {
     }),
   );
 
-  test("state constructors are compatible with Machine.on", () => {
-    const TestState = State({
-      A: { value: Schema.Finite },
-      B: { value: Schema.Finite },
-    });
-    type TestState = typeof TestState.Type;
+  it.scopedLive("state constructors are compatible with Machine.on", () =>
+    Effect.gen(function* () {
+      const TestState = State({
+        A: { value: Schema.Finite },
+        B: { value: Schema.Finite },
+      });
 
-    const TestEvent = Event({
-      Next: {},
-    });
-    type TestEvent = typeof TestEvent.Type;
+      const TestEvent = Event({ Next: {} });
+      const machine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.A({ value: 0 }),
+      }).on(TestState.A, TestEvent.Next, ({ state }) => TestState.B({ value: state.value + 1 }));
 
-    // This should compile - state constructors produce branded types
-    const machine = Machine.make({
-      state: TestState,
-      event: TestEvent,
-      initial: TestState.A({ value: 0 }),
-    }).on(TestState.A, TestEvent.Next, ({ state }) => TestState.B({ value: state.value + 1 }));
-
-    expect(machine.transitions.length).toBe(1);
-  });
+      const result = yield* simulate(machine, [TestEvent.Next]);
+      expect(result.finalState).toEqual(TestState.B({ value: 1 }));
+    }),
+  );
 
   it.scopedLive("fluent from() scopes transitions to a state", () =>
     Effect.gen(function* () {
@@ -517,9 +513,6 @@ describe("State/Event with Machine", () => {
             .on(EditorEvent.Submit, ({ state }) => EditorState.Submitted({ text: state.text })),
         )
         .final(EditorState.Submitted);
-
-      // 3 transitions: Idle->Focus, Typing->KeyPress, Typing->Submit
-      expect(machine.transitions.length).toBe(3);
 
       const result = yield* simulate(machine, [
         EditorEvent.Focus,

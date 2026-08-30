@@ -1,6 +1,7 @@
-import { Clock, Effect } from "effect";
+import { Cause, Clock, Effect } from "effect";
 
 import type { InspectionEvent, InspectorService } from "../inspection.js";
+import type { ProcessEventHooks } from "./transition.js";
 
 /**
  * Emit an inspection event with timestamp from Clock.
@@ -23,4 +24,39 @@ export const emitWithTimestamp = Effect.fn("effect-machine.emitWithTimestamp")(f
   if (Effect.isEffect(result)) {
     yield* result.pipe(Effect.ignoreCause);
   }
+});
+
+/** Adapt the Inspector service to the transition kernel. */
+// @effect-diagnostics missingPipeableSignature:off -- Internal fixed-arity adapter.
+export const makeInspectionHooks = <S, E>(
+  actorId: string,
+  inspector: InspectorService<S, E>,
+): ProcessEventHooks<S, E> => ({
+  onSpawnEffect: (state) =>
+    emitWithTimestamp(inspector, (timestamp) => ({
+      type: "@machine.effect",
+      actorId,
+      effectType: "spawn",
+      state,
+      timestamp,
+    })),
+  onTransition: (from, to, event) =>
+    emitWithTimestamp(inspector, (timestamp) => ({
+      type: "@machine.transition",
+      actorId,
+      fromState: from,
+      toState: to,
+      event,
+      timestamp,
+    })),
+  onError: (info) =>
+    emitWithTimestamp(inspector, (timestamp) => ({
+      type: "@machine.error",
+      actorId,
+      phase: info.phase,
+      state: info.state,
+      event: info.event,
+      error: Cause.pretty(info.cause),
+      timestamp,
+    })),
 });

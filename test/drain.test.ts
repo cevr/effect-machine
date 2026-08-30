@@ -1,7 +1,7 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Deferred, Duration, Effect, Schema } from "effect";
+import { Duration, Effect, Schema } from "effect";
 
-import { ActorSystemDefault, ActorSystemService, Machine, State, Event } from "../src/index.js";
+import { Machine, State, Event } from "../src/index.js";
 import { describe, expect, it, yieldFibers } from "effect-bun-test";
 
 // ============================================================================
@@ -19,58 +19,6 @@ const machine = Machine.make({ state: S, event: E, initial: S.Idle })
   .on(S.Active, E.Increment, ({ state }) => S.Active({ count: state.count + 1 }))
   .on(S.Active, E.Finish, () => S.Done)
   .final(S.Done);
-
-// ============================================================================
-// actor.watch — observe when another actor stops
-// ============================================================================
-
-describe("actor.watch", () => {
-  it.scopedLive("completes when watched actor is stopped", () =>
-    Effect.gen(function* () {
-      const system = yield* ActorSystemService;
-      const watcher = yield* system.spawn("watcher", machine);
-      const target = yield* system.spawn("target", machine);
-
-      const watchDone = yield* Deferred.make<void>();
-      yield* Effect.forkDetach(
-        watcher.watch(target).pipe(Effect.andThen(Deferred.succeed(watchDone, undefined))),
-      );
-      yield* Effect.yieldNow;
-      yield* yieldFibers;
-
-      yield* system.stop("target");
-      yield* Effect.yieldNow;
-      yield* yieldFibers;
-      yield* Effect.sleep(Duration.millis(50));
-      yield* yieldFibers;
-
-      expect(yield* Deferred.isDone(watchDone)).toBe(true);
-    }).pipe(Effect.provide(ActorSystemDefault)),
-  );
-
-  it.scopedLive("completes immediately for already-stopped actor", () =>
-    Effect.gen(function* () {
-      const system = yield* ActorSystemService;
-      const watcher = yield* system.spawn("watcher", machine);
-      const target = yield* system.spawn("target", machine);
-
-      yield* system.stop("target");
-      yield* Effect.yieldNow;
-      yield* yieldFibers;
-
-      const watchDone = yield* Deferred.make<void>();
-      yield* Effect.forkDetach(
-        watcher.watch(target).pipe(Effect.andThen(Deferred.succeed(watchDone, undefined))),
-      );
-      yield* Effect.yieldNow;
-      yield* yieldFibers;
-      yield* Effect.sleep(Duration.millis(50));
-      yield* yieldFibers;
-
-      expect(yield* Deferred.isDone(watchDone)).toBe(true);
-    }).pipe(Effect.provide(ActorSystemDefault)),
-  );
-});
 
 // ============================================================================
 // actor.drain — process remaining queue, then stop

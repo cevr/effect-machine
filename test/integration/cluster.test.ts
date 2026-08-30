@@ -6,7 +6,7 @@
  * Cluster Integration Tests
  *
  * Tests the integration between effect-machine and @effect/cluster using:
- * - MachineSchema for schema-first definitions (single source of truth)
+ * - State and Event for schema-first definitions
  * - toEntity for generating Entity definitions
  * - EntityMachine.layer for wiring machine to cluster
  */
@@ -18,16 +18,17 @@ import { describe, expect, it, test } from "effect-bun-test";
 import {
   ActorSystemDefault,
   ActorSystemService,
+  InspectorService,
   Machine,
+  makeInspector,
   simulate,
   State,
   Event,
-  Slot,
 } from "../../src/index.js";
 import { toEntity, EntityMachine, makeEntityActorRef } from "../../src/cluster/index.js";
 
 // =============================================================================
-// Schema-first definitions using MachineSchema
+// Schema-first State and Event definitions
 // =============================================================================
 
 // State and Event defined once - schema IS the source of truth
@@ -96,8 +97,8 @@ const TestShardingConfig = ShardingConfig.layer({
 // Tests
 // =============================================================================
 
-describe("Cluster Integration with MachineSchema", () => {
-  it.scopedLive("MachineSchema types work with simulate() (baseline)", () =>
+describe("Cluster Integration with schema-first machines", () => {
+  it.scopedLive("State and Event types work with simulate()", () =>
     // simulate() works great for testing pure state machine logic
     Effect.gen(function* () {
       const machineWithInitial = Machine.make({
@@ -170,7 +171,7 @@ describe("Cluster Integration with MachineSchema", () => {
     expect(OrderEntity.protocol).toBeDefined();
   });
 
-  test("MachineSchema $match works for pattern matching", () => {
+  test("State.$match works for pattern matching", () => {
     const state = OrderState.Pending({ orderId: "test-123" });
 
     const message = OrderState.$match(state, {
@@ -183,7 +184,7 @@ describe("Cluster Integration with MachineSchema", () => {
     expect(message).toBe("Order test-123 is pending");
   });
 
-  test("MachineSchema $is works for type guards", () => {
+  test("State.$is works for type guards", () => {
     const pending = OrderState.Pending({ orderId: "123" });
     const shipped = OrderState.Shipped({ orderId: "123", trackingId: "abc" });
 
@@ -192,7 +193,7 @@ describe("Cluster Integration with MachineSchema", () => {
     expect(OrderState.$is("Shipped")(shipped)).toBe(true);
   });
 
-  test("MachineSchema works as Schema for encode/decode", () => {
+  test("State works as Schema for encode/decode", () => {
     const pending = OrderState.Pending({ orderId: "test" });
 
     // Encode
@@ -200,24 +201,12 @@ describe("Cluster Integration with MachineSchema", () => {
     expect(encoded).toEqual({ _tag: "Pending", orderId: "test" });
 
     // Decode
-    const decoded = Schema.decodeUnknownSync(OrderState)({
+    const decoded = Schema.decodeSync(OrderState)({
       _tag: "Shipped",
       orderId: "123",
       trackingId: "abc",
     });
     expect(decoded._tag).toBe("Shipped");
-  });
-
-  test("Machine.findTransitions provides O(1) lookup", () => {
-    // Using the indexed lookup
-    const transitions = Machine.findTransitions(orderMachine, "Pending", "Process");
-    expect(transitions.length).toBe(1);
-    expect(transitions[0]?.stateTag).toBe("Pending");
-    expect(transitions[0]?.eventTag).toBe("Process");
-
-    // No transition for this pair
-    const noMatch = Machine.findTransitions(orderMachine, "Shipped", "Process");
-    expect(noMatch.length).toBe(0);
   });
 });
 
@@ -239,42 +228,33 @@ describe("Entity.makeTestClient with machine handler", () => {
   });
   type CounterEvent = typeof CounterEvent.Type;
 
-  const CounterSlots = Slot.define({
-    underLimit: Slot.fn({}, Schema.Boolean),
-  });
-
   const counterMachine = Machine.make({
     state: CounterState,
     event: CounterEvent,
-    slots: CounterSlots,
     initial: CounterState.Counting({ count: 0 }),
   })
-    .on(CounterState.Counting, CounterEvent.Increment, ({ state, slots }) =>
-      Effect.gen(function* () {
-        if (yield* slots.underLimit()) {
-          return CounterState.Counting({ count: state.count + 1 });
-        }
-        return state;
-      }),
-    )
+    .on(CounterState.Counting, CounterEvent.Increment, ({ state }) => {
+      if (state.count < 3) return CounterState.Counting({ count: state.count + 1 });
+      return state;
+    })
     .on(CounterState.Counting, CounterEvent.Finish, ({ state }) =>
       CounterState.Done({ count: state.count }),
     )
     .final(CounterState.Done);
 
-  // Entity using MachineSchema directly as schemas
+  // Entity using State and Event directly as schemas
   const _CounterEntity = Entity.make("Counter", [
     Rpc.make("Send", { payload: { event: CounterEvent }, success: CounterState }),
     Rpc.make("GetState", { success: CounterState }),
   ]);
 
-  // Entity using MachineSchema for Order as well
+  // Entity using Order State and Event schemas
   const OrderEntityManual = Entity.make("OrderManual", [
     Rpc.make("Send", { payload: { event: OrderEvent }, success: OrderState }),
     Rpc.make("GetState", { success: OrderState }),
   ]);
 
-  it.scopedLive("Entity.makeTestClient works with MachineSchema", () =>
+  it.scopedLive("Entity.makeTestClient works with State and Event", () =>
     Effect.gen(function* () {
       const OrderEntityWithMachine = OrderEntityManual.toLayer(
         Effect.gen(function* () {
@@ -288,26 +268,9 @@ describe("Entity.makeTestClient with machine handler", () => {
                 const currentState = yield* Ref.get(stateRef);
                 const event = envelope.payload.event as unknown as OrderEvent;
 
-                const transitions = Machine.findTransitions(
-                  orderMachine,
-                  currentState._tag,
-                  event._tag,
-                );
-
-                const transition = transitions[0];
-                if (transition === undefined) {
-                  return currentState;
-                }
-
-                const handlerResult = transition.handler({
-                  state: currentState,
-                  event,
-                  slots: {} as any,
+                const newState = yield* Machine.replay(orderMachine, [event], {
+                  from: currentState,
                 });
-                let newState: OrderState = handlerResult as OrderState;
-                if (Effect.isEffect(handlerResult)) {
-                  newState = (yield* handlerResult) as OrderState;
-                }
                 yield* Ref.set(stateRef, newState);
                 return newState;
               }),
@@ -337,27 +300,13 @@ describe("Entity.makeTestClient with machine handler", () => {
 
   it.scopedLive("guards work with simulate", () =>
     Effect.gen(function* () {
-      const result = yield* simulate(
-        counterMachine,
-        [
-          CounterEvent.Increment,
-          CounterEvent.Increment,
-          CounterEvent.Increment,
-          CounterEvent.Increment, // blocked by guard
-          CounterEvent.Finish,
-        ],
-        {
-          slots: {
-            underLimit: () =>
-              Effect.gen(function* () {
-                const ctx = yield* counterMachine.Context;
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const state = ctx.state as any;
-                return state._tag === "Counting" && state.count < 3;
-              }),
-          },
-        },
-      );
+      const result = yield* simulate(counterMachine, [
+        CounterEvent.Increment,
+        CounterEvent.Increment,
+        CounterEvent.Increment,
+        CounterEvent.Increment,
+        CounterEvent.Finish,
+      ]);
 
       expect(result.finalState._tag).toBe("Done");
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test assertion
@@ -389,10 +338,33 @@ describe("EntityMachine.layer", () => {
         entityLayer.pipe(Layer.provide(ActorSystemDefault)),
       );
       const client = yield* makeClient("order-1");
-      const ref = makeEntityActorRef<OrderState, OrderEvent, never>(client, "order-1");
+      const ref = makeEntityActorRef<OrderState, OrderEvent>(client, "order-1");
 
       const state = yield* ref.send(OrderEvent.Process);
       expect(state._tag).toBe("Processing");
+    }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)),
+  );
+
+  it.scopedLive("uses the Inspector service for transition events", () =>
+    Effect.gen(function* () {
+      const events: string[] = [];
+      const inspector = makeInspector<OrderState, OrderEvent>((event) => {
+        events.push(event.type);
+      });
+      const entity = toEntity(orderMachine, { type: "OrderInspection" });
+      const entityLayer = EntityMachine.layer(entity, orderMachine, {
+        initializeState: (entityId) => OrderState.Pending({ orderId: entityId }),
+      }).pipe(
+        Layer.provide(Layer.merge(ActorSystemDefault, Layer.succeed(InspectorService, inspector))),
+      );
+
+      const makeClient = yield* Entity.makeTestClient(entity, entityLayer);
+      const client = yield* makeClient("inspected-1");
+      const ref = makeEntityActorRef<OrderState, OrderEvent>(client, "inspected-1");
+
+      yield* ref.send(OrderEvent.Process);
+
+      expect(events).toContain("@machine.transition");
     }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)),
   );
 
@@ -432,7 +404,7 @@ describe("EntityMachine.layer", () => {
         entityLayer.pipe(Layer.provide(ActorSystemDefault)),
       );
       const client = yield* makeClient("ask-1");
-      const ref = makeEntityActorRef<AskState, AskEvent, never>(client, "ask-1");
+      const ref = makeEntityActorRef<AskState, AskEvent>(client, "ask-1");
 
       const reply = yield* ref.ask(AskEvent.GetCount).pipe(Effect.orDie);
       expect(reply).toBe(42);
@@ -441,7 +413,6 @@ describe("EntityMachine.layer", () => {
 
   // ---------------------------------------------------------------------------
   // Test 3: Background effects run
-  // BUG: entity-machine never iterates machine.backgroundEffects
   // ---------------------------------------------------------------------------
   it.scopedLive("background effects run in entity context", () =>
     Effect.gen(function* () {
@@ -473,7 +444,7 @@ describe("EntityMachine.layer", () => {
         entityLayer.pipe(Layer.provide(ActorSystemDefault)),
       );
       const client = yield* makeClient("bg-1");
-      const ref = makeEntityActorRef<BgState, BgEvent, never>(client, "bg-1");
+      const ref = makeEntityActorRef<BgState, BgEvent>(client, "bg-1");
 
       // Give background effect time to fire
       yield* Effect.sleep("100 millis");
@@ -486,7 +457,6 @@ describe("EntityMachine.layer", () => {
 
   // ---------------------------------------------------------------------------
   // Test 4: Final state stops accepting events
-  // BUG: isFinal computed but never checked, entity keeps accepting RPCs
   // ---------------------------------------------------------------------------
   it.scopedLive("final state rejects further events", () =>
     Effect.gen(function* () {
@@ -500,7 +470,7 @@ describe("EntityMachine.layer", () => {
         entityLayer.pipe(Layer.provide(ActorSystemDefault)),
       );
       const client = yield* makeClient("final-1");
-      const ref = makeEntityActorRef<OrderState, OrderEvent, never>(client, "final-1");
+      const ref = makeEntityActorRef<OrderState, OrderEvent>(client, "final-1");
 
       // Drive to final state
       yield* ref.send(OrderEvent.Process);
@@ -554,7 +524,7 @@ describe("EntityMachine.layer", () => {
         entityLayer.pipe(Layer.provide(ActorSystemDefault)),
       );
       const client = yield* makeClient("spawn-1");
-      const ref = makeEntityActorRef<SpawnState, SpawnEvent, never>(client, "spawn-1");
+      const ref = makeEntityActorRef<SpawnState, SpawnEvent>(client, "spawn-1");
 
       yield* ref.send(SpawnEvent.Begin);
 
@@ -605,7 +575,7 @@ describe("EntityMachine.layer", () => {
         entityLayer.pipe(Layer.provide(ActorSystemDefault)),
       );
       const client = yield* makeClient("timeout-1");
-      const ref = makeEntityActorRef<TimeoutState, TimeoutEvent, never>(client, "timeout-1");
+      const ref = makeEntityActorRef<TimeoutState, TimeoutEvent>(client, "timeout-1");
 
       // Wait for timeout to fire
       yield* Effect.sleep("200 millis");
@@ -617,7 +587,6 @@ describe("EntityMachine.layer", () => {
 
   // ---------------------------------------------------------------------------
   // Test 7: Postpone semantics
-  // BUG: shouldPostpone imported but never called in entity-machine
   // ---------------------------------------------------------------------------
   it.scopedLive("postponed events drain after state change", () =>
     Effect.gen(function* () {
@@ -654,7 +623,7 @@ describe("EntityMachine.layer", () => {
         entityLayer.pipe(Layer.provide(ActorSystemDefault)),
       );
       const client = yield* makeClient("postpone-1");
-      const ref = makeEntityActorRef<PostponeState, PostponeEvent, never>(client, "postpone-1");
+      const ref = makeEntityActorRef<PostponeState, PostponeEvent>(client, "postpone-1");
 
       // Send Data while in Connecting — should be postponed
       yield* ref.send(PostponeEvent.Data({ payload: "hello" }));
@@ -721,7 +690,7 @@ describe("EntityMachine.layer", () => {
         entityLayer.pipe(Layer.provide(ActorSystemDefault)),
       );
       const client = yield* makeClient("task-1");
-      const ref = makeEntityActorRef<TaskState, TaskEvent, never>(client, "task-1");
+      const ref = makeEntityActorRef<TaskState, TaskEvent>(client, "task-1");
 
       yield* ref.send(TaskEvent.Start);
 
@@ -788,13 +757,13 @@ describe("EntityMachine.layer", () => {
         entityLayer.pipe(Layer.provide(ActorSystemDefault)),
       );
       const client = yield* makeClient("race-1");
-      const ref = makeEntityActorRef<RaceState, RaceEvent, never>(client, "race-1");
+      const ref = makeEntityActorRef<RaceState, RaceEvent>(client, "race-1");
 
       // Fire external increments concurrently — each hits processEvent directly
       // while internal ones are being processed by the queue fiber
       yield* Effect.all(
         Array.from({ length: 10 }, () => ref.send(RaceEvent.ExternalIncrement)),
-        { concurrency: "unbounded" },
+        { concurrency: 10 },
       );
 
       // Give internal events time to finish
@@ -861,10 +830,7 @@ describe("EntityMachine.layer", () => {
       // No ActorSystemDefault provided — implicit system should be created
       const makeClient = yield* Entity.makeTestClient(entity, entityLayer);
       const client = yield* makeClient("spawn-child-1");
-      const ref = makeEntityActorRef<SpawnChildState, SpawnChildEvent, never>(
-        client,
-        "spawn-child-1",
-      );
+      const ref = makeEntityActorRef<SpawnChildState, SpawnChildEvent>(client, "spawn-child-1");
 
       yield* ref.send(SpawnChildEvent.Go);
       yield* Effect.sleep("100 millis");
@@ -909,7 +875,7 @@ describe("EntityMachine.layer", () => {
         entityLayer.pipe(Layer.provide(ActorSystemDefault)),
       );
       const client = yield* makeClient("watch-1");
-      const ref = makeEntityActorRef<WatchState, WatchEvent, never>(client, "watch-1");
+      const ref = makeEntityActorRef<WatchState, WatchEvent>(client, "watch-1");
 
       // Collect state changes in background via WatchState streaming RPC
       const collected: string[] = [];

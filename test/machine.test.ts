@@ -2,8 +2,7 @@
 import { Effect, Schema } from "effect";
 import { describe, expect, it, test } from "effect-bun-test";
 
-import { Machine, simulate, State, Event, Slot } from "../src/index.js";
-import { materializeMachine } from "../src/machine.js";
+import { Machine, simulate, State, Event } from "../src/index.js";
 
 const CounterState = State({
   Idle: { count: Schema.Finite },
@@ -61,51 +60,29 @@ describe("Machine", () => {
     }),
   );
 
-  it.scopedLive("supports slots via Slot.define", () =>
+  it.scopedLive("supports a pure conditional transition", () =>
     Effect.gen(function* () {
-      const CounterSlots = Slot.define({
-        belowLimit: Slot.fn({ limit: Schema.Finite }, Schema.Boolean),
-      });
-
       const machine = Machine.make({
         state: CounterState,
         event: CounterEvent,
-        slots: CounterSlots,
         initial: CounterState.Counting({ count: 0 }),
       })
-        .on(CounterState.Counting, CounterEvent.Increment, ({ state, slots }) =>
-          Effect.gen(function* () {
-            if (yield* slots.belowLimit({ limit: 3 })) {
-              return CounterState.Counting({ count: state.count + 1 });
-            }
-            return state;
-          }),
-        )
+        .on(CounterState.Counting, CounterEvent.Increment, ({ state }) => {
+          if (state.count < 3) return CounterState.Counting({ count: state.count + 1 });
+          return state;
+        })
         .on(CounterState.Counting, CounterEvent.Stop, ({ state }) =>
           CounterState.Done({ count: state.count }),
         )
         .final(CounterState.Done);
 
-      const result = yield* simulate(
-        machine,
-        [
-          CounterEvent.Increment,
-          CounterEvent.Increment,
-          CounterEvent.Increment,
-          CounterEvent.Increment, // blocked
-          CounterEvent.Stop,
-        ],
-        {
-          slots: {
-            belowLimit: ({ limit }: { limit: number }) =>
-              Effect.gen(function* () {
-                const ctx = yield* machine.Context;
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                return (ctx.state as any).count < limit;
-              }),
-          },
-        },
-      );
+      const result = yield* simulate(machine, [
+        CounterEvent.Increment,
+        CounterEvent.Increment,
+        CounterEvent.Increment,
+        CounterEvent.Increment,
+        CounterEvent.Stop,
+      ]);
 
       expect(result.finalState.count).toBe(3);
     }),
@@ -136,17 +113,22 @@ describe("Machine", () => {
     }),
   );
 
-  test("marks states as final", () => {
-    const machine = Machine.make({
-      state: CounterState,
-      event: CounterEvent,
-      initial: CounterState.Idle({ count: 0 }),
-    })
-      .on(CounterState.Idle, CounterEvent.Start, () => CounterState.Done({ count: 0 }))
-      .final(CounterState.Done);
-    expect(machine.finalStates.has("Done")).toBe(true);
-    expect(machine.finalStates.has("Idle")).toBe(false);
-  });
+  it.scopedLive("stops simulation at a final state", () =>
+    Effect.gen(function* () {
+      const machine = Machine.make({
+        state: CounterState,
+        event: CounterEvent,
+        initial: CounterState.Idle({ count: 0 }),
+      })
+        .on(CounterState.Idle, CounterEvent.Start, () => CounterState.Done({ count: 0 }))
+        .on(CounterState.Done, CounterEvent.Increment, () => CounterState.Counting({ count: 1 }))
+        .final(CounterState.Done);
+
+      const result = yield* simulate(machine, [CounterEvent.Start, CounterEvent.Increment]);
+
+      expect(result.states.map((state) => state._tag)).toEqual(["Idle", "Done"]);
+    }),
+  );
 });
 
 // ============================================================================
@@ -205,37 +187,45 @@ describe("multi-state .on()", () => {
     }),
   );
 
-  test("empty array is a no-op", () => {
-    const machine = Machine.make({
-      state: WState,
-      event: WEvent,
-      initial: WState.Draft,
-    }).on([] as (typeof WState.Draft)[], WEvent.Cancel, () => WState.Cancelled);
+  it.scopedLive("empty array is a no-op", () =>
+    Effect.gen(function* () {
+      const machine = Machine.make({
+        state: WState,
+        event: WEvent,
+        initial: WState.Draft,
+      }).on([] as (typeof WState.Draft)[], WEvent.Cancel, () => WState.Cancelled);
 
-    expect(machine.transitions.length).toBe(0);
-  });
+      const result = yield* simulate(machine, [WEvent.Cancel]);
+      expect(result.finalState._tag).toBe("Draft");
+    }),
+  );
 });
 
 describe("multi-state .reenter()", () => {
-  test("reenter with array registers for each state", () => {
-    const RState = State({
-      A: { value: Schema.Finite },
-      B: { value: Schema.Finite },
-    });
-    const REvent = Event({ Reset: {} });
+  it.scopedLive("reenter with array registers for each state", () =>
+    Effect.gen(function* () {
+      const RState = State({
+        A: { value: Schema.Finite },
+        B: { value: Schema.Finite },
+      });
+      const REvent = Event({ Reset: {} });
 
-    const machine = Machine.make({
-      state: RState,
-      event: REvent,
-      initial: RState.A({ value: 0 }),
-    }).reenter([RState.A, RState.B], REvent.Reset, ({ state }) =>
-      RState.A({ value: state.value + 1 }),
-    );
+      const machine = Machine.make({
+        state: RState,
+        event: REvent,
+        initial: RState.A({ value: 0 }),
+      }).reenter([RState.A, RState.B], REvent.Reset, ({ state }) =>
+        RState.A({ value: state.value + 1 }),
+      );
 
-    expect(machine.transitions.length).toBe(2);
-    expect(machine.transitions[0]!.reenter).toBe(true);
-    expect(machine.transitions[1]!.reenter).toBe(true);
-  });
+      const fromA = yield* Machine.replay(machine, [REvent.Reset]);
+      const fromB = yield* Machine.replay(machine, [REvent.Reset], {
+        from: RState.B({ value: 2 }),
+      });
+      expect(fromA).toEqual(RState.A({ value: 1 }));
+      expect(fromB).toEqual(RState.A({ value: 3 }));
+    }),
+  );
 });
 
 // ============================================================================
@@ -354,56 +344,4 @@ describe(".from()", () => {
       expect(approved.finalState._tag).toBe("Approved");
     }),
   );
-});
-
-// ============================================================================
-//  (F7)
-// ============================================================================
-
-describe("materializeMachine", () => {
-  test("throws ProvisionValidationError when slots missing", () => {
-    const TestSlots = Slot.define({
-      check: Slot.fn({}, Schema.Boolean),
-      notify: Slot.fn({}),
-    });
-
-    const machine = Machine.make({
-      state: CounterState,
-      event: CounterEvent,
-      slots: TestSlots,
-      initial: CounterState.Idle({ count: 0 }),
-    });
-
-    expect(() => materializeMachine(machine, {})).toThrow();
-  });
-
-  test("succeeds when all handlers provided", () => {
-    const TestSlots = Slot.define({
-      check: Slot.fn({}, Schema.Boolean),
-    });
-
-    const machine = Machine.make({
-      state: CounterState,
-      event: CounterEvent,
-      slots: TestSlots,
-      initial: CounterState.Idle({ count: 0 }),
-    });
-
-    const materialized = materializeMachine(machine, {
-      check: () => true,
-    });
-
-    expect(materialized.initial._tag).toBe("Idle");
-  });
-
-  test("no-arg materialize works on slotless machine", () => {
-    const machine = Machine.make({
-      state: CounterState,
-      event: CounterEvent,
-      initial: CounterState.Idle({ count: 0 }),
-    });
-
-    const materialized = materializeMachine(machine);
-    expect(materialized.initial._tag).toBe("Idle");
-  });
 });

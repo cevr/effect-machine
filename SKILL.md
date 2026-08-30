@@ -9,7 +9,7 @@ Type-safe state machines for Effect. Schema-first API.
 ## Core Pattern
 
 ```ts
-import { Machine, State, Event, Slot } from "effect-machine";
+import { Machine, State, Event } from "effect-machine";
 
 // 1. Define schemas
 const MyState = State({
@@ -48,55 +48,45 @@ const machine = Machine.make({
 | `.background(handler)`                 | Machine-lifetime effect                 |
 | `.final(state)`                        | Mark final state                        |
 
-## State.derive()
+## State.with()
 
 Construct state from existing source:
 
 ```ts
 // Per-variant: preserve fields, override specific ones
-State.Active.derive(state, { count: state.count + 1 });
+State.Active.with(state, { count: state.count + 1 });
 
 // Cross-state: picks only target fields
-State.Shipped.derive(processingState, { trackingId: "TRACK-123" });
+State.Shipped.with(processingState, { trackingId: "TRACK-123" });
 
 // Empty variant
-State.Idle.derive(anyState); // → { _tag: "Idle" }
+State.Idle.with(anyState); // → { _tag: "Idle" }
 
 // Union-level: dispatches to correct variant based on _tag
 // Preserves specific variant subtype — no switch needed
-const updated = MyState.derive(state, { queue: newQueue });
+const updated = MyState.with(state, { queue: newQueue });
 ```
 
-## Slots
+## Effect Services
 
 ```ts
-const MySlots = Slot.define({
-  canRetry: Slot.fn({ max: Schema.Number }, Schema.Boolean),
-  fetch: Slot.fn({ url: Schema.String }),
-});
+class Api extends Context.Service<Api, { readonly fetch: (url: string) => Effect.Effect<Data> }>()(
+  "app/Api",
+) {}
 
-const machine = Machine.make({ state, event, slots: MySlots, initial }).on(
-  State.X,
-  Event.Y,
-  ({ slots }) =>
-    Effect.gen(function* () {
-      if (yield* slots.canRetry({ max: 3 })) {
-        yield* slots.fetch({ url: "/api" });
-      }
-      return State.Z;
-    }),
+const machine = Machine.make({ state, event, initial }).task(
+  State.Loading,
+  ({ state }) => Effect.flatMap(Api, (api) => api.fetch(state.url)),
+  { onSuccess: (data) => Event.Loaded({ data }) },
 );
 
-// Slot implementations provided at spawn time — handlers take only params
-const actor =
-  yield *
-  Machine.spawn(machine, {
-    slots: {
-      canRetry: ({ max }) => attempts < max,
-      fetch: ({ url }) => Http.get(url),
-    },
-  });
+const actor = yield * Machine.spawn(machine).pipe(Effect.provideService(Api, { fetch: Http.get }));
+yield * actor.start;
 ```
+
+Task, spawn, and background handlers can require Effect services. Transition handlers stay pure.
+
+`Machine.spawn` captures the current Effect context. A later `actor.start` keeps those services.
 
 ## Running Actors
 
@@ -129,13 +119,12 @@ Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))
 | Method                           | Description                                 |
 | -------------------------------- | ------------------------------------------- |
 | `actor.send(event)`              | Fire-and-forget (queue event)               |
-| `actor.cast(event)`              | Alias for send (OTP gen_server:cast)        |
 | `actor.call(event)`              | Request-reply, returns `ProcessEventResult` |
 | `actor.ask(event)`               | Typed reply (event must have `Event.reply`) |
 | `actor.waitFor(State.X)`         | Wait for state (constructor or fn)          |
 | `actor.sendAndWait(ev, State.X)` | Send + wait for state                       |
 | `actor.awaitFinal`               | Wait for final state                        |
-| `actor.watch(other)`             | Completes when other actor stops            |
+| `actor.awaitExit`                | Completes when this actor stops             |
 | `actor.drain`                    | Process remaining queue, then stop          |
 | `actor.snapshot`                 | Get current state                           |
 | `actor.sync.send(event)`         | Sync fire-and-forget (for UI)               |
@@ -237,8 +226,8 @@ expect(result.newState._tag).toBe("Loading");
 4. **Same-state skips lifecycle**: Use `.reenter()` to force
 5. **Never throw in Effect.gen**: Use `yield* Effect.fail()`
 6. **`.onAny()` is fallback**: Specific `.on()` always takes priority
-7. **Slots at spawn time**: `Machine.spawn(machine, { slots: { ... } })` — not on the builder
-8. **call vs send**: `send`/`cast` = fire-and-forget, `call` = request-reply, `ask` = typed reply
+7. **Services at allocation time**: provide Effect services when `Machine.spawn` allocates the actor
+8. **call vs send**: `send` = fire-and-forget, `call` = request-reply, `ask` = typed reply
 9. **Sync helpers**: Use `actor.sync.*` (not top-level `sendSync`/`snapshotSync`)
 10. **ActorStoppedError**: Pending `call`/`ask` Deferreds settled on stop
 
@@ -270,15 +259,14 @@ const OrderEntityLayer = EntityMachine.layer(OrderEntity, orderMachine, {
 - **snapshot**: background scheduler + deactivation finalizer. No journal.
 - **journal**: inline event append on each RPC, replay on reactivation. Deactivation snapshot as fallback.
 
-**EntityMachineOptions:** `initializeState`, `hooks`, `maxIdleTime`, `mailboxCapacity`, `disableFatalDefects`, `defectRetryPolicy`, `persistence`
+**EntityMachineOptions:** `initializeState`, `maxIdleTime`, `mailboxCapacity`, `disableFatalDefects`, `defectRetryPolicy`, `persistence`
 
 ## Files
 
 | File                            | Purpose                                |
 | ------------------------------- | -------------------------------------- |
 | `machine.ts`                    | Machine builder                        |
-| `schema.ts`                     | State/Event + derive                   |
-| `slot.ts`                       | Slot.define/Slot.fn                    |
+| `schema.ts`                     | State/Event schemas and copy helpers   |
 | `actor.ts`                      | ActorSystem, event loop                |
 | `testing.ts`                    | simulate, harness                      |
 | `internal/runtime.ts`           | Shared runtime kernel (entity-machine) |

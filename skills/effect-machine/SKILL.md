@@ -14,8 +14,7 @@ What are you building?
 ├─ Running actors                   → §Actors
 ├─ Typed ask/reply                  → §Ask / Reply
 ├─ Recovery/durability              → §Lifecycle
-├─ Timeouts / postpone              → §Timeouts, §Postpone
-└─ Slots (guards/effects)           → §Slots
+└─ Timeouts / postpone              → §Timeouts, §Postpone
 ```
 
 ## Schema-First
@@ -39,11 +38,11 @@ const E = Event({
 });
 ```
 
-**derive** — construct from existing state, picks overlapping fields:
+**`.with()`** — construct from existing state and copy overlapping fields:
 
 ```ts
-S.Active.derive(state); // pick target fields from source
-S.Active.derive(state, { count: n + 1 }); // pick + override
+S.Active.with(state); // pick target fields from source
+S.Active.with(state, { count: n + 1 }); // pick + override
 ```
 
 **Type guards / matching:**
@@ -67,7 +66,7 @@ const machine = Machine.make({ state: S, event: E, initial: S.Idle })
   .onAny(E.Cancel, () => S.Cancelled)
 
   // Reenter same state (re-triggers spawn effects + timeouts)
-  .reenter(S.Active, E.Refresh, ({ state }) => S.Active.derive(state))
+  .reenter(S.Active, E.Refresh, ({ state }) => S.Active.with(state))
 
   // Mark final states (actor stops, postpone buffer settles)
   .final(S.Done)
@@ -84,7 +83,7 @@ const machine = Machine.make({ state: S, event: E, initial: S.Idle })
 ({ state }) => Effect.gen(function* () { ... return S.Next({ ... }) })
 
 // With reply (for actor.ask — event must use Event.reply()):
-({ state }) => Machine.reply(S.Same.derive(state), state.count)
+({ state }) => Machine.reply(S.Same.with(state), state.count)
 ```
 
 ## Effects
@@ -119,45 +118,28 @@ machine.background(({ self }) =>
 );
 ```
 
-## Slots
+## Effect Services
 
-Unified parameterized slots via `Slot.define` + `Slot.fn`. Handlers take only params:
+Task, spawn, and background handlers can use standard Effect services:
 
 ```ts
-import { Slot } from "effect-machine";
+class Notifier extends Context.Service<
+  Notifier,
+  { readonly notify: (message: string) => Effect.Effect<void> }
+>()("app/Notifier") {}
 
-const MySlots = Slot.define({
-  canRetry: Slot.fn({ max: Schema.Number }, Schema.Boolean),
-  notify: Slot.fn({ msg: Schema.String }),
-});
+const machine = Machine.make({ state: S, event: E, initial: S.Idle }).spawn(S.Done, ({ state }) =>
+  Effect.flatMap(Notifier, (notifier) => notifier.notify(`Done: ${state.id}`)),
+);
 
-const machine = Machine.make({
-  state: S,
-  event: E,
-  slots: MySlots,
-  initial: S.Idle,
-})
-  .on(S.Error, E.Retry, ({ slots, state }) =>
-    Effect.gen(function* () {
-      if (yield* slots.canRetry({ max: 3 })) return S.Loading.derive(state);
-      return S.Failed;
-    }),
-  )
-  .spawn(S.Done, ({ slots, state }) => slots.notify({ msg: `Done: ${state.id}` }));
-
-// Provide at spawn time — handlers take only params
 const actor =
-  yield *
-  Machine.spawn(machine, {
-    slots: {
-      canRetry: ({ max }) => attempts < max,
-      notify: ({ msg }) => Effect.log(msg),
-    },
-  });
+  yield * Machine.spawn(machine).pipe(Effect.provideService(Notifier, { notify: Effect.log }));
 yield * actor.start;
 ```
 
-Slots are accepted everywhere: `Machine.spawn`, `Machine.replay`, `simulate`, `createTestHarness`.
+`Machine.spawn` captures the current Effect context. A later `actor.start` keeps those services.
+
+Keep `.on()` and `.reenter()` pure. These handlers cannot require services.
 
 ## Ask / Reply
 
@@ -170,7 +152,7 @@ const E = Event({
 });
 
 // Handler — Machine.reply() required for reply-bearing events
-machine.on(S.Active, E.GetCount, ({ state }) => Machine.reply(S.Active.derive(state), state.count));
+machine.on(S.Active, E.GetCount, ({ state }) => Machine.reply(S.Active.with(state), state.count));
 
 // Caller — return type inferred from schema
 const count = yield * actor.ask(E.GetCount); // number
@@ -230,7 +212,8 @@ const actor = yield * Machine.spawn(machine, { id: "my-id", hydrate: savedState 
 yield * actor.start;
 ```
 
-Auto-cleans up if `Scope` is present. Otherwise call `actor.stop` manually.
+Call `actor.stop` when you manage the actor lifetime. Use `Machine.scoped(effect)` to bridge
+`Scope.Scope` to `ActorScope` and attach automatic cleanup. Ambient `Scope.Scope` does not attach cleanup.
 
 ### ActorRef API
 
@@ -238,7 +221,6 @@ Auto-cleans up if `Scope` is present. Otherwise call `actor.stop` manually.
 | ---------------------- | ------------------------------------------------------------------- |
 | `start`                | Fork event loop + effects (required after `Machine.spawn`)          |
 | `send(event)`          | Fire-and-forget                                                     |
-| `cast(event)`          | Alias for send                                                      |
 | `call(event)`          | Request-reply → `ProcessEventResult`                                |
 | `ask(event)`           | Typed reply (event must have `Event.reply()` schema)                |
 | `snapshot`             | Current state                                                       |
@@ -247,6 +229,7 @@ Auto-cleans up if `Scope` is present. Otherwise call `actor.stop` manually.
 | `waitFor(S.X)`         | Wait for state                                                      |
 | `sendAndWait(ev, S.X)` | Send + wait                                                         |
 | `awaitFinal`           | Wait for final state                                                |
+| `awaitExit`            | Wait for terminal exit                                              |
 | `sync.*`               | Sync variants for non-Effect boundaries                             |
 
 ### ActorSystem — registry + lifecycle (auto-starts)
@@ -360,7 +343,7 @@ Both `simulate` and `createTestHarness` accept `Machine` directly.
 ## Gotchas
 
 - **`Machine.spawn` returns unstarted actor** — must call `yield* actor.start`. `system.spawn` auto-starts.
-- **Slots are provided at spawn time** — `Machine.spawn(machine, { slots: { ... } })`
+- **Services are provided through Effect** — provide them when `Machine.spawn` allocates the actor
 - **Empty state = value, non-empty = constructor** — `S.Idle` vs `S.Loading({ url })`
 - **Spawn effects re-run on hydrate** — `Machine.spawn({ hydrate })` re-runs spawn effects for the hydrated state (timers, scoped resources)
 - **`hydrate` overrides recovery** — `resolve()` is never called when `hydrate` is set
@@ -368,4 +351,3 @@ Both `simulate` and `createTestHarness` accept `Machine` directly.
 - **Effectful handlers in replay** — replay runs handlers but stubs `self`/`system`. Side effects through `self.send` are no-ops.
 - **`ask()` requires reply schema** — only events with `Event.reply()` accepted; non-reply events are type errors
 - **Reply decode failure = defect** — if handler returns wrong type, actor dies (broken handler, not business logic)
-- **v3 compat** — import from `"effect-machine/v3"` for Effect v3 projects

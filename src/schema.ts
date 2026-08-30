@@ -1,7 +1,7 @@
 /**
  * Schema-first State/Event definitions for effect-machine.
  *
- * MachineSchema provides a single source of truth that combines:
+ * `State` and `Event` provide one source of truth that combines:
  * - Schema for validation/serialization
  * - Variant constructors (like Data.taggedEnum)
  * - $is and $match helpers for pattern matching
@@ -16,6 +16,9 @@
  *   Pending: { orderId: Schema.String },
  *   Shipped: { trackingId: Schema.String },
  * })
+ * const OrderEvent = Event({
+ *   Ship: { trackingId: Schema.String },
+ * })
  *
  * // Infer type from schema
  * type OrderState = typeof OrderState.Type
@@ -29,8 +32,12 @@
  *   Shipped: (s) => `Shipped: ${s.trackingId}`,
  * })
  *
- * // Use as Schema for persistence/cluster
- * machine.pipe(Machine.persist({ stateSchema: OrderState, ... }))
+ * // Use the schemas to define a machine
+ * const machine = Machine.make({
+ *   state: OrderState,
+ *   event: OrderEvent,
+ *   initial: pending,
+ * })
  * ```
  *
  * @module
@@ -158,11 +165,6 @@ type MatchCases<D extends Record<string, Schema.Struct.Fields>, R> = {
  */
 interface MachineSchemaBase<D extends Record<string, Schema.Struct.Fields>, Brand> {
   /**
-   * Raw definition record for introspection
-   */
-  readonly _definition: D;
-
-  /**
    * Per-variant schemas for fine-grained operations
    */
   readonly variants: VariantSchemas<D>;
@@ -205,13 +207,14 @@ interface MachineSchemaBase<D extends Record<string, Schema.Struct.Fields>, Bran
     source: S,
     partial?: Partial<Record<SharedKeys<D>, unknown>>,
   ) => S;
-
-  /**
-   * Reply schemas per variant tag. Only populated for event schemas
-   * with variants defined via `Event.reply()`.
-   */
-  readonly _replySchemas: ReadonlyMap<string, Schema.Decoder<unknown>>;
 }
+
+const replySchemaRegistry = new WeakMap<object, ReadonlyMap<string, Schema.Decoder<unknown>>>();
+
+/** @internal */
+export const getReplySchemas = (
+  schema: object,
+): ReadonlyMap<string, Schema.Decoder<unknown>> | undefined => replySchemaRegistry.get(schema);
 
 // ============================================================================
 // MachineStateSchema Type
@@ -232,10 +235,7 @@ export type MachineStateSchema<D extends Record<string, Schema.Struct.Fields>> =
   unknown
 > &
   MachineSchemaBase<D, FullStateBrand<D>> &
-  VariantConstructors<D, FullStateBrand<D>> & {
-    /** Schema for persistence, config, and registration. */
-    readonly schema: Schema.Schema<VariantsUnion<D> & FullStateBrand<D>>;
-  };
+  VariantConstructors<D, FullStateBrand<D>>;
 
 /**
  * Schema-first event definition (same structure as state, different brand)
@@ -265,7 +265,6 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
   schema: Schema.Schema<VariantsUnion<D>>;
   variants: VariantSchemas<D>;
   constructors: Record<string, (args: Record<string, unknown>) => Record<string, unknown>>;
-  _definition: D;
   replySchemas: Map<string, Schema.Decoder<unknown>>;
   $is: <Tag extends string>(tag: Tag) => (u: unknown) => boolean;
   $match: (valueOrCases: unknown, maybeCases?: unknown) => unknown;
@@ -371,7 +370,6 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
     schema: unionSchema as unknown as Schema.Schema<VariantsUnion<D>>,
     variants: variants as unknown as VariantSchemas<D>,
     constructors,
-    _definition: definition,
     replySchemas,
     $is,
     $match,
@@ -383,7 +381,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
  * Builds the schema object with variants, constructors, $is, and $match.
  */
 const createMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(definition: D) => {
-  const { schema, variants, constructors, _definition, replySchemas, $is, $match } =
+  const { schema, variants, constructors, replySchemas, $is, $match } =
     buildMachineSchema(definition);
   // Union-level with: dispatch to per-variant with based on _tag
   const withFn = (source: { _tag: string }, partial?: Record<string, unknown>) => {
@@ -398,16 +396,15 @@ const createMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(def
     return fn(source, partial);
   };
 
-  return Object.assign(Object.create(schema), {
+  const machineSchema = Object.assign(Object.create(schema), {
     variants,
-    _definition,
-    _replySchemas: replySchemas,
-    schema,
     $is,
     $match,
     with: withFn,
     ...constructors,
   });
+  replySchemaRegistry.set(machineSchema, replySchemas);
+  return machineSchema;
 };
 
 /**
@@ -419,7 +416,7 @@ const createMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(def
  *
  * @example
  * ```ts
- * const OrderState = MachineSchema.State({
+ * const OrderState = State({
  *   Pending: { orderId: Schema.String },
  *   Shipped: { trackingId: Schema.String },
  * })

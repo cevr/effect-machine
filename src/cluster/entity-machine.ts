@@ -30,7 +30,9 @@ import {
 import { type Machine, replay } from "../machine.js";
 import type { ActorSystemService } from "../actor.js";
 import { ActorSystem as ActorSystemTag, makeSystem } from "../actor.js";
-import type { ProcessEventHooks } from "../internal/transition.js";
+import type { InspectorService } from "../inspection.js";
+import { Inspector as InspectorTag } from "../inspection.js";
+import { makeInspectionHooks } from "../internal/inspection.js";
 import { createRuntime, type RuntimeQueuedEvent } from "../internal/runtime.js";
 import {
   PersistenceAdapter,
@@ -44,17 +46,12 @@ import {
 /**
  * Options for EntityMachine.layer
  */
-export interface EntityMachineOptions<S, E> {
+export interface EntityMachineOptions<S> {
   /**
    * Initialize state from entity ID.
    * Called once when entity is first activated.
    */
   readonly initializeState?: (entityId: string) => S;
-
-  /**
-   * Optional hooks for inspection/tracing.
-   */
-  readonly hooks?: ProcessEventHooks<S, E>;
 
   /**
    * Maximum idle time before entity deactivation.
@@ -113,8 +110,8 @@ export const EntityMachine = {
   >(
     entity: Entity.Entity<EntityType, Rpcs>,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Machine type params need wide acceptance
-    machine: Machine<S, E, R, any, any, any>,
-    options?: EntityMachineOptions<S, E>,
+    machine: Machine<S, E, R, any, any>,
+    options?: EntityMachineOptions<S>,
   ): Layer.Layer<never, never, R> => {
     const persistence = options?.persistence;
 
@@ -127,6 +124,10 @@ export const EntityMachine = {
           return "";
         }),
       );
+
+      const inspector = Option.getOrUndefined(yield* Effect.serviceOption(InspectorTag)) as
+        | InspectorService<S, E>
+        | undefined;
 
       // Resolve actor system from context, or create implicit one
       const existingSystem = yield* Effect.serviceOption(ActorSystemTag);
@@ -156,9 +157,7 @@ export const EntityMachine = {
 
       let machineWithState = machine;
       if (initialState !== undefined) {
-        machineWithState = Object.create(machine, {
-          initial: { value: initialState, enumerable: true },
-        });
+        machineWithState = machine._withInitial(initialState);
       }
 
       // Version tracking
@@ -168,12 +167,16 @@ export const EntityMachine = {
       const computedInitial = initialState ?? machine.initial;
       const stateRef = yield* SubscriptionRef.make(computedInitial);
       const stoppedRef = yield* Ref.make(false);
-      const eventQueue = yield* Queue.unbounded<RuntimeQueuedEvent<E>>();
+      const eventQueue = yield* Queue.unbounded<RuntimeQueuedEvent<S, E>>();
+      let hooks: ReturnType<typeof makeInspectionHooks<S, E>> | undefined = undefined;
+      if (inspector !== undefined) {
+        hooks = makeInspectionHooks(entityId, inspector);
+      }
 
       // Create runtime kernel — single queue, sequential processing
       const runtime = yield* createRuntime(machineWithState, system, {
         actorId: entityId,
-        hooks: options?.hooks,
+        hooks,
         childIdPrefix: `${entityId}/`,
         cellResources: { stateRef, stoppedRef, eventQueue },
       });
@@ -372,7 +375,7 @@ const hydratePersistence = <
   entityDef: { readonly type: string },
   entityId: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Machine type params need wide acceptance
-  machine: Machine<S, E, any, any, any, any>,
+  machine: Machine<S, E, any, any, any>,
   initializeState?: (entityId: string) => S,
 ) =>
   Effect.gen(function* () {

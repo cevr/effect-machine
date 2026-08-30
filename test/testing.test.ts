@@ -83,6 +83,47 @@ describe("Testing", () => {
         expect(current._tag).toBe("Success");
       }),
     );
+
+    it.scopedLive("drains postponed events through multiple state changes", () =>
+      Effect.gen(function* () {
+        const CascadeState = State({ A: {}, B: {}, C: {}, Done: {} });
+        const CascadeEvent = Event({ GoB: {}, GoC: {}, Finish: {} });
+        const machine = Machine.make({
+          state: CascadeState,
+          event: CascadeEvent,
+          initial: CascadeState.A,
+        })
+          .on(CascadeState.A, CascadeEvent.GoB, () => CascadeState.B)
+          .on(CascadeState.B, CascadeEvent.GoC, () => CascadeState.C)
+          .on(CascadeState.C, CascadeEvent.Finish, () => CascadeState.Done)
+          .postpone(CascadeState.A, [CascadeEvent.GoC, CascadeEvent.Finish])
+          .postpone(CascadeState.B, CascadeEvent.Finish)
+          .final(CascadeState.Done);
+        const harness = yield* createTestHarness(machine);
+
+        yield* harness.send(CascadeEvent.Finish);
+        yield* harness.send(CascadeEvent.GoC);
+        const state = yield* harness.send(CascadeEvent.GoB);
+
+        expect(state._tag).toBe("Done");
+      }),
+    );
+
+    it.scopedLive("does not process events after a final state", () =>
+      Effect.gen(function* () {
+        const transitions: string[] = [];
+        const harness = yield* createTestHarness(testMachine, {
+          onTransition: (_from, event) => transitions.push(event._tag),
+        });
+
+        yield* harness.send(TestEvent.Fetch);
+        yield* harness.send(TestEvent.Resolve({ data: "done" }));
+        const state = yield* harness.send(TestEvent.Reject({ message: "late" }));
+
+        expect(state._tag).toBe("Success");
+        expect(transitions).toEqual(["Fetch", "Resolve"]);
+      }),
+    );
   });
 
   describe("assertReaches", () => {

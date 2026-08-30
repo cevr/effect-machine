@@ -8,7 +8,7 @@ import { Rpc } from "effect/unstable/rpc";
 import { Schema } from "effect";
 
 import type { Machine } from "../machine.js";
-import { MissingSchemaError } from "../errors.js";
+import type { MachineEventSchema, MachineStateSchema } from "../schema.js";
 
 /**
  * Options for toEntity.
@@ -20,18 +20,31 @@ export interface ToEntityOptions {
   readonly type: string;
 }
 
-/**
- * Default RPC protocol for entity machines.
- *
- * - `Send` - Send event to machine (fire-and-forget), returns new state
- * - `Ask` - Send event and get domain reply (typed via Event.reply() schemas)
- * - `GetState` - Get current state
- */
-export type EntityRpcs<StateSchema extends Schema.Top, EventSchema extends Schema.Top> = readonly [
-  Rpc.Rpc<"Send", Schema.Struct<{ readonly event: EventSchema }>, StateSchema>,
-  Rpc.Rpc<"Ask", Schema.Struct<{ readonly event: EventSchema }>, typeof Schema.Unknown>,
-  Rpc.Rpc<"GetState", typeof Schema.Void, StateSchema>,
+const makeEntityProtocol = <StateSchema extends Schema.Top, EventSchema extends Schema.Top>(
+  stateSchema: StateSchema,
+  eventSchema: EventSchema,
+) => [
+  Rpc.make("Send", {
+    payload: { event: eventSchema },
+    success: stateSchema,
+  }),
+  Rpc.make("Ask", {
+    payload: { event: eventSchema },
+    success: Schema.Unknown,
+  }),
+  Rpc.make("GetState", {
+    success: stateSchema,
+  }),
+  Rpc.make("WatchState", {
+    success: stateSchema,
+    stream: true,
+  }),
 ];
+
+/** RPC protocol owned by `toEntity`. */
+export type EntityRpcs<StateSchema extends Schema.Top, EventSchema extends Schema.Top> = ReturnType<
+  typeof makeEntityProtocol<StateSchema, EventSchema>
+>[number];
 
 /**
  * Generate an Entity definition from a machine.
@@ -57,8 +70,8 @@ export type EntityRpcs<StateSchema extends Schema.Top, EventSchema extends Schem
  *   state: OrderState,
  *   event: OrderEvent,
  *   initial: OrderState.Pending({ orderId: "" }),
- * }).pipe(
- *   Machine.on(OrderState.Pending, OrderEvent.Ship, ...),
+ * }).on(OrderState.Pending, OrderEvent.Ship, ({ event }) =>
+ *   OrderState.Shipped({ trackingId: event.trackingId }),
  * )
  *
  * const OrderEntity = toEntity(orderMachine, { type: "Order" })
@@ -68,33 +81,20 @@ export const toEntity = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
+  SD extends Record<string, Schema.Struct.Fields>,
+  ED extends Record<string, Schema.Struct.Fields>,
 >(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-  machine: Machine<S, E, R, any, any, any>,
+  machine: Machine<S, E, R, SD, ED>,
   options: ToEntityOptions,
-) => {
+): Entity.Entity<
+  string,
+  EntityRpcs<
+    MachineStateSchema<SD> & { readonly Type: S },
+    MachineEventSchema<ED> & { readonly Type: E }
+  >
+> => {
   const stateSchema = machine.stateSchema;
   const eventSchema = machine.eventSchema;
 
-  if (stateSchema === undefined || eventSchema === undefined) {
-    throw MissingSchemaError.make({ operation: "toEntity" });
-  }
-
-  return Entity.make(options.type, [
-    Rpc.make("Send", {
-      payload: { event: eventSchema },
-      success: stateSchema,
-    }),
-    Rpc.make("Ask", {
-      payload: { event: eventSchema },
-      success: Schema.Unknown,
-    }),
-    Rpc.make("GetState", {
-      success: stateSchema,
-    }),
-    Rpc.make("WatchState", {
-      success: stateSchema,
-      stream: true,
-    }),
-  ]);
+  return Entity.make(options.type, makeEntityProtocol(stateSchema, eventSchema));
 };

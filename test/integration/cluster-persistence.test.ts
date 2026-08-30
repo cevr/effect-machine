@@ -100,7 +100,7 @@ const runPersistenceTest = <A>(opts: {
       Effect.gen(function* () {
         const makeClient = yield* Entity.makeTestClient(entity, provideLayer);
         const client = yield* makeClient("entity-1");
-        yield* opts.act1(makeEntityActorRef<CounterState, CounterEvent, never>(client, "entity-1"));
+        yield* opts.act1(makeEntityActorRef<CounterState, CounterEvent>(client, "entity-1"));
       }),
     ).pipe(Effect.provide(TestShardingConfig));
 
@@ -109,7 +109,7 @@ const runPersistenceTest = <A>(opts: {
       Effect.gen(function* () {
         const makeClient = yield* Entity.makeTestClient(entity, provideLayer);
         const client = yield* makeClient("entity-1");
-        yield* opts.act2(makeEntityActorRef<CounterState, CounterEvent, never>(client, "entity-1"));
+        yield* opts.act2(makeEntityActorRef<CounterState, CounterEvent>(client, "entity-1"));
       }),
     ).pipe(Effect.provide(TestShardingConfig));
   });
@@ -185,7 +185,7 @@ describe("Entity Persistence", () => {
             entityLayer.pipe(Layer.provide(ActorSystemDefault), Layer.provide(adapterLayer)),
           );
           const client = yield* makeClient("fresh-1");
-          const ref = makeEntityActorRef<CounterState, CounterEvent, never>(client, "fresh-1");
+          const ref = makeEntityActorRef<CounterState, CounterEvent>(client, "fresh-1");
           const state = yield* ref.snapshot;
           expect(state._tag).toBe("Active");
           expect((state as { count: number }).count).toBe(42);
@@ -214,7 +214,7 @@ describe("Entity Persistence", () => {
             entityLayer.pipe(Layer.provide(ActorSystemDefault), Layer.provide(adapterLayer)),
           );
           const client = yield* makeClient("same-tag-1");
-          const ref = makeEntityActorRef<CounterState, CounterEvent, never>(client, "same-tag-1");
+          const ref = makeEntityActorRef<CounterState, CounterEvent>(client, "same-tag-1");
 
           // 3 same-tag transitions (Active → Active)
           yield* ref.send(CounterEvent.Increment);
@@ -252,7 +252,7 @@ describe("Entity Persistence", () => {
             entityLayer.pipe(Layer.provide(ActorSystemDefault), Layer.provide(adapterLayer)),
           );
           const client = yield* makeClient("snap-1");
-          const ref = makeEntityActorRef<CounterState, CounterEvent, never>(client, "snap-1");
+          const ref = makeEntityActorRef<CounterState, CounterEvent>(client, "snap-1");
           yield* ref.send(CounterEvent.Increment);
           yield* ref.send(CounterEvent.Increment);
         }),
@@ -288,7 +288,7 @@ describe("Entity Persistence", () => {
             entityLayer.pipe(Layer.provide(ActorSystemDefault), Layer.provide(adapterLayer)),
           );
           const client = yield* makeClient("ver-1");
-          const ref = makeEntityActorRef<CounterState, CounterEvent, never>(client, "ver-1");
+          const ref = makeEntityActorRef<CounterState, CounterEvent>(client, "ver-1");
           yield* ref.send(CounterEvent.Increment);
           yield* ref.send(CounterEvent.Increment);
           yield* ref.send(CounterEvent.Increment);
@@ -327,7 +327,7 @@ describe("Entity Persistence", () => {
         Effect.gen(function* () {
           const makeClient = yield* Entity.makeTestClient(entity, provideLayer);
           const client = yield* makeClient("js-1");
-          const ref = makeEntityActorRef<CounterState, CounterEvent, never>(client, "js-1");
+          const ref = makeEntityActorRef<CounterState, CounterEvent>(client, "js-1");
           for (let i = 0; i < 5; i++) {
             yield* ref.send(CounterEvent.Increment);
           }
@@ -352,7 +352,7 @@ describe("Entity Persistence", () => {
         Effect.gen(function* () {
           const makeClient = yield* Entity.makeTestClient(entity, provideLayer);
           const client = yield* makeClient("js-1");
-          const ref = makeEntityActorRef<CounterState, CounterEvent, never>(client, "js-1");
+          const ref = makeEntityActorRef<CounterState, CounterEvent>(client, "js-1");
           const state = yield* ref.snapshot;
           expect(state._tag).toBe("Active");
           expect((state as { count: number }).count).toBe(5);
@@ -401,7 +401,7 @@ describe("Entity Persistence", () => {
             entityLayer.pipe(Layer.provide(ActorSystemDefault), Layer.provide(failingAdapterLayer)),
           );
           const client = yield* makeClient("fail-1");
-          const ref = makeEntityActorRef<CounterState, CounterEvent, never>(client, "fail-1");
+          const ref = makeEntityActorRef<CounterState, CounterEvent>(client, "fail-1");
 
           yield* ref.send(CounterEvent.Increment);
           yield* ref.send(CounterEvent.Increment);
@@ -461,7 +461,7 @@ describe("Entity Persistence", () => {
           Effect.gen(function* () {
             const makeClient = yield* Entity.makeTestClient(entity, provideLayer);
             const client = yield* makeClient("recover-1");
-            const ref = makeEntityActorRef<CounterState, CounterEvent, never>(client, "recover-1");
+            const ref = makeEntityActorRef<CounterState, CounterEvent>(client, "recover-1");
             yield* ref.send(CounterEvent.Increment);
             yield* ref.send(CounterEvent.Increment);
             yield* ref.send(CounterEvent.Increment);
@@ -480,7 +480,7 @@ describe("Entity Persistence", () => {
           Effect.gen(function* () {
             const makeClient = yield* Entity.makeTestClient(entity, provideLayer);
             const client = yield* makeClient("recover-1");
-            const ref = makeEntityActorRef<CounterState, CounterEvent, never>(client, "recover-1");
+            const ref = makeEntityActorRef<CounterState, CounterEvent>(client, "recover-1");
             const state = yield* ref.snapshot;
             expect(state._tag).toBe("Active");
             // Should recover to at least count=3 (journal) or count=4 (snapshot from defected state)
@@ -513,7 +513,7 @@ describe("Entity Persistence", () => {
         Effect.gen(function* () {
           const makeClient = yield* Entity.makeTestClient(entity, provideLayer);
           const client = yield* makeClient("sv-1");
-          const ref = makeEntityActorRef<CounterState, CounterEvent, never>(client, "sv-1");
+          const ref = makeEntityActorRef<CounterState, CounterEvent>(client, "sv-1");
           for (let i = 0; i < 5; i++) {
             yield* ref.send(CounterEvent.Increment);
           }
@@ -534,7 +534,7 @@ describe("Entity Persistence", () => {
         Effect.gen(function* () {
           const makeClient = yield* Entity.makeTestClient(entity, provideLayer);
           const client = yield* makeClient("sv-1");
-          const ref = makeEntityActorRef<CounterState, CounterEvent, never>(client, "sv-1");
+          const ref = makeEntityActorRef<CounterState, CounterEvent>(client, "sv-1");
           const state = yield* ref.snapshot;
           expect(state._tag).toBe("Active");
           expect((state as { count: number }).count).toBe(5);
