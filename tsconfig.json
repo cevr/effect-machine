@@ -114,17 +114,17 @@
           {
             "target": "service",
             "pattern": "default",
-            "skipLeadingPath": ["src/", "v3/src/"]
+            "skipLeadingPath": ["src/"]
           },
           {
             "target": "error",
             "pattern": "default",
-            "skipLeadingPath": ["src/", "v3/src/"]
+            "skipLeadingPath": ["src/"]
           }
         ],
         "overrides": [
           {
-            "include": ["test/**/*.ts", "v3/test/**/*.ts", "**/test/**/*.ts", "**/*.test.ts"],
+            "include": ["test/**/*.ts", "**/test/**/*.ts", "**/*.test.ts"],
             "options": {
               "diagnosticSeverity": {
                 "missingEffectContext": "off",
@@ -134,25 +134,17 @@
           },
           {
             // Data-first constructors and internal helpers. Machine.spawn,
-            // Machine.replay, materializeMachine, toEntity, and the transition
+            // Machine.replay, toEntity, and the transition
             // helpers take a machine plus options as fixed arity — they are not
             // data-last operators, so a pipeable overload would be dead API.
             // The public shape is documented as Machine.spawn(machine, {...}).
             "include": [
               "src/actor.ts",
               "src/machine.ts",
-              "src/slot.ts",
               "src/cluster/entity-actor-ref.ts",
               "src/cluster/to-entity.ts",
               "src/internal/transition.ts",
-              "src/internal/utils.ts",
-              "v3/src/actor.ts",
-              "v3/src/machine.ts",
-              "v3/src/slot.ts",
-              "v3/src/cluster/entity-actor-ref.ts",
-              "v3/src/cluster/to-entity.ts",
-              "v3/src/internal/transition.ts",
-              "v3/src/internal/utils.ts"
+              "src/internal/utils.ts"
             ],
             "options": {
               "diagnosticSeverity": {
@@ -168,13 +160,7 @@
             // fail ActorStoppedError into it while the queue sees NoReplyError.
             // FOLLOW-UP: thread R through wrapProcess and split the reply
             // Deferred by phase so these narrowings become provable.
-            "include": [
-              "src/actor.ts",
-              "src/internal/runtime.ts",
-              "v3/src/actor.ts",
-              "v3/src/internal/runtime.ts",
-              "v3/src/machine.ts"
-            ],
+            "include": ["src/actor.ts", "src/internal/runtime.ts"],
             "options": {
               "diagnosticSeverity": {
                 "unsafeEffectTypeAssertion": "off"

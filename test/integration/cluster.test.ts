@@ -22,7 +22,6 @@ import {
   simulate,
   State,
   Event,
-  Slot,
 } from "../../src/index.js";
 import { toEntity, EntityMachine, makeEntityActorRef } from "../../src/cluster/index.js";
 
@@ -200,7 +199,7 @@ describe("Cluster Integration with MachineSchema", () => {
     expect(encoded).toEqual({ _tag: "Pending", orderId: "test" });
 
     // Decode
-    const decoded = Schema.decodeUnknownSync(OrderState)({
+    const decoded = Schema.decodeSync(OrderState)({
       _tag: "Shipped",
       orderId: "123",
       trackingId: "abc",
@@ -239,24 +238,15 @@ describe("Entity.makeTestClient with machine handler", () => {
   });
   type CounterEvent = typeof CounterEvent.Type;
 
-  const CounterSlots = Slot.define({
-    underLimit: Slot.fn({}, Schema.Boolean),
-  });
-
   const counterMachine = Machine.make({
     state: CounterState,
     event: CounterEvent,
-    slots: CounterSlots,
     initial: CounterState.Counting({ count: 0 }),
   })
-    .on(CounterState.Counting, CounterEvent.Increment, ({ state, slots }) =>
-      Effect.gen(function* () {
-        if (yield* slots.underLimit()) {
-          return CounterState.Counting({ count: state.count + 1 });
-        }
-        return state;
-      }),
-    )
+    .on(CounterState.Counting, CounterEvent.Increment, ({ state }) => {
+      if (state.count < 3) return CounterState.Counting({ count: state.count + 1 });
+      return state;
+    })
     .on(CounterState.Counting, CounterEvent.Finish, ({ state }) =>
       CounterState.Done({ count: state.count }),
     )
@@ -302,7 +292,6 @@ describe("Entity.makeTestClient with machine handler", () => {
                 const handlerResult = transition.handler({
                   state: currentState,
                   event,
-                  slots: {} as any,
                 });
                 let newState: OrderState = handlerResult as OrderState;
                 if (Effect.isEffect(handlerResult)) {
@@ -337,27 +326,13 @@ describe("Entity.makeTestClient with machine handler", () => {
 
   it.scopedLive("guards work with simulate", () =>
     Effect.gen(function* () {
-      const result = yield* simulate(
-        counterMachine,
-        [
-          CounterEvent.Increment,
-          CounterEvent.Increment,
-          CounterEvent.Increment,
-          CounterEvent.Increment, // blocked by guard
-          CounterEvent.Finish,
-        ],
-        {
-          slots: {
-            underLimit: () =>
-              Effect.gen(function* () {
-                const ctx = yield* counterMachine.Context;
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const state = ctx.state as any;
-                return state._tag === "Counting" && state.count < 3;
-              }),
-          },
-        },
-      );
+      const result = yield* simulate(counterMachine, [
+        CounterEvent.Increment,
+        CounterEvent.Increment,
+        CounterEvent.Increment,
+        CounterEvent.Increment,
+        CounterEvent.Finish,
+      ]);
 
       expect(result.finalState._tag).toBe("Done");
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test assertion
@@ -794,7 +769,7 @@ describe("EntityMachine.layer", () => {
       // while internal ones are being processed by the queue fiber
       yield* Effect.all(
         Array.from({ length: 10 }, () => ref.send(RaceEvent.ExternalIncrement)),
-        { concurrency: "unbounded" },
+        { concurrency: 10 },
       );
 
       // Give internal events time to finish

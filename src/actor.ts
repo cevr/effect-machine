@@ -27,10 +27,8 @@ import {
 } from "effect";
 
 import type { Machine, Lifecycle } from "./machine.js";
-import { materializeMachine } from "./machine.js";
 import type { ActorExit, Supervision } from "./supervision.js";
 import type { ReplyTypeBrand, ExtractReply } from "./internal/brands.js";
-import type { SlotsDef, ProvideSlots } from "./slot.js";
 import type { InspectorService } from "./inspection.js";
 import { Inspector as InspectorTag } from "./inspection.js";
 import { resolveTransition } from "./internal/transition.js";
@@ -248,19 +246,12 @@ export interface ActorSystemService {
    * const actor = yield* system.spawn("my-actor", machine);
    * ```
    */
-  readonly spawn: <
-    S extends { readonly _tag: string },
-    E extends { readonly _tag: string },
-    R,
-    SD extends SlotsDef = Record<string, never>,
-  >(
+  readonly spawn: <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
     id: string,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    machine: Machine<S, E, R, any, any, SD>,
+    machine: Machine<S, E, R, any, any>,
     options?: {
       readonly supervision?: Supervision.Policy;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      readonly slots?: ProvideSlots<SD, any>;
       readonly lifecycle?: Lifecycle<S, E>;
     },
   ) => Effect.Effect<ActorRef<S, E>, DuplicateActorError, R>;
@@ -341,11 +332,10 @@ export const buildActorRefCore = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
-  SD extends SlotsDef,
 >(
   id: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-  machine: Machine<S, E, R, any, any, SD>,
+  machine: Machine<S, E, R, any, any>,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
   eventQueueRef: Ref.Ref<Queue.Queue<QueuedEvent<E>>>,
   stoppedRef: Ref.Ref<boolean>,
@@ -640,7 +630,7 @@ const runSupervisionLoop = <
 >(params: {
   supervision: Supervision.Policy;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  machine: Machine<S, E, any, any, any, any>;
+  machine: Machine<S, E, any, any, any>;
   id: string;
   runtimeRef: { current: RuntimeHandle<S, E> | undefined };
   terminalExitDeferred: Deferred.Deferred<ActorExit<S>>;
@@ -738,11 +728,10 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
-  SD extends SlotsDef,
 >(
   id: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  machine: Machine<S, E, R, any, any, SD>,
+  machine: Machine<S, E, R, any, any>,
   options?: {
     initialState?: S;
     supervision?: Supervision.Policy;
@@ -752,6 +741,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   },
 ) {
   const lifecycle: Lifecycle<S, E> | undefined = options?.lifecycle;
+  const serviceContext = yield* Effect.context<R>();
 
   // Spawn is cold — initial state from hydrate or machine.initial.
   // Recovery runs during start, not allocate.
@@ -934,7 +924,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
               ),
             onChildSpawned: (childId, child) =>
               Effect.gen(function* () {
-                childrenMap.set(childId, child as ActorRef<AnyState, unknown>);
+                childrenMap.set(childId, child as unknown as ActorRef<AnyState, unknown>);
                 // Use Scope.Scope here intentionally — this is the spawn handler's
                 // state-scoped scope, not an ambient scope. When the state exits,
                 // this scope closes and the child is removed from the map.
@@ -961,7 +951,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   // Build actor stop — wraps current runtime.stop with implicit system teardown.
   // For supervised actors: interrupt supervisor fiber first (cancels restart/backoff),
   // then stop the current runtime, then set terminal exit.
-  const stop = Effect.gen(function* () {
+  const stopActor = Effect.fn("effect-machine.actor.stop")(function* () {
     // Interrupt supervisor loop first — prevents restart during/after stop
     if (supervisorFiberRef.current !== undefined) {
       yield* Fiber.interrupt(supervisorFiberRef.current);
@@ -975,13 +965,14 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     if (implicitSystemScope !== undefined) {
       yield* Scope.close(implicitSystemScope, Exit.void);
     }
-  }).pipe(Effect.withSpan("effect-machine.actor.stop"), Effect.asVoid);
+  });
+  const stop = stopActor().pipe(Effect.provide(serviceContext), Effect.asVoid);
 
   // Track whether hydrate was provided — skip recovery when hydrated
   const isHydrated = options?.initialState !== undefined;
 
   // Build actor start — runs recovery, emits @machine.spawn, arms supervisor, then delegates to runtime.start
-  const start = Effect.gen(function* () {
+  const startActor = Effect.fn("effect-machine.actor.start")(function* () {
     // Run recovery if lifecycle.recovery exists AND not hydrated (hydrate takes precedence)
     if (lifecycle?.recovery !== undefined && !isHydrated) {
       const resolved = yield* lifecycle.recovery.resolve({
@@ -1054,7 +1045,8 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     if (currentRuntime !== undefined) {
       yield* currentRuntime.start;
     }
-  }).pipe(Effect.withSpan("effect-machine.actor.start"), Effect.asVoid);
+  });
+  const start = startActor().pipe(Effect.provide(serviceContext), Effect.asVoid);
 
   return buildActorRefCore(
     id,
@@ -1125,10 +1117,7 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     MutableHashMap.forEach(actorsMap, (actor) => {
       stops.push(actor.stop);
     });
-    return Effect.all(stops, { concurrency: "unbounded" }).pipe(
-      Effect.andThen(PubSub.shutdown(eventPubSub)),
-      Effect.asVoid,
-    );
+    return Effect.all(stops).pipe(Effect.andThen(PubSub.shutdown(eventPubSub)), Effect.asVoid);
   });
 
   /** Check for duplicate ID, register actor, attach scope cleanup if available */
@@ -1183,21 +1172,14 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
   >(
     id: string,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    machine: Machine<S, E, R, any, any, any>,
+    machine: Machine<S, E, R, any, any>,
     spawnOptions?: {
       readonly supervision?: Supervision.Policy;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      readonly slots?: Record<string, any>;
       readonly lifecycle?: Lifecycle<S, E>;
     },
   ) {
     if (MutableHashMap.has(actorsMap, id)) {
       return yield* DuplicateActorError.make({ actorId: id });
-    }
-    // Materialize slots if provided
-    let materialized = machine;
-    if (spawnOptions?.slots !== undefined) {
-      materialized = materializeMachine(machine, spawnOptions.slots);
     }
     // Mutable ref for the actor �� onRestart closure needs it, but actor isn't registered yet
     let actorRef: ActorRef<AnyState, unknown> | undefined;
@@ -1217,8 +1199,7 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
         });
       };
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const actor = yield* createActor(id, materialized as Machine<S, E, never, any, any, any>, {
+    const actor = yield* createActor(id, machine, {
       supervision: spawnOptions?.supervision,
       lifecycle: spawnOptions?.lifecycle,
       onRestart,
@@ -1233,19 +1214,12 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     return actor;
   });
 
-  const spawn = <
-    S extends { readonly _tag: string },
-    E extends { readonly _tag: string },
-    R,
-    SD extends SlotsDef = Record<string, never>,
-  >(
+  const spawn = <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R>(
     id: string,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    machine: Machine<S, E, R, any, any, SD>,
+    machine: Machine<S, E, R, any, any>,
     options?: {
       readonly supervision?: Supervision.Policy;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      readonly slots?: ProvideSlots<SD, any>;
       readonly lifecycle?: Lifecycle<S, E>;
     },
   ): Effect.Effect<ActorRef<S, E>, DuplicateActorError, R> =>

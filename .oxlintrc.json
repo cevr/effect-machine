@@ -29,39 +29,113 @@
     "typescript/unbound-method": "off",
     "typescript/no-unnecessary-type-conversion": "off",
     "typescript/no-redundant-type-constituents": "off",
+    "effect/noAs": "error",
     "effect/noAsyncFunction": "error",
+    "effect/noChainedTypeAssertions": "error",
+    "effect/noConditionalEmptyObjectSpread": "error",
     "effect/noDynamicImports": "error",
     "effect/noEffectBind": "error",
     "effect/noEffectDo": "error",
     "effect/noGlobals": "error",
+    "effect/noInlineProvide": "error",
+    "effect/noKnownValueWidening": "error",
+    "effect/noManagedRuntimeInEffect": "error",
+    "effect/noModuleMocks": "error",
+    "effect/noNestedEffectGen": "error",
     "effect/noNewError": "error",
     "effect/noNewPromise": "error",
     "effect/noNodeBuiltinImport": "error",
+    "effect/noNullish": "error",
+    "effect/noObjectParameters": "error",
+    "effect/noPerCallCacheConstruction": "error",
+    "effect/noRunCollectOnUnboundedStream": "error",
+    "effect/noRuntimeTypeof": "error",
+    "effect/noSequentialEffectAll": "error",
+    "effect/noShapeInSymbolNames": "error",
+    "effect/noSilentCatchAll": "error",
     "effect/noTernary": "error",
     "effect/noTestLifecycleHooks": "error",
     "effect/noThrowStatement": "error",
-    "effect/noTryCatch": "error"
+    "effect/noTryCatch": "error",
+    "effect/noUnboundedConcurrency": "error",
+    "effect/noUnboundedRetry": "error",
+    "effect/noUnknownParameters": "error",
+    "effect/noUnknownTypeAliases": "error",
+    "effect/noUnsafeDictionaryType": "error",
+    "effect/noWidenThenAssert": "error",
+    "effect/preferCatchTag": "error",
+    "effect/preferEffectFn": "error",
+    "effect/preferMatchTagsExhaustive": "error",
+    "effect/preferPredicateIsTagged": "error",
+    "effect/preferServiceOf": "error",
+    "effect/requireNamedEffectFn": "error"
   },
-  "ignorePatterns": [
-    "**/dist/**",
-    "**/dist-v3/**",
-    "**/node_modules/**",
-    "**/*.d.ts",
-    "**/src-v3/**"
-  ],
+  "ignorePatterns": ["**/dist/**", "**/node_modules/**", "**/*.d.ts"],
   "overrides": [
+    {
+      // The public API uses optional fields and undefined to match JavaScript
+      // conventions. A move to Option would be a separate breaking API change.
+      "files": ["src/**/*.ts"],
+      "rules": {
+        "effect/noNullish": "off"
+      }
+    },
+    {
+      // These files own generic schema and actor boundaries. Their assertions
+      // preserve branded and invariant types that TypeScript cannot express.
+      // External values still enter through Effect Schema decoders.
+      "files": [
+        "src/actor.ts",
+        "src/cluster/entity-actor-ref.ts",
+        "src/cluster/entity-machine.ts",
+        "src/inspection.ts",
+        "src/internal/brands.ts",
+        "src/internal/runtime.ts",
+        "src/internal/transition.ts",
+        "src/internal/utils.ts",
+        "src/machine.ts",
+        "src/schema.ts",
+        "src/supervision.ts"
+      ],
+      "rules": {
+        "effect/noAs": "off",
+        "effect/noChainedTypeAssertions": "off",
+        "effect/noKnownValueWidening": "off",
+        "effect/noObjectParameters": "off",
+        "effect/noRuntimeTypeof": "off",
+        "effect/noUnknownParameters": "off",
+        "effect/noUnsafeDictionaryType": "off"
+      }
+    },
+    {
+      // The actor framework captures a service context at allocation. It must
+      // provide that context to start and stop after the caller scope ends.
+      "files": ["src/actor.ts", "src/internal/runtime.ts"],
+      "rules": {
+        "effect/noInlineProvide": "off"
+      }
+    },
     {
       "files": ["**/*.test.ts"],
       "rules": {
         "typescript/no-non-null-assertion": "off",
-        "typescript/no-explicit-any": "off"
+        "typescript/no-explicit-any": "off",
+        "effect/noAs": "off",
+        "effect/noChainedTypeAssertions": "off",
+        "effect/noInlineProvide": "off",
+        "effect/noKnownValueWidening": "off",
+        "effect/noNullish": "off",
+        "effect/noObjectParameters": "off",
+        "effect/noRuntimeTypeof": "off",
+        "effect/noUnknownParameters": "off",
+        "effect/noUnsafeDictionaryType": "off"
       }
     },
     {
       // Synchronous builder and validation APIs. State(), Event(), $match,
-      // materializeMachine, and toEntity are called at module scope, outside any
+      // and toEntity are called at module scope, outside any
       // Effect, so a schema or provisioning mistake can only surface as a throw.
-      // The errors are already Schema.TaggedErrorClass, and the throw is the
+      // The errors are already Schema.TaggedError, and the throw is the
       // tested contract (see the toThrow assertions in the listed test files).
       // FOLLOW-UP: return Either/Effect from these constructors and add
       // *OrThrow variants. That is a breaking major, tracked separately.
@@ -69,15 +143,9 @@
         "src/schema.ts",
         "src/machine.ts",
         "src/cluster/to-entity.ts",
-        "v3/src/schema.ts",
-        "v3/src/machine.ts",
-        "v3/src/cluster/to-entity.ts",
         "test/actor-system-observation.test.ts",
         "test/actor.test.ts",
-        "test/inspection.test.ts",
-        "v3/test/actor-system-observation.test.ts",
-        "v3/test/actor.test.ts",
-        "v3/test/inspection.test.ts"
+        "test/inspection.test.ts"
       ],
       "rules": {
         "effect/noThrowStatement": "off"
@@ -90,12 +158,7 @@
       // Effect context to route the failure through.
       // FOLLOW-UP: type listeners as (s: S) => Effect<void> so failures are
       // catchable. That is a breaking change to subscribe, tracked separately.
-      "files": [
-        "src/actor.ts",
-        "src/internal/utils.ts",
-        "v3/src/actor.ts",
-        "v3/src/internal/utils.ts"
-      ],
+      "files": ["src/actor.ts", "src/internal/utils.ts"],
       "rules": {
         "effect/noTryCatch": "off"
       }

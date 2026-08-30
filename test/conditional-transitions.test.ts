@@ -2,7 +2,7 @@
 import { Effect, Schema } from "effect";
 import { describe, expect, it } from "effect-bun-test";
 
-import { Event, Machine, simulate, State, Slot } from "../src/index.js";
+import { Event, Machine, simulate, State } from "../src/index.js";
 
 describe("Conditional Transitions (replaces choose combinator)", () => {
   it.scopedLive("first matching guard wins", () =>
@@ -18,50 +18,25 @@ describe("Conditional Transitions (replaces choose combinator)", () => {
         Check: {},
       });
 
-      const TestSlots = Slot.define({
-        isHigh: Slot.fn({}, Schema.Boolean),
-        isMedium: Slot.fn({}, Schema.Boolean),
-      });
-
       const machine = Machine.make({
         state: TestState,
         event: TestEvent,
-        slots: TestSlots,
         initial: TestState.Idle({ value: 75 }),
       })
-        .on(TestState.Idle, TestEvent.Check, ({ slots }) =>
-          Effect.gen(function* () {
-            if (yield* slots.isHigh()) {
-              return TestState.High;
-            }
-            if (yield* slots.isMedium()) {
-              return TestState.Medium;
-            }
-            return TestState.Low;
-          }),
-        )
+        .on(TestState.Idle, TestEvent.Check, ({ state }) => {
+          if (state.value >= 70) {
+            return TestState.High;
+          }
+          if (state.value >= 40) {
+            return TestState.Medium;
+          }
+          return TestState.Low;
+        })
         .final(TestState.High)
         .final(TestState.Medium)
         .final(TestState.Low);
 
-      const result = yield* simulate(machine, [TestEvent.Check], {
-        slots: {
-          isHigh: () =>
-            Effect.gen(function* () {
-              const ctx = yield* machine.Context;
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const s = ctx.state as any;
-              return s._tag === "Idle" && s.value >= 70;
-            }),
-          isMedium: () =>
-            Effect.gen(function* () {
-              const ctx = yield* machine.Context;
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const s = ctx.state as any;
-              return s._tag === "Idle" && s.value >= 40;
-            }),
-        },
-      });
+      const result = yield* simulate(machine, [TestEvent.Check]);
       expect(result.finalState._tag).toBe("High");
     }),
   );
@@ -78,44 +53,24 @@ describe("Conditional Transitions (replaces choose combinator)", () => {
         Check: {},
       });
 
-      const TestSlots = Slot.define({
-        isHigh: Slot.fn({}, Schema.Boolean),
-      });
-
       const machine = Machine.make({
         state: TestState,
         event: TestEvent,
-        slots: TestSlots,
         initial: TestState.Idle({ value: 10 }),
       })
-        .on(TestState.Idle, TestEvent.Check, ({ slots }) =>
-          Effect.gen(function* () {
-            if (yield* slots.isHigh()) {
-              return TestState.High;
-            }
-            // Fallback
-            return TestState.Low;
-          }),
-        )
+        .on(TestState.Idle, TestEvent.Check, ({ state }) => {
+          if (state.value >= 70) return TestState.High;
+          return TestState.Low;
+        })
         .final(TestState.High)
         .final(TestState.Low);
 
-      const result = yield* simulate(machine, [TestEvent.Check], {
-        slots: {
-          isHigh: () =>
-            Effect.gen(function* () {
-              const ctx = yield* machine.Context;
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const s = ctx.state as any;
-              return s._tag === "Idle" && s.value >= 70;
-            }),
-        },
-      });
+      const result = yield* simulate(machine, [TestEvent.Check]);
       expect(result.finalState._tag).toBe("Low");
     }),
   );
 
-  it.scopedLive("runs effect in matching branch", () =>
+  it.scopedLive("accepts an Effect result in a matching branch", () =>
     Effect.gen(function* () {
       const TestState = State({
         Idle: {},
@@ -126,35 +81,16 @@ describe("Conditional Transitions (replaces choose combinator)", () => {
         Go: {},
       });
 
-      const TestSlots = Slot.define({
-        logAction: Slot.fn({ message: Schema.String }),
-      });
-
-      const logs: string[] = [];
-
       const machine = Machine.make({
         state: TestState,
         event: TestEvent,
-        slots: TestSlots,
         initial: TestState.Idle,
       })
-        .on(TestState.Idle, TestEvent.Go, ({ slots }) =>
-          Effect.gen(function* () {
-            yield* slots.logAction({ message: "effect ran" });
-            return TestState.Done;
-          }),
-        )
+        .on(TestState.Idle, TestEvent.Go, () => Effect.succeed(TestState.Done))
         .final(TestState.Done);
 
-      yield* simulate(machine, [TestEvent.Go], {
-        slots: {
-          logAction: ({ message }: { message: string }) =>
-            Effect.sync(() => {
-              logs.push(message);
-            }),
-        },
-      });
-      expect(logs).toEqual(["effect ran"]);
+      const result = yield* simulate(machine, [TestEvent.Go]);
+      expect(result.finalState).toEqual(TestState.Done);
     }),
   );
 });

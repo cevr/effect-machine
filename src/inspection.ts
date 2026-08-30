@@ -167,7 +167,7 @@ export const combineInspectors = <S, E>(
     Effect.forEach(
       inspectors,
       (inspector) => inspectionEffect(inspector, event).pipe(Effect.ignoreCause),
-      { concurrency: "unbounded", discard: true },
+      { concurrency: 16, discard: true },
     ),
 });
 
@@ -307,7 +307,7 @@ export const tracingInspector = <
       ...(options?.attributes?.(event) ?? {}),
     };
 
-    return Effect.gen(function* () {
+    const traceInspection = Effect.fn("effect-machine.inspector.trace")(function* () {
       const currentSpan = yield* Effect.option(Effect.currentSpan);
       if (Option.isSome(currentSpan)) {
         currentSpan.value.event(traceName, BigInt(event.timestamp) * 1_000_000n, {
@@ -315,7 +315,10 @@ export const tracingInspector = <
           inspectionType: event.type,
         });
       }
-    }).pipe(Effect.withSpan(spanName ?? inspectionSpanName(event), { attributes }));
+    });
+    return traceInspection().pipe(
+      Effect.withSpan(spanName ?? inspectionSpanName(event), { attributes }),
+    );
   },
 });
 

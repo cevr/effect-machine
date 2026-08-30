@@ -1,23 +1,6 @@
 // Machine namespace (Effect-style)
 export * as Machine from "./machine.js";
 
-// Slot module
-export { Slot } from "./slot.js";
-export type {
-  SlotsDef,
-  SlotsSchema,
-  SlotCalls,
-  SlotCall,
-  SlotFnDef,
-  SlotHandler,
-  SlotRequest,
-  SlotResult,
-  SlotInvocation,
-  ProvideSlots,
-  HasSlotKeys,
-  MachineContext,
-} from "./slot.js";
-
 // Errors
 export {
   ActorStoppedError,
@@ -28,9 +11,6 @@ export {
   MissingSchemaError,
   NoReplyError,
   PersistenceError,
-  ProvisionValidationError,
-  SlotCodecError,
-  SlotProvisionError,
   VersionConflictError,
 } from "./errors.js";
 

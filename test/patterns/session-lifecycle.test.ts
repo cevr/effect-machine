@@ -2,7 +2,7 @@
 import { Clock, Effect, Schema, SubscriptionRef } from "effect";
 import { TestClock } from "effect/testing";
 
-import { ActorSystemDefault, assertPath, Event, Machine, Slot, State } from "../../src/index.js";
+import { ActorSystemDefault, assertPath, Event, Machine, State } from "../../src/index.js";
 import { describe, expect, it, yieldFibers } from "effect-bun-test";
 
 /**
@@ -35,10 +35,6 @@ describe("Session Lifecycle Pattern", () => {
     Logout: {},
   });
 
-  const SessionSlots = Slot.define({
-    scheduleTimeout: Slot.fn({}),
-  });
-
   // Helper to compute initial state based on token
   const makeSessionMachine = (token: string | null) => {
     // Initial state computed inline - no need for .always()
@@ -56,7 +52,6 @@ describe("Session Lifecycle Pattern", () => {
     return Machine.make({
       state: SessionState,
       event: SessionEvent,
-      slots: SessionSlots,
       initial,
     })
       .on(SessionState.Guest, SessionEvent.Login, ({ event }) =>
@@ -72,7 +67,7 @@ describe("Session Lifecycle Pattern", () => {
           }),
       )
       .on(SessionState.Active, SessionEvent.SessionTimeout, () => SessionState.SessionExpired)
-      .task(SessionState.Active, ({ slots }) => slots.scheduleTimeout(), {
+      .task(SessionState.Active, () => Effect.sleep("30 minutes"), {
         onSuccess: () => SessionEvent.SessionTimeout,
       })
       .on(SessionState.Maintenance, SessionEvent.MaintenanceEnded, ({ state }) => {
@@ -90,14 +85,10 @@ describe("Session Lifecycle Pattern", () => {
       .final(SessionState.LoggedOut);
   };
 
-  const sessionSlots = {
-    scheduleTimeout: () => Effect.sleep("30 minutes"),
-  };
-
   it.live("null token starts as Guest", () =>
     Effect.gen(function* () {
       const machine = makeSessionMachine(null);
-      const result = yield* assertPath(machine, [], ["Guest"], { slots: sessionSlots });
+      const result = yield* assertPath(machine, [], ["Guest"]);
       expect(result.finalState._tag).toBe("Guest");
     }),
   );
@@ -105,7 +96,7 @@ describe("Session Lifecycle Pattern", () => {
   it.live("valid token starts as Active", () =>
     Effect.gen(function* () {
       const machine = makeSessionMachine("valid-token");
-      const result = yield* assertPath(machine, [], ["Active"], { slots: sessionSlots });
+      const result = yield* assertPath(machine, [], ["Active"]);
       expect(result.finalState._tag).toBe("Active");
     }),
   );
@@ -117,7 +108,6 @@ describe("Session Lifecycle Pattern", () => {
         machine,
         [SessionEvent.Login({ userId: "user-123", role: "user" })],
         ["Guest", "Active"],
-        { slots: sessionSlots },
       );
       expect(result.finalState._tag).toBe("Active");
     }),
@@ -159,7 +149,6 @@ describe("Session Lifecycle Pattern", () => {
       const activeMachine = Machine.make({
         state: SessionState,
         event: SessionEvent,
-        slots: SessionSlots,
         initial: SessionState.Active({
           userId: "user-1",
           role: "user",
@@ -167,15 +156,12 @@ describe("Session Lifecycle Pattern", () => {
         }),
       })
         .on(SessionState.Active, SessionEvent.SessionTimeout, () => SessionState.SessionExpired)
-        .task(SessionState.Active, ({ slots }) => slots.scheduleTimeout(), {
+        .task(SessionState.Active, () => Effect.sleep("30 minutes"), {
           onSuccess: () => SessionEvent.SessionTimeout,
         })
         .final(SessionState.SessionExpired);
 
-      const actor = yield* Machine.spawn(activeMachine, {
-        id: "session",
-        slots: sessionSlots,
-      });
+      const actor = yield* Machine.spawn(activeMachine, { id: "session" });
       yield* actor.start;
 
       let state = yield* SubscriptionRef.get(actor.state);
@@ -205,14 +191,13 @@ describe("Session Lifecycle Pattern", () => {
       const activeMachine = Machine.make({
         state: SessionState,
         event: SessionEvent,
-        slots: SessionSlots,
         initial: SessionState.Active({
           userId: "user-1",
           role: "user",
           lastActivity: now,
         }),
       })
-        .task(SessionState.Active, ({ slots }) => slots.scheduleTimeout(), {
+        .task(SessionState.Active, () => Effect.sleep("30 minutes"), {
           onSuccess: () => SessionEvent.SessionTimeout,
         })
         .on(SessionState.Active, SessionEvent.SessionTimeout, () => SessionState.SessionExpired)
@@ -222,10 +207,7 @@ describe("Session Lifecycle Pattern", () => {
         )
         .final(SessionState.SessionExpired);
 
-      const actor = yield* Machine.spawn(activeMachine, {
-        id: "session",
-        slots: sessionSlots,
-      });
+      const actor = yield* Machine.spawn(activeMachine, { id: "session" });
       yield* actor.start;
 
       // Activity after 20 minutes

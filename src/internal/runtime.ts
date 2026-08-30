@@ -31,10 +31,9 @@ import {
 } from "effect";
 
 import type { Machine, MachineRef } from "../machine.js";
-import type { ActorSystemService } from "../actor.js";
+import type { ActorRef, ActorSystemService } from "../actor.js";
 import { ActorSystem as ActorSystemTag } from "../actor.js";
 import type { ProcessEventHooks, ProcessEventResult } from "./transition.js";
-import type { SlotsDef, MachineContext } from "../slot.js";
 import { processEventCore, runSpawnEffects, shouldPostpone } from "./transition.js";
 import { NoReplyError } from "../errors.js";
 import { INTERNAL_INIT_EVENT } from "./utils.js";
@@ -173,7 +172,10 @@ export interface RuntimeConfig<S, E> {
     inner: Effect.Effect<ProcessQueuedResult<S>>,
   ) => Effect.Effect<ProcessQueuedResult<S>>;
   /** Called after self.spawn succeeds — actor tracks children */
-  readonly onChildSpawned?: (childId: string, child: unknown) => Effect.Effect<void>;
+  readonly onChildSpawned?: <ChildState extends { readonly _tag: string }, ChildEvent>(
+    childId: string,
+    child: ActorRef<ChildState, ChildEvent>,
+  ) => Effect.Effect<void>;
   /** Skip registering stop as scope finalizer — actor manages its own lifecycle */
   readonly skipFinalizer?: boolean;
   /** Prefix for child actor IDs in self.spawn. Entity-machine uses `${actorId}/`. Default: no prefix. */
@@ -206,17 +208,16 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
-  SD extends SlotsDef,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- wide acceptance for Machine type params
-  machine: Machine<S, E, R, any, any, SD>,
+  machine: Machine<S, E, R, any, any>,
   system: ActorSystemService,
   config: RuntimeConfig<S, E>,
 ) {
   const { actorId, hooks, lifecycle } = config;
 
-  // Capture context for fire-and-forget Deferred settlement (runForkWith)
-  const services = yield* Effect.context();
+  // Capture services at allocation so delayed start and stop retain them.
+  const services = yield* Effect.context<R>();
   const fork = Effect.runForkWith(services);
 
   // Resources: use cell-provided or allocate fresh
@@ -282,15 +283,6 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
 
   // Shared mutable refs used by both start() and stop()
   const initEvent = { _tag: INTERNAL_INIT_EVENT } as E;
-  const ctx: MachineContext<S, E, MachineRef<E>> = {
-    actorId,
-    state: machine.initial,
-    event: initEvent,
-    self,
-    system,
-  };
-  const slots = machine._slots;
-
   // Mutable holder for the loop fiber — needed by stop() and spawn defect signals
   const loopFiberRef: { current: Fiber.Fiber<void> | undefined } = { current: undefined };
 
@@ -319,10 +311,9 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
           state: machine.initial,
           event: initEvent,
           self,
-          slots,
           system,
         })
-        .pipe(Effect.provideService(machine.Context, ctx), Effect.forkIn(actorScope));
+        .pipe(Effect.forkIn(actorScope));
       backgroundFibers.push(fiber);
     }
 
@@ -487,8 +478,8 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
 
   return {
     ...makeHandle(stateRef, stoppedRef, eventQueue, exitDeferred, actorScope),
-    stop,
-    start,
+    stop: stop.pipe(Effect.provide(services)),
+    start: start.pipe(Effect.provide(services)),
   };
 });
 
@@ -548,10 +539,9 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
-  SD extends SlotsDef,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- wide acceptance
-  machine: Machine<S, E, R, any, any, SD>,
+  machine: Machine<S, E, R, any, any>,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
   eventQueue: Queue.Queue<RuntimeQueuedEvent<E>>,
   stoppedRef: Ref.Ref<boolean>,
@@ -758,8 +748,7 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
     // queued is narrowed: drain is handled above, so it's always an event-bearing variant here
     const eventQueued = queued;
     // processQueued carries the machine's R, but createRuntime provides
-    // MachineContextTag and Scope before the loop is forked, so R is already
-    // satisfied at this point. wrapProcess is declared context-free to match.
+    // createRuntime provides the machine requirements before the loop is forked.
     const processInner: Effect.Effect<ProcessQueuedResult<S>> = processQueued(
       eventQueued,
     ) as Effect.Effect<ProcessQueuedResult<S>>;
