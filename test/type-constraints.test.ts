@@ -13,7 +13,14 @@
  * All "bad" tests use @ts-expect-error on the handler return expression.
  */
 import { Effect, Schema, Context } from "effect";
-import { ActorSystemDefault, ActorSystemService, Machine, State, Event } from "../src/index.js";
+import {
+  ActorSystemDefault,
+  ActorSystemService,
+  Machine,
+  State,
+  Event,
+  simulate,
+} from "../src/index.js";
 
 const MyState = State({
   Idle: {},
@@ -144,6 +151,54 @@ const _test3d = () => {
     ),
   );
 };
+
+// Test 3e: Machine input is required at every spawn seam
+const inputMachine = Machine.make({
+  state: MyState,
+  event: MyEvent,
+  initial: (input: { readonly url: string }) => MyState.Loading(input),
+});
+
+const _test3e = () => {
+  // @ts-expect-error - input machine requires input
+  const missingInput = Machine.spawn(inputMachine);
+  const hasInput = Machine.spawn(inputMachine, { input: { url: "/ready" } });
+  // @ts-expect-error - simulation requires input
+  const missingSimulationInput = simulate(inputMachine, []);
+  const simulation = simulate(inputMachine, [], { input: { url: "/ready" } });
+  // @ts-expect-error - replay requires input or a starting snapshot
+  const missingReplayInput = Machine.replay(inputMachine, []);
+  const replay = Machine.replay(inputMachine, [], { input: { url: "/ready" } });
+
+  const systemSpawn = Effect.gen(function* () {
+    const system = yield* ActorSystemService;
+    // @ts-expect-error - system spawn also requires input
+    yield* system.spawn("missing-input", inputMachine);
+    yield* system.spawn("has-input", inputMachine, { input: { url: "/ready" } });
+  });
+  return {
+    missingInput,
+    hasInput,
+    missingSimulationInput,
+    simulation,
+    missingReplayInput,
+    replay,
+    systemSpawn,
+  };
+};
+
+// Test 3f: Final output is inferred independently from final state
+const outputMachine = Machine.make({
+  state: MyState,
+  event: MyEvent,
+  initial: MyState.Idle,
+}).final(MyState.Loading, ({ state }) => ({ requestedUrl: state.url }));
+
+const _test3f = Effect.gen(function* () {
+  const actor = yield* Machine.spawn(outputMachine);
+  const output: { readonly requestedUrl: string } = yield* actor.awaitOutput;
+  return output;
+});
 
 const ReplyState = State({
   Active: { count: Schema.Finite },

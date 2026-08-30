@@ -23,8 +23,8 @@ export type ActorAtom<State, Event> = Atom.Writable<State, Event>;
  * supervision restarts, and normal transitions through the actor's
  * SubscriptionRef.
  */
-export const make = <State extends { readonly _tag: string }, Event>(
-  actor: ActorRef<State, Event>,
+export const make = <State extends { readonly _tag: string }, Event, Output>(
+  actor: ActorRef<State, Event, Output>,
 ): ActorAtom<State, Event> => {
   const state = Atom.subscriptionRef(actor.state);
   return Atom.writable(
@@ -59,12 +59,12 @@ export const select: {
 );
 
 /** Observe actor lifecycle without coupling it to domain state. */
-export const lifecycle = <State extends { readonly _tag: string }, Event>(
-  actor: ActorRef<State, Event>,
+export const lifecycle = <State extends { readonly _tag: string }, Event, Output>(
+  actor: ActorRef<State, Event, Output>,
 ): Atom.Atom<ActorLifecycle<State>> => Atom.subscriptionRef(actor.lifecycle);
 
 /** Observe the latest accepted edge. The value remains after actor exit. */
-export const latestTransition = <State extends { readonly _tag: string }, Event>(
-  actor: ActorRef<State, Event>,
+export const latestTransition = <State extends { readonly _tag: string }, Event, Output>(
+  actor: ActorRef<State, Event, Output>,
 ): Atom.Atom<TransitionInfo<State, Event> | undefined> =>
   Atom.subscriptionRef(actor.latestTransition);

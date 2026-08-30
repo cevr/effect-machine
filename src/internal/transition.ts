@@ -95,7 +95,7 @@ export const executeTransition = <
   R,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  machine: Machine<S, E, R, any, any>,
+  machine: Machine<S, E, R, any, any, any, any>,
   currentState: S,
   event: E,
 ) =>
@@ -192,7 +192,7 @@ export const executeTransitionImmediate = <
   R,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  machine: Machine<S, E, R, any, any>,
+  machine: Machine<S, E, R, any, any, any, any>,
   currentState: S,
   event: E,
   hooks?: ProcessEventHooks<S, E>,
@@ -210,7 +210,7 @@ const stabilizeTransition = <
   R,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  machine: Machine<S, E, R, any, any>,
+  machine: Machine<S, E, R, any, any, any, any>,
   initialState: S,
   event: E,
   result: ExecutedTransition<S, E>,
@@ -332,7 +332,7 @@ export const shouldPostpone = <
   R,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  machine: Machine<S, E, R, any, any>,
+  machine: Machine<S, E, R, any, any, any, any>,
   stateTag: string,
   eventTag: string,
 ): boolean => machine._shouldPostpone(stateTag, eventTag);
@@ -355,7 +355,7 @@ export const processEventCore = <
   R,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  machine: Machine<S, E, R, any, any>,
+  machine: Machine<S, E, R, any, any, any, any>,
   currentState: S,
   event: E,
   self: MachineRef<E>,
@@ -385,7 +385,7 @@ const completeProcessedEvent = <
   R,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  machine: Machine<S, E, R, any, any>,
+  machine: Machine<S, E, R, any, any, any, any>,
   currentState: S,
   event: E,
   result: ExecutedTransition<S, E>,
@@ -481,7 +481,7 @@ export const processEventCoreImmediate = <
   R,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  machine: Machine<S, E, R, any, any>,
+  machine: Machine<S, E, R, any, any, any, any>,
   currentState: S,
   event: E,
   self: MachineRef<E>,
@@ -592,7 +592,7 @@ export const runSpawnEffects = Effect.fn("effect-machine.runSpawnEffects")(funct
   R,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  machine: Machine<S, E, R, any, any>,
+  machine: Machine<S, E, R, any, any, any, any>,
   state: S,
   event: E,
   self: MachineRef<E>,
@@ -651,7 +651,7 @@ export const resolveTransition = <
   R,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
-  machine: Machine<S, E, R, any, any>,
+  machine: Machine<S, E, R, any, any, any, any>,
   currentState: S,
   event: E,
 ): Transition<S, E, never> | undefined =>

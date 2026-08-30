@@ -195,7 +195,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
   R,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- wide acceptance for Machine type params
-  machine: Machine<S, E, R, any, any>,
+  machine: Machine<S, E, R, any, any, any, any>,
   system: ActorSystemService,
   config: RuntimeConfig<S, E>,
 ) {
@@ -390,7 +390,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
       yield* Ref.set(stoppedRef, true);
       yield* Scope.close(stateScopeRef.current, Exit.void);
       yield* Scope.close(actorScope, Exit.void);
-      yield* setExit(ActorExit.Final(stableInitialState));
+      yield* setExit(ActorExit.Final(stableInitialState, stableInitialState));
       yield* Deferred.succeed(startDeferred, undefined);
       return;
     }
@@ -611,7 +611,7 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
   R,
 >(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- wide acceptance
-  machine: Machine<S, E, R, any, any>,
+  machine: Machine<S, E, R, any, any, any, any>,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
   eventQueue: Queue.Queue<RuntimeQueuedEvent<S, E>>,
   pendingRequests: Set<(error: ActorStoppedError) => Effect.Effect<void>>,
@@ -879,7 +879,7 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
 
     if (stopped) {
       const finalState = yield* SubscriptionRef.get(stateRef);
-      yield* shutdown(ActorExit.Final(finalState));
+      yield* shutdown(ActorExit.Final(finalState, finalState));
       return;
     }
   }

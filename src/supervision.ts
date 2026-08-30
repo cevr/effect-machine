@@ -31,14 +31,18 @@ export type DefectPhase = "transition" | "spawn" | "background" | "initial-spawn
  * - `Stopped` — explicit `actor.stop` or `actor.drain`
  * - `Defect` — unhandled error in the runtime
  */
-export type ActorExit<S> =
-  | { readonly _tag: "Final"; readonly state: S }
+export type ActorExit<S, O = S> =
+  | { readonly _tag: "Final"; readonly state: S; readonly output: O }
   | { readonly _tag: "Stopped" }
   | { readonly _tag: "Defect"; readonly cause: Cause.Cause<unknown>; readonly phase: DefectPhase };
 
 /** Constructors for ActorExit */
 export const ActorExit = {
-  Final: <S>(state: S): ActorExit<S> => ({ _tag: "Final", state }),
+  Final: <S, O>(state: S, output: O): ActorExit<S, O> => ({
+    _tag: "Final",
+    state,
+    output,
+  }),
   Stopped: { _tag: "Stopped" } as ActorExit<never>,
   Defect: <S = never>(cause: Cause.Cause<unknown>, phase: DefectPhase): ActorExit<S> => ({
     _tag: "Defect",
