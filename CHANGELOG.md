@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.19.0
+
+### Minor Changes
+
+- [#31](https://github.com/cevr/effect-machine/pull/31) [`a3c1e46`](https://github.com/cevr/effect-machine/commit/a3c1e4686f4fedfa56e162820c21a9af701e1647) Thanks [@cevr](https://github.com/cevr)! - Add a framework-neutral Effect Atom adapter for actors with writable selectors and custom equality support. Include working React and Solid package examples with Suspense-owned actor lifecycles, animated exits, selector performance tests, and exit-safe terminal state modeling.
+
 ## 0.18.0
 
 ### Minor Changes
