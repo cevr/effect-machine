@@ -231,21 +231,20 @@ describe("supervision: actor identity", () => {
 });
 
 // ============================================================================
-// watch returns ActorExit
+// awaitExit returns ActorExit
 // ============================================================================
 
-describe("supervision: watch", () => {
-  it.scopedLive("watch resolves with exit reason on terminal stop", () =>
+describe("supervision: awaitExit", () => {
+  it.scopedLive("awaitExit resolves with exit reason on terminal stop", () =>
     Effect.gen(function* () {
       const system = yield* ActorSystemService;
-      const watcher = yield* system.spawn("watcher", machine);
       const target = yield* system.spawn("target", machine, {
         supervision: Supervision.restart({ maxRestarts: 1 }),
       });
 
       const watchResult = yield* Deferred.make<ActorExit<unknown>>();
       yield* Effect.forkDetach(
-        watcher.watch(target).pipe(Effect.tap((exit) => Deferred.succeed(watchResult, exit))),
+        target.awaitExit.pipe(Effect.tap((exit) => Deferred.succeed(watchResult, exit))),
       );
 
       // Drive target to final

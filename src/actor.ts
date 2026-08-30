@@ -82,9 +82,6 @@ export interface ActorRef<State extends { readonly _tag: string }, Event> {
   /** Send an event (fire-and-forget). */
   readonly send: (event: Event) => Effect.Effect<void>;
 
-  /** Fire-and-forget alias for send (OTP gen_server:cast). */
-  readonly cast: (event: Event) => Effect.Effect<void>;
-
   /**
    * Serialized request-reply (OTP gen_server:call).
    * Event is processed through the queue; caller gets ProcessEventResult back.
@@ -161,16 +158,6 @@ export interface ActorRef<State extends { readonly _tag: string }, Event> {
    * Set exactly once when the actor terminates (final, stop, drain, or defect).
    */
   readonly awaitExit: Effect.Effect<ActorExit<State>>;
-
-  /**
-   * Watch another actor. Returns an Effect that resolves with the exit reason
-   * when the watched actor terminally stops. Ignores restarts (Step 3).
-   * Built on the other actor's exitDeferred — authoritative, not system events.
-   */
-  readonly watch: (other: {
-    readonly id: string;
-    readonly awaitExit: Effect.Effect<ActorExit<unknown>>;
-  }) => Effect.Effect<ActorExit<unknown>>;
 
   /**
    * Drain: process all remaining events in the queue, then stop.
@@ -457,7 +444,6 @@ const buildActorRefCore = <
   return {
     id,
     send,
-    cast: send,
     call,
     ask: ask as ActorRef<S, E>["ask"],
     state: stateRef,
@@ -478,10 +464,6 @@ const buildActorRefCore = <
       };
     },
     awaitExit: Deferred.await(cell.terminalExitDeferred),
-    watch: (other) =>
-      // Bind to the other actor's exitDeferred — authoritative, not system events.
-      // Resolves with exit reason on terminal stop (ignores restarts in Step 3).
-      other.awaitExit,
     drain: Effect.suspend(() => runtimeRef.current?.drain ?? Effect.void),
     sync: {
       send: (event) => {

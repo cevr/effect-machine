@@ -242,7 +242,6 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
   }
   const self: MachineRef<E> = {
     send: selfSend,
-    cast: selfSend,
     spawn,
     reply: (value: unknown) =>
       Effect.sync(() => {

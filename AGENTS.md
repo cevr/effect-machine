@@ -184,7 +184,7 @@ const actor =
 
 // Observe exit reason
 const exit = yield * actor.awaitExit; // ActorExit<S>
-const exit = yield * actor.watch(other); // ActorExit<unknown>
+const otherExit = yield * other.awaitExit; // ActorExit<OtherState>
 ```
 
 - **Restart from `machine.initial`** — always clean slate, never last-state
@@ -220,13 +220,12 @@ machine.spawn(State.Active, ({ self }) =>
 
 ```ts
 actor.send(event); // fire-and-forget
-actor.cast(event); // alias for send
 actor.call(event); // request-reply, returns ProcessEventResult
 actor.ask(event); // typed reply (event must have Event.reply())
 actor.waitFor(State.X); // wait for state (constructor or predicate)
 actor.sendAndWait(ev, X); // send + wait for state
 actor.awaitFinal; // wait for final state
-actor.watch(other); // completes when other actor stops
+actor.awaitExit; // completes when actor stops
 actor.drain; // process remaining queue, then stop
 actor.subscribe(fn); // sync callback, returns unsubscribe
 actor.system; // ActorSystem

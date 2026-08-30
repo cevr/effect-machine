@@ -64,8 +64,6 @@ import { Inspector as InspectorTag } from "./inspection.js";
  */
 export interface MachineRef<Event> {
   readonly send: (event: Event) => Effect.Effect<void>;
-  /** Fire-and-forget alias for send (OTP gen_server:cast). */
-  readonly cast: (event: Event) => Effect.Effect<void>;
   readonly spawn: <S2 extends { readonly _tag: string }, E2 extends { readonly _tag: string }, R2>(
     id: string,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

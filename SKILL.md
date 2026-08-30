@@ -119,13 +119,12 @@ Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))
 | Method                           | Description                                 |
 | -------------------------------- | ------------------------------------------- |
 | `actor.send(event)`              | Fire-and-forget (queue event)               |
-| `actor.cast(event)`              | Alias for send (OTP gen_server:cast)        |
 | `actor.call(event)`              | Request-reply, returns `ProcessEventResult` |
 | `actor.ask(event)`               | Typed reply (event must have `Event.reply`) |
 | `actor.waitFor(State.X)`         | Wait for state (constructor or fn)          |
 | `actor.sendAndWait(ev, State.X)` | Send + wait for state                       |
 | `actor.awaitFinal`               | Wait for final state                        |
-| `actor.watch(other)`             | Completes when other actor stops            |
+| `actor.awaitExit`                | Completes when this actor stops             |
 | `actor.drain`                    | Process remaining queue, then stop          |
 | `actor.snapshot`                 | Get current state                           |
 | `actor.sync.send(event)`         | Sync fire-and-forget (for UI)               |
