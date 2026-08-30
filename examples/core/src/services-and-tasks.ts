@@ -1,4 +1,4 @@
-import { Cause, Context, Effect, Schema } from "effect";
+import { Context, Effect, Schema } from "effect";
 import { Event, Machine, State } from "effect-machine";
 
 export class Catalog extends Context.Service<
@@ -30,7 +30,7 @@ export const searchMachine = Machine.make({
     {
       name: "catalog-search",
       onSuccess: (items) => SearchEvent.SearchSucceeded({ items }),
-      onFailure: (cause) => SearchEvent.SearchFailed({ message: Cause.pretty(cause) }),
+      onFailure: (error) => SearchEvent.SearchFailed({ message: error }),
     },
   )
   .on(SearchState.Searching, SearchEvent.SearchSucceeded, ({ event }) =>

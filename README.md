@@ -130,7 +130,7 @@ class Api extends Context.Service<
 machine.task(State.Loading, ({ state }) => Effect.flatMap(Api, (api) => api.load(state.id)), {
   name: "load-data",
   onSuccess: (data) => Event.Loaded({ data }),
-  onFailure: (cause) => Event.LoadFailed({ message: Cause.pretty(cause) }),
+  onFailure: (error) => Event.LoadFailed({ message: String(error) }),
 });
 
 const actor = yield * Machine.spawn(machine).pipe(Effect.provide(ApiLive));
@@ -138,6 +138,8 @@ yield * actor.start;
 ```
 
 The actor captures the Effect context during allocation. It keeps those services when it starts later.
+
+`onFailure` receives the typed Effect error. A defect does not enter `onFailure`. It stops the actor or starts supervision.
 
 ## Input, output, and composition
 
@@ -201,7 +203,7 @@ Read [Atom and UI integration](./docs/atom-and-ui.md) and browse [all examples](
 - Recovery resolves state during actor startup.
 - Durability saves committed transitions.
 - Supervision restarts defects within an Effect `Schedule` budget.
-- Inspection reports events, transitions, named guards, tasks, Effects, errors, and stops.
+- Inspection reports events, named transition operations, transitions, named guards, tasks, Effects, errors, stops, and actor generations.
 
 Read [Persistence and supervision](./docs/persistence-and-supervision.md) and [Inspection](./docs/inspection.md).
 

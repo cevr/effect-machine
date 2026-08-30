@@ -167,6 +167,7 @@ export interface RuntimeLifecycleHooks<S, E> {
 /** @internal */
 export interface RuntimeConfig<S, E> {
   readonly actorId: string;
+  readonly generation?: number;
   readonly hooks?: ProcessEventHooks<S, E>;
   /** State and mailbox resources owned by the calling cell. */
   readonly cellResources: RuntimeCellResources<S, E>;
@@ -216,6 +217,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
   config: RuntimeConfig<S, E>,
 ) {
   const { actorId, hooks, lifecycle } = config;
+  const generation = config.generation ?? 0;
 
   // Capture services at allocation so delayed start and stop retain them.
   const services = yield* Effect.context<R>();
@@ -322,6 +324,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
       system,
       actorId,
       { ...hooks, onSpawnDefect: initialSpawnDefectSignal },
+      generation,
     );
     let initialResult: ProcessEventResult<S, E>;
     if (isEffect(initialProcessing)) {
@@ -359,6 +362,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
       const fiber = yield* bg
         .handler({
           actorId,
+          generation,
           state: stableInitialState,
           event: initEvent,
           self,
@@ -387,6 +391,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
         actorId,
         hooks?.onError,
         initialSpawnDefectSignal,
+        generation,
       ).pipe(
         Effect.catchCause((cause) =>
           // Tag as initial-spawn defect, set exit, clean up, then propagate
@@ -441,6 +446,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
       self,
       stateScopeRef,
       actorId,
+      generation,
       system,
       exitDeferred,
       augmentedHooks,
@@ -636,6 +642,7 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
   self: MachineRef<E>,
   stateScopeRef: { current: Scope.Closeable },
   actorId: string,
+  generation: number,
   system: ActorSystemService,
   exitDeferred: Deferred.Deferred<RuntimeExit<S>>,
   hooks?: ProcessEventHooks<S, E>,
@@ -706,6 +713,7 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
         system,
         actorId,
         hooks,
+        generation,
       );
       let result: ProcessEventResult<S, E>;
       if (isEffect(processing)) {

@@ -178,11 +178,32 @@ const executeTransitionCandidatesImmediate = <
       return completeTransition(currentState, event, transition, raw);
     };
 
-    if (hooks?.onGuard === undefined || resolved.evaluations.length === 0) return runHandler();
+    const runInspectedHandler = () => {
+      if (hooks?.onOperation === undefined) return runHandler();
+      return hooks
+        .onOperation({
+          operation: transition.handler.name || "<inline>",
+          state: currentState,
+          event,
+        })
+        .pipe(
+          Effect.andThen(
+            Effect.suspend(() => {
+              const result = runHandler();
+              if (isEffect(result)) return result;
+              return Effect.succeed(result);
+            }),
+          ),
+        );
+    };
+
+    if (hooks?.onGuard === undefined || resolved.evaluations.length === 0) {
+      return runInspectedHandler();
+    }
     return Effect.forEach(resolved.evaluations, hooks.onGuard, { discard: true }).pipe(
       Effect.andThen(
         Effect.suspend(() => {
-          const result = runHandler();
+          const result = runInspectedHandler();
           if (isEffect(result)) return result;
           return Effect.succeed(result);
         }),
@@ -278,6 +299,8 @@ const stabilizeTransition = <
 export interface ProcessEventHooks<S, E> {
   /** Called after each guard candidate is evaluated. */
   readonly onGuard?: (evaluation: GuardEvaluation<S, E>) => Effect.Effect<void>;
+  /** Called before an accepted transition handler runs. */
+  readonly onOperation?: (operation: TransitionOperation<S, E>) => Effect.Effect<void>;
   /** Called before running spawn effects */
   readonly onSpawnEffect?: (state: S) => Effect.Effect<void>;
   /** Called after transition completes */
@@ -292,8 +315,13 @@ export interface GuardEvaluation<S, E> {
   readonly guard: string;
   readonly state: S;
   readonly event: E;
-  readonly params: unknown;
   readonly result: boolean;
+}
+
+export interface TransitionOperation<S, E> {
+  readonly operation: string;
+  readonly state: S;
+  readonly event: E;
 }
 
 /**
@@ -377,6 +405,7 @@ export const processEventCore = <
   system: ActorSystemService,
   actorId: string,
   hooks?: ProcessEventHooks<S, E>,
+  generation = 0,
 ) =>
   Effect.suspend(() => {
     const processed = processEventCoreImmediate(
@@ -388,6 +417,7 @@ export const processEventCore = <
       system,
       actorId,
       hooks,
+      generation,
     );
     if (isEffect(processed)) return processed;
     return Effect.succeed(processed);
@@ -408,6 +438,7 @@ const completeProcessedEvent = <
   system: ActorSystemService,
   actorId: string,
   hooks?: ProcessEventHooks<S, E>,
+  generation = 0,
 ):
   | ProcessEventResult<S, E>
   | Effect.Effect<ProcessEventResult<S, E>, never, Exclude<R, Scope.Scope>> => {
@@ -483,6 +514,7 @@ const completeProcessedEvent = <
       actorId,
       hooks?.onError,
       hooks?.onSpawnDefect,
+      generation,
     );
     return processed;
   });
@@ -503,6 +535,7 @@ export const processEventCoreImmediate = <
   system: ActorSystemService,
   actorId: string,
   hooks?: ProcessEventHooks<S, E>,
+  generation = 0,
 ) => {
   const execution = executeTransitionImmediate(machine, currentState, event, hooks);
   const complete = (result: ExecutedTransition<S, E>) => {
@@ -518,6 +551,7 @@ export const processEventCoreImmediate = <
         system,
         actorId,
         hooks,
+        generation,
       );
     }
 
@@ -571,6 +605,7 @@ export const processEventCoreImmediate = <
         system,
         actorId,
         hooks,
+        generation,
       );
       if (isEffect(processed)) return yield* processed;
       return processed;
@@ -615,6 +650,7 @@ export const runSpawnEffects = Effect.fn("effect-machine.runSpawnEffects")(funct
   actorId: string,
   onError?: (info: ProcessEventError<S, E>) => Effect.Effect<void>,
   onSpawnDefect?: (cause: Cause.Cause<unknown>) => Effect.Effect<void>,
+  generation = 0,
 ) {
   const spawnEffects = machine._findSpawnEffects(state._tag);
   const reportError = onError;
@@ -625,6 +661,7 @@ export const runSpawnEffects = Effect.fn("effect-machine.runSpawnEffects")(funct
     const effect = spawnEffect
       .handler({
         actorId,
+        generation,
         state,
         event,
         self,
@@ -734,7 +771,6 @@ const evaluateTransitions = <S, E>(
           guard: guardName,
           state: currentState,
           event,
-          params: undefined,
           result: passed,
         },
       ];

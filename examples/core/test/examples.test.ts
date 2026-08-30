@@ -51,10 +51,13 @@ describe("core examples", () => {
     Effect.map(supervisionProgram, (output) => expect(output).toBe("recovered")),
   );
 
-  it.scopedLive("inspects named guards", () =>
+  it.scopedLive("inspects named guards and transition operations", () =>
     Effect.map(inspectionProgram, (events) => {
       const guards = events.filter((event) => event.type === "@machine.guard");
+      const operations = events.filter((event) => event.type === "@machine.operation");
       expect(guards.map((event) => event.result)).toEqual([false, true]);
+      expect(operations.map((event) => event.operation)).toEqual(["recordFailedAttempt", "unlock"]);
+      expect(events.every((event) => event.generation === 0)).toBe(true);
     }),
   );
 

@@ -736,9 +736,9 @@ describe("ActorRef", () => {
           .on(TaskState.Running, TaskEvent.Fail, ({ event }) =>
             TaskState.Failed({ message: event.message }),
           )
-          .task(TaskState.Running, () => Effect.fail("boom"), {
+          .task(TaskState.Running, () => Effect.fail({ message: "boom" }), {
             onSuccess: () => TaskEvent.Success,
-            onFailure: () => TaskEvent.Fail({ message: "boom" }),
+            onFailure: (error) => TaskEvent.Fail({ message: error.message }),
           })
           .final(TaskState.Failed);
 
@@ -754,6 +754,34 @@ describe("ActorRef", () => {
         }
       }).pipe(Effect.provide(ActorSystemDefault)),
     );
+
+    it.scopedLive("task defects stop the actor and do not run onFailure", () => {
+      let handled = false;
+      const machine = Machine.make({
+        state: TaskState,
+        event: TaskEvent,
+        initial: TaskState.Idle,
+      })
+        .on(TaskState.Idle, TaskEvent.Start, () => TaskState.Running)
+        .task(TaskState.Running, () => Effect.die("task-defect"), {
+          onSuccess: () => TaskEvent.Success,
+          onFailure: () => {
+            handled = true;
+            return TaskEvent.Fail({ message: "handled" });
+          },
+        });
+
+      return Effect.gen(function* () {
+        const system = yield* ActorSystemService;
+        const actor = yield* system.spawn("task-defect", machine);
+
+        yield* actor.send(TaskEvent.Start);
+        const exit = yield* actor.awaitExit;
+
+        expect(exit._tag).toBe("Defect");
+        expect(handled).toBe(false);
+      }).pipe(Effect.provide(ActorSystemDefault));
+    });
   });
 
   describe("waitFor race (fast-failing task)", () => {

@@ -55,12 +55,12 @@ Async work that emits an event on completion:
 // Explicit onSuccess mapping
 .task(State.Loading, ({ state }) => fetchData(state.url), {
   onSuccess: (data) => Event.Loaded({ data }),
-  onFailure: (cause) => Event.Failed({ error: Cause.pretty(cause) }),
+  onFailure: (error) => Event.Failed({ error: String(error) }),
 })
 
 // Shorthand — when task returns Event directly, onSuccess can be omitted
 .task(State.Loading, ({ state }) => fetchData(state.url).pipe(Effect.map(d => Event.Loaded({ data: d }))), {
-  onFailure: (cause) => Event.Failed({ error: Cause.pretty(cause) }),
+  onFailure: (error) => Event.Failed({ error: String(error) }),
 })
 
 // Multi-state

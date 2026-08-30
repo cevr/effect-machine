@@ -12,9 +12,10 @@ Inspection events cover:
 - actor spawn
 - event receipt
 - named predicate result
+- named accepted transition operation
 - accepted transition
 - state-owned Effect start
-- named task start, success, failure, and interruption
+- named task start, success, typed failure, defect, and interruption
 - defects
 - actor stop
 
@@ -30,6 +31,16 @@ machine.when(
   () => State.Accepted,
 );
 ```
+
+Use a named transition handler to make the accepted operation visible:
+
+```ts
+machine.on(State.Accepted, Event.Submit, function submitOrder({ state }) {
+  return State.Submitted.with(state);
+});
+```
+
+Each inspection event includes the actor generation. Generation zero is the first run. The value increases after each supervised restart.
 
 The console inspector logs readable machine events with Effect logging. The tracing inspector emits spans and events. The collecting inspector stores typed events for tests. `combineInspectors` isolates an inspector failure from the other inspectors.
 

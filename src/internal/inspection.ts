@@ -31,22 +31,34 @@ export const emitWithTimestamp = Effect.fn("effect-machine.emitWithTimestamp")(f
 export const makeInspectionHooks = <S, E>(
   actorId: string,
   inspector: InspectorService<S, E>,
+  getGeneration: () => number = () => 0,
 ): ProcessEventHooks<S, E> => ({
   onGuard: (evaluation) =>
     emitWithTimestamp(inspector, (timestamp) => ({
       type: "@machine.guard",
       actorId,
+      generation: getGeneration(),
       state: evaluation.state,
       event: evaluation.event,
       guard: evaluation.guard,
-      params: evaluation.params,
       result: evaluation.result,
+      timestamp,
+    })),
+  onOperation: (operation) =>
+    emitWithTimestamp(inspector, (timestamp) => ({
+      type: "@machine.operation",
+      actorId,
+      generation: getGeneration(),
+      operation: operation.operation,
+      state: operation.state,
+      event: operation.event,
       timestamp,
     })),
   onSpawnEffect: (state) =>
     emitWithTimestamp(inspector, (timestamp) => ({
       type: "@machine.effect",
       actorId,
+      generation: getGeneration(),
       effectType: "spawn",
       state,
       timestamp,
@@ -55,6 +67,7 @@ export const makeInspectionHooks = <S, E>(
     emitWithTimestamp(inspector, (timestamp) => ({
       type: "@machine.transition",
       actorId,
+      generation: getGeneration(),
       fromState: from,
       toState: to,
       event,
@@ -64,6 +77,7 @@ export const makeInspectionHooks = <S, E>(
     emitWithTimestamp(inspector, (timestamp) => ({
       type: "@machine.error",
       actorId,
+      generation: getGeneration(),
       phase: info.phase,
       state: info.state,
       event: info.event,

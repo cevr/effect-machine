@@ -89,6 +89,7 @@ export type {
   InspectionEvent,
   InspectorService as Inspector,
   InspectorHandler,
+  OperationEvent,
   SpawnEvent,
   StopEvent,
   TaskEvent,

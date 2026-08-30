@@ -30,11 +30,13 @@ const accessMachine = Machine.make({
     function correctCode({ event }) {
       return event.code === "1234";
     },
-    () => AccessState.Open,
+    function unlock() {
+      return AccessState.Open;
+    },
   )
-  .on(AccessState.Locked, AccessEvent.EnterCode, ({ state }) =>
-    AccessState.Locked({ attempts: state.attempts + 1 }),
-  )
+  .on(AccessState.Locked, AccessEvent.EnterCode, function recordFailedAttempt({ state }) {
+    return AccessState.Locked({ attempts: state.attempts + 1 });
+  })
   .final(AccessState.Open);
 
 export const inspectionProgram = Effect.gen(function* () {

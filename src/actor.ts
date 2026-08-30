@@ -766,11 +766,13 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   const listeners: Listeners<S> = new Set();
   const transitionsPubSub = yield* PubSub.unbounded<TransitionInfo<S, E>>();
 
-  // Build hooks from inspector
-  let hooks: ProcessEventHooks<S, E> | undefined = undefined;
-  if (inspectorValue !== undefined) {
-    hooks = makeInspectionHooks(id, inspectorValue);
-  }
+  // Generation counter. Recovery and inspection use the same value.
+  const generation = { current: 0 };
+
+  const inspectionHooks = (runtimeGeneration: number): ProcessEventHooks<S, E> | undefined => {
+    if (inspectorValue === undefined) return undefined;
+    return makeInspectionHooks(id, inspectorValue, () => runtimeGeneration);
+  };
 
   // Cell-owned resources: stable across generations (supervision)
   const stateRef = yield* SubscriptionRef.make<S>(initial);
@@ -785,12 +787,6 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   // Terminal exit deferred — set exactly once when the actor truly terminates.
   // This is what awaitExit/watch bind to, NOT the per-generation exitDeferred.
   const terminalExitDeferred = yield* Deferred.make<ActorExit<S, O>>();
-
-  // Track whether @machine.stop has been emitted
-  let stopEmitted = false;
-
-  // Generation counter — used by recovery to distinguish cold start from restart
-  const generation = { current: 0 };
 
   // Mutable ref for the current runtime — supervision loop updates this
   const runtimeRef: { current: RuntimeHandle<S, E> | undefined } = { current: undefined };
@@ -819,14 +815,15 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   };
 
   /** Build lifecycle hooks for a generation */
-  const buildRuntimeLifecycle = (): RuntimeLifecycleHooks<S, E> => {
-    stopEmitted = false;
+  const buildRuntimeLifecycle = (runtimeGeneration: number): RuntimeLifecycleHooks<S, E> => {
+    let stopEmitted = false;
     let onEvent: RuntimeLifecycleHooks<S, E>["onEvent"] = undefined;
     if (inspectorValue !== undefined) {
       onEvent = (state: S, event: E) =>
         emitWithTimestamp(inspectorValue, (timestamp) => ({
           type: "@machine.event",
           actorId: id,
+          generation: runtimeGeneration,
           state,
           event,
           timestamp,
@@ -840,6 +837,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
           yield* emitWithTimestamp(inspectorValue, (timestamp) => ({
             type: "@machine.stop",
             actorId: id,
+            generation: runtimeGeneration,
             finalState: state,
             timestamp,
           }));
@@ -851,6 +849,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
         emitWithTimestamp(inspectorValue, (timestamp) => ({
           type: "@machine.effect",
           actorId: id,
+          generation: runtimeGeneration,
           effectType: "spawn",
           state,
           timestamp,
@@ -877,7 +876,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
           if (!shouldPersist) return;
           yield* durability.save({
             actorId: id,
-            generation: generation.current,
+            generation: runtimeGeneration,
             previousState: result.previousState,
             nextState: result.newState,
             event,
@@ -904,6 +903,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
             yield* emitWithTimestamp(inspectorValue, (timestamp) => ({
               type: "@machine.stop",
               actorId: id,
+              generation: runtimeGeneration,
               finalState,
               timestamp,
             }));
@@ -914,16 +914,18 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   };
 
   /** Create a single runtime generation. machineForGen is machineWithState for initial, machine for restarts. */
-  const spawnGeneration = (machineForGen: typeof machine) =>
-    Ref.get(eventQueueRef).pipe(
+  const spawnGeneration = (machineForGen: typeof machine) => {
+    const runtimeGeneration = generation.current;
+    return Ref.get(eventQueueRef).pipe(
       Effect.flatMap(
         (currentQueue) =>
           createRuntime(machineForGen, system, {
             actorId: id,
-            hooks,
+            generation: runtimeGeneration,
+            hooks: inspectionHooks(runtimeGeneration),
             skipFinalizer: true,
             cellResources: { stateRef, stoppedRef, eventQueue: currentQueue },
-            lifecycle: buildRuntimeLifecycle(),
+            lifecycle: buildRuntimeLifecycle(runtimeGeneration),
             onChildSpawned: (childId, child) =>
               Effect.gen(function* () {
                 childrenMap.set(childId, child as unknown as ActorRef<AnyState, unknown>);
@@ -943,6 +945,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
           }) as Effect.Effect<RuntimeHandle<S, E>>,
       ),
     );
+  };
 
   // Spawn initial generation (with hydrated state if provided)
   const runtime = yield* spawnGeneration(machine);
@@ -1000,6 +1003,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     yield* emitWithTimestamp(inspectorValue, (timestamp) => ({
       type: "@machine.spawn",
       actorId: id,
+      generation: generation.current,
       initialState: currentState,
       timestamp,
     }));

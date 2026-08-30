@@ -19,6 +19,7 @@ type ResolveType<T> = T extends Schema.Schema<infer A> ? A : T;
 export interface SpawnEvent<S> {
   readonly type: "@machine.spawn";
   readonly actorId: string;
+  readonly generation: number;
   readonly initialState: S;
   readonly timestamp: number;
 }
@@ -29,6 +30,7 @@ export interface SpawnEvent<S> {
 export interface EventReceivedEvent<S, E> {
   readonly type: "@machine.event";
   readonly actorId: string;
+  readonly generation: number;
   readonly state: S;
   readonly event: E;
   readonly timestamp: number;
@@ -40,6 +42,7 @@ export interface EventReceivedEvent<S, E> {
 export interface TransitionEvent<S, E> {
   readonly type: "@machine.transition";
   readonly actorId: string;
+  readonly generation: number;
   readonly fromState: S;
   readonly toState: S;
   readonly event: E;
@@ -50,11 +53,22 @@ export interface TransitionEvent<S, E> {
 export interface GuardEvent<S, E> {
   readonly type: "@machine.guard";
   readonly actorId: string;
+  readonly generation: number;
   readonly state: S;
   readonly event: E;
   readonly guard: string;
-  readonly params?: unknown;
   readonly result: boolean;
+  readonly timestamp: number;
+}
+
+/** Event emitted before an accepted transition handler runs. */
+export interface OperationEvent<S, E> {
+  readonly type: "@machine.operation";
+  readonly actorId: string;
+  readonly generation: number;
+  readonly operation: string;
+  readonly state: S;
+  readonly event: E;
   readonly timestamp: number;
 }
 
@@ -64,6 +78,7 @@ export interface GuardEvent<S, E> {
 export interface EffectEvent<S> {
   readonly type: "@machine.effect";
   readonly actorId: string;
+  readonly generation: number;
   readonly effectType: "spawn";
   readonly state: S;
   readonly timestamp: number;
@@ -72,9 +87,10 @@ export interface EffectEvent<S> {
 export interface TaskEvent<S> {
   readonly type: "@machine.task";
   readonly actorId: string;
+  readonly generation: number;
   readonly state: S;
   readonly taskName?: string;
-  readonly phase: "start" | "success" | "failure" | "interrupt";
+  readonly phase: "start" | "success" | "failure" | "defect" | "interrupt";
   readonly error?: string;
   readonly timestamp: number;
 }
@@ -85,6 +101,7 @@ export interface TaskEvent<S> {
 export interface ErrorEvent<S, E> {
   readonly type: "@machine.error";
   readonly actorId: string;
+  readonly generation: number;
   readonly phase: "transition" | "spawn";
   readonly state: S;
   readonly event: E;
@@ -98,6 +115,7 @@ export interface ErrorEvent<S, E> {
 export interface StopEvent<S> {
   readonly type: "@machine.stop";
   readonly actorId: string;
+  readonly generation: number;
   readonly finalState: S;
   readonly timestamp: number;
 }
@@ -110,6 +128,7 @@ export type InspectionEvent<S, E> =
   | EventReceivedEvent<S, E>
   | TransitionEvent<S, E>
   | GuardEvent<S, E>
+  | OperationEvent<S, E>
   | EffectEvent<S>
   | TaskEvent<S>
   | ErrorEvent<S, E>
@@ -207,6 +226,8 @@ const inspectionSpanName = <
       return `Machine.inspect ${event.fromState._tag}->${event.toState._tag}`;
     case "@machine.guard":
       return `Machine.inspect guard:${event.guard}`;
+    case "@machine.operation":
+      return `Machine.inspect operation:${event.operation}`;
     case "@machine.effect":
       return `Machine.inspect ${event.effectType}`;
     case "@machine.task":
@@ -233,6 +254,8 @@ const inspectionTraceName = <
       return `machine.transition ${event.fromState._tag}->${event.toState._tag}`;
     case "@machine.guard":
       return `machine.guard ${event.guard}`;
+    case "@machine.operation":
+      return `machine.operation ${event.operation}`;
     case "@machine.effect":
       return `machine.effect ${event.effectType}`;
     case "@machine.task": {
@@ -257,6 +280,7 @@ const inspectionAttributes = <
 ): Record<string, string | number | boolean> => {
   const shared = {
     "machine.actor.id": event.actorId,
+    "machine.actor.generation": event.generation,
     "machine.inspection.type": event.type,
   };
 
@@ -283,6 +307,13 @@ const inspectionAttributes = <
         "machine.event.tag": event.event._tag,
         "machine.guard.name": event.guard,
         "machine.guard.result": event.result,
+      };
+    case "@machine.operation":
+      return {
+        ...shared,
+        "machine.state.current": event.state._tag,
+        "machine.event.tag": event.event._tag,
+        "machine.operation.name": event.operation,
       };
     case "@machine.effect":
       return {
@@ -337,6 +368,7 @@ export const tracingInspector = <
       if (Option.isSome(currentSpan)) {
         currentSpan.value.event(traceName, BigInt(event.timestamp) * 1_000_000n, {
           actorId: event.actorId,
+          generation: event.generation,
           inspectionType: event.type,
         });
       }
@@ -369,6 +401,8 @@ export const consoleInspector = (): InspectorService<
         return Effect.log(`${prefix} ${event.fromState._tag} -> ${event.toState._tag}`);
       case "@machine.guard":
         return Effect.log(`${prefix} guard ${event.guard} -> ${String(event.result)}`);
+      case "@machine.operation":
+        return Effect.log(`${prefix} operation ${event.operation} in ${event.state._tag}`);
       case "@machine.effect":
         return Effect.log(`${prefix} ${event.effectType} effect in ${event.state._tag}`);
       case "@machine.task":

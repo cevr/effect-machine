@@ -98,6 +98,7 @@ export interface HandlerContext<State, Event> {
  */
 export interface StateHandlerContext<State, Event> {
   readonly actorId: string;
+  readonly generation: number;
   readonly state: State;
   readonly event: Event;
   readonly self: MachineRef<Event>;
@@ -131,7 +132,7 @@ export type GuardPredicate<State, Event, R = never> = (
 
 export interface TaskOptions<State, Event, A, E1, ES, EF> {
   readonly onSuccess?: (value: A, ctx: StateHandlerContext<State, Event>) => ES;
-  readonly onFailure?: (cause: Cause.Cause<E1>, ctx: StateHandlerContext<State, Event>) => EF;
+  readonly onFailure?: (error: E1, ctx: StateHandlerContext<State, Event>) => EF;
   readonly name?: string;
 }
 
@@ -214,9 +215,10 @@ const toReadonlyArray = <T>(valueOrValues: T | ReadonlyArray<T>): ReadonlyArray<
 
 const emitTaskInspection = <S extends { readonly _tag: string }>(input: {
   readonly actorId: string;
+  readonly generation: number;
   readonly state: S;
   readonly taskName: string | undefined;
-  readonly phase: "start" | "success" | "failure" | "interrupt";
+  readonly phase: "start" | "success" | "failure" | "defect" | "interrupt";
   readonly error?: string;
 }) =>
   Effect.flatMap(Effect.serviceOption(InspectorTag), (inspector) => {
@@ -224,6 +226,7 @@ const emitTaskInspection = <S extends { readonly _tag: string }>(input: {
     return emitWithTimestamp(inspector.value, (timestamp) => ({
       type: "@machine.task",
       actorId: input.actorId,
+      generation: input.generation,
       state: input.state,
       taskName: input.taskName,
       phase: input.phase,
@@ -959,6 +962,7 @@ export class Machine<
     ) {
       yield* emitTaskInspection({
         actorId: ctx.actorId,
+        generation: ctx.generation,
         state: ctx.state,
         taskName: options.name,
         phase: "start",
@@ -970,6 +974,7 @@ export class Machine<
       if (Exit.isSuccess(exit)) {
         yield* emitTaskInspection({
           actorId: ctx.actorId,
+          generation: ctx.generation,
           state: ctx.state,
           taskName: options.name,
           phase: "success",
@@ -987,21 +992,36 @@ export class Machine<
       if (Cause.hasInterruptsOnly(cause)) {
         yield* emitTaskInspection({
           actorId: ctx.actorId,
+          generation: ctx.generation,
           state: ctx.state,
           taskName: options.name,
           phase: "interrupt",
         });
         return;
       }
+      if (Cause.hasDies(cause) || Cause.hasInterrupts(cause)) {
+        yield* emitTaskInspection({
+          actorId: ctx.actorId,
+          generation: ctx.generation,
+          state: ctx.state,
+          taskName: options.name,
+          phase: "defect",
+          error: Cause.pretty(cause),
+        });
+        // @effect-diagnostics anyUnknownInErrorContext:off
+        return yield* Effect.failCause(cause).pipe(Effect.orDie);
+      }
+      const error = Option.getOrThrow(Cause.findErrorOption(cause));
       yield* emitTaskInspection({
         actorId: ctx.actorId,
+        generation: ctx.generation,
         state: ctx.state,
         taskName: options.name,
         phase: "failure",
         error: Cause.pretty(cause),
       });
       if (options.onFailure !== undefined) {
-        yield* ctx.self.send(options.onFailure(cause, ctx));
+        yield* ctx.self.send(options.onFailure(error, ctx));
         yield* Effect.yieldNow;
         return;
       }

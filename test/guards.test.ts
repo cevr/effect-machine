@@ -58,7 +58,7 @@ describe("transition guards", () => {
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
 
-  it.scopedLive("reports each evaluated guard with its parameters and result", () => {
+  it.scopedLive("reports each evaluated guard with its result", () => {
     const events: AnyInspectionEvent[] = [];
     return Effect.gen(function* () {
       const isHigh = ({
@@ -92,10 +92,10 @@ describe("transition guards", () => {
       expect(
         events
           .filter((event) => event.type === "@machine.guard")
-          .map((event) => ({ guard: event.guard, params: event.params, result: event.result })),
+          .map((event) => ({ guard: event.guard, result: event.result })),
       ).toEqual([
-        { guard: "isHigh", params: undefined, result: false },
-        { guard: "isLow", params: undefined, result: true },
+        { guard: "isHigh", result: false },
+        { guard: "isLow", result: true },
       ]);
     }).pipe(
       Effect.provide(ActorSystemDefault),
@@ -125,8 +125,8 @@ describe("transition guards", () => {
       expect(
         events
           .filter((event) => event.type === "@machine.guard")
-          .map((event) => ({ guard: event.guard, params: event.params, result: event.result })),
-      ).toEqual([{ guard: "<inline>", params: undefined, result: true }]);
+          .map((event) => ({ guard: event.guard, result: event.result })),
+      ).toEqual([{ guard: "<inline>", result: true }]);
     }).pipe(
       Effect.provide(ActorSystemDefault),
       Effect.provideService(InspectorService, collectingInspector(events)),

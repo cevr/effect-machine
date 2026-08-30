@@ -92,6 +92,18 @@ const _test5 = Machine.make({
   .on(MyState.Idle, MyEvent.Start, () => MyState.Loading({ url: "/" }))
   .spawn(MyState.Loading, () => MyService);
 
+// Test 6: task failure handlers receive the typed Effect error, not Cause
+const _testTaskFailureError = Machine.make({
+  state: MyState,
+  event: MyEvent,
+  initial: MyState.Idle,
+}).task(MyState.Loading, () => Effect.fail(MyError.make({})), {
+  onFailure: (error) => {
+    const _typedError: MyError = error;
+    return MyEvent.Complete;
+  },
+});
+
 // ============================================================================
 // Reply Schema Type Constraints
 // ============================================================================

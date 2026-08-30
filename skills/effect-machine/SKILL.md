@@ -124,9 +124,11 @@ machine.spawn(S.Loading, ({ state, self }) =>
 ```ts
 machine.task(S.Loading, ({ state }) => fetchData(state.url), {
   onSuccess: (data) => E.Done({ data }),
-  onFailure: () => E.Error,
+  onFailure: (_error) => E.Error,
 });
 ```
+
+`onFailure` receives only the typed Effect error. A defect stops the actor or starts supervision.
 
 ### background — machine-lifetime (not state-scoped)
 
@@ -396,7 +398,7 @@ The actor owns state. Atom writes send events. Selected Atoms publish only when 
 
 ## Inspection
 
-Provide `InspectorService` when the actor is allocated. Inspection reports actor spawn, event receipt, named guard results, transitions, state-owned Effects, task phases, defects, and actor stop.
+Provide `InspectorService` when the actor is allocated. Inspection reports actor spawn, event receipt, named guard results, named transition operations, transitions, state-owned Effects, task phases, defects, actor stop, and actor generation.
 
 Use `consoleInspector()` for Effect logs, `tracingInspector()` for traces, and `collectingInspector(events)` for tests.
 

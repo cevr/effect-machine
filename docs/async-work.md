@@ -17,11 +17,11 @@ Choose the API from the work lifetime and result contract.
 machine.task(State.Loading, ({ state }) => load(state.id), {
   name: "load-order",
   onSuccess: (order) => Event.Loaded({ order }),
-  onFailure: (cause) => Event.LoadFailed({ message: Cause.pretty(cause) }),
+  onFailure: (error) => Event.LoadFailed({ message: String(error) }),
 });
 ```
 
-A task is interrupted when its state exits. Interruption does not emit a failure event.
+A task sends `onFailure` only for a typed Effect error. A defect stops the actor or starts supervision. A state exit interrupts the task. An interruption does not emit a failure event.
 
 ## State-owned resource
 
