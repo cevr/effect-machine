@@ -171,12 +171,6 @@ export interface RuntimeConfig<S, E> {
   readonly queueFactory?: Effect.Effect<Queue.Queue<RuntimeQueuedEvent<S, E>>>;
   /** Lifecycle callbacks for actor-specific concerns */
   readonly lifecycle?: RuntimeLifecycleHooks<S, E>;
-  /** Wrap each processQueued invocation — actor uses for span annotations */
-  readonly wrapProcess?: (
-    state: S,
-    event: E,
-    inner: Effect.Effect<ProcessQueuedResult<S>>,
-  ) => Effect.Effect<ProcessQueuedResult<S>>;
   /** Called after self.spawn succeeds — actor tracks children */
   readonly onChildSpawned?: <ChildState extends { readonly _tag: string }, ChildEvent>(
     childId: string,
@@ -416,7 +410,6 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
         augmentedHooks,
         deferredReplyRef,
         lifecycle,
-        config.wrapProcess,
         fork,
       ),
     );
@@ -621,11 +614,6 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
     current: Deferred.Deferred<unknown, NoReplyError | ActorStoppedError> | undefined;
   },
   lifecycle?: RuntimeLifecycleHooks<S, E>,
-  wrapProcess?: (
-    state: S,
-    event: E,
-    inner: Effect.Effect<ProcessQueuedResult<S>>,
-  ) => Effect.Effect<ProcessQueuedResult<S>>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   fork?: (effect: Effect.Effect<any>) => Fiber.Fiber<any>,
 ) {
@@ -762,11 +750,26 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
     postpone: postponeQueued,
     process: (state: S, queued: EventQueued, draining: boolean) => {
       const processInner = processQueued(state, queued).pipe(Effect.provide(services));
-      let wrapped = processInner;
-      if (!draining && wrapProcess !== undefined) {
-        wrapped = wrapProcess(state, queued.event, processInner);
+      let processedEffect = processInner;
+      if (!draining) {
+        processedEffect = Effect.withSpan("effect-machine.event.process", {
+          attributes: {
+            "effect_machine.actor.id": actorId,
+            "effect_machine.state.current": state._tag,
+            "effect_machine.event.type": queued.event._tag,
+          },
+        })(
+          processInner.pipe(
+            Effect.tap((processed) =>
+              Effect.annotateCurrentSpan(
+                "effect_machine.transition.matched",
+                processed.result.transitioned,
+              ),
+            ),
+          ),
+        );
       }
-      return wrapped.pipe(
+      return processedEffect.pipe(
         Effect.map((processed) => ({
           state: processed.result.newState,
           transitioned: processed.result.transitioned,

@@ -808,23 +808,6 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
             skipFinalizer: true,
             cellResources: { stateRef, stoppedRef, eventQueue: currentQueue },
             lifecycle: buildRuntimeLifecycle(),
-            wrapProcess: (state, event, inner) =>
-              Effect.withSpan("effect-machine.event.process", {
-                attributes: {
-                  "effect_machine.actor.id": id,
-                  "effect_machine.state.current": state._tag,
-                  "effect_machine.event.type": event._tag,
-                },
-              })(
-                inner.pipe(
-                  Effect.tap((r) =>
-                    Effect.annotateCurrentSpan(
-                      "effect_machine.transition.matched",
-                      r.result.transitioned,
-                    ),
-                  ),
-                ),
-              ),
             onChildSpawned: (childId, child) =>
               Effect.gen(function* () {
                 childrenMap.set(childId, child as unknown as ActorRef<AnyState, unknown>);
