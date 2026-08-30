@@ -1,0 +1,25 @@
+{
+  "name": "effect-machine-example-solid",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "test": "vitest run",
+    "gate": "bun run build && bun run test"
+  },
+  "dependencies": {
+    "@effect/atom-solid": "4.0.0-rc.112",
+    "effect": "4.0.0-rc.112",
+    "solid-js": "1.9.15",
+    "solid-transition-group": "0.3.0"
+  },
+  "devDependencies": {
+    "@solidjs/testing-library": "0.8.10",
+    "jsdom": "30.0.1",
+    "typescript": "7.0.2",
+    "vite": "8.2.2",
+    "vite-plugin-solid": "2.11.14",
+    "vitest": "4.1.11"
+  }
+}
