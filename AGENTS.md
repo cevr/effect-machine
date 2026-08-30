@@ -29,6 +29,12 @@ bun run fmt           # oxfmt
 ```ts
 const machine = Machine.make({ state, event, initial })
   .on(State.Idle, Event.Start, () => State.Running)
+  .when(
+    State.Ready,
+    Event.Submit,
+    ({ state }) => state.valid,
+    () => State.Saving,
+  )
   .on([State.Draft, State.Review], Event.Cancel, () => State.Cancelled) // multi-state
   .onAny(Event.Reset, () => State.Idle) // wildcard (any state)
   .spawn(State.Running, () => Effect.flatMap(Poller, (poller) => poller.poll()))
@@ -98,7 +104,7 @@ yield * actor.start;
 
 `Machine.spawn` captures the current Effect context. The actor keeps that context when `actor.start` runs later.
 
-Keep `.on()` and `.reenter()` pure. These handlers cannot require services.
+Transition handlers and `.when()` predicates can use Effect services. Their error channels must be `never`.
 
 ## Running Machines
 
@@ -231,12 +237,13 @@ actor.subscribe(fn); // sync callback, returns unsubscribe
 actor.system; // ActorSystem
 actor.children; // ReadonlyMap<string, ActorRef>
 
-// Sync helpers (for UI hooks)
-actor.sync.send(event);
-actor.sync.stop();
-actor.sync.snapshot();
-actor.sync.matches(tag);
-actor.sync.can(event);
+// JavaScript client for code outside Effect
+actor.client.send(event);
+actor.client.stop();
+actor.client.getSnapshot();
+actor.client.matches(tag);
+actor.client.canSync(event); // Boolean predicates only
+await actor.client.can(event); // all predicates
 ```
 
 ## ask / reply
@@ -260,11 +267,12 @@ const count = yield* actor.ask(Event.GetCount);  // number
 
 | Method                       | Allowed R | Why                                |
 | ---------------------------- | --------- | ---------------------------------- |
-| `.on()` / `.reenter()`       | `never`   | Pure transitions, no services      |
+| `.on()` / `.reenter()`       | Any R     | State transition Effects           |
+| `.when()` predicate          | Any R     | Boolean or Effect condition        |
 | `.spawn()` / `.background()` | `Scope`   | Finalizers allowed                 |
 | `.task()`                    | Any R     | Async work can use Effect services |
 
-- Transition handlers cannot require services
+- Transition handlers and predicates can require services
 - Task, spawn, and background handlers can require services
 - Handlers cannot produce errors — error channel fixed to `never`
 - Handlers must return machine's state schema — wrong states rejected at compile time
@@ -279,7 +287,7 @@ const count = yield* actor.ask(Event.GetCount);  // number
 - Empty structs: `State.Idle` not `State.Idle()`
 - `.onAny()` only fires when no specific `.on()` matches
 - `self.spawn` errors with `DuplicateActorError` — wrap with `Effect.orDie`
-- Sync helpers live on `actor.sync.*`
+- Non-Effect code uses `actor.client`
 - Pending `call`/`ask` Deferreds settled with `ActorStoppedError` on stop
 - `ask()` only accepts events with `Event.reply()` — non-reply events are a type error
 - Reply decode failures (schema mismatch) are defects

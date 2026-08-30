@@ -39,10 +39,13 @@ const machine = Machine.make({
 | Method                                 | Purpose                                 |
 | -------------------------------------- | --------------------------------------- |
 | `.on(state, event, handler)`           | Add transition                          |
+| `.when(state, event, predicate, h)`    | Add conditional transition              |
 | `.on([stateA, stateB], event, h)`      | Multi-state transition                  |
 | `.onAny(event, handler)`               | Wildcard (any state, specific .on wins) |
 | `.reenter(state, event, handler)`      | Force lifecycle on same-state           |
+| `.reenterWhen(state, event, p, h)`     | Conditional forced lifecycle            |
 | `.immediate(state, handler)`           | Eventless transition until stable       |
+| `.immediateWhen(state, p, handler)`    | Conditional eventless transition        |
 | `.spawn(state, handler)`               | State-scoped effect (auto-cancelled)    |
 | `.timeout(state, { duration, event })` | State timeout (gen_statem)              |
 | `.postpone(state, event/events)`       | Postpone event in state (gen_statem)    |
@@ -85,21 +88,21 @@ const actor = yield * Machine.spawn(machine).pipe(Effect.provideService(Api, { f
 yield * actor.start;
 ```
 
-Task, spawn, background, and Effectful transition handlers can require Effect services. Guards stay pure.
+Task, spawn, background, transition handlers, and `.when()` predicates can require Effect services.
 
 Guards are named and ordered. The first passing candidate wins. An unguarded candidate is a fallback.
 
 ```ts
-machine.on(
+machine.when(
   State.Idle,
   Event.Go,
+  ({ state }) => state.allowed,
   ({ state }) =>
     Effect.gen(function* () {
       const audit = yield* Audit;
       yield* audit.record(state);
       return State.Ready;
     }),
-  { guard: Machine.guard("allowed", ({ state }) => state.allowed) },
 );
 ```
 
@@ -107,7 +110,7 @@ Transition Effects finish before state subscribers run. Their error channel must
 
 `Machine.spawn` captures the current Effect context. A later `actor.start` keeps those services.
 
-All handler requirements flow into the machine type. `Machine.spawn(machine)` and `system.spawn(id, machine)` keep those requirements until the caller provides them.
+All handler and predicate requirements flow into the machine type. `Machine.spawn(machine)` and `system.spawn(id, machine)` keep those requirements until the caller provides them.
 
 Use the Effect context as the only runtime requirement channel. Use `.task()` for work that sends a completion event. Use `.spawn()` for state-owned work. Use `.background()` for actor-owned work. Use an Effectful transition only when its result must select the next state before the mailbox can continue.
 
@@ -127,7 +130,7 @@ const output = yield * actor.awaitOutput;
 
 - Input creates the initial state. It does not replace Effect context.
 - Output is separate from the retained final state.
-- Compose autonomous runs with `Effect.flatMap` or `Effect.andThen`.
+- Compose autonomous runs with `Effect.flatMap` or `Effect.gen`.
 - Use `Machine.run(machine, options)` to start, await output, and always stop one autonomous actor.
 - Use a parent machine when interactive phases must remain visible together.
 - Do not add an action queue. Model external work with Effect handlers.
@@ -139,6 +142,7 @@ const output = yield * actor.awaitOutput;
 ```ts
 const program = Effect.gen(function* () {
   const actor = yield* Machine.spawn(machine);
+  yield* actor.start;
   yield* actor.send(Event.Start({ url: "/api" }));
   const state = yield* actor.waitFor(MyState.Done);
 });
@@ -172,11 +176,12 @@ Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))
 | `actor.awaitExit`                | Completes when this actor stops             |
 | `actor.drain`                    | Process remaining queue, then stop          |
 | `actor.snapshot`                 | Get current state                           |
-| `actor.sync.send(event)`         | Sync fire-and-forget (for UI)               |
-| `actor.sync.stop()`              | Sync stop                                   |
-| `actor.sync.snapshot()`          | Sync get state                              |
-| `actor.sync.matches(tag)`        | Sync check state tag                        |
-| `actor.sync.can(event)`          | Sync can handle event?                      |
+| `actor.client.send(event)`       | Fire-and-forget outside Effect              |
+| `actor.client.stop()`            | Start a stop outside Effect                 |
+| `actor.client.getSnapshot()`     | Get state outside Effect                    |
+| `actor.client.matches(tag)`      | Check a state tag outside Effect            |
+| `actor.client.canSync(event)`    | Check Boolean predicates outside Effect     |
+| `actor.client.can(event)`        | Promise check for all predicates            |
 | `actor.lifecycle`                | Observable actor lifecycle                  |
 | `actor.latestTransition`         | Retained latest accepted edge               |
 | `actor.subscribe(fn)`            | Sync callback, returns unsubscribe          |
@@ -268,7 +273,7 @@ expect(result.newState._tag).toBe("Loading");
 
 ## Effect Atom
 
-Use `effect-machine/atom` for React, Solid, Vue, or another Effect Atom client.
+Use `effect-machine/atom` with an Effect Atom framework binding.
 
 ```ts
 import * as ActorAtom from "effect-machine/atom";
@@ -277,6 +282,7 @@ const actorAtom = ActorAtom.make(actor);
 const countAtom = ActorAtom.select(actorAtom, (state) => state.count);
 const lifecycleAtom = ActorAtom.lifecycle(actor);
 const latestTransitionAtom = ActorAtom.latestTransition(actor);
+const canStartAtom = ActorAtom.can(actor, Event.Start);
 ```
 
 The Atom value is actor state. Atom writes send actor events. A selected Atom stays writable.
@@ -301,7 +307,7 @@ An exit animation can keep a screen mounted after a final transition. Keep requi
 6. **`.onAny()` is fallback**: Specific `.on()` always takes priority
 7. **Services at allocation time**: provide Effect services when `Machine.spawn` allocates the actor
 8. **call vs send**: `send` = fire-and-forget, `call` = request-reply, `ask` = typed reply
-9. **Sync helpers**: Use `actor.sync.*` (not top-level `sendSync`/`snapshotSync`)
+9. **Non-Effect code**: Use `actor.client`. React and Solid should use Actor Atoms.
 10. **ActorStoppedError**: Pending `call`/`ask` Deferreds settled on stop
 
 ## Cluster / Entity Machines
@@ -351,3 +357,7 @@ Input machines require `input: (entityId) => Input`. Use `initializeState` only 
 | `cluster/adapters/in-memory.ts`      | In-memory persistence adapter          |
 | `cluster/entity-actor-ref.ts`        | Typed entity client wrapper            |
 | `cluster/to-entity.ts`               | Entity definition generator            |
+| `examples/core`                      | Runnable Effect and actor patterns     |
+| `examples/react`                     | React Suspense and selector example    |
+| `examples/solid`                     | Solid Suspense and selector example    |
+| `docs`                               | User and migration guides              |
