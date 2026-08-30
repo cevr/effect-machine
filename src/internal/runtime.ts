@@ -708,6 +708,7 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
       return wrapped.pipe(
         Effect.map((processed) => ({
           state: processed.result.newState,
+          transitioned: processed.result.transitioned,
           stateChanged: processed.stateChanged,
           shouldStop: processed.shouldStop,
           value: processed,

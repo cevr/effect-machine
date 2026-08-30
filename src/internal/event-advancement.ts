@@ -10,6 +10,7 @@ import { Effect } from "effect";
 
 export interface AdvancementStep<S, A> {
   readonly state: S;
+  readonly transitioned: boolean;
   readonly stateChanged: boolean;
   readonly shouldStop: boolean;
   readonly value: A;
@@ -30,12 +31,17 @@ export interface EventAdvancementOptions<S, I, A, R> {
     input: I,
     draining: boolean,
   ) => Effect.Effect<AdvancementStep<S, A>, never, R>;
+  readonly commit?: (
+    previousState: S,
+    input: I,
+    step: AdvancementStep<S, A>,
+  ) => Effect.Effect<void, never, R>;
   readonly discard?: (input: I) => Effect.Effect<void, never, R>;
 }
 
 export interface AdvancementResult<S, A> {
   readonly state: S;
-  readonly value: A;
+  readonly value: A | undefined;
   readonly stopped: boolean;
   readonly postponed: boolean;
 }
@@ -48,6 +54,15 @@ export const makeEventAdvancement = <S, I, A, R>(options: EventAdvancementOption
   const advance = Effect.fn("effect-machine.eventAdvancement.advance")(function* (input: I) {
     const postponedStep = (entry: I) => options.postpone(state, entry);
 
+    if (stopped) {
+      return {
+        state,
+        value: undefined,
+        stopped: true,
+        postponed: false,
+      } satisfies AdvancementResult<S, A>;
+    }
+
     if (options.shouldPostpone(state, input)) {
       const result = yield* postponedStep(input);
       postponed.push(result.input);
@@ -59,8 +74,12 @@ export const makeEventAdvancement = <S, I, A, R>(options: EventAdvancementOption
       } satisfies AdvancementResult<S, A>;
     }
 
-    const first = yield* options.process(state, input, false);
+    const previousState = state;
+    const first = yield* options.process(previousState, input, false);
     state = first.state;
+    if (options.commit !== undefined) {
+      yield* options.commit(previousState, input, first);
+    }
     stopped = first.shouldStop || options.isFinal(state);
 
     let stateChanged = first.stateChanged;
@@ -74,8 +93,12 @@ export const makeEventAdvancement = <S, I, A, R>(options: EventAdvancementOption
           continue;
         }
 
-        const step = yield* options.process(state, entry, true);
+        const drainedPreviousState = state;
+        const step = yield* options.process(drainedPreviousState, entry, true);
         state = step.state;
+        if (options.commit !== undefined) {
+          yield* options.commit(drainedPreviousState, entry, step);
+        }
         stopped = step.shouldStop || options.isFinal(state);
         stateChanged = stateChanged || step.stateChanged;
         if (stopped) break;

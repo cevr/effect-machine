@@ -1031,6 +1031,7 @@ const replayImpl = Effect.fn("effect-machine.replay")(function* <
       executeTransition(machine, state, event).pipe(
         Effect.map((result) => ({
           state: result.newState,
+          transitioned: result.transitioned,
           stateChanged:
             result.transitioned && (result.newState._tag !== state._tag || result.reenter),
           shouldStop: result.transitioned && machine.finalStates.has(result.newState._tag),
@@ -1040,7 +1041,6 @@ const replayImpl = Effect.fn("effect-machine.replay")(function* <
   });
 
   for (const event of events) {
-    if (advancement.stopped) break;
     yield* advancement.advance(event);
   }
 

@@ -108,6 +108,22 @@ describe("Testing", () => {
         expect(state._tag).toBe("Done");
       }),
     );
+
+    it.scopedLive("does not process events after a final state", () =>
+      Effect.gen(function* () {
+        const transitions: string[] = [];
+        const harness = yield* createTestHarness(testMachine, {
+          onTransition: (_from, event) => transitions.push(event._tag),
+        });
+
+        yield* harness.send(TestEvent.Fetch);
+        yield* harness.send(TestEvent.Resolve({ data: "done" }));
+        const state = yield* harness.send(TestEvent.Reject({ message: "late" }));
+
+        expect(state._tag).toBe("Success");
+        expect(transitions).toEqual(["Fetch", "Resolve"]);
+      }),
+    );
   });
 
   describe("assertReaches", () => {

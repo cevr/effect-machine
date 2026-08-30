@@ -55,6 +55,7 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
           if (result.transitioned) states.push(result.newState);
           return {
             state: result.newState,
+            transitioned: result.transitioned,
             stateChanged:
               result.transitioned && (result.newState._tag !== state._tag || result.reenter),
             shouldStop: result.transitioned && machine.finalStates.has(result.newState._tag),
@@ -65,7 +66,6 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
   });
 
   for (const event of events) {
-    if (advancement.stopped) break;
     yield* advancement.advance(event);
   }
 
@@ -224,22 +224,21 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
     postpone: (state: S, event: E) => Effect.succeed({ input: event, value: state }),
     process: (state: S, event: E) =>
       executeTransition(machine, state, event).pipe(
-        Effect.tap((result) => {
-          if (!result.transitioned) return Effect.void;
-          return SubscriptionRef.set(stateRef, result.newState).pipe(
-            Effect.tap(() =>
-              Effect.sync(() => options?.onTransition?.(state, event, result.newState)),
-            ),
-          );
-        }),
         Effect.map((result) => ({
           state: result.newState,
+          transitioned: result.transitioned,
           stateChanged:
             result.transitioned && (result.newState._tag !== state._tag || result.reenter),
           shouldStop: result.transitioned && machine.finalStates.has(result.newState._tag),
           value: result.newState,
         })),
       ),
+    commit: (state: S, event: E, step) => {
+      if (!step.transitioned) return Effect.void;
+      return SubscriptionRef.set(stateRef, step.state).pipe(
+        Effect.tap(() => Effect.sync(() => options?.onTransition?.(state, event, step.state))),
+      );
+    },
   });
   const send = Effect.fn("effect-machine.testHarness.send")(function* (event: E) {
     const result = yield* advancement.advance(event);
