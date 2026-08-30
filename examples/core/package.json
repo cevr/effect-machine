@@ -1,0 +1,18 @@
+{
+  "name": "effect-machine-example-core",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test --tsconfig-override=tsconfig.json",
+    "gate": "bun run typecheck && bun run test"
+  },
+  "dependencies": {
+    "effect": "4.0.0-rc.112"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.0",
+    "effect-bun-test": "0.3.0",
+    "typescript": "7.0.2"
+  }
+}

@@ -39,6 +39,54 @@
         "effect": ">=4.0.0-rc.112 <5",
       },
     },
+    "examples/core": {
+      "name": "effect-machine-example-core",
+      "dependencies": {
+        "effect": "4.0.0-rc.112",
+      },
+      "devDependencies": {
+        "@types/bun": "1.4.0",
+        "effect-bun-test": "0.3.0",
+        "typescript": "7.0.2",
+      },
+    },
+    "examples/react": {
+      "name": "effect-machine-example-react",
+      "dependencies": {
+        "@effect/atom-react": "4.0.0-rc.112",
+        "effect": "4.0.0-rc.112",
+        "motion": "13.1.1",
+        "react": "19.2.8",
+        "react-dom": "19.2.8",
+      },
+      "devDependencies": {
+        "@testing-library/react": "16.3.3",
+        "@types/react": "19.2.18",
+        "@types/react-dom": "19.2.5",
+        "@vitejs/plugin-react": "6.1.1",
+        "jsdom": "30.0.1",
+        "typescript": "7.0.2",
+        "vite": "8.2.2",
+        "vitest": "4.1.11",
+      },
+    },
+    "examples/solid": {
+      "name": "effect-machine-example-solid",
+      "dependencies": {
+        "@effect/atom-solid": "4.0.0-rc.112",
+        "effect": "4.0.0-rc.112",
+        "solid-js": "1.9.15",
+        "solid-transition-group": "0.3.0",
+      },
+      "devDependencies": {
+        "@solidjs/testing-library": "0.8.10",
+        "jsdom": "30.0.1",
+        "typescript": "7.0.2",
+        "vite": "8.2.2",
+        "vite-plugin-solid": "2.11.14",
+        "vitest": "4.1.11",
+      },
+    },
   },
   "packages": {
     "@asamuzakjp/css-color": ["@asamuzakjp/css-color@6.0.7", "", { "dependencies": { "@csstools/css-calc": "^3.3.0", "@csstools/css-color-parser": "^4.1.10", "@csstools/css-parser-algorithms": "^4.0.0", "@csstools/css-tokenizer": "^4.0.0", "lru-cache": "^11.5.2" } }, "sha512-vC/bk1Lz7Tn/EfU9/apOTBk80/8dyGyWMowPoV1tJ52muDGsDqt2HPT2klrFUiY60MQmQv9q8yIht15JnBgDGw=="],
@@ -540,6 +588,12 @@
     "effect": ["effect@4.0.0-rc.112", "", { "dependencies": { "fast-check": "^4.9.0", "msgpackr": "^2.0.5" } }, "sha512-wXxwuh1Ywnv4cPRM3Wfa0vDwuOHnZ1TsTgHJkG9XgzND6inhBH9n1vBxhg3iIXOia/OrpmvVmd3lrD4vq6bF3A=="],
 
     "effect-bun-test": ["effect-bun-test@0.3.0", "", { "peerDependencies": { "bun": "*", "effect": ">=3.19.0" } }, "sha512-P2xZ4HBZg4bFw2ePY4E5UB6EZ2d1L/HO13+KdoprTYFuc8B1uTpdn7V4UU6qyYiYsqTY9DZ1TFB94Ekx2YLA4g=="],
+
+    "effect-machine-example-core": ["effect-machine-example-core@workspace:examples/core"],
+
+    "effect-machine-example-react": ["effect-machine-example-react@workspace:examples/react"],
+
+    "effect-machine-example-solid": ["effect-machine-example-solid@workspace:examples/solid"],
 
     "electron-to-chromium": ["electron-to-chromium@1.5.416", "", {}, "sha512-K6bvB2BjnNrugtIih6ewlbBI9DXa976jIdiIlRLHhBoEI9a4JaQjjHyF+A1IQI543aQYR4LnmOrT/K5fZj0aPA=="],
 

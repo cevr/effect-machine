@@ -5,6 +5,9 @@
     "type": "git",
     "url": "https://github.com/cevr/effect-machine.git"
   },
+  "workspaces": [
+    "examples/*"
+  ],
   "files": [
     "dist"
   ],
@@ -42,7 +45,7 @@
     "test:watch": "bun test --watch",
     "example:react": "bun run --cwd examples/react dev",
     "example:solid": "bun run --cwd examples/solid dev",
-    "examples:gate": "bun run --cwd examples/react gate && bun run --cwd examples/solid gate",
+    "examples:gate": "bun run --cwd examples/core gate && bun run --cwd examples/react gate && bun run --cwd examples/solid gate",
     "bench": "bun benchmark/core.ts",
     "gate": "concurrently -n type,lint,fmt,test,build,examples -c blue,yellow,magenta,green,cyan,white \"bun run typecheck\" \"bun run lint:fix\" \"bun run fmt\" \"bun run test\" \"bun run build\" \"bun run examples:gate\"",
     "prepare": "lefthook install && effect-tsgo patch",
