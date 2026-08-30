@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.21.0
+
+### Minor Changes
+
+- [#38](https://github.com/cevr/effect-machine/pull/38) [`5cf9b40`](https://github.com/cevr/effect-machine/commit/5cf9b40b5a24b15e6f4ac57a20e66f5ea8df58ca) Thanks [@cevr](https://github.com/cevr)! - Add typed ActorSystem keys, per-ID actor generation streams, and Suspense-ready Actor Atoms for named actor acquisition.
+
 ## 0.20.0
 
 ### Minor Changes
