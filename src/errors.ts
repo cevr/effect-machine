@@ -16,12 +16,6 @@ export class DuplicateActorError extends Schema.TaggedError<DuplicateActorError>
   { actorId: Schema.String },
 ) {}
 
-/** Operation requires schemas attached to machine */
-export class MissingSchemaError extends Schema.TaggedError<MissingSchemaError>()(
-  "MissingSchemaError",
-  { operation: Schema.String },
-) {}
-
 /** State/Event schema has no variants */
 export class InvalidSchemaError extends Schema.TaggedError<InvalidSchemaError>()(
   "InvalidSchemaError",

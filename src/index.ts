@@ -8,7 +8,6 @@ export {
   DuplicateActorError,
   InvalidSchemaError,
   MissingMatchHandlerError,
-  MissingSchemaError,
   NoReplyError,
   PersistenceError,
   VersionConflictError,
