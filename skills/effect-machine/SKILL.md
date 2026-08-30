@@ -39,11 +39,11 @@ const E = Event({
 });
 ```
 
-**derive** — construct from existing state, picks overlapping fields:
+**`.with()`** — construct from existing state and copy overlapping fields:
 
 ```ts
-S.Active.derive(state); // pick target fields from source
-S.Active.derive(state, { count: n + 1 }); // pick + override
+S.Active.with(state); // pick target fields from source
+S.Active.with(state, { count: n + 1 }); // pick + override
 ```
 
 **Type guards / matching:**
@@ -67,7 +67,7 @@ const machine = Machine.make({ state: S, event: E, initial: S.Idle })
   .onAny(E.Cancel, () => S.Cancelled)
 
   // Reenter same state (re-triggers spawn effects + timeouts)
-  .reenter(S.Active, E.Refresh, ({ state }) => S.Active.derive(state))
+  .reenter(S.Active, E.Refresh, ({ state }) => S.Active.with(state))
 
   // Mark final states (actor stops, postpone buffer settles)
   .final(S.Done)
@@ -84,7 +84,7 @@ const machine = Machine.make({ state: S, event: E, initial: S.Idle })
 ({ state }) => Effect.gen(function* () { ... return S.Next({ ... }) })
 
 // With reply (for actor.ask — event must use Event.reply()):
-({ state }) => Machine.reply(S.Same.derive(state), state.count)
+({ state }) => Machine.reply(S.Same.with(state), state.count)
 ```
 
 ## Effects
@@ -153,7 +153,7 @@ const E = Event({
 });
 
 // Handler — Machine.reply() required for reply-bearing events
-machine.on(S.Active, E.GetCount, ({ state }) => Machine.reply(S.Active.derive(state), state.count));
+machine.on(S.Active, E.GetCount, ({ state }) => Machine.reply(S.Active.with(state), state.count));
 
 // Caller — return type inferred from schema
 const count = yield * actor.ask(E.GetCount); // number

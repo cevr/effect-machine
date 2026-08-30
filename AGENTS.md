@@ -61,18 +61,18 @@ Async work that emits an event on completion:
 .task([State.Loading, State.Retrying], ({ state }) => fetchData(state.url), { onSuccess: ... })
 ```
 
-## State.derive()
+## State.with()
 
 Construct state from existing source. Per-variant and union-level:
 
 ```ts
 // Per-variant: target-specific, works cross-state
-State.Active.derive(state, { count: state.count + 1 });
-State.Shipped.derive(processingState, { trackingId: "TRACK-123" });
-State.Idle.derive(anyState); // → { _tag: "Idle" }
+State.Active.with(state, { count: state.count + 1 });
+State.Shipped.with(processingState, { trackingId: "TRACK-123" });
+State.Idle.with(anyState); // → { _tag: "Idle" }
 
 // Union-level: dispatches by _tag, preserves specific variant subtype
-const updated = MyState.derive(state, { queue: newQueue });
+const updated = MyState.with(state, { queue: newQueue });
 // If state is Streaming, returns Streaming (not union type)
 // Partial keys not in target variant are silently dropped
 ```

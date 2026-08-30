@@ -58,16 +58,16 @@ const checkoutMachine = Machine.make({
   initial: CheckoutState.ReviewingCart({ cartId: "cart_123", totalCents: 4200 }),
 })
   .on(CheckoutState.ReviewingCart, CheckoutEvent.Submit, ({ state }) =>
-    CheckoutState.ChargingCard.derive(state),
+    CheckoutState.ChargingCard.with(state),
   )
   .on(CheckoutState.ChargingCard, CheckoutEvent.Charged, ({ state, event }) =>
-    CheckoutState.Confirmed.derive(state, { receiptId: event.receiptId }),
+    CheckoutState.Confirmed.with(state, { receiptId: event.receiptId }),
   )
   .on(CheckoutState.ChargingCard, CheckoutEvent.Declined, ({ state, event }) =>
-    CheckoutState.Failed.derive(state, { reason: event.reason }),
+    CheckoutState.Failed.with(state, { reason: event.reason }),
   )
   .onAny(CheckoutEvent.Cancel, ({ state }) =>
-    CheckoutState.Failed.derive(state, { reason: "cancelled" }),
+    CheckoutState.Failed.with(state, { reason: "cancelled" }),
   )
   .task(
     CheckoutState.ChargingCard,
@@ -87,7 +87,7 @@ const checkoutMachine = Machine.make({
 A few things to notice:
 
 - Empty variants are values: `State.Idle`. Non-empty are constructors: `State.Loading({ url })`.
-- `State.derive(source, overrides)` carries overlapping fields forward without manual copying.
+- `State.with(source, overrides)` carries overlapping fields forward without manual copying.
 - `.onAny(...)` is a fallback; a specific `.on(...)` wins.
 - `.spawn(...)` runs work on state entry and cancels it on state exit.
 

@@ -48,23 +48,23 @@ const machine = Machine.make({
 | `.background(handler)`                 | Machine-lifetime effect                 |
 | `.final(state)`                        | Mark final state                        |
 
-## State.derive()
+## State.with()
 
 Construct state from existing source:
 
 ```ts
 // Per-variant: preserve fields, override specific ones
-State.Active.derive(state, { count: state.count + 1 });
+State.Active.with(state, { count: state.count + 1 });
 
 // Cross-state: picks only target fields
-State.Shipped.derive(processingState, { trackingId: "TRACK-123" });
+State.Shipped.with(processingState, { trackingId: "TRACK-123" });
 
 // Empty variant
-State.Idle.derive(anyState); // → { _tag: "Idle" }
+State.Idle.with(anyState); // → { _tag: "Idle" }
 
 // Union-level: dispatches to correct variant based on _tag
 // Preserves specific variant subtype — no switch needed
-const updated = MyState.derive(state, { queue: newQueue });
+const updated = MyState.with(state, { queue: newQueue });
 ```
 
 ## Effect Services
@@ -267,7 +267,7 @@ const OrderEntityLayer = EntityMachine.layer(OrderEntity, orderMachine, {
 | File                            | Purpose                                |
 | ------------------------------- | -------------------------------------- |
 | `machine.ts`                    | Machine builder                        |
-| `schema.ts`                     | State/Event + derive                   |
+| `schema.ts`                     | State/Event schemas and copy helpers   |
 | `actor.ts`                      | ActorSystem, event loop                |
 | `testing.ts`                    | simulate, harness                      |
 | `internal/runtime.ts`           | Shared runtime kernel (entity-machine) |
