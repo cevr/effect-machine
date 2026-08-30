@@ -93,6 +93,37 @@ A few things to notice:
 
 The builder also supports `.timeout(state, { duration, event })`, `.postpone(state, event)` for buffering, and `.reenter(...)` for re-running lifecycle on same-state transitions.
 
+### Guards, transition Effects, and eventless transitions
+
+Add ordered guarded candidates when one event can take more than one edge. The first passing guard wins. An unguarded candidate is a fallback. `actor.can(event)` and `actor.sync.can(event)` evaluate the same guards.
+
+```ts
+machine
+  .on(
+    State.Checking,
+    Event.Continue,
+    ({ state }) =>
+      Effect.gen(function* () {
+        const audit = yield* Audit;
+        yield* audit.record(state);
+        return State.Accepted;
+      }),
+    {
+      guard: Machine.guard(
+        "has-stock",
+        ({ state }) => state.stock > 0,
+        ({ state }) => ({ stock: state.stock }),
+      ),
+    },
+  )
+  .on(State.Checking, Event.Continue, () => State.Rejected)
+  .immediate(State.Accepted, ({ state }) => State.Ready.with(state));
+```
+
+Effectful transition handlers run before the state becomes visible. They can use captured Effect services. Their error channel must be `never`. Convert expected failures to states or events. An unhandled defect stops the actor and emits an inspector error.
+
+`.immediate(...)` defines an eventless transition. The actor follows eventless edges until it reaches a stable state. State subscribers see only that stable state. This also applies to the initial state. The runtime defects after 100 eventless edges to stop an accidental loop.
+
 ## Effect Services
 
 Task, spawn, and background handlers can use standard Effect services. The machine type records each service requirement.
@@ -110,7 +141,9 @@ yield * actor.start;
 
 `Machine.spawn` captures the current Effect context. A later `actor.start` keeps those services. Use a different layer or service value in each test or runtime.
 
-Transition handlers in `.on()` and `.reenter()` stay pure. Use services only in `.task()`, `.spawn()`, and `.background()`.
+The builder adds every transition, task, spawn, and background service to the machine requirement type. `Machine.spawn(machine)` and `system.spawn(id, machine)` do not compile at an application entry point until the caller provides all requirements.
+
+Guards stay pure. Transition handlers can return a state directly or an Effect that returns a state. Effectful transition handlers can require services, but their error channel must be `never`.
 
 ## Running Actors
 
@@ -143,6 +176,8 @@ Key actor operations:
 - `waitFor(...)` / `awaitFinal` for coordination
 - `stop` interrupts now; `drain` processes the remaining queue first
 - `awaitExit` completes when the actor stops
+- `lifecycle` observes `Created`, `Starting`, `Active`, and the terminal `ActorExit`
+- `latestTransition` retains the latest accepted edge, including after actor exit
 
 For named actors or shared lookup, use an actor system. `system.spawn` auto-starts — no `actor.start` needed:
 
@@ -217,6 +252,9 @@ const totalAtom = ActorAtom.select(
   (state) => ("totalCents" in state ? { cents: state.totalCents } : { cents: 0 }),
   (value, next) => value.cents === next.cents,
 );
+
+const lifecycleAtom = ActorAtom.lifecycle(actor);
+const latestTransitionAtom = ActorAtom.latestTransition(actor);
 ```
 
 The selected Atom stays writable. `useAtomSet(totalAtom)` still sends checkout events. Solid uses the same Atom with `@effect/atom-solid`. Vue uses the same Atom with `@effect/atom-vue`.

@@ -42,6 +42,7 @@ const machine = Machine.make({
 | `.on([stateA, stateB], event, h)`      | Multi-state transition                  |
 | `.onAny(event, handler)`               | Wildcard (any state, specific .on wins) |
 | `.reenter(state, event, handler)`      | Force lifecycle on same-state           |
+| `.immediate(state, handler)`           | Eventless transition until stable       |
 | `.spawn(state, handler)`               | State-scoped effect (auto-cancelled)    |
 | `.timeout(state, { duration, event })` | State timeout (gen_statem)              |
 | `.postpone(state, event/events)`       | Postpone event in state (gen_statem)    |
@@ -84,9 +85,29 @@ const actor = yield * Machine.spawn(machine).pipe(Effect.provideService(Api, { f
 yield * actor.start;
 ```
 
-Task, spawn, and background handlers can require Effect services. Transition handlers stay pure.
+Task, spawn, background, and Effectful transition handlers can require Effect services. Guards stay pure.
+
+Guards are named and ordered. The first passing candidate wins. An unguarded candidate is a fallback.
+
+```ts
+machine.on(
+  State.Idle,
+  Event.Go,
+  ({ state }) =>
+    Effect.gen(function* () {
+      const audit = yield* Audit;
+      yield* audit.record(state);
+      return State.Ready;
+    }),
+  { guard: Machine.guard("allowed", ({ state }) => state.allowed) },
+);
+```
+
+Transition Effects finish before state subscribers run. Their error channel must be `never`. Convert expected failures to states or events. `.immediate()` edges also settle before state subscribers run.
 
 `Machine.spawn` captures the current Effect context. A later `actor.start` keeps those services.
+
+All handler requirements flow into the machine type. `Machine.spawn(machine)` and `system.spawn(id, machine)` keep those requirements until the caller provides them.
 
 ## Running Actors
 
@@ -132,6 +153,8 @@ Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))
 | `actor.sync.snapshot()`          | Sync get state                              |
 | `actor.sync.matches(tag)`        | Sync check state tag                        |
 | `actor.sync.can(event)`          | Sync can handle event?                      |
+| `actor.lifecycle`                | Observable actor lifecycle                  |
+| `actor.latestTransition`         | Retained latest accepted edge               |
 | `actor.subscribe(fn)`            | Sync callback, returns unsubscribe          |
 | `actor.system`                   | Access the actor's `ActorSystem`            |
 | `actor.children`                 | Child actors (`ReadonlyMap`)                |
@@ -185,6 +208,7 @@ interface ProcessEventResult<S> {
   hasReply: boolean;
   reply?: unknown;
   postponed: boolean;
+  transitions: ReadonlyArray<{ previousState: S; newState: S; event: E }>;
 }
 ```
 
@@ -227,6 +251,8 @@ import * as ActorAtom from "effect-machine/atom";
 
 const actorAtom = ActorAtom.make(actor);
 const countAtom = ActorAtom.select(actorAtom, (state) => state.count);
+const lifecycleAtom = ActorAtom.lifecycle(actor);
+const latestTransitionAtom = ActorAtom.latestTransition(actor);
 ```
 
 The Atom value is actor state. Atom writes send actor events. A selected Atom stays writable.
