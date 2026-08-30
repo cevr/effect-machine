@@ -141,3 +141,32 @@ it.scopedLive("lifecycle and latest transition atoms retain terminal values", ()
     registry.dispose();
   }),
 );
+
+it.scopedLive("can reevaluates guarded transitions when actor state changes", () =>
+  Effect.gen(function* () {
+    const LimitedState = State({ Active: { count: Schema.Finite } });
+    const LimitedEvent = Event({ Increment: {} });
+    const limitedMachine = Machine.make({
+      state: LimitedState,
+      event: LimitedEvent,
+      initial: LimitedState.Active({ count: 0 }),
+    }).when(
+      LimitedState.Active,
+      LimitedEvent.Increment,
+      ({ state }) => state.count < 1,
+      ({ state }) => LimitedState.Active({ count: state.count + 1 }),
+    );
+    const actor = yield* Machine.spawn(limitedMachine);
+    yield* actor.start;
+
+    const registry = AtomRegistry.make();
+    const canIncrementAtom = ActorAtom.can(actor, LimitedEvent.Increment);
+
+    expect(yield* AtomRegistry.getResult(registry, canIncrementAtom)).toBe(true);
+    yield* actor.call(LimitedEvent.Increment);
+    expect(yield* AtomRegistry.getResult(registry, canIncrementAtom)).toBe(false);
+
+    registry.dispose();
+    yield* actor.stop;
+  }),
+);

@@ -23,15 +23,18 @@ export const kioskMachine = Machine.make({
   event: KioskEvent,
   initial: KioskState.Menu({ selected: 0 }),
 })
-  .on(
+  .when(
     KioskState.Menu,
     KioskEvent.Pressed,
+    ({ event }) => event.direction === "down",
     ({ state }) => KioskState.Menu.with(state, { selected: state.selected + 1 }),
-    { guard: Machine.guard("pressed-down", ({ event }) => event.direction === "down") },
   )
-  .on(KioskState.Menu, KioskEvent.Pressed, ({ state }) => KioskState.Checkout.with(state), {
-    guard: Machine.guard("pressed-center", ({ event }) => event.direction === "center"),
-  })
+  .when(
+    KioskState.Menu,
+    KioskEvent.Pressed,
+    ({ event }) => event.direction === "center",
+    ({ state }) => KioskState.Checkout.with(state),
+  )
   .spawn(KioskState.Menu, ({ self }) =>
     Effect.flatMap(InputDevice, (device) =>
       Stream.runForEach(device.presses, (direction) =>

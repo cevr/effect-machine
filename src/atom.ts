@@ -6,6 +6,7 @@
  */
 import { dual } from "effect/Function";
 import * as Atom from "effect/unstable/reactivity/Atom";
+import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
 
 import type { ActorLifecycle, ActorRef, TransitionInfo } from "./actor.js";
 
@@ -68,3 +69,43 @@ export const latestTransition = <State extends { readonly _tag: string }, Event,
   actor: ActorRef<State, Event, Output>,
 ): Atom.Atom<TransitionInfo<State, Event> | undefined> =>
   Atom.subscriptionRef(actor.latestTransition);
+
+/** A reactive result for whether an actor can accept one event. */
+export type CanAtom = Atom.Atom<AsyncResult.AsyncResult<boolean>>;
+
+/**
+ * Observe whether an event has an enabled transition.
+ *
+ * The Atom reevaluates after each actor state change. It supports pure and
+ * Effect predicates. Effect predicates use the context captured by the actor.
+ */
+export const can: {
+  <Event>(
+    event: Event,
+  ): <State extends { readonly _tag: string }, Output>(
+    actor: ActorRef<State, Event, Output>,
+  ) => CanAtom;
+  <State extends { readonly _tag: string }, Event, Output>(
+    actor: ActorRef<State, Event, Output>,
+    event: Event,
+  ): CanAtom;
+} = dual(
+  2,
+  <State extends { readonly _tag: string }, Event, Output>(
+    actor: ActorRef<State, Event, Output>,
+    event: Event,
+  ): CanAtom => {
+    const state = Atom.subscriptionRef(actor.state);
+    return Atom.make((get) => {
+      get(state);
+      return actor.can(event);
+    }).pipe(
+      Atom.withEquality<AsyncResult.AsyncResult<boolean>>(
+        (value, next) =>
+          AsyncResult.isSuccess(value) &&
+          AsyncResult.isSuccess(next) &&
+          Object.is(value.value, next.value),
+      ),
+    );
+  },
+);

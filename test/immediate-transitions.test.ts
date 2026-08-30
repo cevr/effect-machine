@@ -73,9 +73,11 @@ describe("immediate transitions", () => {
       .on(TestState.Idle, TestEvent.Check, ({ event }) =>
         TestState.Checking({ value: event.value }),
       )
-      .immediate(TestState.Checking, () => TestState.Accepted, {
-        guard: Machine.guard("accept", ({ state }) => state.value >= 10),
-      })
+      .immediateWhen(
+        TestState.Checking,
+        ({ state }) => state.value >= 10,
+        () => TestState.Accepted,
+      )
       .immediate(TestState.Checking, () => TestState.Rejected);
 
     return Effect.gen(function* () {

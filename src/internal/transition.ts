@@ -10,7 +10,7 @@
  */
 import { Cause, Effect, Exit, Scope } from "effect";
 
-import type { Guard, Machine, MachineRef, HandlerContext } from "../machine.js";
+import type { Machine, MachineRef, HandlerContext } from "../machine.js";
 import type { ActorSystemService } from "../actor.js";
 import type { Transition } from "./machine-definition.js";
 import { isEffect, isReplyResult, isDeferReplyResult, INTERNAL_ENTER_EVENT } from "./utils.js";
@@ -129,60 +129,74 @@ const executeTransitionCandidatesImmediate = <
   candidates: ReadonlyArray<Transition<S, E, never>>,
   hooks?: ProcessEventHooks<S, E>,
 ): ExecutedTransition<S, E> | Effect.Effect<ExecutedTransition<S, E>> => {
-  let resolution: TransitionResolution<S, E>;
+  let resolution: TransitionResolution<S, E> | Effect.Effect<TransitionResolution<S, E>>;
   try {
     resolution = evaluateTransitions(candidates, currentState, event);
   } catch (defect) {
     return Effect.die(defect);
   }
-  const transition = resolution.transition;
 
-  if (transition === undefined) {
-    const unhandled: ExecutedTransition<S, E> = {
-      newState: currentState,
-      transitioned: false as const,
-      reenter: false,
-      hasReply: false,
-      deferReply: false,
-      reply: undefined,
-      transition: undefined,
-      steps: [],
-    };
-    if (hooks?.onGuard === undefined || resolution.evaluations.length === 0) return unhandled;
-    return Effect.forEach(resolution.evaluations, hooks.onGuard, { discard: true }).pipe(
-      Effect.as(unhandled),
-    );
-  }
+  const executeResolved = (
+    resolved: TransitionResolution<S, E>,
+  ): ExecutedTransition<S, E> | Effect.Effect<ExecutedTransition<S, E>> => {
+    const transition = resolved.transition;
 
-  const runHandler = (): ExecutedTransition<S, E> | Effect.Effect<ExecutedTransition<S, E>> => {
-    const handlerCtx: HandlerContext<S, E> = { state: currentState, event };
-    let raw: ReturnType<typeof transition.handler>;
-    try {
-      raw = transition.handler(handlerCtx);
-    } catch (defect) {
-      return Effect.die(defect);
-    }
-    type HandlerResult = S | ReplyResult<S, unknown> | DeferReplyResult<S>;
-
-    if (isEffect(raw)) {
-      // SAFETY: The transition type fixes the state and error domains.
-      return (raw as Effect.Effect<HandlerResult, never>).pipe(
-        Effect.map((resolved) => completeTransition(currentState, event, transition, resolved)),
+    if (transition === undefined) {
+      const unhandled: ExecutedTransition<S, E> = {
+        newState: currentState,
+        transitioned: false as const,
+        reenter: false,
+        hasReply: false,
+        deferReply: false,
+        reply: undefined,
+        transition: undefined,
+        steps: [],
+      };
+      if (hooks?.onGuard === undefined || resolved.evaluations.length === 0) return unhandled;
+      return Effect.forEach(resolved.evaluations, hooks.onGuard, { discard: true }).pipe(
+        Effect.as(unhandled),
       );
     }
 
-    return completeTransition(currentState, event, transition, raw);
+    const runHandler = (): ExecutedTransition<S, E> | Effect.Effect<ExecutedTransition<S, E>> => {
+      const handlerCtx: HandlerContext<S, E> = { state: currentState, event };
+      let raw: ReturnType<typeof transition.handler>;
+      try {
+        raw = transition.handler(handlerCtx);
+      } catch (defect) {
+        return Effect.die(defect);
+      }
+      type HandlerResult = S | ReplyResult<S, unknown> | DeferReplyResult<S>;
+
+      if (isEffect(raw)) {
+        // SAFETY: The transition type fixes the state and error domains.
+        return (raw as Effect.Effect<HandlerResult, never>).pipe(
+          Effect.map((value) => completeTransition(currentState, event, transition, value)),
+        );
+      }
+
+      return completeTransition(currentState, event, transition, raw);
+    };
+
+    if (hooks?.onGuard === undefined || resolved.evaluations.length === 0) return runHandler();
+    return Effect.forEach(resolved.evaluations, hooks.onGuard, { discard: true }).pipe(
+      Effect.andThen(
+        Effect.suspend(() => {
+          const result = runHandler();
+          if (isEffect(result)) return result;
+          return Effect.succeed(result);
+        }),
+      ),
+    );
   };
 
-  if (hooks?.onGuard === undefined || resolution.evaluations.length === 0) return runHandler();
-  return Effect.forEach(resolution.evaluations, hooks.onGuard, { discard: true }).pipe(
-    Effect.andThen(
-      Effect.suspend(() => {
-        const result = runHandler();
-        if (isEffect(result)) return result;
-        return Effect.succeed(result);
-      }),
-    ),
+  if (!isEffect(resolution)) return executeResolved(resolution);
+  return resolution.pipe(
+    Effect.flatMap((resolved) => {
+      const result = executeResolved(resolved);
+      if (isEffect(result)) return result;
+      return Effect.succeed(result);
+    }),
   );
 };
 
@@ -275,7 +289,7 @@ export interface ProcessEventHooks<S, E> {
 }
 
 export interface GuardEvaluation<S, E> {
-  readonly guard: Guard<S, E, unknown>;
+  readonly guard: string;
   readonly state: S;
   readonly event: E;
   readonly params: unknown;
@@ -654,9 +668,39 @@ export const resolveTransition = <
   machine: Machine<S, E, R, any, any, any, any>,
   currentState: S,
   event: E,
-): Transition<S, E, never> | undefined =>
-  evaluateTransitions(machine._findTransitions(currentState._tag, event._tag), currentState, event)
-    .transition;
+): Transition<S, E, never> | undefined => {
+  const resolution = evaluateTransitions(
+    machine._findTransitions(currentState._tag, event._tag),
+    currentState,
+    event,
+  );
+  if (isEffect(resolution)) {
+    return Effect.runSync(
+      Effect.die("Effect guards require actor.can(event). actor.sync.can(event) is synchronous."),
+    );
+  }
+  return resolution.transition;
+};
+
+/** Resolve a transition with pure or Effect guards. */
+export const resolveTransitionEffect = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+>(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema fields need wide acceptance
+  machine: Machine<S, E, R, any, any, any, any>,
+  currentState: S,
+  event: E,
+): Effect.Effect<Transition<S, E, never> | undefined> => {
+  const resolution = evaluateTransitions(
+    machine._findTransitions(currentState._tag, event._tag),
+    currentState,
+    event,
+  );
+  if (isEffect(resolution)) return resolution.pipe(Effect.map((value) => value.transition));
+  return Effect.succeed(resolution.transition);
+};
 
 interface TransitionResolution<S, E> {
   readonly transition: Transition<S, E, never> | undefined;
@@ -667,15 +711,44 @@ const evaluateTransitions = <S, E>(
   candidates: ReadonlyArray<Transition<S, E, never>>,
   currentState: S,
   event: E,
-): TransitionResolution<S, E> => {
+): TransitionResolution<S, E> | Effect.Effect<TransitionResolution<S, E>> => {
   const ctx: HandlerContext<S, E> = { state: currentState, event };
-  const evaluations: Array<GuardEvaluation<S, E>> = [];
-  for (const candidate of candidates) {
+  const loop = (
+    index: number,
+    evaluations: ReadonlyArray<GuardEvaluation<S, E>>,
+  ): TransitionResolution<S, E> | Effect.Effect<TransitionResolution<S, E>> => {
+    const candidate = candidates[index];
+    if (candidate === undefined) return { transition: undefined, evaluations };
     if (candidate.guard === undefined) return { transition: candidate, evaluations };
-    const params = candidate.guard.params?.(ctx);
-    const result = candidate.guard.check(ctx);
-    evaluations.push({ guard: candidate.guard, state: currentState, event, params, result });
-    if (result) return { transition: candidate, evaluations };
-  }
-  return { transition: undefined, evaluations };
+
+    const guardName = candidate.guard.name || "<inline>";
+    const result = candidate.guard(ctx);
+    const continueWith = (
+      passed: boolean,
+    ): TransitionResolution<S, E> | Effect.Effect<TransitionResolution<S, E>> => {
+      const nextEvaluations = [
+        ...evaluations,
+        {
+          guard: guardName,
+          state: currentState,
+          event,
+          params: undefined,
+          result: passed,
+        },
+      ];
+      if (passed) return { transition: candidate, evaluations: nextEvaluations };
+      return loop(index + 1, nextEvaluations);
+    };
+
+    if (!isEffect(result)) return continueWith(result);
+    return result.pipe(
+      Effect.flatMap((passed) => {
+        const next = continueWith(passed);
+        if (isEffect(next)) return next;
+        return Effect.succeed(next);
+      }),
+    );
+  };
+
+  return loop(0, []);
 };

@@ -5,6 +5,7 @@ import { actorSystemProgram } from "../src/actor-system.js";
 import { atomProgram } from "../src/atom.js";
 import { basicProgram } from "../src/basic.js";
 import { compositionProgram } from "../src/composition.js";
+import { runEffectGuard } from "../src/effect-guard.js";
 import { hardwareNavigationProgram } from "../src/hardware-navigation.js";
 import { inspectionProgram } from "../src/inspection.js";
 import { persistenceProgram } from "../src/persistence.js";
@@ -14,6 +15,14 @@ import { supervisionProgram } from "../src/supervision.js";
 describe("core examples", () => {
   it.scopedLive("runs a guarded machine", () =>
     Effect.map(basicProgram, (output) => expect(output).toBe(2)),
+  );
+
+  it.scopedLive("uses an Effect service in a transition predicate", () =>
+    Effect.gen(function* () {
+      const result = yield* runEffectGuard;
+      expect(result.canCheckout).toBe(true);
+      expect(result.state._tag).toBe("Checkout");
+    }),
   );
 
   it.scopedLive("runs a task with an Effect service", () =>

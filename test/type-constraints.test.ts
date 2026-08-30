@@ -131,6 +131,41 @@ const _test3c = Machine.make({ state: MyState, event: MyEvent, initial: MyState.
   .immediate(MyState.Idle, () => transitionWithService)
   .from(MyState.Idle, (scope) => scope.on(MyEvent.Start, () => transitionWithService));
 
+// Test 3c.1: Conditional transition predicates reject errors and record requirements
+const predicateFailure = Effect.fail(MyError.make({})).pipe(Effect.as(true));
+const predicateBaseMachine = Machine.make({
+  state: MyState,
+  event: MyEvent,
+  initial: MyState.Idle,
+});
+const _invalidPredicateMachine = predicateBaseMachine.when(
+  // @ts-expect-error - when predicate Effect error must be never
+  MyState.Idle,
+  MyEvent.Start,
+  () => predicateFailure,
+  () => MyState.Done,
+);
+
+const predicateWithService = Effect.map(MyService, () => true);
+const _predicateMachine = Machine.make({
+  state: MyState,
+  event: MyEvent,
+  initial: MyState.Idle,
+}).when(
+  MyState.Idle,
+  MyEvent.Start,
+  () => predicateWithService,
+  () => MyState.Done,
+);
+
+const _predicateRequirements = () => {
+  // @ts-expect-error - MyService is still required by the predicate
+  Effect.runPromise(Machine.spawn(_predicateMachine));
+  Effect.runPromise(
+    Machine.spawn(_predicateMachine).pipe(Effect.provideService(MyService, { foo: "ready" })),
+  );
+};
+
 // Test 3d: A machine cannot spawn until all transition requirements are provided
 const _test3d = () => {
   // @ts-expect-error - MyService is still required

@@ -31,7 +31,7 @@ import { ActorExit, type Supervision } from "./supervision.js";
 import type { ReplyTypeBrand, ExtractReply } from "./internal/brands.js";
 import type { InspectorService } from "./inspection.js";
 import { Inspector as InspectorTag } from "./inspection.js";
-import { resolveTransition } from "./internal/transition.js";
+import { resolveTransition, resolveTransitionEffect } from "./internal/transition.js";
 import type { ProcessEventHooks, ProcessEventResult } from "./internal/transition.js";
 import { emitWithTimestamp, makeInspectionHooks } from "./internal/inspection.js";
 import type { NoReplyError } from "./errors.js";
@@ -138,7 +138,7 @@ export interface ActorRef<State extends { readonly _tag: string }, Event, Output
   /** Check if current state matches tag. */
   readonly matches: (tag: State["_tag"]) => Effect.Effect<boolean>;
 
-  /** Check if event can be handled in current state. */
+  /** Check if an event has an enabled transition. Supports Boolean and Effect predicates. */
   readonly can: (event: Event) => Effect.Effect<boolean>;
 
   /** Stream of state changes. */
@@ -386,6 +386,7 @@ const buildActorRefCore = <
   cell: ActorCell<S, E, R, O>,
   stop: Effect.Effect<void>,
   start: Effect.Effect<void>,
+  serviceContext: Context.Context<R>,
 ): ActorRef<S, E, O> => {
   const {
     id,
@@ -445,10 +446,11 @@ const buildActorRefCore = <
     return state._tag === tag;
   });
 
-  const can = Effect.fn("effect-machine.actor.can")(function* (event: E) {
+  const canEffect = Effect.fn("effect-machine.actor.can")(function* (event: E) {
     const state = yield* SubscriptionRef.get(stateRef);
-    return resolveTransition(machine, state, event) !== undefined;
+    return (yield* resolveTransitionEffect(machine, state, event)) !== undefined;
   });
+  const can = (event: E) => canEffect(event).pipe(Effect.provide(serviceContext));
 
   const waitFor = Effect.fn("effect-machine.actor.waitFor")(function* (
     predicateOrState: ((state: S) => boolean) | { readonly _tag: S["_tag"] },
@@ -1012,7 +1014,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     ),
   );
 
-  return buildActorRefCore(cell, stop, start);
+  return buildActorRefCore(cell, stop, start, serviceContext);
 });
 
 // ============================================================================

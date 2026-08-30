@@ -18,13 +18,11 @@ export const counterMachine = Machine.make({
   initial: (input: { readonly count: number; readonly limit: number }) =>
     CounterState.Counting(input),
 })
-  .on(
+  .when(
     CounterState.Counting,
     CounterEvent.Increment,
+    ({ state }) => state.count < state.limit,
     ({ state }) => CounterState.Counting.with(state, { count: state.count + 1 }),
-    {
-      guard: Machine.guard("below-limit", ({ state }) => state.count < state.limit),
-    },
   )
   .on(CounterState.Counting, CounterEvent.Increment, ({ state }) =>
     CounterState.AtLimit.with(state),

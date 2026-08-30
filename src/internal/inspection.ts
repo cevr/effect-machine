@@ -38,7 +38,7 @@ export const makeInspectionHooks = <S, E>(
       actorId,
       state: evaluation.state,
       event: evaluation.event,
-      guard: evaluation.guard.name,
+      guard: evaluation.guard,
       params: evaluation.params,
       result: evaluation.result,
       timestamp,

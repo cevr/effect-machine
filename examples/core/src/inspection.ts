@@ -24,13 +24,14 @@ const accessMachine = Machine.make({
   event: AccessEvent,
   initial: AccessState.Locked({ attempts: 0 }),
 })
-  .on(AccessState.Locked, AccessEvent.EnterCode, () => AccessState.Open, {
-    guard: Machine.guard(
-      "correct-code",
-      ({ event }) => event.code === "1234",
-      ({ state }) => ({ attempt: state.attempts + 1 }),
-    ),
-  })
+  .when(
+    AccessState.Locked,
+    AccessEvent.EnterCode,
+    function correctCode({ event }) {
+      return event.code === "1234";
+    },
+    () => AccessState.Open,
+  )
   .on(AccessState.Locked, AccessEvent.EnterCode, ({ state }) =>
     AccessState.Locked({ attempts: state.attempts + 1 }),
   )
