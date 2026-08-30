@@ -413,7 +413,6 @@ describe("EntityMachine.layer", () => {
 
   // ---------------------------------------------------------------------------
   // Test 3: Background effects run
-  // BUG: entity-machine never iterates machine.backgroundEffects
   // ---------------------------------------------------------------------------
   it.scopedLive("background effects run in entity context", () =>
     Effect.gen(function* () {
@@ -458,7 +457,6 @@ describe("EntityMachine.layer", () => {
 
   // ---------------------------------------------------------------------------
   // Test 4: Final state stops accepting events
-  // BUG: isFinal computed but never checked, entity keeps accepting RPCs
   // ---------------------------------------------------------------------------
   it.scopedLive("final state rejects further events", () =>
     Effect.gen(function* () {
@@ -589,7 +587,6 @@ describe("EntityMachine.layer", () => {
 
   // ---------------------------------------------------------------------------
   // Test 7: Postpone semantics
-  // BUG: shouldPostpone imported but never called in entity-machine
   // ---------------------------------------------------------------------------
   it.scopedLive("postponed events drain after state change", () =>
     Effect.gen(function* () {
