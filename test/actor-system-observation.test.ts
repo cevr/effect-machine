@@ -1,7 +1,14 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Data, Effect, Fiber, Stream } from "effect";
+import { Data, Effect, Fiber, Option, Stream } from "effect";
 
-import { ActorSystemDefault, ActorSystemService, Machine, State, Event } from "../src/index.js";
+import {
+  actorSystemKey,
+  ActorSystemDefault,
+  ActorSystemService,
+  Machine,
+  State,
+  Event,
+} from "../src/index.js";
 import type { SystemEvent } from "../src/index.js";
 import { describe, expect, it, yieldFibers } from "effect-bun-test";
 
@@ -33,6 +40,8 @@ const testMachine = Machine.make({
   .on(TestState.Idle, TestEvent.Activate, () => TestState.Active)
   .on(TestState.Active, TestEvent.Finish, () => TestState.Done)
   .final(TestState.Done);
+
+const TestActor = actorSystemKey<typeof TestState.Type, typeof TestEvent.Type>("typed-test");
 
 // ============================================================================
 // Tests
@@ -196,6 +205,33 @@ describe("ActorSystem Observation", () => {
         expect(collected[0]!.id).toBe("a1");
         expect(collected[1]!._tag).toBe("ActorStopped");
         expect(collected[1]!.id).toBe("a1");
+      }).pipe(Effect.provide(ActorSystemDefault)),
+    );
+
+    it.scopedLive("watches one typed ID across actor generations", () =>
+      Effect.gen(function* () {
+        const system = yield* ActorSystemService;
+        const valuesFiber = yield* system
+          .watch(TestActor)
+          .pipe(Stream.take(4), Stream.runCollect, Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* yieldFibers;
+
+        const first = yield* system.spawn(TestActor, testMachine);
+        yield* system.spawn("unrelated", testMachine);
+        yield* system.stop(TestActor);
+        const second = yield* system.spawn(TestActor, testMachine);
+        const values = Array.from(yield* Fiber.join(valuesFiber));
+
+        expect(Option.isNone(values[0]!)).toBe(true);
+        expect(Option.getOrThrow(values[1]!)).toBe(first);
+        expect(Option.isNone(values[2]!)).toBe(true);
+        expect(Option.getOrThrow(values[3]!)).toBe(second);
+
+        const current = yield* system.get(TestActor);
+        const actor = Option.getOrThrow(current);
+        yield* actor.call(TestEvent.Activate);
+        expect(actor.client.getSnapshot()._tag).toBe("Active");
       }).pipe(Effect.provide(ActorSystemDefault)),
     );
   });

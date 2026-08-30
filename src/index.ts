@@ -54,6 +54,8 @@ export type {
   SystemSpawnOptions,
 } from "./actor.js";
 export {
+  actorSystemKey,
+  ActorSystemKey,
   ActorSystem as ActorSystemService,
   ActorScope,
   Default as ActorSystemDefault,

@@ -138,6 +138,7 @@ export const isEffect: (value: unknown) => value is Effect.Effect<unknown, unkno
 export const stubSystem: ActorSystemService = {
   spawn: () => Effect.die("spawn not supported in stub system"),
   get: () => Effect.die("get not supported in stub system"),
+  watch: () => Stream.die("watch not supported in stub system"),
   stop: () => Effect.die("stop not supported in stub system"),
   events: Stream.empty,
   get actors() {
