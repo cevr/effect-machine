@@ -3,7 +3,12 @@ import { Effect, SubscriptionRef } from "effect";
 import type { Machine } from "./machine.js";
 import { AssertionError } from "./errors.js";
 import { makeEventAdvancement } from "./internal/event-advancement.js";
-import { executeTransition, shouldPostpone } from "./internal/transition.js";
+import {
+  executeTransition,
+  executeTransitionImmediate,
+  shouldPostpone,
+} from "./internal/transition.js";
+import { isEffect } from "./internal/utils.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type MachineInput<S, E, R> =
@@ -44,6 +49,25 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
 >(input: MachineInput<S, E, R>, events: ReadonlyArray<E>) {
   const machine = input;
   const states: S[] = [machine.initial];
+  if (!machine._hasPostponeRules()) {
+    let state = machine.initial;
+    for (const event of events) {
+      if (machine._isFinal(state._tag)) break;
+      const execution = executeTransitionImmediate(machine, state, event);
+      let result;
+      if (isEffect(execution)) {
+        result = yield* execution;
+      } else {
+        result = execution;
+      }
+      if (result.transitioned) {
+        state = result.newState;
+        states.push(state);
+      }
+    }
+    return { states, finalState: state };
+  }
+
   const advancement = makeEventAdvancement({
     initial: machine.initial,
     isFinal: (state: S) => machine._isFinal(state._tag),

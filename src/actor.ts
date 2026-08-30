@@ -335,33 +335,37 @@ const buildActorRefCore = <
   start: Effect.Effect<void>,
 ): ActorRef<S, E> => {
   const { id, machine, stateRef, runtimeRef, listeners, system } = cell;
-  const send = Effect.fn("effect-machine.actor.send")(function* (event: E) {
-    const runtime = runtimeRef.current;
-    if (runtime !== undefined) yield* runtime.send(event);
-  });
+  const send = (event: E) =>
+    Effect.gen(function* () {
+      const runtime = runtimeRef.current;
+      if (runtime !== undefined) yield* runtime.send(event);
+    });
 
-  const call = Effect.fn("effect-machine.actor.call")(function* (event: E) {
-    const runtime = runtimeRef.current;
-    if (runtime !== undefined) {
-      const result = yield* runtime.call(event).pipe(Effect.option);
-      if (Option.isSome(result)) return result.value;
-    }
-    yield* Effect.logWarning("effect-machine.actor.call.stopped").pipe(
-      Effect.annotateLogs({ actorId: id, eventTag: event._tag }),
-    );
-    const currentState = yield* SubscriptionRef.get(stateRef);
-    return {
-      newState: currentState,
-      previousState: currentState,
-      transitioned: false,
-      hasReply: false,
-      deferReply: false,
-      reply: undefined,
-      postponed: false,
-      lifecycleRan: false,
-      isFinal: machine._isFinal(currentState._tag),
-    } satisfies ProcessEventResult<S>;
-  });
+  const stoppedCall = (event: E) =>
+    Effect.gen(function* () {
+      yield* Effect.logWarning("effect-machine.actor.call.stopped").pipe(
+        Effect.annotateLogs({ actorId: id, eventTag: event._tag }),
+      );
+      const currentState = yield* SubscriptionRef.get(stateRef);
+      return {
+        newState: currentState,
+        previousState: currentState,
+        transitioned: false,
+        hasReply: false,
+        deferReply: false,
+        reply: undefined,
+        postponed: false,
+        lifecycleRan: false,
+        isFinal: machine._isFinal(currentState._tag),
+      } satisfies ProcessEventResult<S>;
+    });
+
+  const call = (event: E) =>
+    Effect.suspend(() => {
+      const runtime = runtimeRef.current;
+      if (runtime === undefined) return stoppedCall(event);
+      return runtime.call(event).pipe(Effect.catch(() => stoppedCall(event)));
+    });
 
   const ask = Effect.fn("effect-machine.actor.ask")(function* (event: E) {
     const runtime = runtimeRef.current;
@@ -722,36 +726,24 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     }
     return {
       onEvent,
-      onStateChange: (result, event) =>
-        Effect.gen(function* () {
-          notifyListeners(listeners, result.newState);
-          // Durability: save after state committed to ref, before reply settlement
-          if (lifecycle?.durability !== undefined && result.transitioned) {
-            const durability = lifecycle.durability;
-            const shouldPersist =
-              durability.shouldSave === undefined ||
-              durability.shouldSave(result.newState, result.previousState);
-            if (shouldPersist) {
-              yield* durability.save({
-                actorId: id,
-                generation: generation.current,
-                previousState: result.previousState,
-                nextState: result.newState,
-                event,
-              });
-            }
-          }
-          yield* Effect.annotateCurrentSpan("effect_machine.transition.matched", true);
-          if (result.lifecycleRan) {
-            yield* Effect.annotateCurrentSpan(
-              "effect_machine.state.from",
-              result.previousState._tag,
-            );
-            yield* Effect.annotateCurrentSpan("effect_machine.state.to", result.newState._tag);
-          }
-        }),
+      onStateChange: (result, event) => {
+        notifyListeners(listeners, result.newState);
+        const durability = lifecycle?.durability;
+        if (durability === undefined || !result.transitioned) return;
+        const shouldPersist =
+          durability.shouldSave === undefined ||
+          durability.shouldSave(result.newState, result.previousState);
+        if (!shouldPersist) return;
+        return durability.save({
+          actorId: id,
+          generation: generation.current,
+          previousState: result.previousState,
+          nextState: result.newState,
+          event,
+        });
+      },
       onProcessed: (result, event) => {
-        if (!result.transitioned) return Effect.void;
+        if (!result.transitioned || transitionsPubSub.subscribers.size === 0) return;
         return PubSub.publish(transitionsPubSub, {
           fromState: result.previousState,
           toState: result.newState,

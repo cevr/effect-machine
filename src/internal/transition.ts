@@ -16,56 +16,50 @@ import type { Transition } from "./machine-definition.js";
 import { isEffect, isReplyResult, isDeferReplyResult, INTERNAL_ENTER_EVENT } from "./utils.js";
 import type { ReplyResult, DeferReplyResult } from "./utils.js";
 
-/**
- * Run a transition handler and return the new state.
- * Shared logic for executing handlers with proper context.
- *
- * Used by:
- * - executeTransition (actor event loop, testing)
- * - Machine.replay (event sourcing restore)
- *
- * @internal
- */
-export const runTransitionHandler = Effect.fn("effect-machine.runTransitionHandler")(function* <
-  S extends { readonly _tag: string },
-  E extends { readonly _tag: string },
->(transition: Transition<S, E, never>, state: S, event: E) {
-  const handlerCtx: HandlerContext<S, E> = { state, event };
-  const raw = transition.handler(handlerCtx);
+interface ExecutedTransition<S> {
+  readonly newState: S;
+  readonly transitioned: boolean;
+  readonly reenter: boolean;
+  readonly hasReply: boolean;
+  readonly deferReply: boolean;
+  readonly reply: unknown;
+}
 
-  let resolved: S | ReplyResult<S, unknown> | DeferReplyResult<S>;
-  if (isEffect(raw)) {
-    // SAFETY: The handler type fixes the state and error domains.
-    resolved = yield* raw as Effect.Effect<
-      S | ReplyResult<S, unknown> | DeferReplyResult<S>,
-      never
-    >;
-  } else {
-    resolved = raw;
-  }
-
-  // Detect branded ReplyResult (created via Machine.reply())
+const completeTransition = <S, E>(
+  transition: Transition<S, E, never>,
+  resolved: S | ReplyResult<S, unknown> | DeferReplyResult<S>,
+): ExecutedTransition<S> => {
   if (isReplyResult(resolved)) {
     return {
       newState: resolved.state,
+      transitioned: true,
+      reenter: transition.reenter === true,
       hasReply: true,
       deferReply: false,
       reply: resolved.reply,
     };
   }
 
-  // Detect branded DeferReplyResult (created via Machine.deferReply())
   if (isDeferReplyResult(resolved)) {
     return {
       newState: resolved.state,
+      transitioned: true,
+      reenter: transition.reenter === true,
       hasReply: false,
       deferReply: true,
       reply: undefined,
     };
   }
 
-  return { newState: resolved, hasReply: false, deferReply: false, reply: undefined };
-});
+  return {
+    newState: resolved,
+    transitioned: true,
+    reenter: transition.reenter === true,
+    hasReply: false,
+    deferReply: false,
+    reply: undefined,
+  };
+};
 
 /**
  * Execute a transition for a given state and event.
@@ -78,7 +72,7 @@ export const runTransitionHandler = Effect.fn("effect-machine.runTransitionHandl
  *
  * @internal
  */
-export const executeTransition = Effect.fn("effect-machine.executeTransition")(function* <
+export const executeTransition = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
@@ -87,13 +81,37 @@ export const executeTransition = Effect.fn("effect-machine.executeTransition")(f
   machine: Machine<S, E, R, any, any>,
   currentState: S,
   event: E,
-) {
+) =>
+  Effect.suspend(() => {
+    const result = executeTransitionImmediate(machine, currentState, event);
+    if (isEffect(result)) {
+      return result;
+    }
+    return Effect.succeed(result);
+  });
+
+/**
+ * Execute a transition without adding an Effect boundary for a synchronous handler.
+ * A throwing handler becomes a defect Effect.
+ *
+ * @internal
+ */
+export const executeTransitionImmediate = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+>(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  machine: Machine<S, E, R, any, any>,
+  currentState: S,
+  event: E,
+): ExecutedTransition<S> | Effect.Effect<ExecutedTransition<S>> => {
   const transition = resolveTransition(machine, currentState, event);
 
   if (transition === undefined) {
     return {
       newState: currentState,
-      transitioned: false,
+      transitioned: false as const,
       reenter: false,
       hasReply: false,
       deferReply: false,
@@ -101,21 +119,24 @@ export const executeTransition = Effect.fn("effect-machine.executeTransition")(f
     };
   }
 
-  const { newState, hasReply, deferReply, reply } = yield* runTransitionHandler(
-    transition,
-    currentState,
-    event,
-  );
+  const handlerCtx: HandlerContext<S, E> = { state: currentState, event };
+  let raw: ReturnType<typeof transition.handler>;
+  try {
+    raw = transition.handler(handlerCtx);
+  } catch (defect) {
+    return Effect.die(defect);
+  }
+  type HandlerResult = S | ReplyResult<S, unknown> | DeferReplyResult<S>;
 
-  return {
-    newState,
-    transitioned: true,
-    reenter: transition.reenter === true,
-    hasReply,
-    deferReply,
-    reply,
-  };
-});
+  if (isEffect(raw)) {
+    // SAFETY: The transition type fixes the state and error domains.
+    return (raw as Effect.Effect<HandlerResult, never>).pipe(
+      Effect.map((resolved) => completeTransition(transition, resolved)),
+    );
+  }
+
+  return completeTransition(transition, raw);
+};
 
 // ============================================================================
 // Event Processing Core (shared by actor and entity-machine)
@@ -196,7 +217,7 @@ export const shouldPostpone = <
  *
  * @internal
  */
-export const processEventCore = Effect.fn("effect-machine.processEventCore")(function* <
+export const processEventCore = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
   R,
@@ -210,26 +231,38 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
   system: ActorSystemService,
   actorId: string,
   hooks?: ProcessEventHooks<S, E>,
-) {
-  // Execute transition (defect-aware)
-  const result = yield* executeTransition(machine, currentState, event).pipe(
-    Effect.catchCause((cause) => {
-      if (Cause.hasInterruptsOnly(cause)) {
-        return Effect.interrupt;
-      }
-      const onError = hooks?.onError;
-      if (onError === undefined) {
-        return Effect.failCause(cause).pipe(Effect.orDie);
-      }
-      return onError({
-        phase: "transition",
-        state: currentState,
-        event,
-        cause,
-      }).pipe(Effect.andThen(Effect.failCause(cause).pipe(Effect.orDie)));
-    }),
-  );
+) =>
+  Effect.suspend(() => {
+    const processed = processEventCoreImmediate(
+      machine,
+      currentState,
+      event,
+      self,
+      stateScopeRef,
+      system,
+      actorId,
+      hooks,
+    );
+    if (isEffect(processed)) return processed;
+    return Effect.succeed(processed);
+  });
 
+const completeProcessedEvent = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+>(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  machine: Machine<S, E, R, any, any>,
+  currentState: S,
+  event: E,
+  result: ExecutedTransition<S>,
+  self: MachineRef<E>,
+  stateScopeRef: { current: Scope.Closeable },
+  system: ActorSystemService,
+  actorId: string,
+  hooks?: ProcessEventHooks<S, E>,
+): ProcessEventResult<S> | Effect.Effect<ProcessEventResult<S>, never, Exclude<R, Scope.Scope>> => {
   if (!result.transitioned) {
     return {
       newState: currentState,
@@ -245,10 +278,21 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
   }
 
   const newState = result.newState;
-  const stateTagChanged = newState._tag !== currentState._tag;
-  const runLifecycle = stateTagChanged || result.reenter;
+  const runLifecycle = newState._tag !== currentState._tag || result.reenter;
+  const processed: ProcessEventResult<S> = {
+    newState,
+    previousState: currentState,
+    transitioned: true,
+    lifecycleRan: runLifecycle,
+    isFinal: machine._isFinal(newState._tag),
+    hasReply: result.hasReply,
+    deferReply: result.deferReply,
+    reply: result.reply,
+    postponed: false,
+  };
+  if (!runLifecycle) return processed;
 
-  if (runLifecycle) {
+  return Effect.gen(function* () {
     // Close old state scope (interrupts spawn fibers)
     yield* Scope.close(stateScopeRef.current, Exit.void);
 
@@ -278,20 +322,57 @@ export const processEventCore = Effect.fn("effect-machine.processEventCore")(fun
       hooks?.onError,
       hooks?.onSpawnDefect,
     );
-  }
+    return processed;
+  });
+};
 
-  return {
-    newState,
-    previousState: currentState,
-    transitioned: true,
-    lifecycleRan: runLifecycle,
-    isFinal: machine._isFinal(newState._tag),
-    hasReply: result.hasReply,
-    deferReply: result.deferReply,
-    reply: result.reply,
-    postponed: false,
-  };
-});
+/** @internal */
+export const processEventCoreImmediate = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+>(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  machine: Machine<S, E, R, any, any>,
+  currentState: S,
+  event: E,
+  self: MachineRef<E>,
+  stateScopeRef: { current: Scope.Closeable },
+  system: ActorSystemService,
+  actorId: string,
+  hooks?: ProcessEventHooks<S, E>,
+) => {
+  const execution = executeTransitionImmediate(machine, currentState, event);
+  const complete = (result: ExecutedTransition<S>) =>
+    completeProcessedEvent(
+      machine,
+      currentState,
+      event,
+      result,
+      self,
+      stateScopeRef,
+      system,
+      actorId,
+      hooks,
+    );
+  if (!isEffect(execution)) return complete(execution);
+
+  return execution.pipe(
+    Effect.catchCause((cause) => {
+      if (Cause.hasInterruptsOnly(cause)) return Effect.interrupt;
+      const onError = hooks?.onError;
+      if (onError === undefined) return Effect.failCause(cause).pipe(Effect.orDie);
+      return onError({ phase: "transition", state: currentState, event, cause }).pipe(
+        Effect.andThen(Effect.failCause(cause).pipe(Effect.orDie)),
+      );
+    }),
+    Effect.flatMap((result) => {
+      const processed = complete(result);
+      if (isEffect(processed)) return processed;
+      return Effect.succeed(processed);
+    }),
+  );
+};
 
 /**
  * Run spawn effects for a state (forked into state scope, auto-cancelled on state exit).

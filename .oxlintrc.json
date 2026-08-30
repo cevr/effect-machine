@@ -158,9 +158,22 @@
       // Effect context to route the failure through.
       // FOLLOW-UP: type listeners as (s: S) => Effect<void> so failures are
       // catchable. That is a breaking change to subscribe, tracked separately.
-      "files": ["src/actor.ts", "src/internal/utils.ts"],
+      "files": ["src/actor.ts", "src/internal/transition.ts", "src/internal/utils.ts"],
       "rules": {
         "effect/noTryCatch": "off"
+      }
+    },
+    {
+      // The benchmark is a Bun process boundary. Sequential samples prevent
+      // concurrent workloads from changing the measured result.
+      "files": ["benchmark/**/*.ts"],
+      "rules": {
+        "no-await-in-loop": "off",
+        "typescript/no-non-null-assertion": "off",
+        "effect/noAsyncFunction": "off",
+        "effect/noGlobals": "off",
+        "effect/noNewError": "off",
+        "effect/noThrowStatement": "off"
       }
     }
   ]

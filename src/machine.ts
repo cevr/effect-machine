@@ -550,6 +550,11 @@ export class Machine<
   }
 
   /** @internal */
+  _hasPostponeRules(): boolean {
+    return this.#postponeRules.length > 0;
+  }
+
+  /** @internal */
   _replySchema(eventTag: string): Schema.Decoder<unknown> | undefined {
     return this.#replySchemas.get(eventTag);
   }

@@ -172,6 +172,6 @@
       }
     ]
   },
-  "include": ["src", "test"],
+  "include": ["src", "test", "benchmark"],
   "exclude": ["node_modules"]
 }
