@@ -1,0 +1,12 @@
+.counter-enter-active,
+.counter-exit-active {
+  transition:
+    opacity 200ms ease,
+    transform 200ms ease;
+}
+
+.counter-enter,
+.counter-exit-to {
+  opacity: 0;
+  transform: translateY(-0.5rem);
+}

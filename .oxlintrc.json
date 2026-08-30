@@ -175,6 +175,20 @@
         "effect/noNewError": "off",
         "effect/noThrowStatement": "off"
       }
+    },
+    {
+      // Framework and DOM APIs use optional props and nullable host values.
+      "files": ["examples/**/*.tsx"],
+      "rules": {
+        "effect/noNullish": "off"
+      }
+    },
+    {
+      // Vite loads the Solid example stylesheet through a side-effect import.
+      "files": ["examples/solid/src/main.tsx"],
+      "rules": {
+        "import/no-unassigned-import": "off"
+      }
     }
   ]
 }

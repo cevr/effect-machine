@@ -218,6 +218,29 @@ expect(result.transitioned).toBe(true);
 expect(result.newState._tag).toBe("Loading");
 ```
 
+## Effect Atom
+
+Use `effect-machine/atom` for React, Solid, Vue, or another Effect Atom client.
+
+```ts
+import * as ActorAtom from "effect-machine/atom";
+
+const actorAtom = ActorAtom.make(actor);
+const countAtom = ActorAtom.select(actorAtom, (state) => state.count);
+```
+
+The Atom value is actor state. Atom writes send actor events. A selected Atom stays writable.
+
+For a Suspense-owned actor, create it through an effect-backed Atom:
+
+```ts
+const actorResource = Atom.make(Machine.scoped(spawnActor));
+```
+
+Use `useAtomSuspense` in React. Use `useAtomResource` in Solid. The Atom scope stops the actor when the resource is released.
+
+An exit animation can keep a screen mounted after a final transition. Keep required display fields in the final state. Do not retain the last selector value in component state or a ref.
+
 ## Critical Gotchas
 
 1. **Empty structs are values**: `State.Idle` not `State.Idle()`

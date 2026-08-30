@@ -5,6 +5,9 @@
     "type": "git",
     "url": "https://github.com/cevr/effect-machine.git"
   },
+  "workspaces": [
+    "examples/*"
+  ],
   "files": [
     "dist"
   ],
@@ -21,6 +24,12 @@
         "types": "./dist/cluster/index.d.ts",
         "default": "./dist/cluster/index.js"
       }
+    },
+    "./atom": {
+      "import": {
+        "types": "./dist/atom.d.ts",
+        "default": "./dist/atom.js"
+      }
     }
   },
   "publishConfig": {
@@ -34,8 +43,11 @@
     "fmt:check": "oxfmt --check",
     "test": "bun test --tsconfig-override=tsconfig.json",
     "test:watch": "bun test --watch",
+    "example:react": "bun run --filter effect-machine-example-react dev",
+    "example:solid": "bun run --filter effect-machine-example-solid dev",
+    "examples:gate": "bun run --filter effect-machine-example-react gate && bun run --filter effect-machine-example-solid gate",
     "bench": "bun benchmark/core.ts",
-    "gate": "concurrently -n type,lint,fmt,test,build -c blue,yellow,magenta,green,cyan \"bun run typecheck\" \"bun run lint:fix\" \"bun run fmt\" \"bun run test\" \"bun run build\"",
+    "gate": "concurrently -n type,lint,fmt,test,build,examples -c blue,yellow,magenta,green,cyan,white \"bun run typecheck\" \"bun run lint:fix\" \"bun run fmt\" \"bun run test\" \"bun run build\" \"bun run examples:gate\"",
     "prepare": "lefthook install && effect-tsgo patch",
     "version": "changeset version",
     "build": "bun --bun tsdown",
