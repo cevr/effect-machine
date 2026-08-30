@@ -11,6 +11,7 @@
  * @module
  */
 import type { RpcClient } from "effect/unstable/rpc";
+import type { Schema } from "effect";
 import { Effect, Option, Stream } from "effect";
 
 import type { ExtractReply, ReplyTypeBrand } from "../internal/brands.js";
@@ -72,35 +73,27 @@ export interface EntityActorRef<
 export const makeEntityActorRef = <
   State extends { readonly _tag: string },
   Event extends { readonly _tag: string },
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Schema types need wide acceptance
-  Rpcs extends EntityRpcs<any, any>[number],
 >(
-  client: RpcClient.RpcClient<Rpcs>,
+  client: RpcClient.RpcClient<
+    EntityRpcs<Schema.Codec<State, unknown>, Schema.Codec<Event, unknown>>
+  >,
   entityId: string,
-): EntityActorRef<State, Event> => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- RPC client has dynamic shape
-  const c = client as any;
-
-  return {
-    entityId,
-    send: (event: Event) => c.Send({ event }) as Effect.Effect<State>,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ask: ((event: any) => c.Ask({ event })) as any,
-    snapshot: c.GetState() as Effect.Effect<State>,
-    watch: c.WatchState() as Stream.Stream<State>,
-    waitFor: (predicate: (state: State) => boolean) =>
-      Effect.gen(function* () {
-        // Snapshot first — if current state already matches, return immediately
-        const current = yield* c.GetState() as Effect.Effect<State>;
-        if (predicate(current)) return current;
-        // Fall through to streaming observation
-        const result = yield* (c.WatchState() as Stream.Stream<State>).pipe(
-          Stream.filter(predicate),
-          Stream.take(1),
-          Stream.runHead,
-        );
-        if (Option.isSome(result)) return result.value;
-        return yield* ActorStoppedError.make({ actorId: entityId });
-      }),
-  };
-};
+): EntityActorRef<State, Event> => ({
+  entityId,
+  send: (event: Event) => client.Send({ event }),
+  ask: ((event) => client.Ask({ event })) as EntityActorRef<State, Event>["ask"],
+  snapshot: client.GetState(),
+  watch: client.WatchState(),
+  waitFor: (predicate: (state: State) => boolean) =>
+    Effect.gen(function* () {
+      // Snapshot first — if current state already matches, return immediately
+      const current = yield* client.GetState();
+      if (predicate(current)) return current;
+      // Fall through to streaming observation
+      const result = yield* client
+        .WatchState()
+        .pipe(Stream.filter(predicate), Stream.take(1), Stream.runHead);
+      if (Option.isSome(result)) return result.value;
+      return yield* ActorStoppedError.make({ actorId: entityId });
+    }),
+});

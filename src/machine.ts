@@ -292,8 +292,8 @@ export class Machine<
     readonly stateTag: string;
     readonly eventTag: string;
   }>;
-  readonly stateSchema?: Schema.Schema<State>;
-  readonly eventSchema?: Schema.Schema<Event>;
+  readonly stateSchema: MachineStateSchema<_SD> & { readonly Type: State };
+  readonly eventSchema: MachineEventSchema<_ED> & { readonly Type: Event };
   readonly #replySchemas: ReadonlyMap<string, Schema.Decoder<unknown>>;
   readonly #transitionIndex: Map<string, Map<string, Array<Transition<State, Event, never>>>>;
   readonly #spawnIndex: Map<string, Array<SpawnEffect<State, Event, R>>>;
@@ -305,8 +305,8 @@ export class Machine<
   /** @internal */
   constructor(
     initial: State,
-    stateSchema?: Schema.Schema<State>,
-    eventSchema?: Schema.Schema<Event>,
+    stateSchema: MachineStateSchema<_SD> & { readonly Type: State },
+    eventSchema: MachineEventSchema<_ED> & { readonly Type: Event },
   ) {
     this.initial = initial;
     this.#backgroundEffects = [];
@@ -314,7 +314,7 @@ export class Machine<
     this.#postponeRules = [];
     this.#transitionIndex = new Map();
     this.#spawnIndex = new Map();
-    this.#replySchemas = getReplySchemas(eventSchema ?? {}) ?? new Map();
+    this.#replySchemas = getReplySchemas(eventSchema) ?? new Map();
     this.stateSchema = stateSchema;
     this.eventSchema = eventSchema;
   }
@@ -853,11 +853,7 @@ export class Machine<
     S extends BrandedState,
     E extends BrandedEvent,
   >(config: MakeConfig<SD, ED, S, E>): Machine<S, E, never, SD, ED> {
-    return new Machine<S, E, never, SD, ED>(
-      config.initial,
-      config.state as unknown as Schema.Schema<S>,
-      config.event as unknown as Schema.Schema<E>,
-    );
+    return new Machine<S, E, never, SD, ED>(config.initial, config.state, config.event);
   }
 }
 

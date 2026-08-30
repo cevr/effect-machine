@@ -338,7 +338,7 @@ describe("EntityMachine.layer", () => {
         entityLayer.pipe(Layer.provide(ActorSystemDefault)),
       );
       const client = yield* makeClient("order-1");
-      const ref = makeEntityActorRef<OrderState, OrderEvent, never>(client, "order-1");
+      const ref = makeEntityActorRef<OrderState, OrderEvent>(client, "order-1");
 
       const state = yield* ref.send(OrderEvent.Process);
       expect(state._tag).toBe("Processing");
@@ -360,7 +360,7 @@ describe("EntityMachine.layer", () => {
 
       const makeClient = yield* Entity.makeTestClient(entity, entityLayer);
       const client = yield* makeClient("inspected-1");
-      const ref = makeEntityActorRef<OrderState, OrderEvent, never>(client, "inspected-1");
+      const ref = makeEntityActorRef<OrderState, OrderEvent>(client, "inspected-1");
 
       yield* ref.send(OrderEvent.Process);
 
@@ -404,7 +404,7 @@ describe("EntityMachine.layer", () => {
         entityLayer.pipe(Layer.provide(ActorSystemDefault)),
       );
       const client = yield* makeClient("ask-1");
-      const ref = makeEntityActorRef<AskState, AskEvent, never>(client, "ask-1");
+      const ref = makeEntityActorRef<AskState, AskEvent>(client, "ask-1");
 
       const reply = yield* ref.ask(AskEvent.GetCount).pipe(Effect.orDie);
       expect(reply).toBe(42);
@@ -445,7 +445,7 @@ describe("EntityMachine.layer", () => {
         entityLayer.pipe(Layer.provide(ActorSystemDefault)),
       );
       const client = yield* makeClient("bg-1");
-      const ref = makeEntityActorRef<BgState, BgEvent, never>(client, "bg-1");
+      const ref = makeEntityActorRef<BgState, BgEvent>(client, "bg-1");
 
       // Give background effect time to fire
       yield* Effect.sleep("100 millis");
@@ -472,7 +472,7 @@ describe("EntityMachine.layer", () => {
         entityLayer.pipe(Layer.provide(ActorSystemDefault)),
       );
       const client = yield* makeClient("final-1");
-      const ref = makeEntityActorRef<OrderState, OrderEvent, never>(client, "final-1");
+      const ref = makeEntityActorRef<OrderState, OrderEvent>(client, "final-1");
 
       // Drive to final state
       yield* ref.send(OrderEvent.Process);
@@ -526,7 +526,7 @@ describe("EntityMachine.layer", () => {
         entityLayer.pipe(Layer.provide(ActorSystemDefault)),
       );
       const client = yield* makeClient("spawn-1");
-      const ref = makeEntityActorRef<SpawnState, SpawnEvent, never>(client, "spawn-1");
+      const ref = makeEntityActorRef<SpawnState, SpawnEvent>(client, "spawn-1");
 
       yield* ref.send(SpawnEvent.Begin);
 
@@ -577,7 +577,7 @@ describe("EntityMachine.layer", () => {
         entityLayer.pipe(Layer.provide(ActorSystemDefault)),
       );
       const client = yield* makeClient("timeout-1");
-      const ref = makeEntityActorRef<TimeoutState, TimeoutEvent, never>(client, "timeout-1");
+      const ref = makeEntityActorRef<TimeoutState, TimeoutEvent>(client, "timeout-1");
 
       // Wait for timeout to fire
       yield* Effect.sleep("200 millis");
@@ -626,7 +626,7 @@ describe("EntityMachine.layer", () => {
         entityLayer.pipe(Layer.provide(ActorSystemDefault)),
       );
       const client = yield* makeClient("postpone-1");
-      const ref = makeEntityActorRef<PostponeState, PostponeEvent, never>(client, "postpone-1");
+      const ref = makeEntityActorRef<PostponeState, PostponeEvent>(client, "postpone-1");
 
       // Send Data while in Connecting — should be postponed
       yield* ref.send(PostponeEvent.Data({ payload: "hello" }));
@@ -693,7 +693,7 @@ describe("EntityMachine.layer", () => {
         entityLayer.pipe(Layer.provide(ActorSystemDefault)),
       );
       const client = yield* makeClient("task-1");
-      const ref = makeEntityActorRef<TaskState, TaskEvent, never>(client, "task-1");
+      const ref = makeEntityActorRef<TaskState, TaskEvent>(client, "task-1");
 
       yield* ref.send(TaskEvent.Start);
 
@@ -760,7 +760,7 @@ describe("EntityMachine.layer", () => {
         entityLayer.pipe(Layer.provide(ActorSystemDefault)),
       );
       const client = yield* makeClient("race-1");
-      const ref = makeEntityActorRef<RaceState, RaceEvent, never>(client, "race-1");
+      const ref = makeEntityActorRef<RaceState, RaceEvent>(client, "race-1");
 
       // Fire external increments concurrently — each hits processEvent directly
       // while internal ones are being processed by the queue fiber
@@ -833,10 +833,7 @@ describe("EntityMachine.layer", () => {
       // No ActorSystemDefault provided — implicit system should be created
       const makeClient = yield* Entity.makeTestClient(entity, entityLayer);
       const client = yield* makeClient("spawn-child-1");
-      const ref = makeEntityActorRef<SpawnChildState, SpawnChildEvent, never>(
-        client,
-        "spawn-child-1",
-      );
+      const ref = makeEntityActorRef<SpawnChildState, SpawnChildEvent>(client, "spawn-child-1");
 
       yield* ref.send(SpawnChildEvent.Go);
       yield* Effect.sleep("100 millis");
@@ -881,7 +878,7 @@ describe("EntityMachine.layer", () => {
         entityLayer.pipe(Layer.provide(ActorSystemDefault)),
       );
       const client = yield* makeClient("watch-1");
-      const ref = makeEntityActorRef<WatchState, WatchEvent, never>(client, "watch-1");
+      const ref = makeEntityActorRef<WatchState, WatchEvent>(client, "watch-1");
 
       // Collect state changes in background via WatchState streaming RPC
       const collected: string[] = [];
