@@ -73,8 +73,8 @@ export type RuntimeQueuedEvent<S, E> =
 // ============================================================================
 
 /**
- * Resources owned by the actor cell (stable across generations).
- * When provided, createRuntime uses these instead of allocating its own.
+ * Resources owned by the actor or entity cell.
+ * Their identity stays stable for the runtime lifetime.
  * @internal
  */
 export interface RuntimeCellResources<S, E> {
@@ -105,8 +105,6 @@ export interface RuntimeHandle<S, E> {
   readonly getState: Effect.Effect<S>;
   /** SubscriptionRef for state observation (WatchState streaming) */
   readonly stateRef: SubscriptionRef.SubscriptionRef<S>;
-  /** Whether the runtime has stopped (final state reached) */
-  readonly isStopped: Effect.Effect<boolean>;
   /** Stop the runtime (interrupt event loop, clean up) */
   readonly stop: Effect.Effect<void>;
   /**
@@ -122,11 +120,6 @@ export interface RuntimeHandle<S, E> {
    * Final state → ActorExit.Final, explicit stop → ActorExit.Stopped, defect → ActorExit.Defect.
    */
   readonly exitDeferred: Deferred.Deferred<ActorExit<S>>;
-  /**
-   * Actor scope — owns background fibers for this generation.
-   * Closing this scope interrupts all background fibers.
-   */
-  readonly actorScope: Scope.Closeable;
 }
 
 // ============================================================================
@@ -157,18 +150,8 @@ export interface RuntimeLifecycleHooks<S, E> {
 export interface RuntimeConfig<S, E> {
   readonly actorId: string;
   readonly hooks?: ProcessEventHooks<S, E>;
-  /**
-   * Cell-owned resources. When provided, the runtime uses the cell's stateRef,
-   * eventQueue, and stoppedRef instead of creating its own.
-   * Used by actor.ts for supervision (cell owns stable resources across generations).
-   */
-  readonly cellResources?: RuntimeCellResources<S, E>;
-  /**
-   * Custom queue factory. Default: `Queue.unbounded()`.
-   * Use `Queue.sliding(n)` or `Queue.dropping(n)` for bounded queues.
-   * Ignored when cellResources is provided.
-   */
-  readonly queueFactory?: Effect.Effect<Queue.Queue<RuntimeQueuedEvent<S, E>>>;
+  /** State and mailbox resources owned by the calling cell. */
+  readonly cellResources: RuntimeCellResources<S, E>;
   /** Lifecycle callbacks for actor-specific concerns */
   readonly lifecycle?: RuntimeLifecycleHooks<S, E>;
   /** Called after self.spawn succeeds — actor tracks children */
@@ -220,13 +203,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
   const services = yield* Effect.context<R>();
   const fork = Effect.runForkWith(services);
 
-  // Resources: use cell-provided or allocate fresh
-  const stateRef =
-    config.cellResources?.stateRef ?? (yield* SubscriptionRef.make<S>(machine.initial));
-  const stoppedRef = config.cellResources?.stoppedRef ?? (yield* Ref.make(false));
-  const eventQueue =
-    config.cellResources?.eventQueue ??
-    (yield* config.queueFactory ?? Queue.unbounded<RuntimeQueuedEvent<S, E>>());
+  const { stateRef, stoppedRef, eventQueue } = config.cellResources;
   const pendingRequests = new Set<(error: ActorStoppedError) => Effect.Effect<void>>();
 
   // Exit deferred — set exactly once with the exit reason
@@ -482,22 +459,14 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
   }
 
   return {
-    ...makeHandle(
-      actorId,
-      stateRef,
-      stoppedRef,
-      eventQueue,
-      pendingRequests,
-      exitDeferred,
-      actorScope,
-    ),
+    ...makeHandle(actorId, stateRef, stoppedRef, eventQueue, pendingRequests, exitDeferred),
     stop: stop.pipe(Effect.provide(services)),
     start: start.pipe(Effect.provide(services)),
   };
 });
 
 /**
- * Build the runtime handle (send/ask/getState/isStopped).
+ * Build the runtime handle.
  * Shared between initial-final and normal paths.
  */
 const makeHandle = <S extends { readonly _tag: string }, E extends { readonly _tag: string }>(
@@ -507,7 +476,6 @@ const makeHandle = <S extends { readonly _tag: string }, E extends { readonly _t
   eventQueue: Queue.Queue<RuntimeQueuedEvent<S, E>>,
   pendingRequests: Set<(error: ActorStoppedError) => Effect.Effect<void>>,
   exitDeferred: Deferred.Deferred<ActorExit<S>>,
-  actorScope: Scope.Closeable,
 ): RuntimeHandle<S, E> => {
   const track = <A, RequestError>(
     deferred: Deferred.Deferred<A, RequestError>,
@@ -569,12 +537,10 @@ const makeHandle = <S extends { readonly _tag: string }, E extends { readonly _t
     },
     getState: SubscriptionRef.get(stateRef),
     stateRef,
-    isStopped: Ref.get(stoppedRef),
     stop: Effect.void,
     start: Effect.void,
     settlePendingRequests: settlePendingRequests(pendingRequests, actorId),
     exitDeferred,
-    actorScope,
   };
 };
 
