@@ -1,9 +1,10 @@
 import { Effect, Schema } from "effect";
+import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
 import * as AtomRegistry from "effect/unstable/reactivity/AtomRegistry";
 import { expect, it } from "effect-bun-test";
 
 import * as ActorAtom from "../src/atom.js";
-import { Machine } from "../src/index.js";
+import { actorSystemKey, ActorSystemDefault, ActorSystemService, Machine } from "../src/index.js";
 import { Event, State } from "../src/schema.js";
 
 const CounterState = State({
@@ -26,6 +27,8 @@ const counterMachine = Machine.make({
   .on(CounterState.Active, CounterEvent.Rename, ({ state, event }) =>
     CounterState.Active.with(state, { label: event.label }),
   );
+
+const CounterActor = actorSystemKey<typeof CounterState.Type, typeof CounterEvent.Type>("counter");
 
 it.scopedLive("make exposes actor state and sends events through Atom writes", () =>
   Effect.gen(function* () {
@@ -169,4 +172,42 @@ it.scopedLive("can reevaluates guarded transitions when actor state changes", ()
     registry.dispose();
     yield* actor.stop;
   }),
+);
+
+it.scopedLive("ActorSystem acquisition follows generations and ignores unrelated actors", () =>
+  Effect.gen(function* () {
+    const system = yield* ActorSystemService;
+    const registry = AtomRegistry.make();
+    const actorAtom = ActorAtom.acquire(system, CounterActor);
+    const values: Array<AsyncResult.AsyncResult<unknown, unknown>> = [];
+    const unsubscribe = registry.subscribe(actorAtom, (value) => values.push(value), {
+      immediate: true,
+    });
+    yield* Effect.yieldNow;
+
+    const first = yield* system.spawn(CounterActor, counterMachine);
+    yield* Effect.yieldNow;
+    const countAfterFirst = values.length;
+    yield* system.spawn("unrelated", counterMachine);
+    yield* Effect.yieldNow;
+    expect(values).toHaveLength(countAfterFirst);
+
+    yield* system.stop(CounterActor);
+    yield* Effect.yieldNow;
+    const waiting = values.at(-1)!;
+    expect(AsyncResult.isInitial(waiting)).toBe(true);
+    expect(waiting.waiting).toBe(true);
+
+    const second = yield* system.spawn(CounterActor, counterMachine);
+    yield* Effect.yieldNow;
+    const current = values.at(-1)!;
+    expect(AsyncResult.isSuccess(current)).toBe(true);
+    if (AsyncResult.isSuccess(current)) {
+      expect(current.value).toBe(second);
+      expect(current.value).not.toBe(first);
+    }
+
+    unsubscribe();
+    registry.dispose();
+  }).pipe(Effect.provide(ActorSystemDefault)),
 );

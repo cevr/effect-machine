@@ -31,6 +31,18 @@ const maybeActor = yield * system.get("checkout");
 
 Terminal actors leave the registry. A stopped actor keeps its final snapshot and lifecycle value through its existing `ActorRef`.
 
+Use a typed key when lookup callers must keep the machine state, event, and output types.
+
+```ts
+const CheckoutActor = actorSystemKey<CheckoutState, CheckoutEvent>("checkout");
+
+const actor = yield * system.spawn(CheckoutActor, checkoutMachine);
+const maybeActor = yield * system.get(CheckoutActor);
+const generations = system.watch(CheckoutActor);
+```
+
+`watch` starts with the current actor or `Option.none()`. It then emits only when that ID starts or stops. A later actor generation with the same key emits its new `ActorRef`.
+
 ## Parent and child actors
 
 Spawn a child from a state-owned Effect:

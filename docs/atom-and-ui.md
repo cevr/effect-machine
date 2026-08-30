@@ -13,6 +13,16 @@ const stateAtom = ActorAtom.make(actor);
 const countAtom = ActorAtom.select(stateAtom, (state) => state.count);
 ```
 
+Acquire a named actor from an `ActorSystem` with a typed key. The acquisition suspends while the key is absent. It follows a later actor generation without a second actor registry.
+
+```ts
+const CounterActor = actorSystemKey<CounterState, CounterEvent>("counter");
+const actorAtom = ActorAtom.acquire(system, CounterActor);
+const actor = useAtomSuspense(actorAtom).value;
+```
+
+Use `ActorAtom.fromSystem(system, key)` when the UI must render absence as `Option.none()` instead of suspending.
+
 Selected Atoms publish only when their selected value changes. Pass an equality function when the selector returns a new object.
 
 ```ts

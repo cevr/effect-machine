@@ -218,6 +218,31 @@ export interface ActorRef<State extends { readonly _tag: string }, Event, Output
 /** Base type for stored actors (internal) */
 type AnyState = { readonly _tag: string };
 
+declare const ActorSystemKeyTypeId: unique symbol;
+
+/** A typed identity for an actor stored in an ActorSystem. */
+export class ActorSystemKey<State extends AnyState, Event, Output = State> {
+  declare readonly [ActorSystemKeyTypeId]: {
+    readonly state: State;
+    readonly event: Event;
+    readonly output: Output;
+  };
+
+  constructor(readonly id: string) {}
+}
+
+/** Create a typed ActorSystem identity. */
+export const actorSystemKey = <State extends AnyState, Event, Output = State>(
+  id: string,
+): ActorSystemKey<State, Event, Output> => new ActorSystemKey(id);
+
+type AnyActorSystemKey = ActorSystemKey<AnyState, unknown, unknown>;
+
+const actorSystemId = (id: string | AnyActorSystemKey): string => {
+  if (typeof id === "string") return id;
+  return id.id;
+};
+
 // ============================================================================
 // System Observation Types
 // ============================================================================
@@ -264,10 +289,22 @@ export interface ActorSystemService {
    */
   readonly spawn: {
     <S extends AnyState, E extends { readonly _tag: string }, R, Output>(
+      key: ActorSystemKey<S, E, Output>,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      machine: Machine<S, E, R, any, any, void, Output>,
+      options?: SystemSpawnOptions<S, E, void>,
+    ): Effect.Effect<ActorRef<S, E, Output>, DuplicateActorError, R>;
+    <S extends AnyState, E extends { readonly _tag: string }, R, Output>(
       id: string,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       machine: Machine<S, E, R, any, any, void, Output>,
       options?: SystemSpawnOptions<S, E, void>,
+    ): Effect.Effect<ActorRef<S, E, Output>, DuplicateActorError, R>;
+    <S extends AnyState, E extends { readonly _tag: string }, R, Input, Output>(
+      key: ActorSystemKey<S, E, Output>,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      machine: Machine<S, E, R, any, any, Input, Output>,
+      options: SystemSpawnOptions<S, E, Input>,
     ): Effect.Effect<ActorRef<S, E, Output>, DuplicateActorError, R>;
     <S extends AnyState, E extends { readonly _tag: string }, R, Input, Output>(
       id: string,
@@ -280,12 +317,25 @@ export interface ActorSystemService {
   /**
    * Get an existing actor by ID
    */
-  readonly get: (id: string) => Effect.Effect<Option.Option<ActorRef<AnyState, unknown>>>;
+  readonly get: {
+    <S extends AnyState, E, Output>(
+      key: ActorSystemKey<S, E, Output>,
+    ): Effect.Effect<Option.Option<ActorRef<S, E, Output>>>;
+    (id: string): Effect.Effect<Option.Option<ActorRef<AnyState, unknown>>>;
+  };
+
+  /** Observe the current actor for one ID across actor generations. */
+  readonly watch: {
+    <S extends AnyState, E, Output>(
+      key: ActorSystemKey<S, E, Output>,
+    ): Stream.Stream<Option.Option<ActorRef<S, E, Output>>>;
+    (id: string): Stream.Stream<Option.Option<ActorRef<AnyState, unknown>>>;
+  };
 
   /**
    * Stop an actor by ID
    */
-  readonly stop: (id: string) => Effect.Effect<boolean>;
+  readonly stop: (id: string | AnyActorSystemKey) => Effect.Effect<boolean>;
 
   /**
    * Async stream of system events (actor spawned/stopped).
@@ -1215,22 +1265,64 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     Input,
     Output,
   >(
-    id: string,
+    idOrKey: string | ActorSystemKey<S, E, Output>,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     machine: Machine<S, E, R, any, any, Input, Output>,
     options?: SystemSpawnOptions<S, E, Input>,
-  ): Effect.Effect<ActorRef<S, E, Output>, DuplicateActorError, R> =>
-    withSpawnGate(spawnRegular(id, machine, options)) as Effect.Effect<
+  ): Effect.Effect<ActorRef<S, E, Output>, DuplicateActorError, R> => {
+    const id = actorSystemId(idOrKey);
+    return withSpawnGate(spawnRegular(id, machine, options)) as Effect.Effect<
       ActorRef<S, E, Output>,
       DuplicateActorError,
       R
     >;
+  };
 
-  const get = Effect.fn("effect-machine.actorSystem.get")(function* (id: string) {
-    return yield* Effect.sync(() => MutableHashMap.get(actorsMap, id));
-  });
+  function get<S extends AnyState, E, Output>(
+    key: ActorSystemKey<S, E, Output>,
+  ): Effect.Effect<Option.Option<ActorRef<S, E, Output>>>;
+  function get(id: string): Effect.Effect<Option.Option<ActorRef<AnyState, unknown>>>;
+  function get(idOrKey: string | AnyActorSystemKey): Effect.Effect<Option.Option<unknown>> {
+    return Effect.sync(() => MutableHashMap.get(actorsMap, actorSystemId(idOrKey)));
+  }
 
-  const stop = Effect.fn("effect-machine.actorSystem.stop")(function* (id: string) {
+  const sameActor = (left: Option.Option<unknown>, right: Option.Option<unknown>): boolean => {
+    if (Option.isNone(left)) return Option.isNone(right);
+    return Option.isSome(right) && Object.is(left.value, right.value);
+  };
+
+  function watch<S extends AnyState, E, Output>(
+    key: ActorSystemKey<S, E, Output>,
+  ): Stream.Stream<Option.Option<ActorRef<S, E, Output>>>;
+  function watch(id: string): Stream.Stream<Option.Option<ActorRef<AnyState, unknown>>>;
+  function watch(idOrKey: string | AnyActorSystemKey): Stream.Stream<Option.Option<unknown>> {
+    const id = actorSystemId(idOrKey);
+    return Stream.callback<Option.Option<unknown>>((queue) =>
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          const unsubscribe = (event: SystemEvent): void => {
+            if (event.id !== id) return;
+            if (event._tag === "ActorSpawned") {
+              Queue.offerUnsafe(queue, Option.some(event.actor));
+            } else if (event._tag === "ActorStopped") {
+              Queue.offerUnsafe(queue, Option.none());
+            }
+          };
+          eventListeners.add(unsubscribe);
+          Queue.offerUnsafe(queue, MutableHashMap.get(actorsMap, id));
+          return (): void => {
+            eventListeners.delete(unsubscribe);
+          };
+        }),
+        (unsubscribe) => Effect.sync(unsubscribe),
+      ),
+    ).pipe(Stream.changesWith(sameActor));
+  }
+
+  const stop = Effect.fn("effect-machine.actorSystem.stop")(function* (
+    idOrKey: string | AnyActorSystemKey,
+  ) {
+    const id = actorSystemId(idOrKey);
     const maybeActor = MutableHashMap.get(actorsMap, id);
     if (Option.isNone(maybeActor)) {
       return false;
@@ -1252,6 +1344,7 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
   return ActorSystem.of({
     spawn,
     get,
+    watch,
     stop,
     events: Stream.fromPubSub(eventPubSub),
     get actors() {
