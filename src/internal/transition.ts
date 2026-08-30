@@ -10,8 +10,9 @@
  */
 import { Cause, Effect, Exit, Scope } from "effect";
 
-import type { Machine, MachineRef, Transition, HandlerContext } from "../machine.js";
+import type { Machine, MachineRef, HandlerContext } from "../machine.js";
 import type { ActorSystemService } from "../actor.js";
+import type { Transition } from "./machine-definition.js";
 import { isEffect, isReplyResult, isDeferReplyResult, INTERNAL_ENTER_EVENT } from "./utils.js";
 import type { ReplyResult, DeferReplyResult } from "./utils.js";
 

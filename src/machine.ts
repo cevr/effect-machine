@@ -51,6 +51,7 @@ import type { DuplicateActorError } from "./errors.js";
 import { makeEventAdvancement } from "./internal/event-advancement.js";
 import { executeTransition, shouldPostpone } from "./internal/transition.js";
 import { emitWithTimestamp } from "./internal/inspection.js";
+import type { BackgroundEffect, SpawnEffect, Transition } from "./internal/machine-definition.js";
 import type { ActorRef, ActorSystemService } from "./actor.js";
 import { Inspector as InspectorTag } from "./inspection.js";
 
@@ -116,31 +117,6 @@ export type TransitionHandler<S, E, NewState, R, Reply = never> = (
 export type StateEffectHandler<S, E, R> = (
   ctx: StateHandlerContext<S, E>,
 ) => Effect.Effect<void, never, R>;
-
-/**
- * Transition definition
- */
-export interface Transition<State, Event, R> {
-  readonly stateTag: string;
-  readonly eventTag: string;
-  readonly handler: TransitionHandler<State, Event, State, R>;
-  readonly reenter?: boolean;
-}
-
-/**
- * Spawn effect - state-scoped forked effect
- */
-export interface SpawnEffect<State, Event, R> {
-  readonly stateTag: string;
-  readonly handler: StateEffectHandler<State, Event, R>;
-}
-
-/**
- * Background effect - runs for entire machine lifetime
- */
-export interface BackgroundEffect<State, Event, R> {
-  readonly handler: StateEffectHandler<State, Event, R>;
-}
 
 // ============================================================================
 // Options types
@@ -297,10 +273,6 @@ export class Machine<
   readonly #replySchemas: ReadonlyMap<string, Schema.Decoder<unknown>>;
   readonly #transitionIndex: Map<string, Map<string, Array<Transition<State, Event, never>>>>;
   readonly #spawnIndex: Map<string, Array<SpawnEffect<State, Event, R>>>;
-
-  get finalStates(): ReadonlySet<string> {
-    return new Set(this.#finalStates);
-  }
 
   /** @internal */
   constructor(

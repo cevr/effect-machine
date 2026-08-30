@@ -113,17 +113,22 @@ describe("Machine", () => {
     }),
   );
 
-  test("marks states as final", () => {
-    const machine = Machine.make({
-      state: CounterState,
-      event: CounterEvent,
-      initial: CounterState.Idle({ count: 0 }),
-    })
-      .on(CounterState.Idle, CounterEvent.Start, () => CounterState.Done({ count: 0 }))
-      .final(CounterState.Done);
-    expect(machine.finalStates.has("Done")).toBe(true);
-    expect(machine.finalStates.has("Idle")).toBe(false);
-  });
+  it.scopedLive("stops simulation at a final state", () =>
+    Effect.gen(function* () {
+      const machine = Machine.make({
+        state: CounterState,
+        event: CounterEvent,
+        initial: CounterState.Idle({ count: 0 }),
+      })
+        .on(CounterState.Idle, CounterEvent.Start, () => CounterState.Done({ count: 0 }))
+        .on(CounterState.Done, CounterEvent.Increment, () => CounterState.Counting({ count: 1 }))
+        .final(CounterState.Done);
+
+      const result = yield* simulate(machine, [CounterEvent.Start, CounterEvent.Increment]);
+
+      expect(result.states.map((state) => state._tag)).toEqual(["Idle", "Done"]);
+    }),
+  );
 });
 
 // ============================================================================
