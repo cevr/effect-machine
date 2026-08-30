@@ -30,7 +30,7 @@ export const make = <State extends { readonly _tag: string }, Event, Output>(
   const state = Atom.subscriptionRef(actor.state);
   return Atom.writable(
     (get) => get(state),
-    (_ctx, event) => actor.sync.send(event),
+    (_ctx, event) => actor.client.send(event),
   );
 };
 

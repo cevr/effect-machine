@@ -86,7 +86,7 @@ describe("Effectful transitions", () => {
       expect((yield* Effect.exit(actor.start))._tag).toBe("Failure");
       expect((yield* actor.awaitExit)._tag).toBe("Defect");
       yield* Effect.yieldNow;
-      expect(actor.sync.lifecycle()._tag).toBe("Defect");
+      expect(actor.client.getLifecycle()._tag).toBe("Defect");
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
 });

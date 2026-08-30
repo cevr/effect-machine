@@ -50,7 +50,7 @@ describe("transition guards", () => {
       const actor = yield* system.spawn("guarded", machine);
 
       expect(yield* actor.can(TestEvent.Check({ minimum: 40 }))).toBe(true);
-      expect(actor.sync.can(TestEvent.Check({ minimum: 60 }))).toBe(false);
+      expect(actor.client.canSync(TestEvent.Check({ minimum: 60 }))).toBe(false);
 
       yield* actor.send(TestEvent.Check({ minimum: 40 }));
       yield* Effect.yieldNow;
@@ -151,8 +151,11 @@ describe("transition guards", () => {
 
       expect(yield* actor.can(TestEvent.Check({ minimum: 40 }))).toBe(true);
       expect(yield* actor.can(TestEvent.Check({ minimum: 41 }))).toBe(false);
-      expect(() => actor.sync.can(TestEvent.Check({ minimum: 40 }))).toThrow(
+      expect(() => actor.client.canSync(TestEvent.Check({ minimum: 40 }))).toThrow(
         "Effect guards require actor.can(event)",
+      );
+      expect(yield* Effect.promise(() => actor.client.can(TestEvent.Check({ minimum: 40 })))).toBe(
+        true,
       );
 
       yield* actor.send(TestEvent.Check({ minimum: 40 }));

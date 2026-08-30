@@ -52,7 +52,7 @@ describe("machine input and output", () => {
       const exit = yield* actor.awaitExit;
       yield* Effect.yieldNow;
       const lifecycle: ActorLifecycle<typeof CounterState.Type, { readonly total: number }> =
-        actor.sync.lifecycle();
+        actor.client.getLifecycle();
 
       expect(output).toEqual({ total: 7 });
       expect(exit).toEqual({

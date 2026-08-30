@@ -676,7 +676,9 @@ export const resolveTransition = <
   );
   if (isEffect(resolution)) {
     return Effect.runSync(
-      Effect.die("Effect guards require actor.can(event). actor.sync.can(event) is synchronous."),
+      Effect.die(
+        "Effect guards require actor.can(event). actor.client.canSync(event) is synchronous.",
+      ),
     );
   }
   return resolution.transition;

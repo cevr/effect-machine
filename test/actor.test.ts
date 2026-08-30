@@ -419,7 +419,7 @@ describe("ActorRef", () => {
         const actor = yield* Machine.spawn(machine, { id: "test" });
         yield* actor.start;
 
-        const state = actor.sync.snapshot();
+        const state = actor.client.getSnapshot();
         expect(state._tag).toBe("Idle");
       }).pipe(Effect.provide(ActorSystemDefault)),
     );
@@ -458,8 +458,8 @@ describe("ActorRef", () => {
         const actor = yield* Machine.spawn(machine, { id: "test" });
         yield* actor.start;
 
-        expect(actor.sync.matches("Idle")).toBe(true);
-        expect(actor.sync.matches("Loading")).toBe(false);
+        expect(actor.client.matches("Idle")).toBe(true);
+        expect(actor.client.matches("Loading")).toBe(false);
       }).pipe(Effect.provide(ActorSystemDefault)),
     );
 
@@ -499,8 +499,8 @@ describe("ActorRef", () => {
         const actor = yield* Machine.spawn(machine, { id: "test" });
         yield* actor.start;
 
-        expect(actor.sync.can(TestEvent.Start({ value: 1 }))).toBe(true);
-        expect(actor.sync.can(TestEvent.Complete)).toBe(false);
+        expect(actor.client.canSync(TestEvent.Start({ value: 1 }))).toBe(true);
+        expect(actor.client.canSync(TestEvent.Complete)).toBe(false);
       }).pipe(Effect.provide(ActorSystemDefault)),
     );
 
@@ -1042,7 +1042,7 @@ describe("ActorRef", () => {
 
         const actor = yield* Machine.spawn(machine);
         yield* actor.start;
-        actor.sync.send(TestEvent.Start({ value: 7 }));
+        actor.client.send(TestEvent.Start({ value: 7 }));
         yield* yieldFibers;
 
         const state = yield* actor.snapshot;
@@ -1068,7 +1068,7 @@ describe("ActorRef", () => {
         yield* actor.stop;
 
         // Should not throw
-        actor.sync.send(TestEvent.Start({ value: 1 }));
+        actor.client.send(TestEvent.Start({ value: 1 }));
 
         const state = yield* actor.snapshot;
         expect(state._tag).toBe("Idle");

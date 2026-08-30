@@ -38,5 +38,5 @@ export const actorSystemProgram = Effect.gen(function* () {
 
   yield* session.send(SessionEvent.Exit);
   yield* session.awaitFinal;
-  return menu.value.sync.matches("Browsing");
+  return menu.value.client.matches("Browsing");
 }).pipe(Effect.scoped, Effect.provide(ActorSystemDefault));

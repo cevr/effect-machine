@@ -43,6 +43,7 @@ export type {
 // Actor types and system
 export type {
   ActorRef,
+  ActorClient,
   ActorRefSync,
   ActorLifecycle,
   ActorSystemService as ActorSystem,

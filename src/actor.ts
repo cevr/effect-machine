@@ -57,9 +57,20 @@ type QueuedEvent<S, E> = RuntimeQueuedEvent<S, E>;
 // ActorRef Interface
 // ============================================================================
 
-/**
- * Sync projection of ActorRef for non-Effect boundaries (React hooks, framework callbacks).
- */
+/** JavaScript client for code that does not run inside Effect. */
+export interface ActorClient<State extends { readonly _tag: string }, Event, Output = State> {
+  readonly send: (event: Event) => void;
+  readonly stop: () => void;
+  readonly getSnapshot: () => State;
+  readonly matches: (tag: State["_tag"]) => boolean;
+  readonly canSync: (event: Event) => boolean;
+  readonly can: (event: Event) => Promise<boolean>;
+  readonly getLifecycle: () => ActorLifecycle<State, Output>;
+  readonly getLatestTransition: () => TransitionInfo<State, Event> | undefined;
+  readonly subscribe: (listener: (state: State) => void) => () => void;
+}
+
+/** @deprecated Use `ActorClient`. */
 export interface ActorRefSync<State extends { readonly _tag: string }, Event, Output = State> {
   readonly send: (event: Event) => void;
   readonly stop: () => void;
@@ -175,6 +186,9 @@ export interface ActorRef<State extends { readonly _tag: string }, Event, Output
   /** Subscribe to state changes (sync callback). Returns unsubscribe function. */
   readonly subscribe: (fn: (state: State) => void) => () => void;
 
+  /** JavaScript client for callbacks and applications outside Effect. */
+  readonly client: ActorClient<State, Event, Output>;
+
   /**
    * Wait for this actor's terminal exit. Resolves with the exit reason.
    * Set exactly once when the actor terminates (final, stop, drain, or defect).
@@ -187,7 +201,7 @@ export interface ActorRef<State extends { readonly _tag: string }, Event, Output
    */
   readonly drain: Effect.Effect<void>;
 
-  /** Sync helpers for non-Effect boundaries. */
+  /** @deprecated Use `client`. */
   readonly sync: ActorRefSync<State, Event, Output>;
 
   /** The actor system this actor belongs to. */
@@ -518,6 +532,37 @@ const buildActorRefCore = <
   });
 
   const transitions = Stream.fromPubSub(cell.transitions);
+  const subscribe = (listener: (state: S) => void): (() => void) => {
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  };
+  const sendClient = (event: E): void => {
+    runtimeRef.current?.sendSync(event);
+  };
+  const stopClient = (): void => {
+    Effect.runFork(stop);
+  };
+  const getSnapshot = (): S => Effect.runSync(SubscriptionRef.get(stateRef));
+  const matchesClient = (tag: S["_tag"]): boolean => getSnapshot()._tag === tag;
+  const canSync = (event: E): boolean =>
+    resolveTransition(machine, getSnapshot(), event) !== undefined;
+  const getLifecycle = (): ActorLifecycle<S, O> =>
+    Effect.runSync(SubscriptionRef.get(lifecycleRef));
+  const getLatestTransition = (): TransitionInfo<S, E> | undefined =>
+    Effect.runSync(SubscriptionRef.get(latestTransitionRef));
+  const client: ActorClient<S, E, O> = {
+    send: sendClient,
+    stop: stopClient,
+    getSnapshot,
+    matches: matchesClient,
+    canSync,
+    can: (event) => Effect.runPromise(can(event)),
+    getLifecycle,
+    getLatestTransition,
+    subscribe,
+  };
 
   return {
     id,
@@ -538,27 +583,18 @@ const buildActorRefCore = <
     awaitFinal,
     awaitOutput,
     sendAndWait,
-    subscribe: (fn) => {
-      listeners.add(fn);
-      return () => {
-        listeners.delete(fn);
-      };
-    },
+    subscribe,
+    client,
     awaitExit: Deferred.await(cell.terminalExitDeferred),
     drain: Effect.suspend(() => runtimeRef.current?.drain ?? Effect.void),
     sync: {
-      send: (event) => {
-        runtimeRef.current?.sendSync(event);
-      },
-      stop: () => Effect.runFork(stop),
-      snapshot: () => Effect.runSync(SubscriptionRef.get(stateRef)),
-      matches: (tag) => Effect.runSync(SubscriptionRef.get(stateRef))._tag === tag,
-      can: (event) => {
-        const state = Effect.runSync(SubscriptionRef.get(stateRef));
-        return resolveTransition(machine, state, event) !== undefined;
-      },
-      lifecycle: () => Effect.runSync(SubscriptionRef.get(lifecycleRef)),
-      latestTransition: () => Effect.runSync(SubscriptionRef.get(latestTransitionRef)),
+      send: sendClient,
+      stop: stopClient,
+      snapshot: getSnapshot,
+      matches: matchesClient,
+      can: canSync,
+      lifecycle: getLifecycle,
+      latestTransition: getLatestTransition,
     },
     system,
     children: cell.children,

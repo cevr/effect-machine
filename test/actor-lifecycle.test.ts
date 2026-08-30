@@ -19,16 +19,16 @@ describe("actor lifecycle observation", () => {
   it.scopedLive("keeps lifecycle and latest transition after final exit", () =>
     Effect.gen(function* () {
       const actor = yield* Machine.spawn(machine);
-      expect(actor.sync.lifecycle()._tag).toBe("Created");
+      expect(actor.client.getLifecycle()._tag).toBe("Created");
       yield* actor.start;
-      expect(actor.sync.lifecycle()._tag).toBe("Active");
+      expect(actor.client.getLifecycle()._tag).toBe("Active");
 
       yield* actor.send(TestEvent.Finish);
       yield* actor.awaitExit;
       yield* Effect.yieldNow;
 
-      expect(actor.sync.lifecycle()._tag).toBe("Final");
-      const latest = actor.sync.latestTransition();
+      expect(actor.client.getLifecycle()._tag).toBe("Final");
+      const latest = actor.client.getLatestTransition();
       expect(latest?.fromState._tag).toBe("Idle");
       expect(latest?.toState._tag).toBe("Done");
       expect(latest?.event._tag).toBe("Finish");
@@ -42,7 +42,7 @@ describe("actor lifecycle observation", () => {
       const observed = yield* Deferred.make<string>();
       // @effect-diagnostics runEffectInsideEffect:off -- synchronous actor callback
       actor.subscribe(() => {
-        const latest = actor.sync.latestTransition();
+        const latest = actor.client.getLatestTransition();
         Effect.runFork(Deferred.succeed(observed, latest?.event._tag ?? "missing"));
       });
       // @effect-diagnostics runEffectInsideEffect:on

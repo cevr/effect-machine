@@ -57,8 +57,8 @@ describe("immediate transitions", () => {
 
       expect((yield* actor.snapshot)._tag).toBe("Accepted");
       expect(spawned).toEqual(["Accepted"]);
-      expect(actor.sync.latestTransition()?.fromState._tag).toBe("Checking");
-      expect(actor.sync.latestTransition()?.toState._tag).toBe("Accepted");
+      expect(actor.client.getLatestTransition()?.fromState._tag).toBe("Checking");
+      expect(actor.client.getLatestTransition()?.toState._tag).toBe("Accepted");
     }).pipe(Effect.provide(ActorSystemDefault));
   });
 
