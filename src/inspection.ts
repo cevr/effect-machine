@@ -46,6 +46,18 @@ export interface TransitionEvent<S, E> {
   readonly timestamp: number;
 }
 
+/** Event emitted after a transition guard runs. */
+export interface GuardEvent<S, E> {
+  readonly type: "@machine.guard";
+  readonly actorId: string;
+  readonly state: S;
+  readonly event: E;
+  readonly guard: string;
+  readonly params?: unknown;
+  readonly result: boolean;
+  readonly timestamp: number;
+}
+
 /**
  * Event emitted when a spawn effect runs
  */
@@ -97,6 +109,7 @@ export type InspectionEvent<S, E> =
   | SpawnEvent<S>
   | EventReceivedEvent<S, E>
   | TransitionEvent<S, E>
+  | GuardEvent<S, E>
   | EffectEvent<S>
   | TaskEvent<S>
   | ErrorEvent<S, E>
@@ -192,6 +205,8 @@ const inspectionSpanName = <
       return `Machine.inspect ${event.event._tag}`;
     case "@machine.transition":
       return `Machine.inspect ${event.fromState._tag}->${event.toState._tag}`;
+    case "@machine.guard":
+      return `Machine.inspect guard:${event.guard}`;
     case "@machine.effect":
       return `Machine.inspect ${event.effectType}`;
     case "@machine.task":
@@ -216,6 +231,8 @@ const inspectionTraceName = <
       return `machine.event ${event.event._tag}`;
     case "@machine.transition":
       return `machine.transition ${event.fromState._tag}->${event.toState._tag}`;
+    case "@machine.guard":
+      return `machine.guard ${event.guard}`;
     case "@machine.effect":
       return `machine.effect ${event.effectType}`;
     case "@machine.task": {
@@ -258,6 +275,14 @@ const inspectionAttributes = <
         "machine.state.from": event.fromState._tag,
         "machine.state.to": event.toState._tag,
         "machine.event.tag": event.event._tag,
+      };
+    case "@machine.guard":
+      return {
+        ...shared,
+        "machine.state.current": event.state._tag,
+        "machine.event.tag": event.event._tag,
+        "machine.guard.name": event.guard,
+        "machine.guard.result": event.result,
       };
     case "@machine.effect":
       return {
@@ -342,6 +367,8 @@ export const consoleInspector = (): InspectorService<
         return Effect.log(`${prefix} received ${event.event._tag} in ${event.state._tag}`);
       case "@machine.transition":
         return Effect.log(`${prefix} ${event.fromState._tag} -> ${event.toState._tag}`);
+      case "@machine.guard":
+        return Effect.log(`${prefix} guard ${event.guard} -> ${String(event.result)}`);
       case "@machine.effect":
         return Effect.log(`${prefix} ${event.effectType} effect in ${event.state._tag}`);
       case "@machine.task":

@@ -3,12 +3,8 @@ import { Effect, SubscriptionRef } from "effect";
 import type { Machine } from "./machine.js";
 import { AssertionError } from "./errors.js";
 import { makeEventAdvancement } from "./internal/event-advancement.js";
-import {
-  executeTransition,
-  executeTransitionImmediate,
-  shouldPostpone,
-} from "./internal/transition.js";
-import { isEffect } from "./internal/utils.js";
+import { executeTransition, shouldPostpone } from "./internal/transition.js";
+import { INTERNAL_INIT_EVENT } from "./internal/utils.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type MachineInput<S, E, R> =
@@ -48,18 +44,16 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
   R,
 >(input: MachineInput<S, E, R>, events: ReadonlyArray<E>) {
   const machine = input;
-  const states: S[] = [machine.initial];
+  // eslint-disable-next-line effect/noAs -- internal eventless-transition sentinel
+  const initial = yield* executeTransition(machine, machine.initial, {
+    _tag: INTERNAL_INIT_EVENT,
+  } as E);
+  const states: S[] = [initial.newState];
   if (!machine._hasPostponeRules()) {
-    let state = machine.initial;
+    let state = initial.newState;
     for (const event of events) {
       if (machine._isFinal(state._tag)) break;
-      const execution = executeTransitionImmediate(machine, state, event);
-      let result;
-      if (isEffect(execution)) {
-        result = yield* execution;
-      } else {
-        result = execution;
-      }
+      const result = yield* executeTransition(machine, state, event);
       if (result.transitioned) {
         state = result.newState;
         states.push(state);
@@ -69,7 +63,7 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
   }
 
   const advancement = makeEventAdvancement({
-    initial: machine.initial,
+    initial: initial.newState,
     isFinal: (state: S) => machine._isFinal(state._tag),
     shouldPostpone: (state: S, event: E) => shouldPostpone(machine, state._tag, event._tag),
     postpone: (_state: S, event: E) => Effect.succeed({ input: event, value: undefined }),
@@ -239,10 +233,13 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
   R,
 >(input: MachineInput<S, E, R>, options?: TestHarnessOptions<S, E>) {
   const machine = input;
-
-  const stateRef = yield* SubscriptionRef.make(machine.initial);
+  // eslint-disable-next-line effect/noAs -- internal eventless-transition sentinel
+  const initial = yield* executeTransition(machine, machine.initial, {
+    _tag: INTERNAL_INIT_EVENT,
+  } as E);
+  const stateRef = yield* SubscriptionRef.make(initial.newState);
   const advancement = makeEventAdvancement({
-    initial: machine.initial,
+    initial: initial.newState,
     isFinal: (state: S) => machine._isFinal(state._tag),
     shouldPostpone: (state: S, event: E) => shouldPostpone(machine, state._tag, event._tag),
     postpone: (state: S, event: E) => Effect.succeed({ input: event, value: state }),

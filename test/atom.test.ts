@@ -112,3 +112,32 @@ it.scopedLive("select supports a custom equality function", () =>
     yield* actor.stop;
   }),
 );
+
+it.scopedLive("lifecycle and latest transition atoms retain terminal values", () =>
+  Effect.gen(function* () {
+    const FinalState = State({ Idle: {}, Done: {} });
+    const FinalEvent = Event({ Finish: {} });
+    const finalMachine = Machine.make({
+      state: FinalState,
+      event: FinalEvent,
+      initial: FinalState.Idle,
+    })
+      .on(FinalState.Idle, FinalEvent.Finish, () => FinalState.Done)
+      .final(FinalState.Done);
+    const actor = yield* Machine.spawn(finalMachine);
+    yield* actor.start;
+
+    const registry = AtomRegistry.make();
+    const lifecycleAtom = ActorAtom.lifecycle(actor);
+    const transitionAtom = ActorAtom.latestTransition(actor);
+    yield* actor.send(FinalEvent.Finish);
+    yield* actor.awaitExit;
+    yield* Effect.yieldNow;
+
+    expect(registry.get(lifecycleAtom)._tag).toBe("Final");
+    expect(registry.get(transitionAtom)?.event._tag).toBe("Finish");
+    expect(registry.get(transitionAtom)?.toState._tag).toBe("Done");
+
+    registry.dispose();
+  }),
+);

@@ -32,6 +32,17 @@ export const makeInspectionHooks = <S, E>(
   actorId: string,
   inspector: InspectorService<S, E>,
 ): ProcessEventHooks<S, E> => ({
+  onGuard: (evaluation) =>
+    emitWithTimestamp(inspector, (timestamp) => ({
+      type: "@machine.guard",
+      actorId,
+      state: evaluation.state,
+      event: evaluation.event,
+      guard: evaluation.guard.name,
+      params: evaluation.params,
+      result: evaluation.result,
+      timestamp,
+    })),
   onSpawnEffect: (state) =>
     emitWithTimestamp(inspector, (timestamp) => ({
       type: "@machine.effect",

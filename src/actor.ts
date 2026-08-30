@@ -64,6 +64,8 @@ export interface ActorRefSync<State extends { readonly _tag: string }, Event> {
   readonly snapshot: () => State;
   readonly matches: (tag: State["_tag"]) => boolean;
   readonly can: (event: Event) => boolean;
+  readonly lifecycle: () => ActorLifecycle<State>;
+  readonly latestTransition: () => TransitionInfo<State, Event> | undefined;
 }
 
 /**
@@ -76,6 +78,13 @@ export interface TransitionInfo<State, Event> {
   readonly event: Event;
 }
 
+/** Observable actor lifecycle. Domain state remains available through `actor.state`. */
+export type ActorLifecycle<State> =
+  | { readonly _tag: "Created" }
+  | { readonly _tag: "Starting"; readonly generation: number }
+  | { readonly _tag: "Active"; readonly generation: number }
+  | ActorExit<State>;
+
 export interface ActorRef<State extends { readonly _tag: string }, Event> {
   readonly id: string;
 
@@ -86,7 +95,7 @@ export interface ActorRef<State extends { readonly _tag: string }, Event> {
    * Serialized request-reply (OTP gen_server:call).
    * Event is processed through the queue; caller gets ProcessEventResult back.
    */
-  readonly call: (event: Event) => Effect.Effect<ProcessEventResult<State>>;
+  readonly call: (event: Event) => Effect.Effect<ProcessEventResult<State, Event>>;
 
   /**
    * Typed request-reply. Accepts only events with a reply schema
@@ -99,6 +108,14 @@ export interface ActorRef<State extends { readonly _tag: string }, Event> {
 
   /** Observable state. */
   readonly state: SubscriptionRef.SubscriptionRef<State>;
+
+  /** Observable actor lifecycle. */
+  readonly lifecycle: SubscriptionRef.SubscriptionRef<ActorLifecycle<State>>;
+
+  /** The latest accepted edge. This value remains available after actor exit. */
+  readonly latestTransition: SubscriptionRef.SubscriptionRef<
+    TransitionInfo<State, Event> | undefined
+  >;
 
   /** Stop the actor gracefully. */
   readonly stop: Effect.Effect<void>;
@@ -318,6 +335,8 @@ interface ActorCell<S extends { readonly _tag: string }, E extends { readonly _t
   readonly listeners: Listeners<S>;
   readonly children: Map<string, ActorRef<AnyState, unknown>>;
   readonly transitions: PubSub.PubSub<TransitionInfo<S, E>>;
+  readonly lifecycleRef: SubscriptionRef.SubscriptionRef<ActorLifecycle<S>>;
+  readonly latestTransitionRef: SubscriptionRef.SubscriptionRef<TransitionInfo<S, E> | undefined>;
   readonly system: ActorSystemService;
   readonly generation: { current: number };
 }
@@ -334,7 +353,16 @@ const buildActorRefCore = <
   stop: Effect.Effect<void>,
   start: Effect.Effect<void>,
 ): ActorRef<S, E> => {
-  const { id, machine, stateRef, runtimeRef, listeners, system } = cell;
+  const {
+    id,
+    machine,
+    stateRef,
+    runtimeRef,
+    listeners,
+    system,
+    lifecycleRef,
+    latestTransitionRef,
+  } = cell;
   const send = (event: E) =>
     Effect.gen(function* () {
       const runtime = runtimeRef.current;
@@ -357,7 +385,8 @@ const buildActorRefCore = <
         postponed: false,
         lifecycleRan: false,
         isFinal: machine._isFinal(currentState._tag),
-      } satisfies ProcessEventResult<S>;
+        transitions: [],
+      } satisfies ProcessEventResult<S, E>;
     });
 
   const call = (event: E) =>
@@ -451,6 +480,8 @@ const buildActorRefCore = <
     call,
     ask: ask as ActorRef<S, E>["ask"],
     state: stateRef,
+    lifecycle: lifecycleRef,
+    latestTransition: latestTransitionRef,
     stop,
     start,
     snapshot,
@@ -480,6 +511,8 @@ const buildActorRefCore = <
         const state = Effect.runSync(SubscriptionRef.get(stateRef));
         return resolveTransition(machine, state, event) !== undefined;
       },
+      lifecycle: () => Effect.runSync(SubscriptionRef.get(lifecycleRef)),
+      latestTransition: () => Effect.runSync(SubscriptionRef.get(latestTransitionRef)),
     },
     system,
     children: cell.children,
@@ -572,6 +605,10 @@ const runSupervisionLoop = <
       }
 
       yield* currentRuntime.settlePendingRequests;
+      yield* SubscriptionRef.set(cell.lifecycleRef, {
+        _tag: "Starting",
+        generation: nextGeneration,
+      });
       const freshQueue = yield* Queue.unbounded<QueuedEvent<S, E>>();
       yield* Ref.set(cell.eventQueueRef, freshQueue);
       yield* SubscriptionRef.set(cell.stateRef, restartState);
@@ -585,6 +622,13 @@ const runSupervisionLoop = <
       const newRuntime = yield* options.spawnGeneration(machineForRestart);
       cell.runtimeRef.current = newRuntime;
       yield* newRuntime.start;
+      const restartExit = yield* Deferred.poll(newRuntime.exitDeferred);
+      if (Option.isNone(restartExit)) {
+        yield* SubscriptionRef.set(cell.lifecycleRef, {
+          _tag: "Active",
+          generation: nextGeneration,
+        });
+      }
 
       if (options.onRestart !== undefined) {
         yield* options.onRestart(nextGeneration, generationExit);
@@ -649,6 +693,10 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
 
   // Cell-owned resources: stable across generations (supervision)
   const stateRef = yield* SubscriptionRef.make<S>(initial);
+  const lifecycleRef = yield* SubscriptionRef.make<ActorLifecycle<S>>({ _tag: "Created" });
+  const latestTransitionRef = yield* SubscriptionRef.make<TransitionInfo<S, E> | undefined>(
+    undefined,
+  );
   const stoppedRef = yield* Ref.make(false);
   const initialQueue = yield* Queue.unbounded<QueuedEvent<S, E>>();
   const eventQueueRef = yield* Ref.make(initialQueue);
@@ -682,6 +730,8 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     listeners,
     children: childrenMap,
     transitions: transitionsPubSub,
+    lifecycleRef,
+    latestTransitionRef,
     system,
     generation,
   };
@@ -726,29 +776,43 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     }
     return {
       onEvent,
-      onStateChange: (result, event) => {
-        notifyListeners(listeners, result.newState);
-        const durability = lifecycle?.durability;
-        if (durability === undefined || !result.transitioned) return;
-        const shouldPersist =
-          durability.shouldSave === undefined ||
-          durability.shouldSave(result.newState, result.previousState);
-        if (!shouldPersist) return;
-        return durability.save({
-          actorId: id,
-          generation: generation.current,
-          previousState: result.previousState,
-          nextState: result.newState,
-          event,
-        });
-      },
-      onProcessed: (result, event) => {
+      onStateChange: (result, event) =>
+        Effect.gen(function* () {
+          const latest = result.transitions.at(-1);
+          if (latest !== undefined) {
+            yield* SubscriptionRef.set(latestTransitionRef, {
+              fromState: latest.previousState,
+              toState: latest.newState,
+              event: latest.event,
+            });
+          }
+          notifyListeners(listeners, result.newState);
+          const durability = lifecycle?.durability;
+          if (durability === undefined || !result.transitioned) return;
+          const shouldPersist =
+            durability.shouldSave === undefined ||
+            durability.shouldSave(result.newState, result.previousState);
+          if (!shouldPersist) return;
+          yield* durability.save({
+            actorId: id,
+            generation: generation.current,
+            previousState: result.previousState,
+            nextState: result.newState,
+            event,
+          });
+        }),
+      onProcessed: (result, _event) => {
         if (!result.transitioned || transitionsPubSub.subscribers.size === 0) return;
-        return PubSub.publish(transitionsPubSub, {
-          fromState: result.previousState,
-          toState: result.newState,
-          event,
-        }).pipe(Effect.asVoid);
+        return Effect.forEach(
+          result.transitions,
+          (transition) =>
+            PubSub.publish(transitionsPubSub, {
+              fromState: transition.previousState,
+              toState: transition.newState,
+              event: transition.event,
+            }),
+          { discard: true },
+        );
       },
       onFinal,
       onShutdown: () =>
@@ -829,6 +893,10 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
 
   // Build actor start — runs recovery, emits @machine.spawn, arms supervisor, then delegates to runtime.start
   const startActor = Effect.fn("effect-machine.actor.start")(function* () {
+    yield* SubscriptionRef.set(lifecycleRef, {
+      _tag: "Starting",
+      generation: generation.current,
+    });
     // Run recovery if lifecycle.recovery exists AND not hydrated (hydrate takes precedence)
     if (lifecycle?.recovery !== undefined && !isHydrated) {
       const resolved = yield* lifecycle.recovery.resolve({
@@ -882,9 +950,23 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     const currentRuntime = runtimeRef.current;
     if (currentRuntime !== undefined) {
       yield* currentRuntime.start;
+      const currentExit = yield* Deferred.poll(currentRuntime.exitDeferred);
+      if (Option.isNone(currentExit)) {
+        yield* SubscriptionRef.set(lifecycleRef, {
+          _tag: "Active",
+          generation: generation.current,
+        });
+      }
     }
   });
   const start = startActor().pipe(Effect.provide(serviceContext), Effect.asVoid);
+
+  yield* Effect.forkDetach(
+    Deferred.await(terminalExitDeferred).pipe(
+      Effect.flatMap((exit) => SubscriptionRef.set(lifecycleRef, exit)),
+      Effect.provide(serviceContext),
+    ),
+  );
 
   return buildActorRefCore(cell, stop, start);
 });
@@ -948,6 +1030,18 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
 
     // Emit spawned event
     yield* emitSystemEvent({ _tag: "ActorSpawned", id, actor: actorRef });
+
+    // Remove terminal actors. Keep supervised actors registered across restarts.
+    yield* Effect.forkDetach(
+      actorRef.awaitExit.pipe(
+        Effect.flatMap((exit) => {
+          const registered = MutableHashMap.get(actorsMap, id);
+          if (Option.isNone(registered) || registered.value !== actorRef) return Effect.void;
+          MutableHashMap.remove(actorsMap, id);
+          return emitSystemEvent({ _tag: "ActorStopped", id, actor: actorRef, exit });
+        }),
+      ),
+    );
 
     // If ActorScope available, attach per-actor cleanup
     const maybeScope = yield* Effect.serviceOption(ActorScope);

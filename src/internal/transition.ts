@@ -10,25 +10,36 @@
  */
 import { Cause, Effect, Exit, Scope } from "effect";
 
-import type { Machine, MachineRef, HandlerContext } from "../machine.js";
+import type { Guard, Machine, MachineRef, HandlerContext } from "../machine.js";
 import type { ActorSystemService } from "../actor.js";
 import type { Transition } from "./machine-definition.js";
 import { isEffect, isReplyResult, isDeferReplyResult, INTERNAL_ENTER_EVENT } from "./utils.js";
 import type { ReplyResult, DeferReplyResult } from "./utils.js";
 
-interface ExecutedTransition<S> {
+interface ExecutedStep<S, E> {
+  readonly previousState: S;
+  readonly newState: S;
+  readonly event: E;
+  readonly transition: Transition<S, E, never>;
+}
+
+interface ExecutedTransition<S, E = unknown> {
   readonly newState: S;
   readonly transitioned: boolean;
   readonly reenter: boolean;
   readonly hasReply: boolean;
   readonly deferReply: boolean;
   readonly reply: unknown;
+  readonly transition?: Transition<S, E, never>;
+  readonly steps: ReadonlyArray<ExecutedStep<S, E>>;
 }
 
 const completeTransition = <S, E>(
+  currentState: S,
+  event: E,
   transition: Transition<S, E, never>,
   resolved: S | ReplyResult<S, unknown> | DeferReplyResult<S>,
-): ExecutedTransition<S> => {
+): ExecutedTransition<S, E> => {
   if (isReplyResult(resolved)) {
     return {
       newState: resolved.state,
@@ -37,6 +48,8 @@ const completeTransition = <S, E>(
       hasReply: true,
       deferReply: false,
       reply: resolved.reply,
+      transition,
+      steps: [{ previousState: currentState, newState: resolved.state, event, transition }],
     };
   }
 
@@ -48,6 +61,8 @@ const completeTransition = <S, E>(
       hasReply: false,
       deferReply: true,
       reply: undefined,
+      transition,
+      steps: [{ previousState: currentState, newState: resolved.state, event, transition }],
     };
   }
 
@@ -58,6 +73,8 @@ const completeTransition = <S, E>(
     hasReply: false,
     deferReply: false,
     reply: undefined,
+    transition,
+    steps: [{ previousState: currentState, newState: resolved, event, transition }],
   };
 };
 
@@ -84,10 +101,17 @@ export const executeTransition = <
 ) =>
   Effect.suspend(() => {
     const result = executeTransitionImmediate(machine, currentState, event);
+    let first: Effect.Effect<ExecutedTransition<S, E>>;
     if (isEffect(result)) {
-      return result;
+      first = result;
+    } else {
+      first = Effect.succeed(result);
     }
-    return Effect.succeed(result);
+    return first.pipe(
+      Effect.flatMap((initialResult) =>
+        stabilizeTransition(machine, currentState, event, initialResult),
+      ),
+    );
   });
 
 /**
@@ -96,6 +120,72 @@ export const executeTransition = <
  *
  * @internal
  */
+const executeTransitionCandidatesImmediate = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+>(
+  currentState: S,
+  event: E,
+  candidates: ReadonlyArray<Transition<S, E, never>>,
+  hooks?: ProcessEventHooks<S, E>,
+): ExecutedTransition<S, E> | Effect.Effect<ExecutedTransition<S, E>> => {
+  let resolution: TransitionResolution<S, E>;
+  try {
+    resolution = evaluateTransitions(candidates, currentState, event);
+  } catch (defect) {
+    return Effect.die(defect);
+  }
+  const transition = resolution.transition;
+
+  if (transition === undefined) {
+    const unhandled: ExecutedTransition<S, E> = {
+      newState: currentState,
+      transitioned: false as const,
+      reenter: false,
+      hasReply: false,
+      deferReply: false,
+      reply: undefined,
+      transition: undefined,
+      steps: [],
+    };
+    if (hooks?.onGuard === undefined || resolution.evaluations.length === 0) return unhandled;
+    return Effect.forEach(resolution.evaluations, hooks.onGuard, { discard: true }).pipe(
+      Effect.as(unhandled),
+    );
+  }
+
+  const runHandler = (): ExecutedTransition<S, E> | Effect.Effect<ExecutedTransition<S, E>> => {
+    const handlerCtx: HandlerContext<S, E> = { state: currentState, event };
+    let raw: ReturnType<typeof transition.handler>;
+    try {
+      raw = transition.handler(handlerCtx);
+    } catch (defect) {
+      return Effect.die(defect);
+    }
+    type HandlerResult = S | ReplyResult<S, unknown> | DeferReplyResult<S>;
+
+    if (isEffect(raw)) {
+      // SAFETY: The transition type fixes the state and error domains.
+      return (raw as Effect.Effect<HandlerResult, never>).pipe(
+        Effect.map((resolved) => completeTransition(currentState, event, transition, resolved)),
+      );
+    }
+
+    return completeTransition(currentState, event, transition, raw);
+  };
+
+  if (hooks?.onGuard === undefined || resolution.evaluations.length === 0) return runHandler();
+  return Effect.forEach(resolution.evaluations, hooks.onGuard, { discard: true }).pipe(
+    Effect.andThen(
+      Effect.suspend(() => {
+        const result = runHandler();
+        if (isEffect(result)) return result;
+        return Effect.succeed(result);
+      }),
+    ),
+  );
+};
+
 export const executeTransitionImmediate = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
@@ -105,38 +195,64 @@ export const executeTransitionImmediate = <
   machine: Machine<S, E, R, any, any>,
   currentState: S,
   event: E,
-): ExecutedTransition<S> | Effect.Effect<ExecutedTransition<S>> => {
-  const transition = resolveTransition(machine, currentState, event);
+  hooks?: ProcessEventHooks<S, E>,
+): ExecutedTransition<S, E> | Effect.Effect<ExecutedTransition<S, E>> =>
+  executeTransitionCandidatesImmediate(
+    currentState,
+    event,
+    machine._findTransitions(currentState._tag, event._tag),
+    hooks,
+  );
 
-  if (transition === undefined) {
+const stabilizeTransition = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+>(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  machine: Machine<S, E, R, any, any>,
+  initialState: S,
+  event: E,
+  result: ExecutedTransition<S, E>,
+  hooks?: ProcessEventHooks<S, E>,
+) =>
+  Effect.gen(function* () {
+    const steps = [...result.steps];
+    let stableState = result.newState;
+    let lifecycleRequired = result.reenter || stableState._tag !== initialState._tag;
+    let depth = 0;
+
+    while (true) {
+      const candidates = machine._findImmediateTransitions(stableState._tag);
+      if (candidates.length === 0) break;
+      depth += 1;
+      if (depth > 100) {
+        return yield* Effect.die(
+          new Error("Immediate transition limit exceeded. Check for an eventless loop."),
+        );
+      }
+      const immediate = executeTransitionCandidatesImmediate(stableState, event, candidates, hooks);
+      let next: ExecutedTransition<S, E>;
+      if (isEffect(immediate)) {
+        next = yield* immediate;
+      } else {
+        next = immediate;
+      }
+      if (!next.transitioned) break;
+      if (next.reenter || next.newState._tag !== stableState._tag) lifecycleRequired = true;
+      steps.push(...next.steps);
+      stableState = next.newState;
+    }
+
     return {
-      newState: currentState,
-      transitioned: false as const,
-      reenter: false,
-      hasReply: false,
-      deferReply: false,
-      reply: undefined,
-    };
-  }
-
-  const handlerCtx: HandlerContext<S, E> = { state: currentState, event };
-  let raw: ReturnType<typeof transition.handler>;
-  try {
-    raw = transition.handler(handlerCtx);
-  } catch (defect) {
-    return Effect.die(defect);
-  }
-  type HandlerResult = S | ReplyResult<S, unknown> | DeferReplyResult<S>;
-
-  if (isEffect(raw)) {
-    // SAFETY: The transition type fixes the state and error domains.
-    return (raw as Effect.Effect<HandlerResult, never>).pipe(
-      Effect.map((resolved) => completeTransition(transition, resolved)),
-    );
-  }
-
-  return completeTransition(transition, raw);
-};
+      ...result,
+      newState: stableState,
+      transitioned: steps.length > 0,
+      reenter: lifecycleRequired,
+      transition: steps.at(-1)?.transition,
+      steps,
+    } satisfies ExecutedTransition<S, E>;
+  });
 
 // ============================================================================
 // Event Processing Core (shared by actor and entity-machine)
@@ -146,6 +262,8 @@ export const executeTransitionImmediate = <
  * Optional hooks for event processing inspection/tracing.
  */
 export interface ProcessEventHooks<S, E> {
+  /** Called after each guard candidate is evaluated. */
+  readonly onGuard?: (evaluation: GuardEvaluation<S, E>) => Effect.Effect<void>;
   /** Called before running spawn effects */
   readonly onSpawnEffect?: (state: S) => Effect.Effect<void>;
   /** Called after transition completes */
@@ -154,6 +272,14 @@ export interface ProcessEventHooks<S, E> {
   readonly onError?: (info: ProcessEventError<S, E>) => Effect.Effect<void>;
   /** Called when a forked spawn fiber defects — signals the runtime to set exitDeferred */
   readonly onSpawnDefect?: (cause: Cause.Cause<unknown>) => Effect.Effect<void>;
+}
+
+export interface GuardEvaluation<S, E> {
+  readonly guard: Guard<S, E, unknown>;
+  readonly state: S;
+  readonly event: E;
+  readonly params: unknown;
+  readonly result: boolean;
 }
 
 /**
@@ -169,7 +295,7 @@ export interface ProcessEventError<S, E> {
 /**
  * Result of processing an event through the machine.
  */
-export interface ProcessEventResult<S> {
+export interface ProcessEventResult<S, E = unknown> {
   /** New state after processing */
   readonly newState: S;
   /** Previous state before processing */
@@ -188,6 +314,12 @@ export interface ProcessEventResult<S> {
   readonly reply?: unknown;
   /** Whether the event was postponed (buffered for retry after next state change) */
   readonly postponed: boolean;
+  /** Each accepted edge in the stable macrostep. */
+  readonly transitions: ReadonlyArray<{
+    readonly previousState: S;
+    readonly newState: S;
+    readonly event: E;
+  }>;
 }
 
 /**
@@ -256,13 +388,15 @@ const completeProcessedEvent = <
   machine: Machine<S, E, R, any, any>,
   currentState: S,
   event: E,
-  result: ExecutedTransition<S>,
+  result: ExecutedTransition<S, E>,
   self: MachineRef<E>,
   stateScopeRef: { current: Scope.Closeable },
   system: ActorSystemService,
   actorId: string,
   hooks?: ProcessEventHooks<S, E>,
-): ProcessEventResult<S> | Effect.Effect<ProcessEventResult<S>, never, Exclude<R, Scope.Scope>> => {
+):
+  | ProcessEventResult<S, E>
+  | Effect.Effect<ProcessEventResult<S, E>, never, Exclude<R, Scope.Scope>> => {
   if (!result.transitioned) {
     return {
       newState: currentState,
@@ -274,12 +408,13 @@ const completeProcessedEvent = <
       deferReply: false,
       reply: undefined,
       postponed: false,
+      transitions: [],
     };
   }
 
   const newState = result.newState;
   const runLifecycle = newState._tag !== currentState._tag || result.reenter;
-  const processed: ProcessEventResult<S> = {
+  const processed: ProcessEventResult<S, E> = {
     newState,
     previousState: currentState,
     transitioned: true,
@@ -289,8 +424,17 @@ const completeProcessedEvent = <
     deferReply: result.deferReply,
     reply: result.reply,
     postponed: false,
+    transitions: result.steps,
   };
-  if (!runLifecycle) return processed;
+  const observeTransitions = hooks?.onTransition;
+  if (!runLifecycle) {
+    if (observeTransitions === undefined || result.steps.length === 0) return processed;
+    return Effect.forEach(
+      result.steps,
+      (step) => observeTransitions(step.previousState, step.newState, step.event),
+      { discard: true },
+    ).pipe(Effect.as(processed));
+  }
 
   return Effect.gen(function* () {
     // Close old state scope (interrupts spawn fibers)
@@ -300,8 +444,12 @@ const completeProcessedEvent = <
     stateScopeRef.current = yield* Scope.make();
 
     // Hook: transition complete (before spawn effects)
-    if (hooks?.onTransition !== undefined) {
-      yield* hooks.onTransition(currentState, newState, event);
+    if (observeTransitions !== undefined) {
+      yield* Effect.forEach(
+        result.steps,
+        (step) => observeTransitions(step.previousState, step.newState, step.event),
+        { discard: true },
+      );
     }
 
     // Hook: about to run spawn effects
@@ -342,19 +490,78 @@ export const processEventCoreImmediate = <
   actorId: string,
   hooks?: ProcessEventHooks<S, E>,
 ) => {
-  const execution = executeTransitionImmediate(machine, currentState, event);
-  const complete = (result: ExecutedTransition<S>) =>
-    completeProcessedEvent(
-      machine,
-      currentState,
-      event,
-      result,
-      self,
-      stateScopeRef,
-      system,
-      actorId,
-      hooks,
-    );
+  const execution = executeTransitionImmediate(machine, currentState, event, hooks);
+  const complete = (result: ExecutedTransition<S, E>) => {
+    const immediateCandidates = machine._findImmediateTransitions(result.newState._tag);
+    if (immediateCandidates.length === 0) {
+      return completeProcessedEvent(
+        machine,
+        currentState,
+        event,
+        result,
+        self,
+        stateScopeRef,
+        system,
+        actorId,
+        hooks,
+      );
+    }
+
+    return Effect.gen(function* () {
+      const steps = [...result.steps];
+      let stableState = result.newState;
+      let lifecycleRequired = result.reenter || stableState._tag !== currentState._tag;
+      let depth = 0;
+
+      while (true) {
+        const candidates = machine._findImmediateTransitions(stableState._tag);
+        if (candidates.length === 0) break;
+        depth += 1;
+        if (depth > 100) {
+          return yield* Effect.die(
+            new Error("Immediate transition limit exceeded. Check for an eventless loop."),
+          );
+        }
+        const immediate = executeTransitionCandidatesImmediate(
+          stableState,
+          event,
+          candidates,
+          hooks,
+        );
+        let next: ExecutedTransition<S, E>;
+        if (isEffect(immediate)) {
+          next = yield* immediate;
+        } else {
+          next = immediate;
+        }
+        if (!next.transitioned) break;
+        if (next.reenter || next.newState._tag !== stableState._tag) lifecycleRequired = true;
+        steps.push(...next.steps);
+        stableState = next.newState;
+      }
+
+      const processed = completeProcessedEvent(
+        machine,
+        currentState,
+        event,
+        {
+          ...result,
+          newState: stableState,
+          transitioned: steps.length > 0,
+          reenter: lifecycleRequired,
+          transition: steps.at(-1)?.transition,
+          steps,
+        },
+        self,
+        stateScopeRef,
+        system,
+        actorId,
+        hooks,
+      );
+      if (isEffect(processed)) return yield* processed;
+      return processed;
+    });
+  };
   if (!isEffect(execution)) return complete(execution);
 
   return execution.pipe(
@@ -447,7 +654,28 @@ export const resolveTransition = <
   machine: Machine<S, E, R, any, any>,
   currentState: S,
   event: E,
-): Transition<S, E, never> | undefined => {
-  const candidates = machine._findTransitions(currentState._tag, event._tag);
-  return candidates[0];
+): Transition<S, E, never> | undefined =>
+  evaluateTransitions(machine._findTransitions(currentState._tag, event._tag), currentState, event)
+    .transition;
+
+interface TransitionResolution<S, E> {
+  readonly transition: Transition<S, E, never> | undefined;
+  readonly evaluations: ReadonlyArray<GuardEvaluation<S, E>>;
+}
+
+const evaluateTransitions = <S, E>(
+  candidates: ReadonlyArray<Transition<S, E, never>>,
+  currentState: S,
+  event: E,
+): TransitionResolution<S, E> => {
+  const ctx: HandlerContext<S, E> = { state: currentState, event };
+  const evaluations: Array<GuardEvaluation<S, E>> = [];
+  for (const candidate of candidates) {
+    if (candidate.guard === undefined) return { transition: candidate, evaluations };
+    const params = candidate.guard.params?.(ctx);
+    const result = candidate.guard.check(ctx);
+    evaluations.push({ guard: candidate.guard, state: currentState, event, params, result });
+    if (result) return { transition: candidate, evaluations };
+  }
+  return { transition: undefined, evaluations };
 };

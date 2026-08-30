@@ -38,7 +38,7 @@ import type { Duration, Schema } from "effect";
 import { Cause, Effect, Exit, Option, Random, Scope } from "effect";
 
 import type { TransitionResult } from "./internal/utils.js";
-import { getTag, makeReply, makeDeferReply } from "./internal/utils.js";
+import { getTag, INTERNAL_INIT_EVENT, makeReply, makeDeferReply } from "./internal/utils.js";
 import type {
   TaggedOrConstructor,
   BrandedState,
@@ -115,6 +115,18 @@ export type TransitionHandler<S, E, NewState, R, Reply = never> = (
 export type StateEffectHandler<S, E, R> = (
   ctx: StateHandlerContext<S, E>,
 ) => Effect.Effect<void, never, R>;
+
+/** A named pure condition for a transition candidate. */
+export interface Guard<State, Event, Params = unknown> {
+  readonly name: string;
+  readonly check: (ctx: HandlerContext<State, Event>) => boolean;
+  readonly params?: (ctx: HandlerContext<State, Event>) => Params;
+}
+
+/** Optional behavior for one transition candidate. */
+export interface TransitionOptions<State, Event> {
+  readonly guard?: Guard<State, Event, unknown>;
+}
 
 // ============================================================================
 // Options types
@@ -270,6 +282,7 @@ export class Machine<
   readonly eventSchema: MachineEventSchema<_ED> & { readonly Type: Event };
   readonly #replySchemas: ReadonlyMap<string, Schema.Decoder<unknown>>;
   readonly #transitionIndex: Map<string, Map<string, Array<Transition<State, Event, never>>>>;
+  readonly #immediateIndex: Map<string, Array<Transition<State, Event, never>>>;
   readonly #spawnIndex: Map<string, Array<SpawnEffect<State, Event, R>>>;
 
   /** @internal */
@@ -283,6 +296,7 @@ export class Machine<
     this.#finalStates = new Set();
     this.#postponeRules = [];
     this.#transitionIndex = new Map();
+    this.#immediateIndex = new Map();
     this.#spawnIndex = new Map();
     this.#replySchemas = getReplySchemas(eventSchema) ?? new Map();
     this.stateSchema = stateSchema;
@@ -293,8 +307,10 @@ export class Machine<
 
   from<NS extends VariantsUnion<_SD> & BrandedState, R1>(
     state: TaggedOrConstructor<NS>,
-    build: (scope: TransitionScope<State, Event, R, _SD, _ED, NS>) => R1,
-  ): Machine<State, Event, R, _SD, _ED>;
+    build: (
+      scope: TransitionScope<State, Event, R, _SD, _ED, NS>,
+    ) => TransitionScope<State, Event, R, _SD, _ED, NS, R1>,
+  ): Machine<State, Event, R | R1, _SD, _ED>;
   from<NS extends ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>, R1>(
     states: NS,
     build: (
@@ -308,15 +324,25 @@ export class Machine<
           ? S
           : never
       >,
-    ) => R1,
-  ): Machine<State, Event, R, _SD, _ED>;
+    ) => TransitionScope<
+      State,
+      Event,
+      R,
+      _SD,
+      _ED,
+      NS[number] extends TaggedOrConstructor<infer S extends VariantsUnion<_SD> & BrandedState>
+        ? S
+        : never,
+      R1
+    >,
+  ): Machine<State, Event, R | R1, _SD, _ED>;
   from(
     stateOrStates:
       | TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>
       | ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>,
     build: (
       scope: TransitionScope<State, Event, R, _SD, _ED, VariantsUnion<_SD> & BrandedState>,
-    ) => unknown,
+    ) => TransitionScope<State, Event, R, _SD, _ED, VariantsUnion<_SD> & BrandedState, unknown>,
   ) {
     const states = toReadonlyArray(stateOrStates);
     build(new TransitionScope(this, states));
@@ -328,18 +354,21 @@ export class Machine<
     NS extends VariantsUnion<_SD> & BrandedState,
     NE extends VariantsUnion<_ED> & BrandedEvent,
     RS extends VariantsUnion<_SD> & BrandedState,
+    R1,
   >(
     states: ReadonlyArray<TaggedOrConstructor<NS>>,
     event: TaggedOrConstructor<NE>,
-    handler: TransitionHandler<NS, NE, RS, never, ExtractReply<NE>>,
+    handler: TransitionHandler<NS, NE, RS, R1, ExtractReply<NE>>,
     reenter: boolean,
-  ): Machine<State, Event, R, _SD, _ED> {
+    options?: TransitionOptions<NS, NE>,
+  ): Machine<State, Event, R | R1, _SD, _ED> {
     for (const state of states) {
       this.addTransition(
         state,
         event,
         handler as unknown as TransitionHandler<NS, NE, BrandedState, never>,
         reenter,
+        options,
       );
     }
     return this;
@@ -350,16 +379,19 @@ export class Machine<
     NS extends VariantsUnion<_SD> & BrandedState,
     NE extends VariantsUnion<_ED> & BrandedEvent,
     RS extends VariantsUnion<_SD> & BrandedState,
+    R1 = never,
   >(
     state: TaggedOrConstructor<NS>,
     event: TaggedOrConstructor<NE>,
-    handler: TransitionHandler<NS, NE, RS, never, ExtractReply<NE>>,
-  ): Machine<State, Event, R, _SD, _ED>;
+    handler: TransitionHandler<NS, NE, RS, R1, ExtractReply<NE>>,
+    options?: TransitionOptions<NS, NE>,
+  ): Machine<State, Event, R | R1, _SD, _ED>;
   /** Register transition for multiple states (handler receives union of state types) */
   on<
     NS extends ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>,
     NE extends VariantsUnion<_ED> & BrandedEvent,
     RS extends VariantsUnion<_SD> & BrandedState,
+    R1 = never,
   >(
     states: NS,
     event: TaggedOrConstructor<NE>,
@@ -367,18 +399,25 @@ export class Machine<
       NS[number] extends TaggedOrConstructor<infer S> ? S : never,
       NE,
       RS,
-      never,
+      R1,
       ExtractReply<NE>
     >,
-  ): Machine<State, Event, R, _SD, _ED>;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  on(stateOrStates: any, event: any, handler: any): Machine<State, Event, R, _SD, _ED> {
+    options?: TransitionOptions<NS[number] extends TaggedOrConstructor<infer S> ? S : never, NE>,
+  ): Machine<State, Event, R | R1, _SD, _ED>;
+  /* eslint-disable @typescript-eslint/no-explicit-any -- overload implementation */
+  on(
+    stateOrStates: any,
+    event: any,
+    handler: any,
+    options?: any,
+  ): Machine<State, Event, R, _SD, _ED> {
     const states = toReadonlyArray(stateOrStates);
     for (const s of states) {
-      this.addTransition(s, event, handler, false);
+      this.addTransition(s, event, handler, false, options);
     }
     return this;
   }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
 
   // ---- reenter ----
 
@@ -391,16 +430,19 @@ export class Machine<
     NS extends VariantsUnion<_SD> & BrandedState,
     NE extends VariantsUnion<_ED> & BrandedEvent,
     RS extends VariantsUnion<_SD> & BrandedState,
+    R1 = never,
   >(
     state: TaggedOrConstructor<NS>,
     event: TaggedOrConstructor<NE>,
-    handler: TransitionHandler<NS, NE, RS, never, ExtractReply<NE>>,
-  ): Machine<State, Event, R, _SD, _ED>;
+    handler: TransitionHandler<NS, NE, RS, R1, ExtractReply<NE>>,
+    options?: TransitionOptions<NS, NE>,
+  ): Machine<State, Event, R | R1, _SD, _ED>;
   /** Multiple states */
   reenter<
     NS extends ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>,
     NE extends VariantsUnion<_ED> & BrandedEvent,
     RS extends VariantsUnion<_SD> & BrandedState,
+    R1 = never,
   >(
     states: NS,
     event: TaggedOrConstructor<NE>,
@@ -408,12 +450,18 @@ export class Machine<
       NS[number] extends TaggedOrConstructor<infer S> ? S : never,
       NE,
       RS,
-      never,
+      R1,
       ExtractReply<NE>
     >,
-  ): Machine<State, Event, R, _SD, _ED>;
+    options?: TransitionOptions<NS[number] extends TaggedOrConstructor<infer S> ? S : never, NE>,
+  ): Machine<State, Event, R | R1, _SD, _ED>;
   /* eslint-disable @typescript-eslint/no-explicit-any */
-  reenter(stateOrStates: any, event: any, handler: any): Machine<State, Event, R, _SD, _ED> {
+  reenter(
+    stateOrStates: any,
+    event: any,
+    handler: any,
+    options?: any,
+  ): Machine<State, Event, R, _SD, _ED> {
     let states: any[];
     /* eslint-enable @typescript-eslint/no-explicit-any */
     if (Array.isArray(stateOrStates)) {
@@ -422,7 +470,7 @@ export class Machine<
       states = [stateOrStates];
     }
     for (const s of states) {
-      this.addTransition(s, event, handler, true);
+      this.addTransition(s, event, handler, true, options);
     }
     return this;
   }
@@ -433,16 +481,22 @@ export class Machine<
    * Register a wildcard transition that fires from any state when no specific transition matches.
    * Specific `.on()` transitions always take priority over `.onAny()`.
    */
-  onAny<NE extends VariantsUnion<_ED> & BrandedEvent, RS extends VariantsUnion<_SD> & BrandedState>(
+  onAny<
+    NE extends VariantsUnion<_ED> & BrandedEvent,
+    RS extends VariantsUnion<_SD> & BrandedState,
+    R1 = never,
+  >(
     event: TaggedOrConstructor<NE>,
-    handler: TransitionHandler<VariantsUnion<_SD> & BrandedState, NE, RS, never>,
-  ): Machine<State, Event, R, _SD, _ED> {
+    handler: TransitionHandler<VariantsUnion<_SD> & BrandedState, NE, RS, R1>,
+    options?: TransitionOptions<VariantsUnion<_SD> & BrandedState, NE>,
+  ): Machine<State, Event, R | R1, _SD, _ED> {
     const eventTag = getTag(event);
     const transition: Transition<State, Event, never> = {
       stateTag: "*",
       eventTag,
       handler: handler as unknown as Transition<State, Event, never>["handler"],
       reenter: false,
+      guard: options?.guard as Guard<State, Event, unknown> | undefined,
     };
     this.registerTransition(transition);
     return this;
@@ -452,8 +506,9 @@ export class Machine<
   private addTransition<NS extends BrandedState, NE extends BrandedEvent>(
     state: TaggedOrConstructor<NS>,
     event: TaggedOrConstructor<NE>,
-    handler: TransitionHandler<NS, NE, BrandedState, never>,
+    handler: TransitionHandler<NS, NE, BrandedState, unknown>,
     reenter: boolean,
+    options?: TransitionOptions<NS, NE>,
   ): Machine<State, Event, R, _SD, _ED> {
     const stateTag = getTag(state);
     const eventTag = getTag(event);
@@ -463,12 +518,63 @@ export class Machine<
       eventTag,
       handler: handler as unknown as Transition<State, Event, never>["handler"],
       reenter,
+      guard: options?.guard as Guard<State, Event, unknown> | undefined,
     };
 
     this.registerTransition(transition);
 
     return this;
   }
+
+  // ---- immediate ----
+
+  /**
+   * Register an eventless transition. The actor runs immediate transitions until stable.
+   * UI observers see only the stable state.
+   */
+  immediate<
+    NS extends VariantsUnion<_SD> & BrandedState,
+    RS extends VariantsUnion<_SD> & BrandedState,
+    R1 = never,
+  >(
+    state: TaggedOrConstructor<NS>,
+    handler: TransitionHandler<NS, VariantsUnion<_ED> & BrandedEvent, RS, R1>,
+    options?: TransitionOptions<NS, VariantsUnion<_ED> & BrandedEvent>,
+  ): Machine<State, Event, R | R1, _SD, _ED>;
+  immediate<
+    NS extends ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>,
+    RS extends VariantsUnion<_SD> & BrandedState,
+    R1 = never,
+  >(
+    states: NS,
+    handler: TransitionHandler<
+      NS[number] extends TaggedOrConstructor<infer S> ? S : never,
+      VariantsUnion<_ED> & BrandedEvent,
+      RS,
+      R1
+    >,
+    options?: TransitionOptions<
+      NS[number] extends TaggedOrConstructor<infer S> ? S : never,
+      VariantsUnion<_ED> & BrandedEvent
+    >,
+  ): Machine<State, Event, R | R1, _SD, _ED>;
+  /* eslint-disable @typescript-eslint/no-explicit-any -- overload implementation */
+  immediate(stateOrStates: any, handler: any, options?: any): Machine<State, Event, R, _SD, _ED> {
+    const states = toReadonlyArray(stateOrStates);
+    for (const state of states) {
+      const stateTag = getTag(state);
+      const transitions = this.#immediateIndex.get(stateTag) ?? [];
+      transitions.push({
+        stateTag,
+        eventTag: "",
+        handler,
+        guard: options?.guard,
+      });
+      this.#immediateIndex.set(stateTag, transitions);
+    }
+    return this;
+  }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
 
   // ---- spawn ----
 
@@ -523,13 +629,20 @@ export class Machine<
     eventTag: string,
   ): ReadonlyArray<Transition<State, Event, never>> {
     const specific = this.#transitionIndex.get(stateTag)?.get(eventTag) ?? [];
-    if (specific.length > 0) return specific;
-    return this.#transitionIndex.get("*")?.get(eventTag) ?? [];
+    const wildcard = this.#transitionIndex.get("*")?.get(eventTag) ?? [];
+    if (specific.length === 0) return wildcard;
+    if (wildcard.length === 0) return specific;
+    return [...specific, ...wildcard];
   }
 
   /** @internal */
   _findSpawnEffects(stateTag: string): ReadonlyArray<SpawnEffect<State, Event, R>> {
     return this.#spawnIndex.get(stateTag) ?? [];
+  }
+
+  /** @internal */
+  _findImmediateTransitions(stateTag: string): ReadonlyArray<Transition<State, Event, never>> {
+    return this.#immediateIndex.get(stateTag) ?? [];
   }
 
   /** @internal */
@@ -575,6 +688,9 @@ export class Machine<
         eventCopy.set(eventTag, transitions.slice());
       }
       copy.#transitionIndex.set(stateTag, eventCopy);
+    }
+    for (const [stateTag, transitions] of this.#immediateIndex) {
+      copy.#immediateIndex.set(stateTag, transitions.slice());
     }
     for (const [stateTag, effects] of this.#spawnIndex) {
       copy.#spawnIndex.set(stateTag, effects.slice());
@@ -839,29 +955,37 @@ class TransitionScope<
   _SD extends Record<string, Schema.Struct.Fields>,
   _ED extends Record<string, Schema.Struct.Fields>,
   SelectedState extends VariantsUnion<_SD> & BrandedState,
+  RAdded = never,
 > {
   constructor(
     private readonly machine: Machine<State, Event, R, _SD, _ED>,
     private readonly states: ReadonlyArray<TaggedOrConstructor<SelectedState>>,
   ) {}
 
-  on<NE extends VariantsUnion<_ED> & BrandedEvent, RS extends VariantsUnion<_SD> & BrandedState>(
+  on<
+    NE extends VariantsUnion<_ED> & BrandedEvent,
+    RS extends VariantsUnion<_SD> & BrandedState,
+    R1 = never,
+  >(
     event: TaggedOrConstructor<NE>,
-    handler: TransitionHandler<SelectedState, NE, RS, never, ExtractReply<NE>>,
-  ): TransitionScope<State, Event, R, _SD, _ED, SelectedState> {
-    this.machine.scopeTransition(this.states, event, handler, false);
-    return this;
+    handler: TransitionHandler<SelectedState, NE, RS, R1, ExtractReply<NE>>,
+    options?: TransitionOptions<SelectedState, NE>,
+  ): TransitionScope<State, Event, R, _SD, _ED, SelectedState, RAdded | R1> {
+    this.machine.scopeTransition(this.states, event, handler, false, options);
+    return this as TransitionScope<State, Event, R, _SD, _ED, SelectedState, RAdded | R1>;
   }
 
   reenter<
     NE extends VariantsUnion<_ED> & BrandedEvent,
     RS extends VariantsUnion<_SD> & BrandedState,
+    R1 = never,
   >(
     event: TaggedOrConstructor<NE>,
-    handler: TransitionHandler<SelectedState, NE, RS, never, ExtractReply<NE>>,
-  ): TransitionScope<State, Event, R, _SD, _ED, SelectedState> {
-    this.machine.scopeTransition(this.states, event, handler, true);
-    return this;
+    handler: TransitionHandler<SelectedState, NE, RS, R1, ExtractReply<NE>>,
+    options?: TransitionOptions<SelectedState, NE>,
+  ): TransitionScope<State, Event, R, _SD, _ED, SelectedState, RAdded | R1> {
+    this.machine.scopeTransition(this.states, event, handler, true, options);
+    return this as TransitionScope<State, Event, R, _SD, _ED, SelectedState, RAdded | R1>;
   }
 }
 
@@ -870,6 +994,13 @@ class TransitionScope<
 // ============================================================================
 
 export const make = Machine.make;
+
+/** Create a reusable named transition guard. */
+export const guard = <State, Event, Params = never>(
+  name: string,
+  check: (ctx: HandlerContext<State, Event>) => boolean,
+  params?: (ctx: HandlerContext<State, Event>) => Params,
+): Guard<State, Event, Params> => ({ name, check, params });
 
 // ============================================================================
 // spawn function - simple actor creation without ActorSystem
@@ -1032,8 +1163,10 @@ const replayImpl = Effect.fn("effect-machine.replay")(function* <
   R,
 >(input: AnyMachine<S, E, R>, events: ReadonlyArray<E>, options?: { from?: S }) {
   const machine = input;
+  const from = options?.from ?? machine.initial;
+  const initial = yield* executeTransition(machine, from, { _tag: INTERNAL_INIT_EVENT } as E);
   const advancement = makeEventAdvancement({
-    initial: options?.from ?? machine.initial,
+    initial: initial.newState,
     isFinal: (state: S) => machine._isFinal(state._tag),
     shouldPostpone: (state: S, event: E) => shouldPostpone(machine, state._tag, event._tag),
     postpone: (_state: S, event: E) => Effect.succeed({ input: event, value: undefined }),

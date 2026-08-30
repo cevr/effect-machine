@@ -7,7 +7,7 @@
 import { dual } from "effect/Function";
 import * as Atom from "effect/unstable/reactivity/Atom";
 
-import type { ActorRef } from "./actor.js";
+import type { ActorLifecycle, ActorRef, TransitionInfo } from "./actor.js";
 
 /**
  * A writable Atom projection of an actor.
@@ -57,3 +57,14 @@ export const select: {
     equals: (value: Selection, next: Selection) => boolean = Object.is,
   ): ActorAtom<Selection, Event> => Atom.withEquality(Atom.map(self, selector), equals),
 );
+
+/** Observe actor lifecycle without coupling it to domain state. */
+export const lifecycle = <State extends { readonly _tag: string }, Event>(
+  actor: ActorRef<State, Event>,
+): Atom.Atom<ActorLifecycle<State>> => Atom.subscriptionRef(actor.lifecycle);
+
+/** Observe the latest accepted edge. The value remains after actor exit. */
+export const latestTransition = <State extends { readonly _tag: string }, Event>(
+  actor: ActorRef<State, Event>,
+): Atom.Atom<TransitionInfo<State, Event> | undefined> =>
+  Atom.subscriptionRef(actor.latestTransition);
