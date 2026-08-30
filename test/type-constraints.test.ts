@@ -166,6 +166,9 @@ const _test3e = () => {
   // @ts-expect-error - input machine requires input
   const missingInput = Machine.spawn(inputMachine);
   const hasInput = Machine.spawn(inputMachine, { input: { url: "/ready" } });
+  // @ts-expect-error - run also requires machine input
+  const missingRunInput = Machine.run(inputMachine);
+  const run = Machine.run(inputMachine, { input: { url: "/ready" } });
   // @ts-expect-error - simulation requires input
   const missingSimulationInput = simulate(inputMachine, []);
   const simulation = simulate(inputMachine, [], { input: { url: "/ready" } });
@@ -187,6 +190,8 @@ const _test3e = () => {
   return {
     missingInput,
     hasInput,
+    missingRunInput,
+    run,
     missingSimulationInput,
     simulation,
     missingReplayInput,

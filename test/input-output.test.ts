@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Deferred, Effect, Fiber, Ref, Schema } from "effect";
 import { describe, expect, it } from "effect-bun-test";
 import { Event, Machine, simulate, State, type ActorLifecycle } from "../src/index.js";
 
@@ -73,6 +73,48 @@ describe("machine input and output", () => {
 
       expect(simulated.finalState).toEqual(CounterState.Done({ count: 6 }));
       expect(replayed).toEqual(CounterState.Done({ count: 6 }));
+    }),
+  );
+
+  it.scopedLive("runs an autonomous machine to typed output", () =>
+    Effect.gen(function* () {
+      const InstantState = State({ Done: { value: Schema.String } });
+      const InstantEvent = Event({ Refresh: {} });
+      const instant = Machine.make({
+        state: InstantState,
+        event: InstantEvent,
+        initial: (input: { readonly value: string }) => InstantState.Done(input),
+      }).final(InstantState.Done, ({ state }) => state.value);
+
+      const output: string = yield* Machine.run(instant, { input: { value: "ready" } });
+
+      expect(output).toBe("ready");
+    }),
+  );
+
+  it.scopedLive("releases a running actor when the run is interrupted", () =>
+    Effect.gen(function* () {
+      const ready = yield* Deferred.make<void>();
+      const released = yield* Ref.make(false);
+      const RunningState = State({ Active: {} });
+      const RunningEvent = Event({ Refresh: {} });
+      const running = Machine.make({
+        state: RunningState,
+        event: RunningEvent,
+        initial: RunningState.Active,
+      }).background(() =>
+        Effect.acquireUseRelease(
+          Deferred.succeed(ready, undefined),
+          () => Effect.never,
+          () => Ref.set(released, true),
+        ),
+      );
+
+      const fiber = yield* Effect.forkChild(Machine.run(running));
+      yield* Deferred.await(ready);
+      yield* Fiber.interrupt(fiber);
+
+      expect(yield* Ref.get(released)).toBe(true);
     }),
   );
 });

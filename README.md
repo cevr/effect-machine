@@ -173,13 +173,13 @@ The actor keeps its final state for inspection and UI exit animation. `awaitOutp
 Compose autonomous machine runs with Effect. This keeps sequencing, errors, requirements, cancellation, and tracing in one model.
 
 ```ts
-const program = cartActor.awaitOutput.pipe(
+const program = Machine.run(cartMachine).pipe(
   Effect.map((cart) => ({ cartId: cart.id, totalCents: cart.totalCents })),
-  Effect.flatMap((input) => Machine.spawn(checkoutMachine, { input })),
-  Effect.tap((actor) => actor.start),
-  Effect.flatMap((actor) => actor.awaitOutput),
+  Effect.flatMap((input) => Machine.run(checkoutMachine, { input })),
 );
 ```
+
+`Machine.run` allocates one actor, starts it, waits for output, and always stops it. Interruption also releases the actor resources.
 
 Use an explicit parent machine when a UI must show both phases or keep prior data during an exit animation. The parent state then owns the retained value and routes events to its child actors.
 

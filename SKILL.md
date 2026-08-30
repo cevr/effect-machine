@@ -128,6 +128,7 @@ const output = yield * actor.awaitOutput;
 - Input creates the initial state. It does not replace Effect context.
 - Output is separate from the retained final state.
 - Compose autonomous runs with `Effect.flatMap` or `Effect.andThen`.
+- Use `Machine.run(machine, options)` to start, await output, and always stop one autonomous actor.
 - Use a parent machine when interactive phases must remain visible together.
 - Do not add an action queue. Model external work with Effect handlers.
 

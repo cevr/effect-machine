@@ -47,7 +47,7 @@ import type {
 } from "./internal/brands.js";
 import { getReplySchemas } from "./schema.js";
 import type { MachineStateSchema, MachineEventSchema, VariantsUnion } from "./schema.js";
-import type { DuplicateActorError } from "./errors.js";
+import type { ActorStoppedError, DuplicateActorError } from "./errors.js";
 import { makeEventAdvancement } from "./internal/event-advancement.js";
 import { executeTransition, shouldPostpone } from "./internal/transition.js";
 import { emitWithTimestamp } from "./internal/inspection.js";
@@ -1214,6 +1214,34 @@ export const spawn: {
     options: SpawnOptions<S, E, Input>,
   ): Effect.Effect<ActorRef<S, E, Output>, never, R>;
 } = spawnImpl;
+
+const runImpl = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+  Input,
+  Output,
+>(
+  machine: AnyMachine<S, E, R, Input, Output>,
+  options?: string | SpawnOptions<S, E, Input>,
+): Effect.Effect<Output, ActorStoppedError, R> =>
+  Effect.acquireUseRelease(
+    spawnImpl(machine, options),
+    (actor) => actor.start.pipe(Effect.andThen(actor.awaitOutput)),
+    (actor) => actor.stop,
+  );
+
+/** Run one actor to final output and always release its resources. */
+export const run: {
+  <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R, Output>(
+    machine: AnyMachine<S, E, R, void, Output>,
+    options?: string | SpawnOptions<S, E, void>,
+  ): Effect.Effect<Output, ActorStoppedError, R>;
+  <S extends { readonly _tag: string }, E extends { readonly _tag: string }, R, Input, Output>(
+    machine: AnyMachine<S, E, R, Input, Output>,
+    options: SpawnOptions<S, E, Input>,
+  ): Effect.Effect<Output, ActorStoppedError, R>;
+} = runImpl;
 
 /**
  * Wrap an effect to provide an `ActorScope` from the current `Scope`.
