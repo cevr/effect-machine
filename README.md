@@ -221,7 +221,7 @@ const totalAtom = ActorAtom.select(
 
 The selected Atom stays writable. `useAtomSet(totalAtom)` still sends checkout events. Solid uses the same Atom with `@effect/atom-solid`. Vue uses the same Atom with `@effect/atom-vue`.
 
-Runnable React and Solid workspace examples are in `examples/react` and `examples/solid`.
+Runnable React and Solid package examples are in `examples/react` and `examples/solid`.
 
 ```bash
 bun run example:react
