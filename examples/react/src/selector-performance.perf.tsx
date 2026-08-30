@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { makeCounterActorAtom } from "../../counter.js";
+import { makeCounterActorAtom } from "@effect-machine/examples-shared/counter";
 import { App } from "./app.js";
 
 describe("React selector performance", () => {
@@ -9,6 +9,8 @@ describe("React selector performance", () => {
     let countRenders = 0;
     let labelRenders = 0;
     let statusRenders = 0;
+    let canIncrementRenders = 0;
+    let initialCanIncrementRenders = 0;
     const view = render(
       <App
         actorAtom={makeCounterActorAtom()}
@@ -16,6 +18,7 @@ describe("React selector performance", () => {
           count: () => countRenders++,
           label: () => labelRenders++,
           status: () => statusRenders++,
+          canIncrement: () => canIncrementRenders++,
         }}
       />,
     );
@@ -25,6 +28,7 @@ describe("React selector performance", () => {
         expect(countRenders).toBe(1);
         expect(labelRenders).toBe(1);
         expect(statusRenders).toBe(1);
+        initialCanIncrementRenders = canIncrementRenders;
         fireEvent.click(screen.getByRole("button", { name: "Rename" }));
         return waitFor(() => expect(screen.getByRole("heading").textContent).toBe("Renamed"));
       })
@@ -32,6 +36,7 @@ describe("React selector performance", () => {
         expect(countRenders).toBe(1);
         expect(labelRenders).toBe(2);
         expect(statusRenders).toBe(1);
+        expect(canIncrementRenders).toBe(initialCanIncrementRenders);
         fireEvent.click(screen.getByRole("button", { name: "Increment" }));
         return waitFor(() => expect(screen.getByLabelText("Count").textContent).toBe("1"));
       })
@@ -39,16 +44,29 @@ describe("React selector performance", () => {
         expect(countRenders).toBe(2);
         expect(labelRenders).toBe(2);
         expect(statusRenders).toBe(1);
+        expect(canIncrementRenders).toBe(initialCanIncrementRenders);
+        fireEvent.click(screen.getByRole("button", { name: "Increment" }));
+        return waitFor(() => expect(screen.getByLabelText("Count").textContent).toBe("2"));
+      })
+      .then(() => {
+        expect(countRenders).toBe(3);
+        expect(labelRenders).toBe(2);
+        expect(statusRenders).toBe(1);
+        expect(canIncrementRenders).toBe(initialCanIncrementRenders + 1);
+        expect(screen.getByRole("button", { name: "Increment" }).hasAttribute("disabled")).toBe(
+          true,
+        );
         fireEvent.click(screen.getByRole("button", { name: "Finish" }));
         return waitFor(() => expect(screen.getByLabelText("Status").textContent).toBe("Done"));
       })
       .then(() => {
         expect(screen.getByRole("heading").textContent).toBe("Renamed");
-        expect(screen.getByLabelText("Count").textContent).toBe("1");
+        expect(screen.getByLabelText("Count").textContent).toBe("2");
         expect(screen.getByTestId("counter-screen")).toBeDefined();
-        expect(countRenders).toBe(2);
+        expect(countRenders).toBe(3);
         expect(labelRenders).toBe(2);
         expect(statusRenders).toBe(2);
+        expect(canIncrementRenders).toBe(initialCanIncrementRenders + 1);
         return waitFor(() => expect(screen.queryByTestId("counter-screen")).toBeNull());
       })
       .then(() => {

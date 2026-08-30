@@ -3,13 +3,14 @@ import { Duration, Effect } from "effect";
 import { createEffect, createMemo, Show, Suspense } from "solid-js";
 import { Transition } from "solid-transition-group";
 
-import type { CounterActorAtom, CounterAtoms } from "../../counter.js";
-import { CounterEvent, makeCounterAtoms } from "../../counter.js";
+import type { CounterActorAtom, CounterAtoms } from "@effect-machine/examples-shared/counter";
+import { CounterEvent, makeCounterAtoms } from "@effect-machine/examples-shared/counter";
 
 export interface ComputationCounters {
   readonly count?: (() => void) | undefined;
   readonly label?: (() => void) | undefined;
   readonly status?: (() => void) | undefined;
+  readonly canIncrement?: (() => void) | undefined;
 }
 
 const Count = (props: { readonly atoms: CounterAtoms; readonly onCompute?: () => void }) => {
@@ -30,11 +31,19 @@ const Label = (props: { readonly atoms: CounterAtoms; readonly onCompute?: () =>
   return <h1>{label()}</h1>;
 };
 
-const Controls = (props: { readonly atoms: CounterAtoms }) => {
+const Controls = (props: {
+  readonly atoms: CounterAtoms;
+  readonly onCanIncrementCompute?: () => void;
+}) => {
   const send = useAtomSet(() => props.atoms.state);
+  const [canIncrement] = useAtomResource(() => props.atoms.canIncrement);
+  createEffect(() => {
+    canIncrement();
+    props.onCanIncrementCompute?.();
+  });
   return (
     <div>
-      <button type="button" onClick={() => send(CounterEvent.Increment)}>
+      <button type="button" disabled={!canIncrement()} onClick={() => send(CounterEvent.Increment)}>
         Increment
       </button>
       <button type="button" onClick={() => send(CounterEvent.Rename({ label: "Renamed" }))}>
@@ -70,7 +79,10 @@ const AnimatedCounter = (props: {
           <main data-testid="counter-screen">
             <Label atoms={props.atoms} onCompute={props.computations?.label} />
             <Count atoms={props.atoms} onCompute={props.computations?.count} />
-            <Controls atoms={props.atoms} />
+            <Controls
+              atoms={props.atoms}
+              onCanIncrementCompute={props.computations?.canIncrement}
+            />
           </main>
         </Show>
       </Transition>

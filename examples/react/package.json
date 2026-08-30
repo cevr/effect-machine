@@ -9,6 +9,7 @@
     "gate": "bun run build && bun run test"
   },
   "dependencies": {
+    "@effect-machine/examples-shared": "workspace:*",
     "@effect/atom-react": "4.0.0-rc.112",
     "effect": "4.0.0-rc.112",
     "motion": "13.1.1",

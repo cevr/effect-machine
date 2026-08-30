@@ -1,6 +1,6 @@
 import { render } from "solid-js/web";
 
-import { makeCounterActorAtom } from "../../counter.js";
+import { makeCounterActorAtom } from "@effect-machine/examples-shared/counter";
 import { App } from "./app.js";
 import "./styles.css";
 

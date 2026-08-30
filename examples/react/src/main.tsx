@@ -1,7 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
-import { makeCounterActorAtom } from "../../counter.js";
+import { makeCounterActorAtom } from "@effect-machine/examples-shared/counter";
 import { App } from "./app.js";
 
 const rootElement = document.getElementById("root");

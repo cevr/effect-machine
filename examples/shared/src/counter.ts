@@ -23,8 +23,11 @@ const counterMachine = Machine.make({
   event: CounterEvent,
   initial: CounterState.Active({ count: 0, label: "Counter" }),
 })
-  .on(CounterState.Active, CounterEvent.Increment, ({ state }) =>
-    CounterState.Active.with(state, { count: state.count + 1 }),
+  .when(
+    CounterState.Active,
+    CounterEvent.Increment,
+    ({ state }) => state.count < 2,
+    ({ state }) => CounterState.Active.with(state, { count: state.count + 1 }),
   )
   .on(CounterState.Active, CounterEvent.Rename, ({ state, event }) =>
     CounterState.Active.with(state, { label: event.label }),
@@ -43,6 +46,7 @@ export interface CounterAtoms {
   readonly count: ActorAtom.ActorAtom<number, CounterEvent>;
   readonly label: ActorAtom.ActorAtom<string, CounterEvent>;
   readonly status: ActorAtom.ActorAtom<CounterState["_tag"], CounterEvent>;
+  readonly canIncrement: ActorAtom.CanAtom;
 }
 
 export const makeCounterAtoms = (
@@ -54,5 +58,6 @@ export const makeCounterAtoms = (
     count: ActorAtom.select(state, (value) => value.count),
     label: ActorAtom.select(state, (value) => value.label),
     status: ActorAtom.select(state, (value) => value._tag),
+    canIncrement: ActorAtom.can(actor, CounterEvent.Increment),
   };
 };

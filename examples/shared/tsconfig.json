@@ -4,15 +4,13 @@
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "jsx": "preserve",
-    "jsxImportSource": "solid-js",
+    "moduleDetection": "force",
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["vite/client", "vitest/globals"],
     "paths": {
       "effect-machine": ["../../src/index.ts"],
       "effect-machine/atom": ["../../src/atom.ts"]
     }
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src"]
 }

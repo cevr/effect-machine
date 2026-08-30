@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { describe, expect, it } from "vitest";
 
-import { makeCounterActorAtom } from "../../counter.js";
+import { makeCounterActorAtom } from "@effect-machine/examples-shared/counter";
 import { App } from "./app.js";
 
 describe("Solid selector performance", () => {
@@ -9,6 +9,8 @@ describe("Solid selector performance", () => {
     let countComputations = 0;
     let labelComputations = 0;
     let statusComputations = 0;
+    let canIncrementComputations = 0;
+    let initialCanIncrementComputations = 0;
     const view = render(() => (
       <App
         actorAtom={makeCounterActorAtom()}
@@ -16,6 +18,7 @@ describe("Solid selector performance", () => {
           count: () => countComputations++,
           label: () => labelComputations++,
           status: () => statusComputations++,
+          canIncrement: () => canIncrementComputations++,
         }}
       />
     ));
@@ -25,6 +28,7 @@ describe("Solid selector performance", () => {
         expect(countComputations).toBe(1);
         expect(labelComputations).toBe(1);
         expect(statusComputations).toBe(1);
+        initialCanIncrementComputations = canIncrementComputations;
         fireEvent.click(screen.getByRole("button", { name: "Rename" }));
         return waitFor(() => expect(screen.getByRole("heading").textContent).toBe("Renamed"));
       })
@@ -32,6 +36,7 @@ describe("Solid selector performance", () => {
         expect(countComputations).toBe(1);
         expect(labelComputations).toBe(2);
         expect(statusComputations).toBe(1);
+        expect(canIncrementComputations).toBe(initialCanIncrementComputations);
         fireEvent.click(screen.getByRole("button", { name: "Increment" }));
         return waitFor(() => expect(screen.getByLabelText("Count").textContent).toBe("1"));
       })
@@ -39,16 +44,29 @@ describe("Solid selector performance", () => {
         expect(countComputations).toBe(2);
         expect(labelComputations).toBe(2);
         expect(statusComputations).toBe(1);
+        expect(canIncrementComputations).toBe(initialCanIncrementComputations);
+        fireEvent.click(screen.getByRole("button", { name: "Increment" }));
+        return waitFor(() => expect(screen.getByLabelText("Count").textContent).toBe("2"));
+      })
+      .then(() => {
+        expect(countComputations).toBe(3);
+        expect(labelComputations).toBe(2);
+        expect(statusComputations).toBe(1);
+        expect(canIncrementComputations).toBe(initialCanIncrementComputations + 1);
+        expect(screen.getByRole("button", { name: "Increment" }).hasAttribute("disabled")).toBe(
+          true,
+        );
         fireEvent.click(screen.getByRole("button", { name: "Finish" }));
         return waitFor(() => expect(screen.getByLabelText("Status").textContent).toBe("Done"));
       })
       .then(() => {
         expect(screen.getByRole("heading").textContent).toBe("Renamed");
-        expect(screen.getByLabelText("Count").textContent).toBe("1");
+        expect(screen.getByLabelText("Count").textContent).toBe("2");
         expect(screen.getByTestId("counter-screen")).toBeDefined();
-        expect(countComputations).toBe(2);
+        expect(countComputations).toBe(3);
         expect(labelComputations).toBe(2);
         expect(statusComputations).toBe(2);
+        expect(canIncrementComputations).toBe(initialCanIncrementComputations + 1);
         return waitFor(() => expect(screen.queryByTestId("counter-screen")).toBeNull());
       })
       .then(() => {

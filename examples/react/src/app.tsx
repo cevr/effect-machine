@@ -2,13 +2,14 @@ import { RegistryProvider, useAtomSet, useAtomSuspense, useAtomValue } from "@ef
 import { AnimatePresence, motion } from "motion/react";
 import { Suspense, useMemo } from "react";
 
-import type { CounterActorAtom, CounterAtoms } from "../../counter.js";
-import { CounterEvent, makeCounterAtoms } from "../../counter.js";
+import type { CounterActorAtom, CounterAtoms } from "@effect-machine/examples-shared/counter";
+import { CounterEvent, makeCounterAtoms } from "@effect-machine/examples-shared/counter";
 
 export interface RenderCounters {
   readonly count?: (() => void) | undefined;
   readonly label?: (() => void) | undefined;
   readonly status?: (() => void) | undefined;
+  readonly canIncrement?: (() => void) | undefined;
 }
 
 const Count = (props: { readonly atoms: CounterAtoms; readonly onRender?: () => void }) => {
@@ -23,11 +24,16 @@ const Label = (props: { readonly atoms: CounterAtoms; readonly onRender?: () => 
   return <h1>{label}</h1>;
 };
 
-const Controls = (props: { readonly atoms: CounterAtoms }) => {
+const Controls = (props: {
+  readonly atoms: CounterAtoms;
+  readonly onCanIncrementRender?: () => void;
+}) => {
+  props.onCanIncrementRender?.();
   const send = useAtomSet(props.atoms.state);
+  const canIncrement = useAtomSuspense(props.atoms.canIncrement).value;
   return (
     <div>
-      <button type="button" onClick={() => send(CounterEvent.Increment)}>
+      <button type="button" disabled={!canIncrement} onClick={() => send(CounterEvent.Increment)}>
         Increment
       </button>
       <button type="button" onClick={() => send(CounterEvent.Rename({ label: "Renamed" }))}>
@@ -61,7 +67,7 @@ const AnimatedCounter = (props: {
           >
             <Label atoms={props.atoms} onRender={props.renders?.label} />
             <Count atoms={props.atoms} onRender={props.renders?.count} />
-            <Controls atoms={props.atoms} />
+            <Controls atoms={props.atoms} onCanIncrementRender={props.renders?.canIncrement} />
           </motion.main>
         )}
       </AnimatePresence>

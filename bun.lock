@@ -53,6 +53,7 @@
     "examples/react": {
       "name": "effect-machine-example-react",
       "dependencies": {
+        "@effect-machine/examples-shared": "workspace:*",
         "@effect/atom-react": "4.0.0-rc.112",
         "effect": "4.0.0-rc.112",
         "motion": "13.1.1",
@@ -70,9 +71,19 @@
         "vitest": "4.1.11",
       },
     },
+    "examples/shared": {
+      "name": "@effect-machine/examples-shared",
+      "dependencies": {
+        "effect": "4.0.0-rc.112",
+      },
+      "devDependencies": {
+        "typescript": "7.0.2",
+      },
+    },
     "examples/solid": {
       "name": "effect-machine-example-solid",
       "dependencies": {
+        "@effect-machine/examples-shared": "workspace:*",
         "@effect/atom-solid": "4.0.0-rc.112",
         "effect": "4.0.0-rc.112",
         "solid-js": "1.9.15",
@@ -182,6 +193,8 @@
     "@csstools/css-syntax-patches-for-csstree": ["@csstools/css-syntax-patches-for-csstree@1.1.9", "", { "peerDependencies": { "css-tree": "^3.2.1" }, "optionalPeers": ["css-tree"] }, "sha512-iGGw4OsAYsS6pD29MdJ2bX/nJx65a04ZZiw6x+VwWlP2DdXf6f++Zmuv/OzALpdyfVhjbduIIF2cXM7HWBIe9A=="],
 
     "@csstools/css-tokenizer": ["@csstools/css-tokenizer@4.0.0", "", {}, "sha512-QxULHAm7cNu72w97JUNCBFODFaXpbDg+dP8b/oWFAZ2MTRppA3U00Y2L1HqaS4J6yBqxwa/Y3nMBaxVKbB/NsA=="],
+
+    "@effect-machine/examples-shared": ["@effect-machine/examples-shared@workspace:examples/shared"],
 
     "@effect/atom-react": ["@effect/atom-react@4.0.0-rc.112", "", { "peerDependencies": { "effect": "^4.0.0-rc.112", "react": ">=19.0.0 <20.0.0", "scheduler": ">=0.25.0 <0.28.0" } }, "sha512-Ksf90KQa6D4UDnMj4M84arlVKNIuwxxF2GvgXBzuaYi2LsgririsUhKQ5SYaK1euf8oIYeamEuthoZSbUQmIhw=="],
 
