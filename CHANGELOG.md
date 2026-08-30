@@ -1,5 +1,31 @@
 # effect-machine
 
+## 0.18.0
+
+### Minor Changes
+
+- [`76fcba1`](https://github.com/cevr/effect-machine/commit/76fcba1125a100a192a0853f5a981865936ae4eb) Thanks [@cevr](https://github.com/cevr)! - Move the package to Effect 4 RC.
+
+  Remove Effect 3 compatibility and the Slot API.
+
+  Let task, spawn, and background handlers require native Effect services.
+
+  Capture provided services when an actor is allocated so a later start keeps the same context.
+
+- [`751862b`](https://github.com/cevr/effect-machine/commit/751862b928e1b9a7fe83138ad8ca03501116b7f1) Thanks [@cevr](https://github.com/cevr)! - Upgrade to effect 4.0.0-beta.102 and raise the peer floor to `>=4.0.0-beta.102`.
+
+### Patch Changes
+
+- [`f7ae688`](https://github.com/cevr/effect-machine/commit/f7ae688cf9988702828796fbff07754f55dbb3b9) Thanks [@cevr](https://github.com/cevr)! - Add synchronous fast paths for pure simulation and same-state actor transitions.
+
+  Provide captured services once per actor event loop.
+
+  Remove internal per-event trace wrappers while keeping inspector events and observation streams.
+
+- [`5704c1a`](https://github.com/cevr/effect-machine/commit/5704c1af577c8f85888a836da6ffe03a05a1ff16) Thanks [@cevr](https://github.com/cevr)! - Construct schema-tagged errors through `.make` instead of `new`, model finite numeric schema fields with `Schema.Finite`, and route an unhandled `NoReplyError` in the cluster entity loop through `Effect.orDie`.
+
+- [`52ec1f6`](https://github.com/cevr/effect-machine/commit/52ec1f61d357873e1b420a15527265364463499d) Thanks [@cevr](https://github.com/cevr)! - Validate slot codecs through the Effect error channel and route inspector callbacks through `Effect.try`, so schema mismatches and throwing inspectors no longer rely on `try`/`catch`.
+
 ## 0.17.1
 
 ### Patch Changes
