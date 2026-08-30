@@ -129,6 +129,32 @@ describe(".postpone()", () => {
     }),
   );
 
+  it.scopedLive("keeps a postponed ask reply until the event runs", () =>
+    Effect.gen(function* () {
+      const AskState = State({ Waiting: {}, Ready: {} });
+      const AskEvent = Event({
+        Start: {},
+        GetValue: Event.reply({}, Schema.String),
+      });
+      const machine = Machine.make({
+        state: AskState,
+        event: AskEvent,
+        initial: AskState.Waiting,
+      })
+        .on(AskState.Waiting, AskEvent.Start, () => AskState.Ready)
+        .on(AskState.Ready, AskEvent.GetValue, () => Machine.reply(AskState.Ready, "ready"))
+        .postpone(AskState.Waiting, AskEvent.GetValue);
+      const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
+
+      const replyFiber = yield* actor.ask(AskEvent.GetValue).pipe(Effect.forkChild);
+      yield* yieldFibers;
+      yield* actor.send(AskEvent.Start);
+
+      expect(yield* Fiber.join(replyFiber)).toBe("ready");
+    }),
+  );
+
   it.scopedLive("multiple events can be postponed", () =>
     Effect.gen(function* () {
       const MState = State({

@@ -2,6 +2,7 @@ import { Effect, SubscriptionRef } from "effect";
 
 import type { Machine } from "./machine.js";
 import { AssertionError } from "./errors.js";
+import { makeEventAdvancement } from "./internal/event-advancement.js";
 import { executeTransition, shouldPostpone } from "./internal/transition.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -42,57 +43,33 @@ export const simulate = Effect.fn("effect-machine.simulate")(function* <
   R,
 >(input: MachineInput<S, E, R>, events: ReadonlyArray<E>) {
   const machine = input;
-
-  let currentState = machine.initial;
-  const states: S[] = [currentState];
-  const hasPostponeRules = machine.postponeRules.length > 0;
-  const postponed: E[] = [];
+  const states: S[] = [machine.initial];
+  const advancement = makeEventAdvancement({
+    initial: machine.initial,
+    isFinal: (state: S) => machine.finalStates.has(state._tag),
+    shouldPostpone: (state: S, event: E) => shouldPostpone(machine, state._tag, event._tag),
+    postpone: (_state: S, event: E) => Effect.succeed({ input: event, value: undefined }),
+    process: (state: S, event: E) =>
+      executeTransition(machine, state, event).pipe(
+        Effect.map((result) => {
+          if (result.transitioned) states.push(result.newState);
+          return {
+            state: result.newState,
+            stateChanged:
+              result.transitioned && (result.newState._tag !== state._tag || result.reenter),
+            shouldStop: result.transitioned && machine.finalStates.has(result.newState._tag),
+            value: undefined,
+          };
+        }),
+      ),
+  });
 
   for (const event of events) {
-    // Check postpone rules
-    if (hasPostponeRules && shouldPostpone(machine, currentState._tag, event._tag)) {
-      postponed.push(event);
-      continue;
-    }
-
-    const result = yield* executeTransition(machine, currentState, event);
-
-    if (!result.transitioned) {
-      continue;
-    }
-
-    const prevTag = currentState._tag;
-    currentState = result.newState;
-    states.push(currentState);
-
-    // Stop if final state
-    if (machine.finalStates.has(currentState._tag)) {
-      break;
-    }
-
-    // Drain postponed events after state tag change — loop until stable
-    let drainTag = prevTag;
-    while (currentState._tag !== drainTag && postponed.length > 0) {
-      drainTag = currentState._tag;
-      const drained = postponed.splice(0);
-      for (const postponedEvent of drained) {
-        if (shouldPostpone(machine, currentState._tag, postponedEvent._tag)) {
-          postponed.push(postponedEvent);
-          continue;
-        }
-        const drainResult = yield* executeTransition(machine, currentState, postponedEvent);
-        if (drainResult.transitioned) {
-          currentState = drainResult.newState;
-          states.push(currentState);
-          if (machine.finalStates.has(currentState._tag)) {
-            break;
-          }
-        }
-      }
-    }
+    if (advancement.stopped) break;
+    yield* advancement.advance(event);
   }
 
-  return { states, finalState: currentState };
+  return { states, finalState: advancement.state };
 });
 
 // AssertionError is exported from errors.ts
@@ -240,57 +217,33 @@ export const createTestHarness = Effect.fn("effect-machine.createTestHarness")(f
   const machine = input;
 
   const stateRef = yield* SubscriptionRef.make(machine.initial);
-  const hasPostponeRules = machine.postponeRules.length > 0;
-  const postponed: E[] = [];
-
+  const advancement = makeEventAdvancement({
+    initial: machine.initial,
+    isFinal: (state: S) => machine.finalStates.has(state._tag),
+    shouldPostpone: (state: S, event: E) => shouldPostpone(machine, state._tag, event._tag),
+    postpone: (state: S, event: E) => Effect.succeed({ input: event, value: state }),
+    process: (state: S, event: E) =>
+      executeTransition(machine, state, event).pipe(
+        Effect.tap((result) => {
+          if (!result.transitioned) return Effect.void;
+          return SubscriptionRef.set(stateRef, result.newState).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => options?.onTransition?.(state, event, result.newState)),
+            ),
+          );
+        }),
+        Effect.map((result) => ({
+          state: result.newState,
+          stateChanged:
+            result.transitioned && (result.newState._tag !== state._tag || result.reenter),
+          shouldStop: result.transitioned && machine.finalStates.has(result.newState._tag),
+          value: result.newState,
+        })),
+      ),
+  });
   const send = Effect.fn("effect-machine.testHarness.send")(function* (event: E) {
-    const currentState = yield* SubscriptionRef.get(stateRef);
-
-    // Check postpone rules
-    if (hasPostponeRules && shouldPostpone(machine, currentState._tag, event._tag)) {
-      postponed.push(event);
-      return currentState;
-    }
-
-    const result = yield* executeTransition(machine, currentState, event);
-
-    if (!result.transitioned) {
-      return currentState;
-    }
-
-    const prevTag = currentState._tag;
-    const newState = result.newState;
-    yield* SubscriptionRef.set(stateRef, newState);
-
-    // Call transition observer
-    if (options?.onTransition !== undefined) {
-      options.onTransition(currentState, event, newState);
-    }
-
-    // Drain postponed after state tag change — loop until stable
-    let drainTag = prevTag;
-    let currentTag = newState._tag;
-    while (currentTag !== drainTag && postponed.length > 0) {
-      drainTag = currentTag;
-      const drained = postponed.splice(0);
-      for (const postponedEvent of drained) {
-        const state = yield* SubscriptionRef.get(stateRef);
-        if (shouldPostpone(machine, state._tag, postponedEvent._tag)) {
-          postponed.push(postponedEvent);
-          continue;
-        }
-        const drainResult = yield* executeTransition(machine, state, postponedEvent);
-        if (drainResult.transitioned) {
-          yield* SubscriptionRef.set(stateRef, drainResult.newState);
-          currentTag = drainResult.newState._tag;
-          if (options?.onTransition !== undefined) {
-            options.onTransition(state, postponedEvent, drainResult.newState);
-          }
-        }
-      }
-    }
-
-    return newState;
+    const result = yield* advancement.advance(event);
+    return result.state;
   });
 
   return {

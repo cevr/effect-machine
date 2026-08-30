@@ -47,12 +47,8 @@ import type {
 } from "./internal/brands.js";
 import type { MachineStateSchema, MachineEventSchema, VariantsUnion } from "./schema.js";
 import type { DuplicateActorError } from "./errors.js";
-import {
-  invalidateIndex,
-  resolveTransition,
-  runTransitionHandler,
-  shouldPostpone,
-} from "./internal/transition.js";
+import { makeEventAdvancement } from "./internal/event-advancement.js";
+import { invalidateIndex, executeTransition, shouldPostpone } from "./internal/transition.js";
 import { emitWithTimestamp } from "./internal/inspection.js";
 import type { ActorRef, ActorSystemService } from "./actor.js";
 import { Inspector as InspectorTag } from "./inspection.js";
@@ -1026,53 +1022,29 @@ const replayImpl = Effect.fn("effect-machine.replay")(function* <
   R,
 >(input: AnyMachine<S, E, R>, events: ReadonlyArray<E>, options?: { from?: S }) {
   const machine = input;
-  let state: S = options?.from ?? machine.initial;
-
-  const hasPostponeRules = machine.postponeRules.length > 0;
-  const postponed: E[] = [];
+  const advancement = makeEventAdvancement({
+    initial: options?.from ?? machine.initial,
+    isFinal: (state: S) => machine.finalStates.has(state._tag),
+    shouldPostpone: (state: S, event: E) => shouldPostpone(machine, state._tag, event._tag),
+    postpone: (_state: S, event: E) => Effect.succeed({ input: event, value: undefined }),
+    process: (state: S, event: E) =>
+      executeTransition(machine, state, event).pipe(
+        Effect.map((result) => ({
+          state: result.newState,
+          stateChanged:
+            result.transitioned && (result.newState._tag !== state._tag || result.reenter),
+          shouldStop: result.transitioned && machine.finalStates.has(result.newState._tag),
+          value: undefined,
+        })),
+      ),
+  });
 
   for (const event of events) {
-    // Final state stops replay
-    if (machine.finalStates.has(state._tag)) break;
-
-    // Check postpone rules
-    if (hasPostponeRules && shouldPostpone(machine, state._tag, event._tag)) {
-      postponed.push(event);
-      continue;
-    }
-
-    const transition = resolveTransition(machine, state, event);
-    if (transition !== undefined) {
-      const result = yield* runTransitionHandler(transition, state, event);
-      const previousTag = state._tag;
-      state = result.newState;
-
-      // Drain postponed events on state change — loop until stable
-      const stateChanged = state._tag !== previousTag || transition.reenter === true;
-      if (stateChanged && postponed.length > 0) {
-        let drainTag = previousTag;
-        while (state._tag !== drainTag && postponed.length > 0) {
-          if (machine.finalStates.has(state._tag)) break;
-          drainTag = state._tag;
-          const drained = postponed.splice(0);
-          for (const postponedEvent of drained) {
-            if (machine.finalStates.has(state._tag)) break;
-            if (shouldPostpone(machine, state._tag, postponedEvent._tag)) {
-              postponed.push(postponedEvent);
-              continue;
-            }
-            const pTransition = resolveTransition(machine, state, postponedEvent);
-            if (pTransition !== undefined) {
-              const pResult = yield* runTransitionHandler(pTransition, state, postponedEvent);
-              state = pResult.newState;
-            }
-          }
-        }
-      }
-    }
+    if (advancement.stopped) break;
+    yield* advancement.advance(event);
   }
 
-  return state;
+  return advancement.state;
 });
 
 export const replay: {

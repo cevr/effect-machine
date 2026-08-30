@@ -83,6 +83,31 @@ describe("Testing", () => {
         expect(current._tag).toBe("Success");
       }),
     );
+
+    it.scopedLive("drains postponed events through multiple state changes", () =>
+      Effect.gen(function* () {
+        const CascadeState = State({ A: {}, B: {}, C: {}, Done: {} });
+        const CascadeEvent = Event({ GoB: {}, GoC: {}, Finish: {} });
+        const machine = Machine.make({
+          state: CascadeState,
+          event: CascadeEvent,
+          initial: CascadeState.A,
+        })
+          .on(CascadeState.A, CascadeEvent.GoB, () => CascadeState.B)
+          .on(CascadeState.B, CascadeEvent.GoC, () => CascadeState.C)
+          .on(CascadeState.C, CascadeEvent.Finish, () => CascadeState.Done)
+          .postpone(CascadeState.A, [CascadeEvent.GoC, CascadeEvent.Finish])
+          .postpone(CascadeState.B, CascadeEvent.Finish)
+          .final(CascadeState.Done);
+        const harness = yield* createTestHarness(machine);
+
+        yield* harness.send(CascadeEvent.Finish);
+        yield* harness.send(CascadeEvent.GoC);
+        const state = yield* harness.send(CascadeEvent.GoB);
+
+        expect(state._tag).toBe("Done");
+      }),
+    );
   });
 
   describe("assertReaches", () => {
