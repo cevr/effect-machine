@@ -205,13 +205,14 @@ interface MachineSchemaBase<D extends Record<string, Schema.Struct.Fields>, Bran
     source: S,
     partial?: Partial<Record<SharedKeys<D>, unknown>>,
   ) => S;
-
-  /**
-   * Reply schemas per variant tag. Only populated for event schemas
-   * with variants defined via `Event.reply()`.
-   */
-  readonly _replySchemas: ReadonlyMap<string, Schema.Decoder<unknown>>;
 }
+
+const replySchemaRegistry = new WeakMap<object, ReadonlyMap<string, Schema.Decoder<unknown>>>();
+
+/** @internal */
+export const getReplySchemas = (
+  schema: object,
+): ReadonlyMap<string, Schema.Decoder<unknown>> | undefined => replySchemaRegistry.get(schema);
 
 // ============================================================================
 // MachineStateSchema Type
@@ -398,16 +399,17 @@ const createMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(def
     return fn(source, partial);
   };
 
-  return Object.assign(Object.create(schema), {
+  const machineSchema = Object.assign(Object.create(schema), {
     variants,
     _definition,
-    _replySchemas: replySchemas,
     schema,
     $is,
     $match,
     with: withFn,
     ...constructors,
   });
+  replySchemaRegistry.set(machineSchema, replySchemas);
+  return machineSchema;
 };
 
 /**

@@ -45,6 +45,7 @@ import type {
   BrandedEvent,
   ExtractReply,
 } from "./internal/brands.js";
+import { getReplySchemas } from "./schema.js";
 import type { MachineStateSchema, MachineEventSchema, VariantsUnion } from "./schema.js";
 import type { DuplicateActorError } from "./errors.js";
 import { makeEventAdvancement } from "./internal/event-advancement.js";
@@ -76,14 +77,6 @@ export interface MachineRef<Event> {
    */
   readonly reply: <Reply>(value: Reply) => Effect.Effect<boolean>;
 }
-
-interface ReplySchemaCarrier {
-  readonly _replySchemas: ReadonlyMap<string, Schema.Decoder<unknown>>;
-}
-
-const hasReplySchemas = <A>(
-  schema: Schema.Schema<A>,
-): schema is Schema.Schema<A> & ReplySchemaCarrier => "_replySchemas" in schema;
 
 const isStateResolver = <State, Value>(
   value: Value | ((state: State) => Value),
@@ -321,11 +314,7 @@ export class Machine<
     this.#postponeRules = [];
     this.#transitionIndex = new Map();
     this.#spawnIndex = new Map();
-    let replySchemas: ReadonlyMap<string, Schema.Decoder<unknown>> = new Map();
-    if (eventSchema !== undefined && hasReplySchemas(eventSchema)) {
-      replySchemas = eventSchema._replySchemas;
-    }
-    this.#replySchemas = replySchemas;
+    this.#replySchemas = getReplySchemas(eventSchema ?? {}) ?? new Map();
     this.stateSchema = stateSchema;
     this.eventSchema = eventSchema;
   }

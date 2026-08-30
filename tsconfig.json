@@ -10,6 +10,7 @@
     "moduleResolution": "bundler",
     "moduleDetection": "force",
     "skipLibCheck": true,
+    "stripInternal": true,
     "types": ["bun"],
     "noEmit": true,
     "plugins": [
