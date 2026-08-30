@@ -165,11 +165,6 @@ type MatchCases<D extends Record<string, Schema.Struct.Fields>, R> = {
  */
 interface MachineSchemaBase<D extends Record<string, Schema.Struct.Fields>, Brand> {
   /**
-   * Raw definition record for introspection
-   */
-  readonly _definition: D;
-
-  /**
    * Per-variant schemas for fine-grained operations
    */
   readonly variants: VariantSchemas<D>;
@@ -240,10 +235,7 @@ export type MachineStateSchema<D extends Record<string, Schema.Struct.Fields>> =
   unknown
 > &
   MachineSchemaBase<D, FullStateBrand<D>> &
-  VariantConstructors<D, FullStateBrand<D>> & {
-    /** Schema for persistence, config, and registration. */
-    readonly schema: Schema.Schema<VariantsUnion<D> & FullStateBrand<D>>;
-  };
+  VariantConstructors<D, FullStateBrand<D>>;
 
 /**
  * Schema-first event definition (same structure as state, different brand)
@@ -273,7 +265,6 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
   schema: Schema.Schema<VariantsUnion<D>>;
   variants: VariantSchemas<D>;
   constructors: Record<string, (args: Record<string, unknown>) => Record<string, unknown>>;
-  _definition: D;
   replySchemas: Map<string, Schema.Decoder<unknown>>;
   $is: <Tag extends string>(tag: Tag) => (u: unknown) => boolean;
   $match: (valueOrCases: unknown, maybeCases?: unknown) => unknown;
@@ -379,7 +370,6 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
     schema: unionSchema as unknown as Schema.Schema<VariantsUnion<D>>,
     variants: variants as unknown as VariantSchemas<D>,
     constructors,
-    _definition: definition,
     replySchemas,
     $is,
     $match,
@@ -391,7 +381,7 @@ const buildMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(
  * Builds the schema object with variants, constructors, $is, and $match.
  */
 const createMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(definition: D) => {
-  const { schema, variants, constructors, _definition, replySchemas, $is, $match } =
+  const { schema, variants, constructors, replySchemas, $is, $match } =
     buildMachineSchema(definition);
   // Union-level with: dispatch to per-variant with based on _tag
   const withFn = (source: { _tag: string }, partial?: Record<string, unknown>) => {
@@ -408,8 +398,6 @@ const createMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(def
 
   const machineSchema = Object.assign(Object.create(schema), {
     variants,
-    _definition,
-    schema,
     $is,
     $match,
     with: withFn,
