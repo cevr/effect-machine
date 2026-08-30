@@ -466,27 +466,24 @@ describe("State/Event with Machine", () => {
     }),
   );
 
-  test("state constructors are compatible with Machine.on", () => {
-    const TestState = State({
-      A: { value: Schema.Finite },
-      B: { value: Schema.Finite },
-    });
-    type TestState = typeof TestState.Type;
+  it.scopedLive("state constructors are compatible with Machine.on", () =>
+    Effect.gen(function* () {
+      const TestState = State({
+        A: { value: Schema.Finite },
+        B: { value: Schema.Finite },
+      });
 
-    const TestEvent = Event({
-      Next: {},
-    });
-    type TestEvent = typeof TestEvent.Type;
+      const TestEvent = Event({ Next: {} });
+      const machine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.A({ value: 0 }),
+      }).on(TestState.A, TestEvent.Next, ({ state }) => TestState.B({ value: state.value + 1 }));
 
-    // This should compile - state constructors produce branded types
-    const machine = Machine.make({
-      state: TestState,
-      event: TestEvent,
-      initial: TestState.A({ value: 0 }),
-    }).on(TestState.A, TestEvent.Next, ({ state }) => TestState.B({ value: state.value + 1 }));
-
-    expect(machine.transitions.length).toBe(1);
-  });
+      const result = yield* simulate(machine, [TestEvent.Next]);
+      expect(result.finalState).toEqual(TestState.B({ value: 1 }));
+    }),
+  );
 
   it.scopedLive("fluent from() scopes transitions to a state", () =>
     Effect.gen(function* () {
@@ -516,9 +513,6 @@ describe("State/Event with Machine", () => {
             .on(EditorEvent.Submit, ({ state }) => EditorState.Submitted({ text: state.text })),
         )
         .final(EditorState.Submitted);
-
-      // 3 transitions: Idle->Focus, Typing->KeyPress, Typing->Submit
-      expect(machine.transitions.length).toBe(3);
 
       const result = yield* simulate(machine, [
         EditorEvent.Focus,

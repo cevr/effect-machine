@@ -206,18 +206,6 @@ describe("Cluster Integration with MachineSchema", () => {
     });
     expect(decoded._tag).toBe("Shipped");
   });
-
-  test("Machine.findTransitions provides O(1) lookup", () => {
-    // Using the indexed lookup
-    const transitions = Machine.findTransitions(orderMachine, "Pending", "Process");
-    expect(transitions.length).toBe(1);
-    expect(transitions[0]?.stateTag).toBe("Pending");
-    expect(transitions[0]?.eventTag).toBe("Process");
-
-    // No transition for this pair
-    const noMatch = Machine.findTransitions(orderMachine, "Shipped", "Process");
-    expect(noMatch.length).toBe(0);
-  });
 });
 
 // =============================================================================
@@ -278,25 +266,9 @@ describe("Entity.makeTestClient with machine handler", () => {
                 const currentState = yield* Ref.get(stateRef);
                 const event = envelope.payload.event as unknown as OrderEvent;
 
-                const transitions = Machine.findTransitions(
-                  orderMachine,
-                  currentState._tag,
-                  event._tag,
-                );
-
-                const transition = transitions[0];
-                if (transition === undefined) {
-                  return currentState;
-                }
-
-                const handlerResult = transition.handler({
-                  state: currentState,
-                  event,
+                const newState = yield* Machine.replay(orderMachine, [event], {
+                  from: currentState,
                 });
-                let newState: OrderState = handlerResult as OrderState;
-                if (Effect.isEffect(handlerResult)) {
-                  newState = (yield* handlerResult) as OrderState;
-                }
                 yield* Ref.set(stateRef, newState);
                 return newState;
               }),

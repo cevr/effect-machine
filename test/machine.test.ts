@@ -182,37 +182,45 @@ describe("multi-state .on()", () => {
     }),
   );
 
-  test("empty array is a no-op", () => {
-    const machine = Machine.make({
-      state: WState,
-      event: WEvent,
-      initial: WState.Draft,
-    }).on([] as (typeof WState.Draft)[], WEvent.Cancel, () => WState.Cancelled);
+  it.scopedLive("empty array is a no-op", () =>
+    Effect.gen(function* () {
+      const machine = Machine.make({
+        state: WState,
+        event: WEvent,
+        initial: WState.Draft,
+      }).on([] as (typeof WState.Draft)[], WEvent.Cancel, () => WState.Cancelled);
 
-    expect(machine.transitions.length).toBe(0);
-  });
+      const result = yield* simulate(machine, [WEvent.Cancel]);
+      expect(result.finalState._tag).toBe("Draft");
+    }),
+  );
 });
 
 describe("multi-state .reenter()", () => {
-  test("reenter with array registers for each state", () => {
-    const RState = State({
-      A: { value: Schema.Finite },
-      B: { value: Schema.Finite },
-    });
-    const REvent = Event({ Reset: {} });
+  it.scopedLive("reenter with array registers for each state", () =>
+    Effect.gen(function* () {
+      const RState = State({
+        A: { value: Schema.Finite },
+        B: { value: Schema.Finite },
+      });
+      const REvent = Event({ Reset: {} });
 
-    const machine = Machine.make({
-      state: RState,
-      event: REvent,
-      initial: RState.A({ value: 0 }),
-    }).reenter([RState.A, RState.B], REvent.Reset, ({ state }) =>
-      RState.A({ value: state.value + 1 }),
-    );
+      const machine = Machine.make({
+        state: RState,
+        event: REvent,
+        initial: RState.A({ value: 0 }),
+      }).reenter([RState.A, RState.B], REvent.Reset, ({ state }) =>
+        RState.A({ value: state.value + 1 }),
+      );
 
-    expect(machine.transitions.length).toBe(2);
-    expect(machine.transitions[0]!.reenter).toBe(true);
-    expect(machine.transitions[1]!.reenter).toBe(true);
-  });
+      const fromA = yield* Machine.replay(machine, [REvent.Reset]);
+      const fromB = yield* Machine.replay(machine, [REvent.Reset], {
+        from: RState.B({ value: 2 }),
+      });
+      expect(fromA).toEqual(RState.A({ value: 1 }));
+      expect(fromB).toEqual(RState.A({ value: 3 }));
+    }),
+  );
 });
 
 // ============================================================================

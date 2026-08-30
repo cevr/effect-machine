@@ -48,7 +48,7 @@ import type {
 import type { MachineStateSchema, MachineEventSchema, VariantsUnion } from "./schema.js";
 import type { DuplicateActorError } from "./errors.js";
 import { makeEventAdvancement } from "./internal/event-advancement.js";
-import { invalidateIndex, executeTransition, shouldPostpone } from "./internal/transition.js";
+import { executeTransition, shouldPostpone } from "./internal/transition.js";
 import { emitWithTimestamp } from "./internal/inspection.js";
 import type { ActorRef, ActorSystemService } from "./actor.js";
 import { Inspector as InspectorTag } from "./inspection.js";
@@ -304,25 +304,14 @@ export class Machine<
   readonly stateSchema?: Schema.Schema<State>;
   readonly eventSchema?: Schema.Schema<Event>;
   /** @internal */ readonly _replySchemas: ReadonlyMap<string, Schema.Decoder<unknown>>;
+  /** @internal */ readonly _transitionIndex: Map<
+    string,
+    Map<string, Array<Transition<State, Event, never>>>
+  >;
+  /** @internal */ readonly _spawnIndex: Map<string, Array<SpawnEffect<State, Event, R>>>;
 
-  // Public readonly views
-  get transitions(): ReadonlyArray<Transition<State, Event, never>> {
-    return this._transitions;
-  }
-  get spawnEffects(): ReadonlyArray<SpawnEffect<State, Event, R>> {
-    return this._spawnEffects;
-  }
-  get backgroundEffects(): ReadonlyArray<BackgroundEffect<State, Event, R>> {
-    return this._backgroundEffects;
-  }
   get finalStates(): ReadonlySet<string> {
     return this._finalStates;
-  }
-  get postponeRules(): ReadonlyArray<{ readonly stateTag: string; readonly eventTag: string }> {
-    return this._postponeRules;
-  }
-  get replySchemas(): ReadonlyMap<string, Schema.Decoder<unknown>> {
-    return this._replySchemas;
   }
 
   /** @internal */
@@ -337,6 +326,8 @@ export class Machine<
     this._backgroundEffects = [];
     this._finalStates = new Set();
     this._postponeRules = [];
+    this._transitionIndex = new Map();
+    this._spawnIndex = new Map();
     let replySchemas: ReadonlyMap<string, Schema.Decoder<unknown>> = new Map();
     if (eventSchema !== undefined && hasReplySchemas(eventSchema)) {
       replySchemas = eventSchema._replySchemas;
@@ -501,9 +492,7 @@ export class Machine<
       handler: handler as unknown as Transition<State, Event, never>["handler"],
       reenter: false,
     };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (this._transitions as any[]).push(transition);
-    invalidateIndex(this);
+    this.registerTransition(transition);
     return this;
   }
 
@@ -524,9 +513,7 @@ export class Machine<
       reenter,
     };
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (this._transitions as any[]).push(transition);
-    invalidateIndex(this);
+    this.registerTransition(transition);
 
     return this;
   }
@@ -567,13 +554,40 @@ export class Machine<
     for (const s of states) {
       const stateTag = getTag(s);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (this._spawnEffects as any[]).push({
+      const spawnEffect: SpawnEffect<State, Event, R> = {
         stateTag,
         handler: handler as unknown as SpawnEffect<State, Event, R>["handler"],
-      });
+      };
+      this._spawnEffects.push(spawnEffect);
+      const effects = this._spawnIndex.get(stateTag) ?? [];
+      effects.push(spawnEffect);
+      this._spawnIndex.set(stateTag, effects);
     }
-    invalidateIndex(this);
     return this;
+  }
+
+  /** @internal */
+  _findTransitions(
+    stateTag: string,
+    eventTag: string,
+  ): ReadonlyArray<Transition<State, Event, never>> {
+    const specific = this._transitionIndex.get(stateTag)?.get(eventTag) ?? [];
+    if (specific.length > 0) return specific;
+    return this._transitionIndex.get("*")?.get(eventTag) ?? [];
+  }
+
+  /** @internal */
+  _findSpawnEffects(stateTag: string): ReadonlyArray<SpawnEffect<State, Event, R>> {
+    return this._spawnIndex.get(stateTag) ?? [];
+  }
+
+  private registerTransition(transition: Transition<State, Event, never>): void {
+    this._transitions.push(transition);
+    const events = this._transitionIndex.get(transition.stateTag) ?? new Map();
+    const transitions = events.get(transition.eventTag) ?? [];
+    transitions.push(transition);
+    events.set(transition.eventTag, transitions);
+    this._transitionIndex.set(transition.stateTag, events);
   }
 
   // ---- task ----
@@ -1055,9 +1069,6 @@ export const replay: {
     options?: { from?: S },
   ): Effect.Effect<S, never, R>;
 } = replayImpl;
-
-// Transition lookup (introspection)
-export { findTransitions } from "./internal/transition.js";
 
 // Reply helpers
 export const reply = makeReply;

@@ -313,7 +313,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
     // Fork background effects under actorScope
     const backgroundFibers: Fiber.Fiber<void>[] = [];
 
-    for (const bg of machine.backgroundEffects) {
+    for (const bg of machine._backgroundEffects) {
       const fiber = yield* bg
         .handler({
           actorId,
