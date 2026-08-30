@@ -145,6 +145,44 @@ The builder adds every transition, task, spawn, and background service to the ma
 
 Guards stay pure. Transition handlers can return a state directly or an Effect that returns a state. Effectful transition handlers can require services, but their error channel must be `never`.
 
+Use one Effect context for all runtime requirements. Use `.task(...)` for work that sends a completion event. Use `.spawn(...)` for work owned by one state. Use `.background(...)` for work owned by the actor. Use an Effectful transition only when its result must select the next state before the mailbox can process another event.
+
+## Input, Output, and Composition
+
+A machine can map a typed input to its initial state. `Machine.spawn` then requires that input. This keeps actor construction data separate from Effect services.
+
+```ts
+const checkoutMachine = Machine.make({
+  state: CheckoutState,
+  event: CheckoutEvent,
+  initial: (input: { readonly cartId: string; readonly totalCents: number }) =>
+    CheckoutState.ReviewingCart(input),
+}).final(CheckoutState.Confirmed, ({ state }) => ({ receiptId: state.receiptId }));
+
+const actor =
+  yield *
+  Machine.spawn(checkoutMachine, {
+    input: { cartId: "cart_123", totalCents: 4200 },
+  });
+yield * actor.start;
+const output = yield * actor.awaitOutput; // { readonly receiptId: string }
+```
+
+The actor keeps its final state for inspection and UI exit animation. `awaitOutput` returns the separate domain output.
+
+Compose autonomous machine runs with Effect. This keeps sequencing, errors, requirements, cancellation, and tracing in one model.
+
+```ts
+const program = cartActor.awaitOutput.pipe(
+  Effect.map((cart) => ({ cartId: cart.id, totalCents: cart.totalCents })),
+  Effect.flatMap((input) => Machine.spawn(checkoutMachine, { input })),
+  Effect.tap((actor) => actor.start),
+  Effect.flatMap((actor) => actor.awaitOutput),
+);
+```
+
+Use an explicit parent machine when a UI must show both phases or keep prior data during an exit animation. The parent state then owns the retained value and routes events to its child actors.
+
 ## Running Actors
 
 `Machine.spawn` allocates an actor but does not start it. Call `actor.start` to fork the event loop, background effects, and spawn effects. Events sent before `start()` are queued.
@@ -173,7 +211,8 @@ Key actor operations:
 - `send(event)` queues and returns immediately
 - `call(event)` returns full transition info
 - `ask(event)` returns a typed domain reply (requires `Event.reply(...)`)
-- `waitFor(...)` / `awaitFinal` for coordination
+- `waitFor(...)` / `awaitFinal` for state coordination
+- `awaitOutput` for the typed domain value of a final state
 - `stop` interrupts now; `drain` processes the remaining queue first
 - `awaitExit` completes when the actor stops
 - `lifecycle` observes `Created`, `Starting`, `Active`, and the terminal `ActorExit`

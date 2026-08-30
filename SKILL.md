@@ -109,6 +109,28 @@ Transition Effects finish before state subscribers run. Their error channel must
 
 All handler requirements flow into the machine type. `Machine.spawn(machine)` and `system.spawn(id, machine)` keep those requirements until the caller provides them.
 
+Use the Effect context as the only runtime requirement channel. Use `.task()` for work that sends a completion event. Use `.spawn()` for state-owned work. Use `.background()` for actor-owned work. Use an Effectful transition only when its result must select the next state before the mailbox can continue.
+
+## Input, Output, and Composition
+
+```ts
+const machine = Machine.make({
+  state,
+  event,
+  initial: (input: { readonly id: string }) => State.Loading({ id: input.id }),
+}).final(State.Done, ({ state }) => state.value);
+
+const actor = yield * Machine.spawn(machine, { input: { id: "item-1" } });
+yield * actor.start;
+const output = yield * actor.awaitOutput;
+```
+
+- Input creates the initial state. It does not replace Effect context.
+- Output is separate from the retained final state.
+- Compose autonomous runs with `Effect.flatMap` or `Effect.andThen`.
+- Use a parent machine when interactive phases must remain visible together.
+- Do not add an action queue. Model external work with Effect handlers.
+
 ## Running Actors
 
 **Simple (no registry):**
@@ -145,6 +167,7 @@ Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))
 | `actor.waitFor(State.X)`         | Wait for state (constructor or fn)          |
 | `actor.sendAndWait(ev, State.X)` | Send + wait for state                       |
 | `actor.awaitFinal`               | Wait for final state                        |
+| `actor.awaitOutput`              | Wait for typed final output                 |
 | `actor.awaitExit`                | Completes when this actor stops             |
 | `actor.drain`                    | Process remaining queue, then stop          |
 | `actor.snapshot`                 | Get current state                           |

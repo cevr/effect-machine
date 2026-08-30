@@ -23,3 +23,11 @@ _Avoid_: Message, action
 **Postponed event**:
 An event that an actor keeps until its state permits processing.
 _Avoid_: Deferred event, delayed event
+
+**Input**:
+An immutable value that creates the initial state of one actor.
+_Avoid_: Initial context, actor context
+
+**Output**:
+A domain value that an actor produces when it reaches a final state.
+_Avoid_: Final context, result state
