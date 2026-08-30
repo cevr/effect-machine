@@ -9,7 +9,7 @@
     "gate": "bun run build && bun run test"
   },
   "dependencies": {
-    "@effect-machine/examples-shared": "workspace:*",
+    "@effect-machine/examples-shared": "file:../shared",
     "@effect/atom-solid": "4.0.0-rc.112",
     "effect": "4.0.0-rc.112",
     "solid-js": "1.9.15",
