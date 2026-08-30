@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect";
 import { describe, expect, it } from "effect-bun-test";
-import { Event, Machine, simulate, State } from "../src/index.js";
+import { Event, Machine, simulate, State, type ActorLifecycle } from "../src/index.js";
 
 const CounterState = State({
   Ready: { count: Schema.Finite },
@@ -50,6 +50,9 @@ describe("machine input and output", () => {
 
       const output: { readonly total: number } = yield* actor.awaitOutput;
       const exit = yield* actor.awaitExit;
+      yield* Effect.yieldNow;
+      const lifecycle: ActorLifecycle<typeof CounterState.Type, { readonly total: number }> =
+        actor.sync.lifecycle();
 
       expect(output).toEqual({ total: 7 });
       expect(exit).toEqual({
@@ -57,6 +60,7 @@ describe("machine input and output", () => {
         state: CounterState.Done({ count: 7 }),
         output: { total: 7 },
       });
+      expect(lifecycle).toEqual(exit);
       expect((yield* actor.snapshot)._tag).toBe("Done");
     }),
   );

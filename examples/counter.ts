@@ -9,6 +9,7 @@ export const CounterState = State({
   Done: { count: Schema.Finite, label: Schema.String },
 });
 export type CounterState = typeof CounterState.Type;
+export type CounterOutput = Extract<CounterState, { readonly _tag: "Done" }>;
 
 export const CounterEvent = Event({
   Increment: {},
@@ -31,9 +32,8 @@ const counterMachine = Machine.make({
   .on(CounterState.Active, CounterEvent.Finish, ({ state }) => CounterState.Done.with(state))
   .final(CounterState.Done);
 
-export const spawnCounter: Effect.Effect<ActorRef<CounterState, CounterEvent>> = Machine.spawn(
-  counterMachine,
-).pipe(Effect.tap((actor) => actor.start));
+export const spawnCounter: Effect.Effect<ActorRef<CounterState, CounterEvent, CounterOutput>> =
+  Machine.spawn(counterMachine).pipe(Effect.tap((actor) => actor.start));
 
 export const makeCounterActorAtom = () => Atom.make(Machine.scoped(spawnCounter));
 export type CounterActorAtom = ReturnType<typeof makeCounterActorAtom>;
@@ -45,7 +45,9 @@ export interface CounterAtoms {
   readonly status: ActorAtom.ActorAtom<CounterState["_tag"], CounterEvent>;
 }
 
-export const makeCounterAtoms = (actor: ActorRef<CounterState, CounterEvent>): CounterAtoms => {
+export const makeCounterAtoms = (
+  actor: ActorRef<CounterState, CounterEvent, CounterOutput>,
+): CounterAtoms => {
   const state = ActorAtom.make(actor);
   return {
     state,

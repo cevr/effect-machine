@@ -266,6 +266,12 @@ export interface FinalContext<State> {
   readonly state: State;
 }
 
+type TaggedValue<Union, Tagged> = Tagged extends (...args: never[]) => infer Value
+  ? Value
+  : Tagged extends { readonly _tag: infer Tag }
+    ? Extract<Union, { readonly _tag: Tag }>
+    : never;
+
 // ============================================================================
 // Machine class
 // ============================================================================
@@ -999,12 +1005,12 @@ export class Machine<
 
   // ---- final ----
 
-  final<NS extends VariantsUnion<_SD> & BrandedState>(
-    state: TaggedOrConstructor<NS>,
-  ): Machine<State, Event, R, _SD, _ED, Input, Output | NS>;
-  final<NS extends VariantsUnion<_SD> & BrandedState, O>(
-    state: TaggedOrConstructor<NS>,
-    output: (ctx: FinalContext<NS>) => O,
+  final<Tagged extends TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>(
+    state: Tagged,
+  ): Machine<State, Event, R, _SD, _ED, Input, Output | TaggedValue<State, Tagged>>;
+  final<Tagged extends TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>, O>(
+    state: Tagged,
+    output: (ctx: FinalContext<TaggedValue<State, Tagged>>) => O,
   ): Machine<State, Event, R, _SD, _ED, Input, Output | O>;
   final<NS extends VariantsUnion<_SD> & BrandedState, O>(
     state: TaggedOrConstructor<NS>,

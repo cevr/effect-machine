@@ -793,9 +793,10 @@ describe("ActorRef", () => {
         const LoopLive = Layer.effect(
           LoopTag,
           Effect.gen(function* () {
-            const actorRef = yield* Ref.make<ActorRef<typeof TS.Type, typeof TE.Type> | undefined>(
-              undefined,
-            );
+            const actorRef = yield* Ref.make<
+              | ActorRef<typeof TS.Type, typeof TE.Type, Extract<typeof TS.Type, { _tag: "Done" }>>
+              | undefined
+            >(undefined);
 
             // Machine.spawn no longer requires Scope.Scope — scope detection
             // auto-attaches cleanup when a scope exists in context (Layer.scoped provides one)
@@ -886,7 +887,11 @@ describe("ActorRef", () => {
           )
           .final(TS.Done);
 
-        type Actor = ActorRef<typeof TS.Type, typeof TE.Type>;
+        type Actor = ActorRef<
+          typeof TS.Type,
+          typeof TE.Type,
+          Extract<typeof TS.Type, { _tag: "Done" }>
+        >;
 
         interface LoopService {
           readonly run: (value: number) => Effect.Effect<void>;

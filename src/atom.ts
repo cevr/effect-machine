@@ -61,7 +61,7 @@ export const select: {
 /** Observe actor lifecycle without coupling it to domain state. */
 export const lifecycle = <State extends { readonly _tag: string }, Event, Output>(
   actor: ActorRef<State, Event, Output>,
-): Atom.Atom<ActorLifecycle<State>> => Atom.subscriptionRef(actor.lifecycle);
+): Atom.Atom<ActorLifecycle<State, Output>> => Atom.subscriptionRef(actor.lifecycle);
 
 /** Observe the latest accepted edge. The value remains after actor exit. */
 export const latestTransition = <State extends { readonly _tag: string }, Event, Output>(

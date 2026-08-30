@@ -41,6 +41,7 @@ import {
   type RuntimeLifecycleHooks,
   type RuntimeQueuedEvent,
   type RuntimeHandle,
+  type RuntimeExit,
 } from "./internal/runtime.js";
 
 export type { ProcessEventResult } from "./internal/transition.js";
@@ -59,13 +60,13 @@ type QueuedEvent<S, E> = RuntimeQueuedEvent<S, E>;
 /**
  * Sync projection of ActorRef for non-Effect boundaries (React hooks, framework callbacks).
  */
-export interface ActorRefSync<State extends { readonly _tag: string }, Event> {
+export interface ActorRefSync<State extends { readonly _tag: string }, Event, Output = State> {
   readonly send: (event: Event) => void;
   readonly stop: () => void;
   readonly snapshot: () => State;
   readonly matches: (tag: State["_tag"]) => boolean;
   readonly can: (event: Event) => boolean;
-  readonly lifecycle: () => ActorLifecycle<State>;
+  readonly lifecycle: () => ActorLifecycle<State, Output>;
   readonly latestTransition: () => TransitionInfo<State, Event> | undefined;
 }
 
@@ -80,11 +81,11 @@ export interface TransitionInfo<State, Event> {
 }
 
 /** Observable actor lifecycle. Domain state remains available through `actor.state`. */
-export type ActorLifecycle<State> =
+export type ActorLifecycle<State, Output = State> =
   | { readonly _tag: "Created" }
   | { readonly _tag: "Starting"; readonly generation: number }
   | { readonly _tag: "Active"; readonly generation: number }
-  | ActorExit<State, unknown>;
+  | ActorExit<State, Output>;
 
 export interface ActorRef<State extends { readonly _tag: string }, Event, Output = State> {
   readonly id: string;
@@ -111,7 +112,7 @@ export interface ActorRef<State extends { readonly _tag: string }, Event, Output
   readonly state: SubscriptionRef.SubscriptionRef<State>;
 
   /** Observable actor lifecycle. */
-  readonly lifecycle: SubscriptionRef.SubscriptionRef<ActorLifecycle<State>>;
+  readonly lifecycle: SubscriptionRef.SubscriptionRef<ActorLifecycle<State, Output>>;
 
   /** The latest accepted edge. This value remains available after actor exit. */
   readonly latestTransition: SubscriptionRef.SubscriptionRef<
@@ -187,7 +188,7 @@ export interface ActorRef<State extends { readonly _tag: string }, Event, Output
   readonly drain: Effect.Effect<void>;
 
   /** Sync helpers for non-Effect boundaries. */
-  readonly sync: ActorRefSync<State, Event>;
+  readonly sync: ActorRefSync<State, Event, Output>;
 
   /** The actor system this actor belongs to. */
   readonly system: ActorSystemService;
@@ -337,6 +338,17 @@ const notifyListeners = <S>(listeners: Listeners<S>, state: S): void => {
   }
 };
 
+const toActorExit = <S, O>(
+  machine: { readonly _output: (state: S) => O },
+  exit: RuntimeExit<S>,
+): ActorExit<S, O> => {
+  if (exit._tag === "Final") return ActorExit.Final(exit.state, machine._output(exit.state));
+  if (exit._tag === "Defect") {
+    return { _tag: "Defect", cause: exit.cause, phase: exit.phase };
+  }
+  return { _tag: "Stopped" };
+};
+
 /** Resources that belong to one Actor cell and survive runtime generations. */
 interface ActorCell<
   S extends { readonly _tag: string },
@@ -356,7 +368,7 @@ interface ActorCell<
   readonly listeners: Listeners<S>;
   readonly children: Map<string, ActorRef<AnyState, unknown>>;
   readonly transitions: PubSub.PubSub<TransitionInfo<S, E>>;
-  readonly lifecycleRef: SubscriptionRef.SubscriptionRef<ActorLifecycle<S>>;
+  readonly lifecycleRef: SubscriptionRef.SubscriptionRef<ActorLifecycle<S, O>>;
   readonly latestTransitionRef: SubscriptionRef.SubscriptionRef<TransitionInfo<S, E> | undefined>;
   readonly system: ActorSystemService;
   readonly generation: { current: number };
@@ -601,14 +613,10 @@ const runSupervisionLoop = <
       const generationExit = yield* Deferred.await(currentRuntime.exitDeferred);
 
       if (generationExit._tag !== "Defect") {
-        if (generationExit._tag === "Final") {
-          yield* Deferred.succeed(
-            cell.terminalExitDeferred,
-            ActorExit.Final(generationExit.state, cell.machine._output(generationExit.state)),
-          );
-        } else {
-          yield* Deferred.succeed(cell.terminalExitDeferred, generationExit);
-        }
+        yield* Deferred.succeed(
+          cell.terminalExitDeferred,
+          toActorExit(cell.machine, generationExit),
+        );
         return;
       }
 
@@ -736,7 +744,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
 
   // Cell-owned resources: stable across generations (supervision)
   const stateRef = yield* SubscriptionRef.make<S>(initial);
-  const lifecycleRef = yield* SubscriptionRef.make<ActorLifecycle<S>>({ _tag: "Created" });
+  const lifecycleRef = yield* SubscriptionRef.make<ActorLifecycle<S, O>>({ _tag: "Created" });
   const latestTransitionRef = yield* SubscriptionRef.make<TransitionInfo<S, E> | undefined>(
     undefined,
   );
@@ -984,15 +992,9 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       if (currentRuntime !== undefined) {
         yield* Effect.forkDetach(
           Deferred.await(currentRuntime.exitDeferred).pipe(
-            Effect.tap((exit) => {
-              if (exit._tag === "Final") {
-                return Deferred.succeed(
-                  terminalExitDeferred,
-                  ActorExit.Final(exit.state, machine._output(exit.state)),
-                );
-              }
-              return Deferred.succeed(terminalExitDeferred, exit);
-            }),
+            Effect.tap((exit) =>
+              Deferred.succeed(terminalExitDeferred, toActorExit(machine, exit)),
+            ),
           ),
         );
       }
