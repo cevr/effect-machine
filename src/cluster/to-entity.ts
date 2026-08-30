@@ -70,8 +70,8 @@ export type EntityRpcs<StateSchema extends Schema.Top, EventSchema extends Schem
  *   state: OrderState,
  *   event: OrderEvent,
  *   initial: OrderState.Pending({ orderId: "" }),
- * }).pipe(
- *   Machine.on(OrderState.Pending, OrderEvent.Ship, ...),
+ * }).on(OrderState.Pending, OrderEvent.Ship, ({ event }) =>
+ *   OrderState.Shipped({ trackingId: event.trackingId }),
  * )
  *
  * const OrderEntity = toEntity(orderMachine, { type: "Order" })

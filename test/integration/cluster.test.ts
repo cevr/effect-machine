@@ -6,7 +6,7 @@
  * Cluster Integration Tests
  *
  * Tests the integration between effect-machine and @effect/cluster using:
- * - MachineSchema for schema-first definitions (single source of truth)
+ * - State and Event for schema-first definitions
  * - toEntity for generating Entity definitions
  * - EntityMachine.layer for wiring machine to cluster
  */
@@ -28,7 +28,7 @@ import {
 import { toEntity, EntityMachine, makeEntityActorRef } from "../../src/cluster/index.js";
 
 // =============================================================================
-// Schema-first definitions using MachineSchema
+// Schema-first State and Event definitions
 // =============================================================================
 
 // State and Event defined once - schema IS the source of truth
@@ -97,8 +97,8 @@ const TestShardingConfig = ShardingConfig.layer({
 // Tests
 // =============================================================================
 
-describe("Cluster Integration with MachineSchema", () => {
-  it.scopedLive("MachineSchema types work with simulate() (baseline)", () =>
+describe("Cluster Integration with schema-first machines", () => {
+  it.scopedLive("State and Event types work with simulate()", () =>
     // simulate() works great for testing pure state machine logic
     Effect.gen(function* () {
       const machineWithInitial = Machine.make({
@@ -171,7 +171,7 @@ describe("Cluster Integration with MachineSchema", () => {
     expect(OrderEntity.protocol).toBeDefined();
   });
 
-  test("MachineSchema $match works for pattern matching", () => {
+  test("State.$match works for pattern matching", () => {
     const state = OrderState.Pending({ orderId: "test-123" });
 
     const message = OrderState.$match(state, {
@@ -184,7 +184,7 @@ describe("Cluster Integration with MachineSchema", () => {
     expect(message).toBe("Order test-123 is pending");
   });
 
-  test("MachineSchema $is works for type guards", () => {
+  test("State.$is works for type guards", () => {
     const pending = OrderState.Pending({ orderId: "123" });
     const shipped = OrderState.Shipped({ orderId: "123", trackingId: "abc" });
 
@@ -193,7 +193,7 @@ describe("Cluster Integration with MachineSchema", () => {
     expect(OrderState.$is("Shipped")(shipped)).toBe(true);
   });
 
-  test("MachineSchema works as Schema for encode/decode", () => {
+  test("State works as Schema for encode/decode", () => {
     const pending = OrderState.Pending({ orderId: "test" });
 
     // Encode
@@ -242,19 +242,19 @@ describe("Entity.makeTestClient with machine handler", () => {
     )
     .final(CounterState.Done);
 
-  // Entity using MachineSchema directly as schemas
+  // Entity using State and Event directly as schemas
   const _CounterEntity = Entity.make("Counter", [
     Rpc.make("Send", { payload: { event: CounterEvent }, success: CounterState }),
     Rpc.make("GetState", { success: CounterState }),
   ]);
 
-  // Entity using MachineSchema for Order as well
+  // Entity using Order State and Event schemas
   const OrderEntityManual = Entity.make("OrderManual", [
     Rpc.make("Send", { payload: { event: OrderEvent }, success: OrderState }),
     Rpc.make("GetState", { success: OrderState }),
   ]);
 
-  it.scopedLive("Entity.makeTestClient works with MachineSchema", () =>
+  it.scopedLive("Entity.makeTestClient works with State and Event", () =>
     Effect.gen(function* () {
       const OrderEntityWithMachine = OrderEntityManual.toLayer(
         Effect.gen(function* () {

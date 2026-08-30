@@ -7,30 +7,31 @@
  *
  * @example
  * ```ts
- * import { Machine, MachineSchema } from "effect-machine"
+ * import { Schema } from "effect"
+ * import { Machine, State, Event } from "effect-machine"
  * import { toEntity, EntityMachine } from "effect-machine/cluster"
  *
  * // Schema-first definitions
- * const OrderState = MachineSchema.State({
+ * const OrderState = State({
  *   Pending: { orderId: Schema.String },
  *   Shipped: { trackingId: Schema.String },
  * })
  *
- * const OrderEvent = MachineSchema.Event({
+ * const OrderEvent = Event({
  *   Ship: { trackingId: Schema.String },
  * })
  *
  * // Define machine
- * const orderMachine = Machine.make(OrderState.Pending({ orderId: "" })).pipe(
- *   Machine.on(OrderState.Pending, OrderEvent.Ship, ...)
+ * const orderMachine = Machine.make({
+ *   state: OrderState,
+ *   event: OrderEvent,
+ *   initial: OrderState.Pending({ orderId: "" }),
+ * }).on(OrderState.Pending, OrderEvent.Ship, ({ event }) =>
+ *   OrderState.Shipped({ trackingId: event.trackingId }),
  * )
  *
  * // Generate Entity
- * const OrderEntity = toEntity(orderMachine, {
- *   type: "Order",
- *   stateSchema: OrderState,
- *   eventSchema: OrderEvent,
- * })
+ * const OrderEntity = toEntity(orderMachine, { type: "Order" })
  *
  * // Create layer
  * const OrderEntityLayer = EntityMachine.layer(OrderEntity, orderMachine)

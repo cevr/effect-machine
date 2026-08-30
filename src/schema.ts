@@ -1,7 +1,7 @@
 /**
  * Schema-first State/Event definitions for effect-machine.
  *
- * MachineSchema provides a single source of truth that combines:
+ * `State` and `Event` provide one source of truth that combines:
  * - Schema for validation/serialization
  * - Variant constructors (like Data.taggedEnum)
  * - $is and $match helpers for pattern matching
@@ -16,6 +16,9 @@
  *   Pending: { orderId: Schema.String },
  *   Shipped: { trackingId: Schema.String },
  * })
+ * const OrderEvent = Event({
+ *   Ship: { trackingId: Schema.String },
+ * })
  *
  * // Infer type from schema
  * type OrderState = typeof OrderState.Type
@@ -29,8 +32,12 @@
  *   Shipped: (s) => `Shipped: ${s.trackingId}`,
  * })
  *
- * // Use as Schema for persistence/cluster
- * machine.pipe(Machine.persist({ stateSchema: OrderState, ... }))
+ * // Use the schemas to define a machine
+ * const machine = Machine.make({
+ *   state: OrderState,
+ *   event: OrderEvent,
+ *   initial: pending,
+ * })
  * ```
  *
  * @module
@@ -421,7 +428,7 @@ const createMachineSchema = <D extends Record<string, Schema.Struct.Fields>>(def
  *
  * @example
  * ```ts
- * const OrderState = MachineSchema.State({
+ * const OrderState = State({
  *   Pending: { orderId: Schema.String },
  *   Shipped: { trackingId: Schema.String },
  * })

@@ -101,8 +101,8 @@ export const INTERNAL_ENTER_EVENT = "$enter" as const;
  * Extract _tag from a tagged value or constructor.
  *
  * Supports:
- * - Plain values with `_tag` (MachineSchema empty structs)
- * - Constructors with static `_tag` (MachineSchema non-empty structs)
+ * - Plain values with `_tag` (`State` and `Event` empty structs)
+ * - Constructors with static `_tag` (`State` and `Event` non-empty structs)
  * - Data.taggedEnum constructors (fallback via instantiation)
  */
 export const getTag = (
