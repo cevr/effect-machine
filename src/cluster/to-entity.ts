@@ -83,8 +83,10 @@ export const toEntity = <
   R,
   SD extends Record<string, Schema.Struct.Fields>,
   ED extends Record<string, Schema.Struct.Fields>,
+  Input,
+  Output,
 >(
-  machine: Machine<S, E, R, SD, ED>,
+  machine: Machine<S, E, R, SD, ED, Input, Output>,
   options: ToEntityOptions,
 ): Entity.Entity<
   string,

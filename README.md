@@ -328,6 +328,16 @@ const CheckoutEntityLayer = EntityMachine.layer(CheckoutEntity, checkoutMachine,
 });
 ```
 
+An input machine requires the `input` adapter. The adapter maps each entity ID to machine input:
+
+```ts
+EntityMachine.layer(CheckoutEntity, inputCheckoutMachine, {
+  input: (entityId) => ({ cartId: entityId, totalCents: 0 }),
+});
+```
+
+`initializeState` remains available when an entity needs to override the complete initial state.
+
 Persistence strategies:
 
 - **Snapshot** — saves state periodically, restores on reactivation

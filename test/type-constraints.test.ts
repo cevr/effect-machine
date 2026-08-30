@@ -21,6 +21,7 @@ import {
   Event,
   simulate,
 } from "../src/index.js";
+import { EntityMachine, toEntity } from "../src/cluster/index.js";
 
 const MyState = State({
   Idle: {},
@@ -158,6 +159,8 @@ const inputMachine = Machine.make({
   event: MyEvent,
   initial: (input: { readonly url: string }) => MyState.Loading(input),
 });
+const inputEntity = toEntity(inputMachine, { type: "InputTypeConstraint" });
+const _inputMachineHasNoStaticInitial: undefined = inputMachine.initial;
 
 const _test3e = () => {
   // @ts-expect-error - input machine requires input
@@ -169,6 +172,11 @@ const _test3e = () => {
   // @ts-expect-error - replay requires input or a starting snapshot
   const missingReplayInput = Machine.replay(inputMachine, []);
   const replay = Machine.replay(inputMachine, [], { input: { url: "/ready" } });
+  // @ts-expect-error - entity input machine requires an entity ID input adapter
+  const missingEntityInput = EntityMachine.layer(inputEntity, inputMachine);
+  const entityLayer = EntityMachine.layer(inputEntity, inputMachine, {
+    input: (entityId) => ({ url: entityId }),
+  });
 
   const systemSpawn = Effect.gen(function* () {
     const system = yield* ActorSystemService;
@@ -183,6 +191,8 @@ const _test3e = () => {
     simulation,
     missingReplayInput,
     replay,
+    missingEntityInput,
+    entityLayer,
     systemSpawn,
   };
 };

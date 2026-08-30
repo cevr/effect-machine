@@ -318,6 +318,8 @@ const OrderEntityLayer = EntityMachine.layer(OrderEntity, orderMachine, {
 });
 ```
 
+Input machines require `input: (entityId) => Input`. Use `initializeState` only to override the complete initial state.
+
 | Export                                        | Purpose                                                             |
 | --------------------------------------------- | ------------------------------------------------------------------- |
 | `toEntity(machine, { type })`                 | Generate `Entity` definition with Send/Ask/GetState/WatchState RPCs |
@@ -331,19 +333,20 @@ const OrderEntityLayer = EntityMachine.layer(OrderEntity, orderMachine, {
 - **snapshot**: background scheduler + deactivation finalizer. No journal.
 - **journal**: inline event append on each RPC, replay on reactivation. Deactivation snapshot as fallback.
 
-**EntityMachineOptions:** `initializeState`, `maxIdleTime`, `mailboxCapacity`, `disableFatalDefects`, `defectRetryPolicy`, `persistence`
+**EntityMachineOptions:** `input`, `initializeState`, `maxIdleTime`, `mailboxCapacity`, `disableFatalDefects`, `defectRetryPolicy`, `persistence`
 
 ## Files
 
-| File                            | Purpose                                |
-| ------------------------------- | -------------------------------------- |
-| `machine.ts`                    | Machine builder                        |
-| `schema.ts`                     | State/Event schemas and copy helpers   |
-| `actor.ts`                      | ActorSystem, event loop                |
-| `testing.ts`                    | simulate, harness                      |
-| `internal/runtime.ts`           | Shared runtime kernel (entity-machine) |
-| `cluster/entity-machine.ts`     | Entity-machine adapter + persistence   |
-| `cluster/persistence.ts`        | Adapter interface, types, service tag  |
-| `cluster/adapters/in-memory.ts` | In-memory persistence adapter          |
-| `cluster/entity-actor-ref.ts`   | Typed entity client wrapper            |
-| `cluster/to-entity.ts`          | Entity definition generator            |
+| File                                 | Purpose                                |
+| ------------------------------------ | -------------------------------------- |
+| `machine.ts`                         | Machine builder                        |
+| `schema.ts`                          | State/Event schemas and copy helpers   |
+| `actor.ts`                           | ActorSystem, event loop                |
+| `testing.ts`                         | simulate, harness                      |
+| `internal/runtime.ts`                | Shared runtime kernel (entity-machine) |
+| `internal/machine-initialization.ts` | Machine input resolution seam          |
+| `cluster/entity-machine.ts`          | Entity-machine adapter + persistence   |
+| `cluster/persistence.ts`             | Adapter interface, types, service tag  |
+| `cluster/adapters/in-memory.ts`      | In-memory persistence adapter          |
+| `cluster/entity-actor-ref.ts`        | Typed entity client wrapper            |
+| `cluster/to-entity.ts`               | Entity definition generator            |

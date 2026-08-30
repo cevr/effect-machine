@@ -46,7 +46,7 @@ import {
 /**
  * Options for EntityMachine.layer
  */
-export interface EntityMachineOptions<S> {
+export interface EntityMachineBaseOptions<S> {
   /**
    * Initialize state from entity ID.
    * Called once when entity is first activated.
@@ -84,6 +84,14 @@ export interface EntityMachineOptions<S> {
   readonly persistence?: EntityPersistenceConfig;
 }
 
+export type EntityMachineOptions<S, Input = void> = EntityMachineBaseOptions<S> &
+  ([Input] extends [void]
+    ? { readonly input?: never }
+    : {
+        /** Map the entity ID to the machine input. */
+        readonly input: (entityId: string) => Input;
+      });
+
 /**
  * Create an Entity layer that wires a machine to handle RPC calls.
  *
@@ -105,14 +113,19 @@ export const EntityMachine = {
     S extends { readonly _tag: string },
     E extends { readonly _tag: string },
     R,
+    Input,
+    Output,
     EntityType extends string,
     Rpcs extends Rpc.Any,
   >(
     entity: Entity.Entity<EntityType, Rpcs>,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Machine type params need wide acceptance
-    machine: Machine<S, E, R, any, any>,
-    options?: EntityMachineOptions<S>,
+    machine: Machine<S, E, R, any, any, Input, Output>,
+    ...optionsArgument: [Input] extends [void]
+      ? [options?: EntityMachineOptions<S, Input>]
+      : [options: EntityMachineOptions<S, Input>]
   ): Layer.Layer<never, never, R> => {
+    const options = optionsArgument[0];
     const persistence = options?.persistence;
 
     // Build function receives (queue, replier) from Entity.toLayerQueue
@@ -128,6 +141,8 @@ export const EntityMachine = {
       const inspector = Option.getOrUndefined(yield* Effect.serviceOption(InspectorTag)) as
         | InspectorService<S, E>
         | undefined;
+
+      const machineInitial = machine._initial(options?.input?.(entityId));
 
       // Resolve actor system from context, or create implicit one
       const existingSystem = yield* Effect.serviceOption(ActorSystemTag);
@@ -146,25 +161,21 @@ export const EntityMachine = {
         entity as { readonly type: string },
         entityId,
         machine,
+        machineInitial,
         options?.initializeState,
       );
 
-      // Compute final initial state: hydrated > initializeState > machine.initial
+      // Compute final initial state: hydrated > initializeState > machine input.
       let initialState: S | undefined = persistCtx.hydratedState;
       if (initialState === undefined && options?.initializeState !== undefined) {
         initialState = options.initializeState(entityId);
-      }
-
-      let machineWithState = machine;
-      if (initialState !== undefined) {
-        machineWithState = machine._withInitial(initialState);
       }
 
       // Version tracking
       const versionRef = yield* Ref.make(persistCtx.initialVersion);
 
       // Cell-owned resources — stable identity for this entity activation
-      const computedInitial = initialState ?? machine.initial;
+      const computedInitial = initialState ?? machineInitial;
       const stateRef = yield* SubscriptionRef.make(computedInitial);
       const stoppedRef = yield* Ref.make(false);
       const eventQueue = yield* Queue.unbounded<RuntimeQueuedEvent<S, E>>();
@@ -174,7 +185,7 @@ export const EntityMachine = {
       }
 
       // Create runtime kernel — single queue, sequential processing
-      const runtime = yield* createRuntime(machineWithState, system, {
+      const runtime = yield* createRuntime(machine, system, {
         actorId: entityId,
         hooks,
         childIdPrefix: `${entityId}/`,
@@ -375,7 +386,8 @@ const hydratePersistence = <
   entityDef: { readonly type: string },
   entityId: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Machine type params need wide acceptance
-  machine: Machine<S, E, any, any, any>,
+  machine: Machine<S, E, any, any, any, any, any>,
+  machineInitial: S,
   initializeState?: (entityId: string) => S,
 ) =>
   Effect.gen(function* () {
@@ -401,7 +413,7 @@ const hydratePersistence = <
       } else if (initializeState !== undefined) {
         baseState = initializeState(entityId);
       } else {
-        baseState = machine.initial;
+        baseState = machineInitial;
       }
       let snapshotVersion = 0;
       if (Option.isSome(maybeSnapshot)) {

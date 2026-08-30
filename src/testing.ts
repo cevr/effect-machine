@@ -53,8 +53,7 @@ const simulateImpl = Effect.fn("effect-machine.simulate")(function* <
   options?: SimulationOptions<Input>,
 ) {
   const machine = input;
-  // eslint-disable-next-line effect/noAs -- conditional input options are erased in the implementation
-  const machineInitial = machine._initial(options?.input as Input);
+  const machineInitial = machine._initial(options?.input);
   // eslint-disable-next-line effect/noAs -- internal eventless-transition sentinel
   const initial = yield* executeTransition(machine, machineInitial, {
     _tag: INTERNAL_INIT_EVENT,
@@ -263,8 +262,7 @@ const createTestHarnessImpl = Effect.fn("effect-machine.createTestHarness")(func
   Input,
 >(input: MachineInput<S, E, R, Input>, options?: InputTestHarnessOptions<S, E, Input>) {
   const machine = input;
-  // eslint-disable-next-line effect/noAs -- conditional input options are erased in the implementation
-  const machineInitial = machine._initial(options?.input as Input);
+  const machineInitial = machine._initial(options?.input);
   // eslint-disable-next-line effect/noAs -- internal eventless-transition sentinel
   const initial = yield* executeTransition(machine, machineInitial, {
     _tag: INTERNAL_INIT_EVENT,

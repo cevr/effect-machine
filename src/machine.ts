@@ -51,6 +51,10 @@ import type { DuplicateActorError } from "./errors.js";
 import { makeEventAdvancement } from "./internal/event-advancement.js";
 import { executeTransition, shouldPostpone } from "./internal/transition.js";
 import { emitWithTimestamp } from "./internal/inspection.js";
+import {
+  MachineInitialization,
+  type MachineInitialization as MachineInitializationType,
+} from "./internal/machine-initialization.js";
 import type { BackgroundEffect, SpawnEffect, Transition } from "./internal/machine-definition.js";
 import type { ActorRef, ActorSystemService } from "./actor.js";
 import { Inspector as InspectorTag } from "./inspection.js";
@@ -295,8 +299,8 @@ export class Machine<
   Input = void,
   Output = State,
 > {
-  readonly initial: Input extends void ? State : never;
-  readonly #initialize: (input: Input) => State;
+  readonly initial: Input extends void ? State : undefined;
+  readonly #initialization: MachineInitializationType<Input, State>;
   readonly #backgroundEffects: Array<BackgroundEffect<State, Event, R>>;
   readonly #finalStates: Set<string>;
   readonly #finalOutputs: Map<string, (state: State) => unknown>;
@@ -317,13 +321,10 @@ export class Machine<
     stateSchema: MachineStateSchema<_SD> & { readonly Type: State },
     eventSchema: MachineEventSchema<_ED> & { readonly Type: Event },
   ) {
-    if (typeof initial === "function") {
-      this.#initialize = initial as (input: Input) => State;
-      this.initial = undefined as Input extends void ? State : never;
-    } else {
-      this.#initialize = () => initial;
-      this.initial = initial as Input extends void ? State : never;
-    }
+    this.#initialization = MachineInitialization.make(initial);
+    this.initial = MachineInitialization.staticValue(this.#initialization) as Input extends void
+      ? State
+      : undefined;
     this.#backgroundEffects = [];
     this.#finalStates = new Set();
     this.#finalOutputs = new Map();
@@ -716,8 +717,8 @@ export class Machine<
   }
 
   /** @internal */
-  _initial(input: Input): State {
-    return this.#initialize(input);
+  _initial(input?: unknown): State {
+    return MachineInitialization.resolve(this.#initialization, input);
   }
 
   /** @internal */
@@ -742,35 +743,6 @@ export class Machine<
   /** @internal */
   _replySchema(eventTag: string): Schema.Decoder<unknown> | undefined {
     return this.#replySchemas.get(eventTag);
-  }
-
-  /** @internal */
-  _withInitial(initial: State): Machine<State, Event, R, _SD, _ED, Input, Output> {
-    const copy = new Machine<State, Event, R, _SD, _ED, Input, Output>(
-      initial,
-      this.stateSchema,
-      this.eventSchema,
-    );
-    copy.#backgroundEffects.push(...this.#backgroundEffects);
-    for (const stateTag of this.#finalStates) copy.#finalStates.add(stateTag);
-    for (const [stateTag, resolve] of this.#finalOutputs) {
-      copy.#finalOutputs.set(stateTag, resolve);
-    }
-    copy.#postponeRules.push(...this.#postponeRules);
-    for (const [stateTag, events] of this.#transitionIndex) {
-      const eventCopy = new Map<string, Array<Transition<State, Event, never>>>();
-      for (const [eventTag, transitions] of events) {
-        eventCopy.set(eventTag, transitions.slice());
-      }
-      copy.#transitionIndex.set(stateTag, eventCopy);
-    }
-    for (const [stateTag, transitions] of this.#immediateIndex) {
-      copy.#immediateIndex.set(stateTag, transitions.slice());
-    }
-    for (const [stateTag, effects] of this.#spawnIndex) {
-      copy.#spawnIndex.set(stateTag, effects.slice());
-    }
-    return copy;
   }
 
   private registerTransition(transition: Transition<State, Event, never>): void {
@@ -1197,7 +1169,7 @@ const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
     opts = idOrOptions;
   }
   const actorId = opts?.id ?? `actor-${(yield* Random.next).toString(36).slice(2)}`;
-  const machineInitial = machine._initial(opts?.input as Input);
+  const machineInitial = machine._initial(opts?.input);
   const initialState = opts?.hydrate ?? machineInitial;
   const actor = yield* createActor(actorId, machine, {
     initialState,
@@ -1305,7 +1277,7 @@ const replayImpl = Effect.fn("effect-machine.replay")(function* <
   options?: ReplayOptions<S, Input>,
 ) {
   const machine = input;
-  const from = options?.from ?? machine._initial(options?.input as Input);
+  const from = options?.from ?? machine._initial(options?.input);
   const initial = yield* executeTransition(machine, from, { _tag: INTERNAL_INIT_EVENT } as E);
   const advancement = makeEventAdvancement({
     initial: initial.newState,

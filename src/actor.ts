@@ -639,7 +639,7 @@ const runSupervisionLoop = <
       const nextGeneration = cell.generation.current + 1;
       cell.generation.current = nextGeneration;
 
-      // Resolve restart state via recovery or fall back to machine.initial.
+      // Resolve restart state via recovery or fall back to the original machine input.
       // Recovery runs here (not in runtime.start) for supervision restarts
       // because the cell resources need the resolved state before runtime creation.
       let restartState = cell.machineInitial;
@@ -665,11 +665,7 @@ const runSupervisionLoop = <
       yield* Ref.set(cell.stoppedRef, false);
       cell.children.clear();
 
-      let machineForRestart = cell.machine;
-      if (restartState !== cell.machineInitial) {
-        machineForRestart = cell.machine._withInitial(restartState);
-      }
-      const newRuntime = yield* options.spawnGeneration(machineForRestart);
+      const newRuntime = yield* options.spawnGeneration(cell.machine);
       cell.runtimeRef.current = newRuntime;
       yield* newRuntime.start;
       const restartExit = yield* Deferred.poll(newRuntime.exitDeferred);
@@ -714,7 +710,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   const lifecycle: Lifecycle<S, E> | undefined = options.lifecycle;
   const serviceContext = yield* Effect.context<R>();
 
-  // Spawn is cold — initial state from hydrate or machine.initial.
+  // Spawn is cold. The caller has already resolved machine input and hydration.
   // Recovery runs during start, not allocate.
   const initial = options.initialState;
   yield* Effect.annotateCurrentSpan("effect_machine.actor.id", id);
@@ -737,10 +733,6 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   if (inspectorValue !== undefined) {
     hooks = makeInspectionHooks(id, inspectorValue);
   }
-
-  // Use initial state override if provided
-  let machineWithState = machine;
-  machineWithState = machine._withInitial(initial);
 
   // Cell-owned resources: stable across generations (supervision)
   const stateRef = yield* SubscriptionRef.make<S>(initial);
@@ -915,7 +907,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     );
 
   // Spawn initial generation (with hydrated state if provided)
-  const runtime = yield* spawnGeneration(machineWithState);
+  const runtime = yield* spawnGeneration(machine);
   runtimeRef.current = runtime;
 
   const supervision = options.supervision;
@@ -959,10 +951,8 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       if (Option.isSome(resolved)) {
         // Update cell stateRef
         yield* SubscriptionRef.set(stateRef, resolved.value);
-        // Runtime was created with cold initial — recreate with recovered state.
-        // The runtime reads machine.initial for background/spawn effects.
-        const recoveredMachine = machine._withInitial(resolved.value);
-        const newRuntime = yield* spawnGeneration(recoveredMachine);
+        // Recreate the runtime against the recovered cell state.
+        const newRuntime = yield* spawnGeneration(machine);
         runtimeRef.current = newRuntime;
       }
     }
@@ -1156,7 +1146,7 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
         });
       };
     }
-    const machineInitial = machine._initial(spawnOptions?.input as Input);
+    const machineInitial = machine._initial(spawnOptions?.input);
     const initialState = spawnOptions?.hydrate ?? machineInitial;
     const actor = yield* createActor(id, machine, {
       initialState,
