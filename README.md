@@ -142,7 +142,7 @@ Key actor operations:
 - `ask(event)` returns a typed domain reply (requires `Event.reply(...)`)
 - `waitFor(...)` / `awaitFinal` for coordination
 - `stop` interrupts now; `drain` processes the remaining queue first
-- `watch(other)` completes when another actor stops
+- `awaitExit` completes when the actor stops
 
 For named actors or shared lookup, use an actor system. `system.spawn` auto-starts — no `actor.start` needed:
 

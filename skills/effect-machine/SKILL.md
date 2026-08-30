@@ -212,7 +212,8 @@ const actor = yield * Machine.spawn(machine, { id: "my-id", hydrate: savedState 
 yield * actor.start;
 ```
 
-Auto-cleans up if `Scope` is present. Otherwise call `actor.stop` manually.
+Call `actor.stop` when you manage the actor lifetime. Use `Machine.scoped(effect)` to bridge
+`Scope.Scope` to `ActorScope` and attach automatic cleanup. Ambient `Scope.Scope` does not attach cleanup.
 
 ### ActorRef API
 
@@ -220,7 +221,6 @@ Auto-cleans up if `Scope` is present. Otherwise call `actor.stop` manually.
 | ---------------------- | ------------------------------------------------------------------- |
 | `start`                | Fork event loop + effects (required after `Machine.spawn`)          |
 | `send(event)`          | Fire-and-forget                                                     |
-| `cast(event)`          | Alias for send                                                      |
 | `call(event)`          | Request-reply → `ProcessEventResult`                                |
 | `ask(event)`           | Typed reply (event must have `Event.reply()` schema)                |
 | `snapshot`             | Current state                                                       |
@@ -229,6 +229,7 @@ Auto-cleans up if `Scope` is present. Otherwise call `actor.stop` manually.
 | `waitFor(S.X)`         | Wait for state                                                      |
 | `sendAndWait(ev, S.X)` | Send + wait                                                         |
 | `awaitFinal`           | Wait for final state                                                |
+| `awaitExit`            | Wait for terminal exit                                              |
 | `sync.*`               | Sync variants for non-Effect boundaries                             |
 
 ### ActorSystem — registry + lifecycle (auto-starts)

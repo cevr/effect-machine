@@ -227,7 +227,7 @@ expect(result.newState._tag).toBe("Loading");
 5. **Never throw in Effect.gen**: Use `yield* Effect.fail()`
 6. **`.onAny()` is fallback**: Specific `.on()` always takes priority
 7. **Services at allocation time**: provide Effect services when `Machine.spawn` allocates the actor
-8. **call vs send**: `send`/`cast` = fire-and-forget, `call` = request-reply, `ask` = typed reply
+8. **call vs send**: `send` = fire-and-forget, `call` = request-reply, `ask` = typed reply
 9. **Sync helpers**: Use `actor.sync.*` (not top-level `sendSync`/`snapshotSync`)
 10. **ActorStoppedError**: Pending `call`/`ask` Deferreds settled on stop
 
