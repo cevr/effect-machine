@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.22.0
+
+### Minor Changes
+
+- [#41](https://github.com/cevr/effect-machine/pull/41) [`fd317fd`](https://github.com/cevr/effect-machine/commit/fd317fd5ff3cda092e04e34eb7d98caab557c677) Thanks [@cevr](https://github.com/cevr)! - Add a dynamic Inspector hub for lazy inspection consumers.
+
 ## 0.21.0
 
 ### Minor Changes
