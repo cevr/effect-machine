@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.24.2
+
+### Patch Changes
+
+- [#50](https://github.com/cevr/effect-machine/pull/50) [`1602aff`](https://github.com/cevr/effect-machine/commit/1602aff930c45a0baa033d2174c4468fa248640a) Thanks [@cevr](https://github.com/cevr)! - Keep actor-local inspection separate from ambient inspection when actors spawn nested actors or restart. Route task inspection through the same actor dispatcher for local, system, and cluster inspectors.
+
 ## 0.24.1
 
 ### Patch Changes
