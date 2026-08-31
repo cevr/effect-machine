@@ -34,6 +34,7 @@ import { Inspector as InspectorTag } from "./inspection.js";
 import { resolveTransition, resolveTransitionEffect } from "./internal/transition.js";
 import type { ProcessEventHooks, ProcessEventResult } from "./internal/transition.js";
 import {
+  ActorInspection,
   emitWithTimestamp,
   makeInspectionDispatcher,
   makeInspectionHooks,
@@ -832,7 +833,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   const localInspector = options.inspect ?? ambientInspector;
   const systemInspectors = systemInspectorsBySystem.get(system) ?? new Set<SystemInspector>();
   const inspectorValue = makeInspectionDispatcher(localInspector, systemInspectors);
-  const serviceContext = Context.add(capturedContext, InspectorTag, inspectorValue);
+  const serviceContext = Context.add(capturedContext, ActorInspection, inspectorValue);
 
   // Actor-specific state
   const childrenMap = new Map<string, ActorRef<AnyState, unknown>>();
@@ -1007,7 +1008,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   };
 
   // Spawn initial generation (with hydrated state if provided)
-  const runtime = yield* spawnGeneration(machine);
+  const runtime = yield* spawnGeneration(machine).pipe(Effect.provide(serviceContext));
   runtimeRef.current = runtime;
 
   const supervision = options.supervision;

@@ -50,14 +50,13 @@ import type { MachineStateSchema, MachineEventSchema, VariantsUnion } from "./sc
 import type { ActorStoppedError, DuplicateActorError } from "./errors.js";
 import { makeEventAdvancement } from "./internal/event-advancement.js";
 import { executeTransition, shouldPostpone } from "./internal/transition.js";
-import { emitWithTimestamp } from "./internal/inspection.js";
+import { ActorInspection, emitWithTimestamp } from "./internal/inspection.js";
 import {
   MachineInitialization,
   type MachineInitialization as MachineInitializationType,
 } from "./internal/machine-initialization.js";
 import type { BackgroundEffect, SpawnEffect, Transition } from "./internal/machine-definition.js";
 import type { ActorRef, ActorSystemService, TransitionInfo } from "./actor.js";
-import { Inspector as InspectorTag } from "./inspection.js";
 import type { InspectorService } from "./inspection.js";
 
 // ============================================================================
@@ -228,7 +227,7 @@ const emitTaskInspection = <S extends { readonly _tag: string }>(input: {
   readonly phase: "start" | "success" | "failure" | "defect" | "interrupt";
   readonly error?: string;
 }) =>
-  Effect.flatMap(Effect.serviceOption(InspectorTag), (inspector) => {
+  Effect.flatMap(Effect.serviceOption(ActorInspection), (inspector) => {
     if (Option.isNone(inspector)) return Effect.void;
     return emitWithTimestamp(inspector.value, (timestamp) => ({
       type: "@machine.task",

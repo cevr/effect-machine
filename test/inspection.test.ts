@@ -1,5 +1,5 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Data, Duration, Effect, Schema } from "effect";
+import { Data, Deferred, Duration, Effect, Option, Schema } from "effect";
 
 import {
   ActorSystemDefault,
@@ -202,6 +202,60 @@ describe("Inspection", () => {
       );
       expect(resetEvent?.generation).toBe(1);
     });
+  });
+
+  it.scopedLive("keeps ambient inspection singular after a supervised restart", () => {
+    const ambientEvents: AnyInspectionEvent[] = [];
+    const parentEvents: AnyInspectionEvent[] = [];
+
+    return Effect.gen(function* () {
+      const system = yield* ActorSystemService;
+      const childReady = yield* Deferred.make<void>();
+      const childMachine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle,
+      });
+      const parentMachine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle,
+      })
+        .on(TestState.Idle, TestEvent.Fetch, () => Effect.die("restart"))
+        .on(TestState.Idle, TestEvent.Reset, () => TestState.Loading({ url: "restarted" }))
+        .spawn(TestState.Loading, () =>
+          system.spawn("supervised-nested-child", childMachine).pipe(
+            Effect.orDie,
+            Effect.tap(() => Deferred.succeed(childReady, undefined)),
+            Effect.asVoid,
+          ),
+        );
+
+      const parent = yield* system.spawn("supervised-nested-parent", parentMachine, {
+        supervision: Supervision.restart({ maxRestarts: 1 }),
+        inspect: collectingInspector(parentEvents),
+      });
+      yield* parent.send(TestEvent.Fetch({ url: "https://example.com" }));
+      yield* Effect.sleep(Duration.millis(50));
+      yield* parent.send(TestEvent.Reset);
+      yield* Deferred.await(childReady);
+      yield* yieldFibers;
+
+      expect(
+        ambientEvents
+          .filter((event) => event.actorId === "supervised-nested-child")
+          .map((event) => event.type),
+      ).toEqual(["@machine.spawn", "@machine.effect"]);
+      expect(parentEvents.some((event) => event.actorId === "supervised-nested-child")).toBe(false);
+      expect(
+        parentEvents.find(
+          (event) => event.type === "@machine.event" && event.event._tag === "Reset",
+        )?.generation,
+      ).toBe(1);
+    }).pipe(
+      Effect.provide(ActorSystemDefault),
+      Effect.provideService(InspectorService, collectingInspector(ambientEvents)),
+    );
   });
 
   it.scopedLive("emits spawn effect events", () => {
@@ -468,6 +522,99 @@ describe("Inspection", () => {
       expect(events).toHaveLength(eventCount);
       expect((yield* actor.snapshot)._tag).toBe("Idle");
     });
+  });
+
+  it.scopedLive("delivers nested actor events once and keeps actor inspection local", () => {
+    const systemEvents: AnyInspectionEvent[] = [];
+    const parentEvents: AnyInspectionEvent[] = [];
+
+    return Effect.gen(function* () {
+      const system = yield* ActorSystemService;
+      const childReady = yield* Deferred.make<void>();
+      const childMachine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle,
+      }).on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }));
+      const parentMachine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle,
+      })
+        .on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }))
+        .spawn(TestState.Loading, () =>
+          system.spawn("nested-child", childMachine).pipe(
+            Effect.orDie,
+            Effect.tap(() => Deferred.succeed(childReady, undefined)),
+            Effect.asVoid,
+          ),
+        );
+
+      const unregister = system.inspect(collectingInspector(systemEvents));
+      const parent = yield* system.spawn("nested-parent", parentMachine, {
+        inspect: collectingInspector(parentEvents),
+      });
+      yield* parent.send(TestEvent.Fetch({ url: "https://parent.example.com" }));
+      yield* Deferred.await(childReady);
+      const child = Option.getOrThrow(yield* system.get("nested-child"));
+      yield* child.send(TestEvent.Fetch({ url: "https://child.example.com" }));
+      yield* yieldFibers;
+
+      expect(
+        systemEvents.filter((event) => event.actorId === "nested-child").map((event) => event.type),
+      ).toEqual([
+        "@machine.spawn",
+        "@machine.effect",
+        "@machine.event",
+        "@machine.operation",
+        "@machine.transition",
+        "@machine.effect",
+      ]);
+      expect(parentEvents.some((event) => event.actorId === "nested-child")).toBe(false);
+      unregister();
+    }).pipe(Effect.provide(ActorSystemDefault));
+  });
+
+  it.scopedLive("routes task events through the spawn inspector", () => {
+    const ambientEvents: AnyInspectionEvent[] = [];
+    const spawnEvents: AnyInspectionEvent[] = [];
+    const systemEvents: AnyInspectionEvent[] = [];
+    const taskMachine = Machine.make({
+      state: TestState,
+      event: TestEvent,
+      initial: TestState.Idle,
+    })
+      .on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }))
+      .task(TestState.Loading, () => Effect.succeed("done"), {
+        name: "inspected-task",
+        onSuccess: (result) => TestEvent.Success({ result }),
+      })
+      .on(TestState.Loading, TestEvent.Success, ({ event }) =>
+        TestState.Done({ result: event.result }),
+      )
+      .final(TestState.Done);
+
+    return Effect.gen(function* () {
+      const system = yield* ActorSystemService;
+      const unregister = system.inspect(collectingInspector(systemEvents));
+      const actor = yield* system.spawn("spawn-task-inspector", taskMachine, {
+        inspect: collectingInspector(spawnEvents),
+      });
+      yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
+      yield* actor.awaitFinal;
+
+      expect(
+        spawnEvents.filter((event) => event.type === "@machine.task").map((event) => event.phase),
+      ).toEqual(["start", "success"]);
+      expect(
+        systemEvents.filter((event) => event.type === "@machine.task").map((event) => event.phase),
+      ).toEqual(["start", "success"]);
+      expect(ambientEvents.some((event) => event.type === "@machine.task")).toBe(false);
+      unregister();
+    }).pipe(
+      Effect.provide(ActorSystemDefault),
+      Effect.provideService(InspectorService, collectingInspector(ambientEvents)),
+    );
   });
 
   it.scopedLive("runs actor and system inspectors in registration order", () => {
