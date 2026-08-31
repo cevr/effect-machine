@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.23.0
+
+### Minor Changes
+
+- [#44](https://github.com/cevr/effect-machine/pull/44) [`1615eea`](https://github.com/cevr/effect-machine/commit/1615eeae3a53b6d591182e8a8893282a83be4723) Thanks [@cevr](https://github.com/cevr)! - Expose the actor-owned current state and latest accepted transition refs on typed machine self references for machine-lifetime background observers.
+
 ## 0.22.0
 
 ### Minor Changes
