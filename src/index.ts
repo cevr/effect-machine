@@ -90,6 +90,7 @@ export type {
   EventReceivedEvent,
   InspectionEvent,
   InspectorService as Inspector,
+  InspectorHub,
   InspectorHandler,
   OperationEvent,
   SpawnEvent,
@@ -105,5 +106,6 @@ export {
   Inspector as InspectorService,
   makeInspector,
   makeInspectorEffect,
+  makeInspectorHub,
   tracingInspector,
 } from "./inspection.js";

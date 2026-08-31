@@ -159,6 +159,14 @@ export interface InspectorService<S, E> {
 }
 
 /**
+ * Dynamic Inspector fan-out for applications that load inspection consumers after actors start.
+ */
+export interface InspectorHub<S, E> {
+  readonly inspector: InspectorService<S, E>;
+  readonly register: (inspector: InspectorService<S, E>) => () => void;
+}
+
+/**
  * Inspector service tag - optional service for machine introspection
  * Uses `any` types to allow variance flexibility when providing the service
  */
@@ -186,11 +194,12 @@ export const makeInspectorEffect = <S = { readonly _tag: string }, E = { readonl
 const inspectionEffect = <S, E>(
   inspector: InspectorService<S, E>,
   event: InspectionEvent<S, E>,
-): Effect.Effect<void> => {
-  const result = inspector.onInspect(event);
-  if (Effect.isEffect(result)) return result;
-  return Effect.void;
-};
+): Effect.Effect<void> =>
+  Effect.suspend(() => {
+    const result = inspector.onInspect(event);
+    if (Effect.isEffect(result)) return result;
+    return Effect.void;
+  });
 
 export const combineInspectors = <S, E>(
   ...inspectors: ReadonlyArray<InspectorService<S, E>>
@@ -202,6 +211,41 @@ export const combineInspectors = <S, E>(
       { concurrency: 16, discard: true },
     ),
 });
+
+/**
+ * Create an Inspector that accepts sinks throughout its lifetime.
+ *
+ * Provide `hub.inspector` before actor startup. Consumers can then register and unregister sinks
+ * without restarting the actor. A sink failure does not affect the actor or other sinks.
+ */
+export const makeInspectorHub = <
+  S = { readonly _tag: string },
+  E = { readonly _tag: string },
+>(): InspectorHub<ResolveType<S>, ResolveType<E>> => {
+  type State = ResolveType<S>;
+  type Event = ResolveType<E>;
+
+  const inspectorByRegistration = new Map<symbol, InspectorService<State, Event>>();
+  const inspector: InspectorService<State, Event> = {
+    onInspect: (event) =>
+      Effect.forEach(
+        Array.from(inspectorByRegistration.values()),
+        (registeredInspector) =>
+          inspectionEffect(registeredInspector, event).pipe(Effect.ignoreCause),
+        { concurrency: 16, discard: true },
+      ),
+  };
+
+  const register = (registeredInspector: InspectorService<State, Event>): (() => void) => {
+    const registration = Symbol();
+    inspectorByRegistration.set(registration, registeredInspector);
+    return () => {
+      inspectorByRegistration.delete(registration);
+    };
+  };
+
+  return { inspector, register };
+};
 
 export interface TracingInspectorOptions<S, E> {
   readonly spanName?: string | ((event: InspectionEvent<S, E>) => string);

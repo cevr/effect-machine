@@ -44,6 +44,21 @@ Each inspection event includes the actor generation. Generation zero is the firs
 
 The console inspector logs readable machine events with Effect logging. The tracing inspector emits spans and events. The collecting inspector stores typed events for tests. `combineInspectors` isolates an inspector failure from the other inspectors.
 
+Use `makeInspectorHub` when inspection consumers load after actors start. Provide the hub Inspector before actor startup. Register and unregister sinks later without restarting actors or duplicating actor state.
+
+```ts
+const hub = makeInspectorHub<typeof State, typeof Event>();
+const actor =
+  yield * Machine.spawn(machine).pipe(Effect.provideService(InspectorService, hub.inspector));
+yield * actor.start;
+
+const unregister = hub.register(collectingInspector(events));
+yield * actor.send(Event.Refresh);
+unregister();
+```
+
+The late sink receives future inspection events. It does not receive events emitted before registration. The hub isolates each sink failure from the actor and the other sinks.
+
 Do not log secrets in state, events, or tracing attributes.
 
 See [`inspection.ts`](../examples/core/src/inspection.ts).

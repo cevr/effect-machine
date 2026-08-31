@@ -9,6 +9,7 @@ import {
   type InspectionEvent,
   makeInspector,
   makeInspectorEffect,
+  makeInspectorHub,
   InspectorService,
   Machine,
   State,
@@ -390,6 +391,54 @@ describe("Inspection", () => {
           collectingInspector(events),
         ),
       ),
+    );
+  });
+
+  it.scopedLive("registers and unregisters Inspector sinks after actor startup", () => {
+    const events: InspectionEvent<TestState, TestEvent>[] = [];
+    const hub = makeInspectorHub<typeof TestState, typeof TestEvent>();
+
+    return Effect.gen(function* () {
+      const machine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle,
+      })
+        .on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }))
+        .on(TestState.Loading, TestEvent.Reset, () => TestState.Idle);
+
+      const system = yield* ActorSystemService;
+      const actor = yield* system.spawn("late-inspector", machine);
+
+      const unregisterFailing = hub.register(
+        makeInspector(() => {
+          throw new InspectorBoomError({ message: "boom" });
+        }),
+      );
+      const unregisterCollector = hub.register(collectingInspector(events));
+
+      yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
+      yield* yieldFibers;
+
+      expect(events.some((event) => event.type === "@machine.spawn")).toBe(false);
+      expect(events.some((event) => event.type === "@machine.event")).toBe(true);
+      expect(events.some((event) => event.type === "@machine.operation")).toBe(true);
+      expect(events.some((event) => event.type === "@machine.transition")).toBe(true);
+      expect(events.every((event) => event.generation === 0)).toBe(true);
+      expect((yield* actor.snapshot)._tag).toBe("Loading");
+
+      unregisterFailing();
+      unregisterCollector();
+      const eventCount = events.length;
+
+      yield* actor.send(TestEvent.Reset);
+      yield* yieldFibers;
+
+      expect(events).toHaveLength(eventCount);
+      expect((yield* actor.snapshot)._tag).toBe("Idle");
+    }).pipe(
+      Effect.provide(ActorSystemDefault),
+      Effect.provideService(InspectorService, hub.inspector),
     );
   });
 
