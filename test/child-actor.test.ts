@@ -2,6 +2,7 @@
 import { Effect, Option } from "effect";
 
 import { ActorSystemDefault, ActorSystemService, Machine, State, Event } from "../src/index.js";
+import { makeSystem } from "../src/actor.js";
 import { describe, expect, it, yieldFibers } from "effect-bun-test";
 
 // ============================================================================
@@ -258,12 +259,34 @@ describe("Child Actor Support", () => {
         yield* parent.stop;
       }),
     );
+
+    it.scopedLive("inherits an ambient system", () =>
+      Effect.gen(function* () {
+        const system = yield* makeSystem();
+        const machine = Machine.make({
+          state: ParentState,
+          event: ParentEvent,
+          initial: ParentState.Idle,
+        });
+
+        const actor = yield* Machine.spawn(machine).pipe(
+          Effect.provideService(ActorSystemService, system),
+        );
+
+        expect(actor.system).toBe(system);
+        yield* actor.stop;
+      }),
+    );
   });
 
   describe("system.spawn inherits system", () => {
-    it.scopedLive("parent and child share system", () =>
+    it.scopedLive("direct system owns the parent, child, and lifecycle events", () =>
       Effect.gen(function* () {
-        const system = yield* ActorSystemService;
+        const system = yield* makeSystem();
+        const lifecycleEvents: string[] = [];
+        const unsubscribe = system.subscribe((event) => {
+          lifecycleEvents.push(event._tag);
+        });
 
         const parentMachine = Machine.make({
           state: ParentState,
@@ -283,13 +306,36 @@ describe("Child Actor Support", () => {
 
         // parent.system should be the same system
         expect(parent.system).toBe(system);
+        expect(lifecycleEvents).toContain("ActorSpawned");
 
         // child should be visible via the shared system
         const child = yield* system.get("child-via-self");
         expect(Option.isSome(child)).toBe(true);
 
         yield* parent.stop;
-      }).pipe(Effect.provide(ActorSystemDefault)),
+        unsubscribe();
+      }),
+    );
+
+    it.scopedLive("receiver system overrides an unrelated ambient system", () =>
+      Effect.gen(function* () {
+        const receiverSystem = yield* makeSystem();
+        const ambientSystem = yield* makeSystem();
+        const machine = Machine.make({
+          state: ParentState,
+          event: ParentEvent,
+          initial: ParentState.Idle,
+        });
+
+        const actor = yield* receiverSystem
+          .spawn("receiver-owned", machine)
+          .pipe(Effect.provideService(ActorSystemService, ambientSystem));
+
+        expect(actor.system).toBe(receiverSystem);
+        expect(Option.isSome(yield* receiverSystem.get("receiver-owned"))).toBe(true);
+        expect(Option.isNone(yield* ambientSystem.get("receiver-owned"))).toBe(true);
+        yield* actor.stop;
+      }),
     );
   });
 

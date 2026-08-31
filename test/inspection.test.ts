@@ -17,6 +17,7 @@ import {
   tracingInspector,
   Event,
 } from "../src/index.js";
+import { makeSystem } from "../src/actor.js";
 import { describe, expect, it, yieldFibers } from "effect-bun-test";
 
 /** Thrown by a deliberately-failing inspector to prove it does not crash the machine. */
@@ -434,7 +435,7 @@ describe("Inspection", () => {
         .on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }))
         .on(TestState.Loading, TestEvent.Reset, () => TestState.Idle);
 
-      const system = yield* ActorSystemService;
+      const system = yield* makeSystem();
       const actor = yield* system.spawn("late-inspector", machine);
 
       const unregisterFailing = actor.system.inspect(
@@ -466,7 +467,7 @@ describe("Inspection", () => {
 
       expect(events).toHaveLength(eventCount);
       expect((yield* actor.snapshot)._tag).toBe("Idle");
-    }).pipe(Effect.provide(ActorSystemDefault));
+    });
   });
 
   it.scopedLive("runs actor and system inspectors in registration order", () => {
