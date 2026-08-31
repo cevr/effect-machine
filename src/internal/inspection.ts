@@ -3,6 +3,54 @@ import { Cause, Clock, Effect } from "effect";
 import type { InspectionEvent, InspectorService } from "../inspection.js";
 import type { ProcessEventHooks } from "./transition.js";
 
+type Tagged = { readonly _tag: string };
+
+const inspectorActivity = new WeakMap<object, () => boolean>();
+
+/** Run one inspector without letting its failure affect the machine. */
+export const runInspector = Effect.fn("effect-machine.runInspector")(function* <S, E>(
+  inspector: InspectorService<S, E>,
+  event: InspectionEvent<S, E>,
+) {
+  const result = yield* Effect.try(() => inspector.onInspect(event)).pipe(
+    Effect.orElseSucceed(() => undefined),
+  );
+  if (Effect.isEffect(result)) {
+    yield* result.pipe(Effect.ignoreCause);
+  }
+});
+
+/** Run inspectors in order and isolate each failure. */
+export const runInspectors = Effect.fn("effect-machine.runInspectors")(function* <S, E>(
+  inspectors: Iterable<InspectorService<S, E>>,
+  event: InspectionEvent<S, E>,
+) {
+  for (const inspector of inspectors) {
+    yield* runInspector(inspector, event);
+  }
+});
+
+/** Build the actor-owned dispatcher for local and system inspection. */
+// @effect-diagnostics missingPipeableSignature:off -- Internal fixed-arity constructor.
+export const makeInspectionDispatcher = <S extends Tagged, E extends Tagged>(
+  localInspector: InspectorService<S, E> | undefined,
+  systemInspectors: ReadonlySet<InspectorService<Tagged, Tagged>>,
+): InspectorService<S, E> => {
+  const inspector: InspectorService<S, E> = {
+    onInspect: (event) =>
+      Effect.gen(function* () {
+        if (localInspector !== undefined) {
+          yield* runInspector(localInspector, event);
+        }
+        for (const systemInspector of systemInspectors) {
+          yield* runInspector(systemInspector, event);
+        }
+      }),
+  };
+  inspectorActivity.set(inspector, () => localInspector !== undefined || systemInspectors.size > 0);
+  return inspector;
+};
+
 /**
  * Emit an inspection event with timestamp from Clock.
  * @internal
@@ -11,19 +59,12 @@ export const emitWithTimestamp = Effect.fn("effect-machine.emitWithTimestamp")(f
   inspector: InspectorService<S, E> | undefined,
   makeEvent: (timestamp: number) => InspectionEvent<S, E>,
 ) {
-  if (inspector === undefined) {
+  if (inspector === undefined || inspectorActivity.get(inspector)?.() === false) {
     return;
   }
   const timestamp = yield* Clock.currentTimeMillis;
   const event = makeEvent(timestamp);
-  // onInspect is user-supplied and may throw; a failing inspector must never
-  // break the machine it observes.
-  const result = yield* Effect.try(() => inspector.onInspect(event)).pipe(
-    Effect.orElseSucceed(() => undefined),
-  );
-  if (Effect.isEffect(result)) {
-    yield* result.pipe(Effect.ignoreCause);
-  }
+  yield* runInspector(inspector, event);
 });
 
 /** Adapt the Inspector service to the transition kernel. */

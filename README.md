@@ -208,7 +208,8 @@ Read [Atom and UI integration](./docs/atom-and-ui.md) and browse [all examples](
 - Durability saves committed transitions.
 - Supervision restarts defects within an Effect `Schedule` budget.
 - Inspection reports events, named transition operations, transitions, named guards, tasks, Effects, errors, stops, and actor generations.
-- Dynamic Inspector hubs let lazy tools observe existing actors without actor restart or state duplication.
+- Typed `inspect` spawn options observe one actor.
+- `actor.system.inspect` lets a late tool observe all actors in one system.
 
 Read [Persistence and supervision](./docs/persistence-and-supervision.md) and [Inspection](./docs/inspection.md).
 

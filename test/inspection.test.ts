@@ -4,12 +4,12 @@ import { Data, Duration, Effect, Schema } from "effect";
 import {
   ActorSystemDefault,
   ActorSystemService,
+  type AnyInspectionEvent,
   combineInspectors,
   collectingInspector,
   type InspectionEvent,
   makeInspector,
   makeInspectorEffect,
-  makeInspectorHub,
   InspectorService,
   Machine,
   State,
@@ -62,6 +62,33 @@ describe("Inspection", () => {
     }).pipe(
       Effect.provide(ActorSystemDefault),
       Effect.provideService(InspectorService, collectingInspector(events)),
+    );
+  });
+
+  it.scopedLive("uses the spawn inspector instead of the ambient inspector", () => {
+    const ambientEvents: InspectionEvent<TestState, TestEvent>[] = [];
+    const spawnEvents: InspectionEvent<TestState, TestEvent>[] = [];
+
+    return Effect.gen(function* () {
+      const machine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle,
+      }).on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }));
+
+      const system = yield* ActorSystemService;
+      const actor = yield* system.spawn("spawn-inspector", machine, {
+        inspect: collectingInspector(spawnEvents),
+      });
+      yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
+      yield* yieldFibers;
+
+      expect(spawnEvents.some((event) => event.type === "@machine.spawn")).toBe(true);
+      expect(spawnEvents.some((event) => event.type === "@machine.transition")).toBe(true);
+      expect(ambientEvents).toHaveLength(0);
+    }).pipe(
+      Effect.provide(ActorSystemDefault),
+      Effect.provideService(InspectorService, collectingInspector(ambientEvents)),
     );
   });
 
@@ -161,6 +188,7 @@ describe("Inspection", () => {
       const actor = yield* Machine.spawn(machine, {
         id: "supervised-inspection",
         supervision: Supervision.restart({ maxRestarts: 1 }),
+        inspect: collectingInspector(events),
       });
       yield* actor.start;
       yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
@@ -172,7 +200,7 @@ describe("Inspection", () => {
         (event) => event.type === "@machine.event" && event.event._tag === "Reset",
       );
       expect(resetEvent?.generation).toBe(1);
-    }).pipe(Effect.provideService(InspectorService, collectingInspector(events)));
+    });
   });
 
   it.scopedLive("emits spawn effect events", () => {
@@ -394,9 +422,8 @@ describe("Inspection", () => {
     );
   });
 
-  it.scopedLive("registers and unregisters Inspector sinks after actor startup", () => {
-    const events: InspectionEvent<TestState, TestEvent>[] = [];
-    const hub = makeInspectorHub<typeof TestState, typeof TestEvent>();
+  it.scopedLive("registers and unregisters system inspectors after actor startup", () => {
+    const events: AnyInspectionEvent[] = [];
 
     return Effect.gen(function* () {
       const machine = Machine.make({
@@ -410,12 +437,12 @@ describe("Inspection", () => {
       const system = yield* ActorSystemService;
       const actor = yield* system.spawn("late-inspector", machine);
 
-      const unregisterFailing = hub.register(
+      const unregisterFailing = actor.system.inspect(
         makeInspector(() => {
           throw new InspectorBoomError({ message: "boom" });
         }),
       );
-      const unregisterCollector = hub.register(collectingInspector(events));
+      const unregisterCollector = actor.system.inspect(collectingInspector(events));
 
       yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
       yield* yieldFibers;
@@ -427,6 +454,9 @@ describe("Inspection", () => {
       expect(events.every((event) => event.generation === 0)).toBe(true);
       expect((yield* actor.snapshot)._tag).toBe("Loading");
 
+      yield* system.spawn("other-inspected-actor", machine);
+      expect(events.some((event) => event.actorId === "other-inspected-actor")).toBe(true);
+
       unregisterFailing();
       unregisterCollector();
       const eventCount = events.length;
@@ -436,10 +466,48 @@ describe("Inspection", () => {
 
       expect(events).toHaveLength(eventCount);
       expect((yield* actor.snapshot)._tag).toBe("Idle");
-    }).pipe(
-      Effect.provide(ActorSystemDefault),
-      Effect.provideService(InspectorService, hub.inspector),
-    );
+    }).pipe(Effect.provide(ActorSystemDefault));
+  });
+
+  it.scopedLive("runs actor and system inspectors in registration order", () => {
+    const calls: string[] = [];
+
+    return Effect.gen(function* () {
+      const machine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle,
+      }).on(TestState.Idle, TestEvent.Fetch, ({ event }) => TestState.Loading({ url: event.url }));
+      const system = yield* ActorSystemService;
+      const unregisterFirst = system.inspect(
+        makeInspectorEffect((event) =>
+          Effect.sync(() => {
+            if (event.type === "@machine.transition") calls.push("system-first");
+          }),
+        ),
+      );
+      const unregisterSecond = system.inspect(
+        makeInspectorEffect((event) =>
+          Effect.sync(() => {
+            if (event.type === "@machine.transition") calls.push("system-second");
+          }),
+        ),
+      );
+      const actor = yield* system.spawn("ordered-inspectors", machine, {
+        inspect: makeInspectorEffect((event) =>
+          Effect.sync(() => {
+            if (event.type === "@machine.transition") calls.push("actor");
+          }),
+        ),
+      });
+
+      yield* actor.send(TestEvent.Fetch({ url: "https://example.com" }));
+      yield* yieldFibers;
+
+      expect(calls).toEqual(["actor", "system-first", "system-second"]);
+      unregisterFirst();
+      unregisterSecond();
+    }).pipe(Effect.provide(ActorSystemDefault));
   });
 
   it.scopedLive("tracing inspector does not break actor processing", () =>
@@ -515,7 +583,7 @@ describe("Inspection", () => {
       Start: {},
       Success: {},
     });
-    const events: InspectionEvent<typeof TaskState.Type, typeof TaskEvent.Type>[] = [];
+    const events: AnyInspectionEvent[] = [];
 
     return Effect.gen(function* () {
       const machine = Machine.make({
@@ -532,6 +600,7 @@ describe("Inspection", () => {
         .final(TaskState.Done);
 
       const system = yield* ActorSystemService;
+      const unregister = system.inspect(collectingInspector(events));
       const actor = yield* system.spawn("task-events", machine);
 
       yield* actor.send(TaskEvent.Start);
@@ -551,9 +620,7 @@ describe("Inspection", () => {
           expect(event.taskName).toBe("load-user");
         }
       }
-    }).pipe(
-      Effect.provide(ActorSystemDefault),
-      Effect.provideService(InspectorService, collectingInspector(events)),
-    );
+      unregister();
+    }).pipe(Effect.provide(ActorSystemDefault));
   });
 });

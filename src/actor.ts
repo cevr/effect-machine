@@ -33,7 +33,11 @@ import type { InspectorService } from "./inspection.js";
 import { Inspector as InspectorTag } from "./inspection.js";
 import { resolveTransition, resolveTransitionEffect } from "./internal/transition.js";
 import type { ProcessEventHooks, ProcessEventResult } from "./internal/transition.js";
-import { emitWithTimestamp, makeInspectionHooks } from "./internal/inspection.js";
+import {
+  emitWithTimestamp,
+  makeInspectionDispatcher,
+  makeInspectionHooks,
+} from "./internal/inspection.js";
 import type { NoReplyError } from "./errors.js";
 import { DuplicateActorError, ActorStoppedError } from "./errors.js";
 import {
@@ -354,13 +358,27 @@ export interface ActorSystemService {
    * Returns an unsubscribe function.
    */
   readonly subscribe: (fn: SystemEventListener) => () => void;
+
+  /**
+   * Inspect all actors in this system.
+   *
+   * Registration affects future events only. The returned function removes the inspector.
+   */
+  readonly inspect: (
+    inspector: InspectorService<{ readonly _tag: string }, { readonly _tag: string }>,
+  ) => () => void;
 }
 
 export type SystemSpawnOptions<S, E, Input> = {
   readonly supervision?: Supervision.Policy;
   readonly lifecycle?: Lifecycle<S, E>;
   readonly hydrate?: S;
+  readonly inspect?: InspectorService<S, E>;
 } & ([Input] extends [void] ? { readonly input?: never } : { readonly input: Input });
+
+type SystemInspector = InspectorService<AnyState, AnyState>;
+
+const systemInspectorsBySystem = new WeakMap<ActorSystemService, Set<SystemInspector>>();
 
 /**
  * ActorSystem service tag
@@ -792,12 +810,13 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     hydrated?: boolean;
     supervision?: Supervision.Policy;
     lifecycle?: Lifecycle<S, E>;
+    inspect?: InspectorService<S, E>;
     /** @internal Called by system after each restart — emits ActorRestarted system event */
     onRestart?: (generation: number, exit: ActorExit<unknown>) => Effect.Effect<void>;
   },
 ) {
   const lifecycle: Lifecycle<S, E> | undefined = options.lifecycle;
-  const serviceContext = yield* Effect.context<R>();
+  const capturedContext = yield* Effect.context<R>();
 
   // Spawn is cold. The caller has already resolved machine input and hydration.
   // Recovery runs during start, not allocate.
@@ -807,10 +826,13 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
 
   const { system, implicitSystemScope } = yield* resolveActorSystem();
 
-  // Get optional inspector from context
-  const inspectorValue = Option.getOrUndefined(yield* Effect.serviceOption(InspectorTag)) as
+  const ambientInspector = Option.getOrUndefined(yield* Effect.serviceOption(InspectorTag)) as
     | InspectorService<S, E>
     | undefined;
+  const localInspector = options.inspect ?? ambientInspector;
+  const systemInspectors = systemInspectorsBySystem.get(system) ?? new Set<SystemInspector>();
+  const inspectorValue = makeInspectionDispatcher(localInspector, systemInspectors);
+  const serviceContext = Context.add(capturedContext, InspectorTag, inspectorValue);
 
   // Actor-specific state
   const childrenMap = new Map<string, ActorRef<AnyState, unknown>>();
@@ -820,10 +842,8 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   // Generation counter. Recovery and inspection use the same value.
   const generation = { current: 0 };
 
-  const inspectionHooks = (runtimeGeneration: number): ProcessEventHooks<S, E> | undefined => {
-    if (inspectorValue === undefined) return undefined;
-    return makeInspectionHooks(id, inspectorValue, () => runtimeGeneration);
-  };
+  const inspectionHooks = (runtimeGeneration: number): ProcessEventHooks<S, E> =>
+    makeInspectionHooks(id, inspectorValue, () => runtimeGeneration);
 
   // Cell-owned resources: stable across generations (supervision)
   const stateRef = yield* SubscriptionRef.make<S>(initial);
@@ -868,44 +888,35 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   /** Build lifecycle hooks for a generation */
   const buildRuntimeLifecycle = (runtimeGeneration: number): RuntimeLifecycleHooks<S, E> => {
     let stopEmitted = false;
-    let onEvent: RuntimeLifecycleHooks<S, E>["onEvent"] = undefined;
-    if (inspectorValue !== undefined) {
-      onEvent = (state: S, event: E) =>
-        emitWithTimestamp(inspectorValue, (timestamp) => ({
-          type: "@machine.event",
+    const onEvent: RuntimeLifecycleHooks<S, E>["onEvent"] = (state, event) =>
+      emitWithTimestamp(inspectorValue, (timestamp) => ({
+        type: "@machine.event",
+        actorId: id,
+        generation: runtimeGeneration,
+        state,
+        event,
+        timestamp,
+      }));
+    const onFinal: RuntimeLifecycleHooks<S, E>["onFinal"] = (state) =>
+      Effect.gen(function* () {
+        stopEmitted = true;
+        yield* emitWithTimestamp(inspectorValue, (timestamp) => ({
+          type: "@machine.stop",
           actorId: id,
           generation: runtimeGeneration,
-          state,
-          event,
+          finalState: state,
           timestamp,
         }));
-    }
-    let onFinal: RuntimeLifecycleHooks<S, E>["onFinal"] = undefined;
-    if (inspectorValue !== undefined) {
-      onFinal = (state: S) =>
-        Effect.gen(function* () {
-          stopEmitted = true;
-          yield* emitWithTimestamp(inspectorValue, (timestamp) => ({
-            type: "@machine.stop",
-            actorId: id,
-            generation: runtimeGeneration,
-            finalState: state,
-            timestamp,
-          }));
-        });
-    }
-    let onInitialSpawnEffects: RuntimeLifecycleHooks<S, E>["onInitialSpawnEffects"] = undefined;
-    if (inspectorValue !== undefined) {
-      onInitialSpawnEffects = (state: S) =>
-        emitWithTimestamp(inspectorValue, (timestamp) => ({
-          type: "@machine.effect",
-          actorId: id,
-          generation: runtimeGeneration,
-          effectType: "spawn",
-          state,
-          timestamp,
-        }));
-    }
+      });
+    const onInitialSpawnEffects: RuntimeLifecycleHooks<S, E>["onInitialSpawnEffects"] = (state) =>
+      emitWithTimestamp(inspectorValue, (timestamp) => ({
+        type: "@machine.effect",
+        actorId: id,
+        generation: runtimeGeneration,
+        effectType: "spawn",
+        state,
+        timestamp,
+      }));
     return {
       onEvent,
       onStateChange: (result, event) =>
@@ -1129,6 +1140,7 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
   // Observable infrastructure
   const eventPubSub = yield* PubSub.unbounded<SystemEvent>();
   const eventListeners = new Set<SystemEventListener>();
+  const systemInspectors = new Set<SystemInspector>();
 
   const emitSystemEvent = (event: SystemEvent): Effect.Effect<void> =>
     Effect.sync(() => notifySystemListeners(eventListeners, event)).pipe(
@@ -1143,7 +1155,11 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     MutableHashMap.forEach(actorsMap, (actor) => {
       stops.push(actor.stop);
     });
-    return Effect.all(stops).pipe(Effect.andThen(PubSub.shutdown(eventPubSub)), Effect.asVoid);
+    return Effect.all(stops).pipe(
+      Effect.andThen(Effect.sync(() => systemInspectors.clear())),
+      Effect.andThen(PubSub.shutdown(eventPubSub)),
+      Effect.asVoid,
+    );
   });
 
   /** Check for duplicate ID, register actor, attach scope cleanup if available */
@@ -1244,6 +1260,7 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
       hydrated: spawnOptions?.hydrate !== undefined,
       supervision: spawnOptions?.supervision,
       lifecycle: spawnOptions?.lifecycle,
+      inspect: spawnOptions?.inspect,
       onRestart,
     });
     actorRef = actor as unknown as ActorRef<AnyState, unknown>;
@@ -1339,7 +1356,7 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     return true;
   });
 
-  return ActorSystem.of({
+  const system = ActorSystem.of({
     spawn,
     get,
     watch,
@@ -1358,7 +1375,15 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
         eventListeners.delete(fn);
       };
     },
+    inspect: (inspector) => {
+      systemInspectors.add(inspector);
+      return () => {
+        systemInspectors.delete(inspector);
+      };
+    },
   });
+  systemInspectorsBySystem.set(system, systemInspectors);
+  return system;
 });
 
 /**

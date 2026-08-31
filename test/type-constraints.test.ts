@@ -19,6 +19,7 @@ import {
   Machine,
   State,
   Event,
+  makeInspector,
   simulate,
 } from "../src/index.js";
 import { EntityMachine, toEntity } from "../src/cluster/index.js";
@@ -249,7 +250,24 @@ const _test3e = () => {
   };
 };
 
-// Test 3f: Final output is inferred independently from final state
+// Test 3f: Spawn inspection is actor-typed. System inspection is heterogeneous.
+const inspectionMachine = Machine.make({
+  state: MyState,
+  event: MyEvent,
+  initial: MyState.Idle,
+});
+const actorInspector = makeInspector<typeof MyState, typeof MyEvent>(() => {});
+const systemInspector = makeInspector(() => {});
+const _inspectedActor = Machine.spawn(inspectionMachine, { inspect: actorInspector });
+const _inspectionTypes = Effect.gen(function* () {
+  const system = yield* ActorSystemService;
+  yield* system.spawn("inspected", inspectionMachine, { inspect: actorInspector });
+  system.inspect(systemInspector);
+  // @ts-expect-error - A system inspector must accept events from every actor in the system
+  system.inspect(actorInspector);
+});
+
+// Test 3g: Final output is inferred independently from final state
 const outputMachine = Machine.make({
   state: MyState,
   event: MyEvent,

@@ -58,6 +58,7 @@ import {
 import type { BackgroundEffect, SpawnEffect, Transition } from "./internal/machine-definition.js";
 import type { ActorRef, ActorSystemService, TransitionInfo } from "./actor.js";
 import { Inspector as InspectorTag } from "./inspection.js";
+import type { InspectorService } from "./inspection.js";
 
 // ============================================================================
 // Core types
@@ -1361,6 +1362,7 @@ export type SpawnOptions<S, E, Input> = {
   readonly hydrate?: S;
   readonly supervision?: Supervision.Policy;
   readonly lifecycle?: Lifecycle<S, E>;
+  readonly inspect?: InspectorService<S, E>;
 } & ([Input] extends [void] ? { readonly input?: never } : { readonly input: Input });
 
 const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
@@ -1385,6 +1387,7 @@ const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
     hydrated: opts?.hydrate !== undefined,
     supervision: opts?.supervision,
     lifecycle: opts?.lifecycle,
+    inspect: opts?.inspect,
   });
 
   // If an ActorScope exists in context, attach cleanup automatically
@@ -1405,6 +1408,7 @@ const spawnImpl = Effect.fn("effect-machine.spawn")(function* <
  *
  * // With lifecycle (recovery + durability)
  * const actor = yield* Machine.spawn(machine, {
+ *   inspect: consoleInspector(),
  *   lifecycle: {
  *     recovery: { resolve: (ctx) => storage.get("actor-state") },
  *     durability: { save: (commit) => storage.set("actor-state", commit.nextState) },
