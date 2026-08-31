@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.24.0
+
+### Minor Changes
+
+- [#46](https://github.com/cevr/effect-machine/pull/46) [`41d00a1`](https://github.com/cevr/effect-machine/commit/41d00a1348f65d76b39a3bf57d031c3042571e5d) Thanks [@cevr](https://github.com/cevr)! - Replace the Inspector Hub with typed `inspect` spawn options and late system-wide registration through `actor.system.inspect`.
+
 ## 0.23.0
 
 ### Minor Changes
