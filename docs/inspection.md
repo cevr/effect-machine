@@ -1,11 +1,16 @@
 # Inspection
 
-Provide `InspectorService` when you allocate an actor. The actor captures it with the rest of its Effect context.
+Pass `inspect` when you spawn one actor. The inspector uses the machine state and event types.
 
 ```ts
 const actor =
-  yield * Machine.spawn(machine).pipe(Effect.provideService(InspectorService, consoleInspector()));
+  yield *
+  Machine.spawn(machine, {
+    inspect: consoleInspector(),
+  });
 ```
+
+You can also provide `InspectorService` as an ambient Effect service. The spawn option replaces the ambient inspector for that actor.
 
 Inspection events cover:
 
@@ -42,22 +47,34 @@ machine.on(State.Accepted, Event.Submit, function submitOrder({ state }) {
 
 Each inspection event includes the actor generation. Generation zero is the first run. The value increases after each supervised restart.
 
-The console inspector logs readable machine events with Effect logging. The tracing inspector emits spans and events. The collecting inspector stores typed events for tests. `combineInspectors` isolates an inspector failure from the other inspectors.
+The console inspector logs readable machine events with Effect logging. The tracing inspector emits spans and events. The collecting inspector stores typed events for tests. `combineInspectors` runs inspectors in order. It isolates each inspector failure.
 
-Use `makeInspectorHub` when inspection consumers load after actors start. Provide the hub Inspector before actor startup. Register and unregister sinks later without restarting actors or duplicating actor state.
+Use `actor.system.inspect` when an inspection consumer loads after an actor starts. The system inspector receives events from all actors in that system.
 
 ```ts
-const hub = makeInspectorHub<typeof State, typeof Event>();
-const actor =
-  yield * Machine.spawn(machine).pipe(Effect.provideService(InspectorService, hub.inspector));
+const actor = yield * Machine.spawn(machine);
 yield * actor.start;
 
-const unregister = hub.register(collectingInspector(events));
+const unregister = actor.system.inspect(
+  makeInspector((event) => {
+    events.push(event);
+  }),
+);
 yield * actor.send(Event.Refresh);
 unregister();
 ```
 
-The late sink receives future inspection events. It does not receive events emitted before registration. The hub isolates each sink failure from the actor and the other sinks.
+The late inspector receives future events. It does not receive prior events. A system inspector is heterogeneous. Use `makeInspector()` without machine-specific type arguments. The runtime runs the actor inspector first. It then runs system inspectors in registration order. It waits for each inspector. It isolates each failure.
+
+Effect code can scope a late registration with `Effect.acquireRelease`.
+
+```ts
+yield *
+  Effect.acquireRelease(
+    Effect.sync(() => actor.system.inspect(consoleInspector())),
+    (unregister) => Effect.sync(unregister),
+  );
+```
 
 Do not log secrets in state, events, or tracing attributes.
 

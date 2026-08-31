@@ -1,12 +1,5 @@
 import { Effect, Schema } from "effect";
-import {
-  collectingInspector,
-  Event,
-  InspectorService,
-  Machine,
-  State,
-  type InspectionEvent,
-} from "effect-machine";
+import { collectingInspector, Event, Machine, State, type InspectionEvent } from "effect-machine";
 
 const AccessState = State({
   Locked: { attempts: Schema.Finite },
@@ -41,9 +34,10 @@ const accessMachine = Machine.make({
 
 export const inspectionProgram = Effect.gen(function* () {
   const events: Array<InspectionEvent<AccessState, AccessEvent>> = [];
-  const actor = yield* Machine.spawn(accessMachine, { id: "access" }).pipe(
-    Effect.provideService(InspectorService, collectingInspector(events)),
-  );
+  const actor = yield* Machine.spawn(accessMachine, {
+    id: "access",
+    inspect: collectingInspector(events),
+  });
   yield* actor.start;
   yield* actor.send(AccessEvent.EnterCode({ code: "0000" }));
   yield* actor.send(AccessEvent.EnterCode({ code: "1234" }));

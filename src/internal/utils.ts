@@ -145,4 +145,5 @@ export const stubSystem: ActorSystemService = {
     return new Map();
   },
   subscribe: () => () => {},
+  inspect: () => () => {},
 };
