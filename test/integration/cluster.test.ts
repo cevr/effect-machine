@@ -12,7 +12,7 @@
  */
 import { Entity, ShardingConfig } from "effect/unstable/cluster";
 import { Rpc } from "effect/unstable/rpc";
-import { Duration, Effect, Fiber, Layer, Ref, Schema, Stream } from "effect";
+import { Deferred, Duration, Effect, Fiber, Layer, Ref, Schema, Stream } from "effect";
 import { describe, expect, it, test } from "effect-bun-test";
 
 import {
@@ -393,6 +393,55 @@ describe("EntityMachine.layer", () => {
       yield* ref.send(OrderEvent.Process);
 
       expect(events).toContain("@machine.transition");
+    }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)),
+  );
+
+  it.scopedLive("routes entity task events through the Inspector service", () =>
+    Effect.gen(function* () {
+      const TaskState = State({
+        Idle: {},
+        Running: {},
+        Done: {},
+      });
+      type TaskState = typeof TaskState.Type;
+      const TaskEvent = Event({
+        Start: {},
+        Complete: {},
+      });
+      type TaskEvent = typeof TaskEvent.Type;
+      const taskMachine = Machine.make({
+        state: TaskState,
+        event: TaskEvent,
+        initial: TaskState.Idle,
+      })
+        .on(TaskState.Idle, TaskEvent.Start, () => TaskState.Running)
+        .task(TaskState.Running, () => Effect.void, {
+          name: "entity-task",
+          onSuccess: () => TaskEvent.Complete,
+        })
+        .on(TaskState.Running, TaskEvent.Complete, () => TaskState.Done)
+        .final(TaskState.Done);
+      const taskEvents: Array<"start" | "success" | "failure" | "defect" | "interrupt"> = [];
+      const taskDone = yield* Deferred.make<void>();
+      const inspector = makeInspector<TaskState, TaskEvent>((event) => {
+        if (event.type !== "@machine.task") return;
+        taskEvents.push(event.phase);
+        if (event.phase === "success")
+          return Deferred.succeed(taskDone, undefined).pipe(Effect.asVoid);
+      });
+      const entity = toEntity(taskMachine, { type: "MachineTaskInspection" });
+      const entityLayer = EntityMachine.layer(entity, taskMachine).pipe(
+        Layer.provide(Layer.merge(ActorSystemDefault, Layer.succeed(InspectorService, inspector))),
+      );
+
+      const makeClient = yield* Entity.makeTestClient(entity, entityLayer);
+      const client = yield* makeClient("task-1");
+      const ref = makeEntityActorRef<TaskState, TaskEvent>(client, "task-1");
+
+      yield* ref.send(TaskEvent.Start);
+      yield* Deferred.await(taskDone);
+
+      expect(taskEvents).toEqual(["start", "success"]);
     }).pipe(Effect.scoped, Effect.provide(TestShardingConfig)),
   );
 

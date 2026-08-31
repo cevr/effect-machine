@@ -1,4 +1,4 @@
-import { Cause, Clock, Effect } from "effect";
+import { Cause, Clock, Context, Effect } from "effect";
 
 import type { InspectionEvent, InspectorService } from "../inspection.js";
 import type { ProcessEventHooks } from "./transition.js";
@@ -6,6 +6,11 @@ import type { ProcessEventHooks } from "./transition.js";
 type Tagged = { readonly _tag: string };
 
 const inspectorActivity = new WeakMap<object, () => boolean>();
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Actor state and event types are restored at the owning machine boundary.
+export class ActorInspection extends Context.Service<ActorInspection, InspectorService<any, any>>()(
+  "effect-machine/internal/inspection/ActorInspection",
+) {}
 
 /** Run one inspector without letting its failure affect the machine. */
 export const runInspector = Effect.fn("effect-machine.runInspector")(function* <S, E>(

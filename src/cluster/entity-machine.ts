@@ -32,7 +32,7 @@ import type { ActorSystemService, TransitionInfo } from "../actor.js";
 import { ActorSystem as ActorSystemTag, makeSystem } from "../actor.js";
 import type { InspectorService } from "../inspection.js";
 import { Inspector as InspectorTag } from "../inspection.js";
-import { makeInspectionHooks } from "../internal/inspection.js";
+import { ActorInspection, makeInspectionHooks } from "../internal/inspection.js";
 import { createRuntime, type RuntimeQueuedEvent } from "../internal/runtime.js";
 import {
   PersistenceAdapter,
@@ -141,6 +141,12 @@ export const EntityMachine = {
       const inspector = Option.getOrUndefined(yield* Effect.serviceOption(InspectorTag)) as
         | InspectorService<S, E>
         | undefined;
+      const withActorInspection = <A, E2, R2>(
+        effect: Effect.Effect<A, E2, R2>,
+      ): Effect.Effect<A, E2, R2> => {
+        if (inspector === undefined) return effect;
+        return effect.pipe(Effect.provideService(ActorInspection, inspector));
+      };
 
       const machineInitial = machine._initial(options?.input?.(entityId));
 
@@ -188,13 +194,15 @@ export const EntityMachine = {
       }
 
       // Create runtime kernel — single queue, sequential processing
-      const runtime = yield* createRuntime(machine, system, {
-        actorId: entityId,
-        hooks,
-        childIdPrefix: `${entityId}/`,
-        cellResources: { stateRef, latestTransitionRef, stoppedRef, eventQueue },
-      });
-      yield* runtime.start;
+      const runtime = yield* withActorInspection(
+        createRuntime(machine, system, {
+          actorId: entityId,
+          hooks,
+          childIdPrefix: `${entityId}/`,
+          cellResources: { stateRef, latestTransitionRef, stoppedRef, eventQueue },
+        }),
+      );
+      yield* withActorInspection(runtime.start);
 
       // ----------------------------------------------------------------
       // Persistence: snapshot scheduling
