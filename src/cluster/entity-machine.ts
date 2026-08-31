@@ -28,7 +28,7 @@ import {
 } from "effect";
 
 import { type Machine, replay } from "../machine.js";
-import type { ActorSystemService } from "../actor.js";
+import type { ActorSystemService, TransitionInfo } from "../actor.js";
 import { ActorSystem as ActorSystemTag, makeSystem } from "../actor.js";
 import type { InspectorService } from "../inspection.js";
 import { Inspector as InspectorTag } from "../inspection.js";
@@ -177,6 +177,9 @@ export const EntityMachine = {
       // Cell-owned resources — stable identity for this entity activation
       const computedInitial = initialState ?? machineInitial;
       const stateRef = yield* SubscriptionRef.make(computedInitial);
+      const latestTransitionRef = yield* SubscriptionRef.make<TransitionInfo<S, E> | undefined>(
+        undefined,
+      );
       const stoppedRef = yield* Ref.make(false);
       const eventQueue = yield* Queue.unbounded<RuntimeQueuedEvent<S, E>>();
       let hooks: ReturnType<typeof makeInspectionHooks<S, E>> | undefined = undefined;
@@ -189,7 +192,7 @@ export const EntityMachine = {
         actorId: entityId,
         hooks,
         childIdPrefix: `${entityId}/`,
-        cellResources: { stateRef, stoppedRef, eventQueue },
+        cellResources: { stateRef, latestTransitionRef, stoppedRef, eventQueue },
       });
       yield* runtime.start;
 

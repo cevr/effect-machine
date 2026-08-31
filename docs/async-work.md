@@ -33,6 +33,28 @@ machine.spawn(State.Active, ({ self }) =>
 
 The state scope closes on exit. Effect finalizers remove listeners, interrupt streams, and stop state-owned child actors.
 
+## Actor-owned state observer
+
+Machine-lifetime work can observe the same state and latest-transition refs as the public actor.
+The refs keep their identity across supervised generations. The latest transition resets before a
+new generation starts.
+
+```ts
+machine.background(({ self }) =>
+  SubscriptionRef.changes(self.state).pipe(
+    Stream.runForEach((state) =>
+      SubscriptionRef.get(self.latestTransition).pipe(
+        Effect.flatMap((transition) => navigate(state, transition?.event)),
+        Effect.flatMap(self.send),
+      ),
+    ),
+  ),
+);
+```
+
+Treat `self.state` and `self.latestTransition` as read-only. The actor runtime owns all writes.
+Rejected events do not change either ref.
+
 ## Effectful transition
 
 ```ts

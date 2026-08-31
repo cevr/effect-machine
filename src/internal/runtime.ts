@@ -31,7 +31,7 @@ import {
 } from "effect";
 
 import type { Machine, MachineRef } from "../machine.js";
-import type { ActorRef, ActorSystemService } from "../actor.js";
+import type { ActorRef, ActorSystemService, TransitionInfo } from "../actor.js";
 import { ActorSystem as ActorSystemTag } from "../actor.js";
 import type { ProcessEventHooks, ProcessEventResult } from "./transition.js";
 import { processEventCoreImmediate, runSpawnEffects, shouldPostpone } from "./transition.js";
@@ -78,6 +78,7 @@ export type RuntimeQueuedEvent<S, E> =
  */
 export interface RuntimeCellResources<S, E> {
   readonly stateRef: SubscriptionRef.SubscriptionRef<S>;
+  readonly latestTransitionRef: SubscriptionRef.SubscriptionRef<TransitionInfo<S, E> | undefined>;
   readonly eventQueue: Queue.Queue<RuntimeQueuedEvent<S, E>>;
   readonly stoppedRef: Ref.Ref<boolean>;
 }
@@ -120,6 +121,8 @@ export interface RuntimeHandle<S, E> {
   readonly getState: Effect.Effect<S>;
   /** SubscriptionRef for state observation (WatchState streaming) */
   readonly stateRef: SubscriptionRef.SubscriptionRef<S>;
+  /** SubscriptionRef for the latest accepted transition. */
+  readonly latestTransitionRef: SubscriptionRef.SubscriptionRef<TransitionInfo<S, E> | undefined>;
   /** Stop the runtime (interrupt event loop, clean up) */
   readonly stop: Effect.Effect<void>;
   /**
@@ -223,7 +226,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
   const services = yield* Effect.context<R>();
   const fork = Effect.runForkWith(services);
 
-  const { stateRef, stoppedRef, eventQueue } = config.cellResources;
+  const { stateRef, latestTransitionRef, stoppedRef, eventQueue } = config.cellResources;
   const pendingRequests = new Set<(error: ActorStoppedError) => Effect.Effect<void>>();
 
   // Exit deferred — set exactly once with the exit reason
@@ -248,19 +251,21 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
     }
   });
   const childPrefix = config.childIdPrefix ?? "";
-  const defaultSpawn: MachineRef<E>["spawn"] = (childId, childMachine) =>
+  const defaultSpawn: MachineRef<E, S>["spawn"] = (childId, childMachine) =>
     system
       .spawn(`${childPrefix}${childId}`, childMachine)
       .pipe(Effect.provideService(ActorSystemTag, system));
   const onChildSpawned = config.onChildSpawned;
-  let spawn: MachineRef<E>["spawn"] = defaultSpawn;
+  let spawn: MachineRef<E, S>["spawn"] = defaultSpawn;
   if (onChildSpawned !== undefined) {
     spawn = (childId, childMachine) =>
       defaultSpawn(childId, childMachine).pipe(
         Effect.tap((child) => onChildSpawned(childId, child)),
       );
   }
-  const self: MachineRef<E> = {
+  const self: MachineRef<E, S> = {
+    state: stateRef,
+    latestTransition: latestTransitionRef,
     send: selfSend,
     spawn,
     reply: (value: unknown) =>
@@ -344,6 +349,14 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
     }
     if (initialResult.transitioned) {
       yield* SubscriptionRef.set(stateRef, initialResult.newState);
+      const latest = initialResult.transitions.at(-1);
+      if (latest !== undefined) {
+        yield* SubscriptionRef.set(latestTransitionRef, {
+          fromState: latest.previousState,
+          toState: latest.newState,
+          event: latest.event,
+        });
+      }
       if (lifecycle?.onStateChange !== undefined) {
         const stateChange = lifecycle.onStateChange(initialResult, initEvent);
         if (isEffect(stateChange)) yield* stateChange;
@@ -440,6 +453,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
     const loopFiber = yield* runtimeEventLoop(
       machine,
       stateRef,
+      latestTransitionRef,
       eventQueue,
       pendingRequests,
       stoppedRef,
@@ -529,7 +543,15 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
   }
 
   return {
-    ...makeHandle(actorId, stateRef, stoppedRef, eventQueue, pendingRequests, exitDeferred),
+    ...makeHandle(
+      actorId,
+      stateRef,
+      latestTransitionRef,
+      stoppedRef,
+      eventQueue,
+      pendingRequests,
+      exitDeferred,
+    ),
     stop: stop.pipe(Effect.provide(services)),
     start: start.pipe(Effect.provide(services)),
   };
@@ -542,6 +564,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
 const makeHandle = <S extends { readonly _tag: string }, E extends { readonly _tag: string }>(
   actorId: string,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
+  latestTransitionRef: SubscriptionRef.SubscriptionRef<TransitionInfo<S, E> | undefined>,
   stoppedRef: Ref.Ref<boolean>,
   eventQueue: Queue.Queue<RuntimeQueuedEvent<S, E>>,
   pendingRequests: Set<(error: ActorStoppedError) => Effect.Effect<void>>,
@@ -607,6 +630,7 @@ const makeHandle = <S extends { readonly _tag: string }, E extends { readonly _t
     },
     getState: SubscriptionRef.get(stateRef),
     stateRef,
+    latestTransitionRef,
     stop: Effect.void,
     start: Effect.void,
     settlePendingRequests: settlePendingRequests(pendingRequests, actorId),
@@ -636,10 +660,11 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- wide acceptance
   machine: Machine<S, E, R, any, any, any, any>,
   stateRef: SubscriptionRef.SubscriptionRef<S>,
+  latestTransitionRef: SubscriptionRef.SubscriptionRef<TransitionInfo<S, E> | undefined>,
   eventQueue: Queue.Queue<RuntimeQueuedEvent<S, E>>,
   pendingRequests: Set<(error: ActorStoppedError) => Effect.Effect<void>>,
   stoppedRef: Ref.Ref<boolean>,
-  self: MachineRef<E>,
+  self: MachineRef<E, S>,
   stateScopeRef: { current: Scope.Closeable },
   actorId: string,
   generation: number,
@@ -725,6 +750,14 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
       // Update state if transitioned
       if (result.transitioned) {
         yield* SubscriptionRef.set(stateRef, result.newState);
+        const latest = result.transitions.at(-1);
+        if (latest !== undefined) {
+          yield* SubscriptionRef.set(latestTransitionRef, {
+            fromState: latest.previousState,
+            toState: latest.newState,
+            event: latest.event,
+          });
+        }
       }
 
       // Lifecycle: onStateChange (actor notifies listeners and saves durability)
