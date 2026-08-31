@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.24.1
+
+### Patch Changes
+
+- [#48](https://github.com/cevr/effect-machine/pull/48) [`4b8523d`](https://github.com/cevr/effect-machine/commit/4b8523d2c1a8fd2d9066af389ebb720689cfbd0f) Thanks [@cevr](https://github.com/cevr)! - Ensure actors spawned through an ActorSystem use that same system for child actors and inspection.
+
 ## 0.24.0
 
 ### Minor Changes
