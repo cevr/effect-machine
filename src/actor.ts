@@ -1262,7 +1262,7 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
       lifecycle: spawnOptions?.lifecycle,
       inspect: spawnOptions?.inspect,
       onRestart,
-    });
+    }).pipe(Effect.provideService(ActorSystem, system));
     actorRef = actor as unknown as ActorRef<AnyState, unknown>;
     // Register before start — actor is in the map before lifecycle hooks fire
     yield* registerActor(id, actor);
