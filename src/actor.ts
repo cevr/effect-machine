@@ -750,6 +750,7 @@ const runSupervisionLoop = <
       const freshQueue = yield* Queue.unbounded<QueuedEvent<S, E>>();
       yield* Ref.set(cell.eventQueueRef, freshQueue);
       yield* SubscriptionRef.set(cell.stateRef, restartState);
+      yield* SubscriptionRef.set(cell.latestTransitionRef, undefined);
       yield* Ref.set(cell.stoppedRef, false);
       cell.children.clear();
 
@@ -909,14 +910,6 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       onEvent,
       onStateChange: (result, event) =>
         Effect.gen(function* () {
-          const latest = result.transitions.at(-1);
-          if (latest !== undefined) {
-            yield* SubscriptionRef.set(latestTransitionRef, {
-              fromState: latest.previousState,
-              toState: latest.newState,
-              event: latest.event,
-            });
-          }
           notifyListeners(listeners, result.newState);
           const durability = lifecycle?.durability;
           if (durability === undefined || !result.transitioned) return;
@@ -974,7 +967,12 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
             generation: runtimeGeneration,
             hooks: inspectionHooks(runtimeGeneration),
             skipFinalizer: true,
-            cellResources: { stateRef, stoppedRef, eventQueue: currentQueue },
+            cellResources: {
+              stateRef,
+              latestTransitionRef,
+              stoppedRef,
+              eventQueue: currentQueue,
+            },
             lifecycle: buildRuntimeLifecycle(runtimeGeneration),
             onChildSpawned: (childId, child) =>
               Effect.gen(function* () {

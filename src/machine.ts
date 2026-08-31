@@ -34,7 +34,7 @@
  *
  * @module
  */
-import type { Duration, Schema } from "effect";
+import type { Duration, Schema, SubscriptionRef } from "effect";
 import { Cause, Effect, Exit, Option, Random, Scope } from "effect";
 
 import type { TransitionResult } from "./internal/utils.js";
@@ -56,7 +56,7 @@ import {
   type MachineInitialization as MachineInitializationType,
 } from "./internal/machine-initialization.js";
 import type { BackgroundEffect, SpawnEffect, Transition } from "./internal/machine-definition.js";
-import type { ActorRef, ActorSystemService } from "./actor.js";
+import type { ActorRef, ActorSystemService, TransitionInfo } from "./actor.js";
 import { Inspector as InspectorTag } from "./inspection.js";
 
 // ============================================================================
@@ -66,7 +66,13 @@ import { Inspector as InspectorTag } from "./inspection.js";
 /**
  * Self reference for sending events back to the machine
  */
-export interface MachineRef<Event> {
+export interface MachineRef<Event, State = never> {
+  /** Actor-owned current state. Consumers must treat this ref as read-only. */
+  readonly state: SubscriptionRef.SubscriptionRef<State>;
+  /** Actor-owned latest accepted transition. Consumers must treat this ref as read-only. */
+  readonly latestTransition: SubscriptionRef.SubscriptionRef<
+    TransitionInfo<State, Event> | undefined
+  >;
   readonly send: (event: Event) => Effect.Effect<void>;
   readonly spawn: <S2 extends { readonly _tag: string }, E2 extends { readonly _tag: string }, R2>(
     id: string,
@@ -101,7 +107,7 @@ export interface StateHandlerContext<State, Event> {
   readonly generation: number;
   readonly state: State;
   readonly event: Event;
-  readonly self: MachineRef<Event>;
+  readonly self: MachineRef<Event, State>;
   readonly system: ActorSystemService;
 }
 
