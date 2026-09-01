@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.24.4
+
+### Patch Changes
+
+- [#56](https://github.com/cevr/effect-machine/pull/56) [`623b906`](https://github.com/cevr/effect-machine/commit/623b906c6e8f4f989b2f334f7f5e1fb0bbba6f1e) Thanks [@cevr](https://github.com/cevr)! - Commit synchronous client transitions before `ActorClient.send` returns and notify Actor Atom subscribers without a timer delay.
+
 ## 0.24.3
 
 ### Patch Changes
