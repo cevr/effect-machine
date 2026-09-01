@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.24.3
+
+### Patch Changes
+
+- [#53](https://github.com/cevr/effect-machine/pull/53) [`69d423c`](https://github.com/cevr/effect-machine/commit/69d423ccddce34e2ca7ca7264f32face253b9b41) Thanks [@cevr](https://github.com/cevr)! - Start state and background Effects eagerly so their synchronous setup completes before actor state becomes visible. A task that completes in its first Effect slice can now enqueue its result before a caller sends its next event. A suspending Inspector can delay this setup because inspection remains ordered and awaited.
+
 ## 0.24.2
 
 ### Patch Changes
