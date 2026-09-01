@@ -381,7 +381,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
           self,
           system,
         })
-        .pipe(Effect.forkIn(actorScope));
+        .pipe(Effect.forkIn(actorScope, { startImmediately: true }));
       backgroundFibers.push(fiber);
     }
 
@@ -438,10 +438,9 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
         Deferred.succeed(exitDeferred, RuntimeExit.Defect(cause, "spawn")).pipe(
           Effect.andThen(Ref.set(stoppedRef, true)),
           Effect.andThen(
-            Effect.suspend(() => {
+            Effect.sync(() => {
               const loopFiber = loopFiberRef.current;
-              if (loopFiber !== undefined) return Fiber.interrupt(loopFiber);
-              return Effect.void;
+              if (loopFiber !== undefined) fork(Fiber.interrupt(loopFiber));
             }),
           ),
           Effect.asVoid,
@@ -725,6 +724,10 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
     Effect.gen(function* () {
       const event = queued.event;
 
+      if (queued._tag === "ask" && deferredReplyRef !== undefined) {
+        deferredReplyRef.current = queued.reply;
+      }
+
       // Lifecycle: onEvent (actor emits @machine.event)
       if (lifecycle?.onEvent !== undefined) yield* lifecycle.onEvent(currentState, event);
 
@@ -776,6 +779,9 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
           break;
         case "ask":
           if (result.hasReply) {
+            if (deferredReplyRef?.current === queued.reply) {
+              deferredReplyRef.current = undefined;
+            }
             const replySchema = machine._replySchema(event._tag);
             if (replySchema !== undefined) {
               const decoded = yield* Schema.decodeUnknownEffect(replySchema)(result.reply).pipe(
@@ -790,10 +796,10 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
             } else {
               yield* Deferred.succeed(queued.reply, result.reply);
             }
-          } else if (result.deferReply && deferredReplyRef !== undefined) {
-            // Handler returned Machine.deferReply() — spawn handler will call self.reply()
-            deferredReplyRef.current = queued.reply;
-          } else {
+          } else if (!result.deferReply) {
+            if (deferredReplyRef?.current === queued.reply) {
+              deferredReplyRef.current = undefined;
+            }
             yield* Deferred.fail(
               queued.reply,
               NoReplyError.make({ actorId, eventTag: event._tag }),

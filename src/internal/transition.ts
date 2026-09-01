@@ -688,7 +688,13 @@ export const runSpawnEffects = Effect.fn("effect-machine.runSpawnEffects")(funct
         }),
       );
 
-    yield* Effect.forkScoped(effect).pipe(Effect.provideService(Scope.Scope, stateScope));
+    const fiber = yield* Effect.forkScoped(effect, { startImmediately: true }).pipe(
+      Effect.provideService(Scope.Scope, stateScope),
+    );
+    const exit = fiber.pollUnsafe();
+    if (exit?._tag === "Failure" && !Cause.hasInterruptsOnly(exit.cause)) {
+      return yield* Effect.failCause(exit.cause);
+    }
   }
 });
 

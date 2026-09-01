@@ -1095,7 +1095,12 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     // Delegate to runtime.start (forks event loop, background, spawn effects)
     const currentRuntime = runtimeRef.current;
     if (currentRuntime !== undefined) {
-      yield* currentRuntime.start;
+      yield* currentRuntime.start.pipe(
+        Effect.catchCause((cause) => {
+          if (supervision === undefined) return Effect.failCause(cause);
+          return Effect.void;
+        }),
+      );
       const currentExit = yield* Deferred.poll(currentRuntime.exitDeferred);
       if (Option.isNone(currentExit)) {
         yield* SubscriptionRef.set(lifecycleRef, {

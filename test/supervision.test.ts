@@ -34,6 +34,31 @@ const machine = Machine.make({ state: S, event: E, initial: S.Idle })
 // ============================================================================
 
 describe("supervision: restart on defect", () => {
+  it.scopedLive("restarts after synchronous initial state Effect defect", () =>
+    Effect.gen(function* () {
+      const restarted = yield* Deferred.make<void>();
+      let attempts = 0;
+      const initialEffectMachine = Machine.make({ state: S, event: E, initial: S.Idle }).spawn(
+        S.Idle,
+        () =>
+          Effect.suspend(() => {
+            attempts += 1;
+            if (attempts === 1) return Effect.die("initial boom");
+            return Deferred.succeed(restarted, void 0);
+          }),
+      );
+      const actor = yield* Machine.spawn(initialEffectMachine, {
+        supervision: Supervision.restart({ maxRestarts: 1 }),
+      });
+
+      yield* actor.start;
+      yield* Deferred.await(restarted);
+
+      expect(attempts).toBe(2);
+      yield* actor.stop;
+    }),
+  );
+
   it.scopedLive("restarts actor from initial state after transition defect", () =>
     Effect.gen(function* () {
       const actor = yield* Machine.spawn(machine, {
