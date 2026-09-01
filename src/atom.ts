@@ -36,6 +36,14 @@ export type ActorAcquireAtom<State extends { readonly _tag: string }, Event, Out
   AsyncResult.AsyncResult<ActorRef<State, Event, Output>, Cause.NoSuchElementError>
 >;
 
+const stateAtom = <State extends { readonly _tag: string }, Event, Output>(
+  actor: ActorRef<State, Event, Output>,
+): Atom.Atom<State> =>
+  Atom.readable((get) => {
+    get.addFinalizer(actor.subscribe((state) => get.setSelf(state)));
+    return actor.client.getSnapshot();
+  });
+
 /** Observe the current ActorRef for one ActorSystem key. */
 export const fromSystem: {
   <State extends { readonly _tag: string }, Event, Output>(
@@ -102,7 +110,7 @@ export const acquire: {
 export const make = <State extends { readonly _tag: string }, Event, Output>(
   actor: ActorRef<State, Event, Output>,
 ): ActorAtom<State, Event> => {
-  const state = Atom.subscriptionRef(actor.state);
+  const state = stateAtom(actor);
   return Atom.writable(
     (get) => get(state),
     (_ctx, event) => actor.client.send(event),
@@ -170,7 +178,7 @@ export const can: {
     actor: ActorRef<State, Event, Output>,
     event: Event,
   ): CanAtom => {
-    const state = Atom.subscriptionRef(actor.state);
+    const state = stateAtom(actor);
     return Atom.make((get) => {
       get(state);
       return actor.can(event);

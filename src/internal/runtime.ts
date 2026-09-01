@@ -550,6 +550,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
       eventQueue,
       pendingRequests,
       exitDeferred,
+      () => loopFiberRef.current?.currentDispatcher?.flush(),
     ),
     stop: stop.pipe(Effect.provide(services)),
     start: start.pipe(Effect.provide(services)),
@@ -568,6 +569,7 @@ const makeHandle = <S extends { readonly _tag: string }, E extends { readonly _t
   eventQueue: Queue.Queue<RuntimeQueuedEvent<S, E>>,
   pendingRequests: Set<(error: ActorStoppedError) => Effect.Effect<void>>,
   exitDeferred: Deferred.Deferred<RuntimeExit<S>>,
+  flushLoop: () => void,
 ): RuntimeHandle<S, E> => {
   const track = <A, RequestError>(
     deferred: Deferred.Deferred<A, RequestError>,
@@ -625,7 +627,10 @@ const makeHandle = <S extends { readonly _tag: string }, E extends { readonly _t
     }).pipe(Effect.asVoid),
     sendSync: (event: E) => {
       const stopped = Effect.runSync(Ref.get(stoppedRef));
-      if (!stopped) Effect.runSync(Queue.offer(eventQueue, { _tag: "send", event }));
+      if (stopped) return;
+      Effect.runSync(Queue.offer(eventQueue, { _tag: "send", event }));
+      eventQueue.dispatcher.flush();
+      flushLoop();
     },
     getState: SubscriptionRef.get(stateRef),
     stateRef,

@@ -43,8 +43,6 @@ it.scopedLive("make exposes actor state and sends events through Atom writes", (
     });
 
     registry.set(stateAtom, CounterEvent.Increment);
-    yield* actor.waitFor((state) => state.count === 1);
-    yield* Effect.yieldNow;
 
     expect(registry.get(stateAtom).count).toBe(1);
     expect(values).toEqual([0, 1]);
