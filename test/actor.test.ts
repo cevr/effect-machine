@@ -1055,7 +1055,7 @@ describe("ActorRef", () => {
   // ============================================================================
 
   describe("sendSync", () => {
-    it.scopedLive("sendSync sends event synchronously", () =>
+    it.scopedLive("sendSync commits a synchronous transition before returning", () =>
       Effect.gen(function* () {
         const machine = Machine.make({
           state: TestState,
@@ -1071,9 +1071,8 @@ describe("ActorRef", () => {
         const actor = yield* Machine.spawn(machine);
         yield* actor.start;
         actor.client.send(TestEvent.Start({ value: 7 }));
-        yield* yieldFibers;
 
-        const state = yield* actor.snapshot;
+        const state = actor.client.getSnapshot();
         expect(state._tag).toBe("Active");
         if (state._tag === "Active") {
           expect(state.value).toBe(7);
@@ -1100,6 +1099,54 @@ describe("ActorRef", () => {
 
         const state = yield* actor.snapshot;
         expect(state._tag).toBe("Idle");
+      }),
+    );
+
+    it.scopedLive("sendSync commits a transition with a synchronous Effect guard", () =>
+      Effect.gen(function* () {
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Idle,
+        }).when(
+          TestState.Idle,
+          TestEvent.Start,
+          () => Effect.succeed(true),
+          ({ event }) => TestState.Active({ value: event.value }),
+        );
+        const actor = yield* Machine.spawn(machine);
+        yield* actor.start;
+
+        actor.client.send(TestEvent.Start({ value: 9 }));
+
+        expect(actor.client.getSnapshot()).toEqual(TestState.Active({ value: 9 }));
+      }),
+    );
+
+    it.scopedLive("sendSync preserves nested event order", () =>
+      Effect.gen(function* () {
+        const machine = Machine.make({
+          state: TestState,
+          event: TestEvent,
+          initial: TestState.Idle,
+        })
+          .on(TestState.Idle, TestEvent.Start, ({ event }) =>
+            TestState.Active({ value: event.value }),
+          )
+          .on(TestState.Active, TestEvent.Stop, () => TestState.Done);
+        const actor = yield* Machine.spawn(machine);
+        yield* actor.start;
+        const states: Array<string> = [];
+        const unsubscribe = actor.subscribe((state) => {
+          states.push(state._tag);
+          if (state._tag === "Active") actor.client.send(TestEvent.Stop);
+        });
+
+        actor.client.send(TestEvent.Start({ value: 1 }));
+
+        expect(actor.client.getSnapshot()._tag).toBe("Done");
+        expect(states).toEqual(["Active", "Done"]);
+        unsubscribe();
       }),
     );
   });
