@@ -247,9 +247,9 @@ describe("Inspection", () => {
       }).spawn(TestState.Idle, () => Effect.die("boom"));
 
       const system = yield* ActorSystemService;
-      yield* system.spawn("test", machine);
-      yield* yieldFibers;
+      const spawnExit = yield* Effect.exit(system.spawn("test", machine));
 
+      expect(spawnExit._tag).toBe("Failure");
       const errorEvent = events.find((e) => e.type === "@machine.error");
       expect(errorEvent).toBeDefined();
       if (errorEvent?.type === "@machine.error") {

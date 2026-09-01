@@ -808,9 +808,7 @@ describe("ActorRef", () => {
           })
           .final(TS.Done);
 
-        // Mirrors the gent AgentLoop pattern: send → yieldNow → waitFor(Running)
-        // The task fails immediately so Running→Idle can happen before
-        // waitFor subscribes. With the old get-then-subscribe waitFor, this hangs.
+        // The wait must own its subscription before the task can leave Running.
         interface LoopService {
           readonly run: () => Effect.Effect<string>;
         }
@@ -841,9 +839,11 @@ describe("ActorRef", () => {
               run: () =>
                 Effect.gen(function* () {
                   const actor = yield* getActor;
+                  const runningFiber = yield* Effect.forkDetach(actor.waitFor(TS.Running), {
+                    startImmediately: true,
+                  });
                   yield* actor.send(TE.Start);
-                  yield* Effect.yieldNow;
-                  yield* actor.waitFor(TS.Running);
+                  yield* Fiber.join(runningFiber);
                   yield* actor.waitFor((s) => s._tag !== "Running");
                   const final = yield* actor.snapshot;
                   return final._tag;
