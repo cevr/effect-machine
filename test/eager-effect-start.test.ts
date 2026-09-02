@@ -1,5 +1,5 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Cause, Effect, Schema } from "effect";
+import { Cause, Effect, Schema, SubscriptionRef } from "effect";
 import * as AtomRegistry from "effect/unstable/reactivity/AtomRegistry";
 import { describe, expect, it } from "effect-bun-test";
 
@@ -10,6 +10,84 @@ const LifecycleState = State({ Idle: {}, Listening: {}, Done: {} });
 const LifecycleEvent = Event({ Start: {}, Stop: {} });
 
 describe("actor Effect eager start", () => {
+  it.scopedLive("commits the entered state before its Effect starts", () =>
+    Effect.gen(function* () {
+      let observedState: typeof LifecycleState.Type | undefined;
+      const machine = Machine.make({
+        state: LifecycleState,
+        event: LifecycleEvent,
+        initial: LifecycleState.Idle,
+      })
+        .on(LifecycleState.Idle, LifecycleEvent.Start, () => LifecycleState.Listening)
+        .spawn(LifecycleState.Listening, ({ self }) =>
+          SubscriptionRef.get(self.state).pipe(
+            Effect.tap((state) => Effect.sync(() => (observedState = state))),
+            Effect.andThen(Effect.never),
+          ),
+        );
+      const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
+
+      yield* actor.call(LifecycleEvent.Start);
+
+      expect(observedState).toEqual(LifecycleState.Listening);
+      yield* actor.stop;
+    }),
+  );
+
+  it.scopedLive("commits an initial immediate state before its Effect starts", () =>
+    Effect.gen(function* () {
+      let observedState: typeof LifecycleState.Type | undefined;
+      const machine = Machine.make({
+        state: LifecycleState,
+        event: LifecycleEvent,
+        initial: LifecycleState.Idle,
+      })
+        .immediate(LifecycleState.Idle, () => LifecycleState.Listening)
+        .spawn(LifecycleState.Listening, ({ self }) =>
+          SubscriptionRef.get(self.state).pipe(
+            Effect.tap((state) => Effect.sync(() => (observedState = state))),
+            Effect.andThen(Effect.never),
+          ),
+        );
+      const actor = yield* Machine.spawn(machine);
+
+      yield* actor.start;
+
+      expect(observedState).toEqual(LifecycleState.Listening);
+      yield* actor.stop;
+    }),
+  );
+
+  it.scopedLive("commits reentry data before its Effect starts", () =>
+    Effect.gen(function* () {
+      const ReentryState = State({ Active: { revision: Schema.Finite } });
+      const ReentryEvent = Event({ Bump: {} });
+      const observedRevisions: Array<number> = [];
+      const machine = Machine.make({
+        state: ReentryState,
+        event: ReentryEvent,
+        initial: ReentryState.Active({ revision: 0 }),
+      })
+        .reenter(ReentryState.Active, ReentryEvent.Bump, ({ state }) =>
+          ReentryState.Active.with(state, { revision: state.revision + 1 }),
+        )
+        .spawn(ReentryState.Active, ({ self }) =>
+          SubscriptionRef.get(self.state).pipe(
+            Effect.tap((state) => Effect.sync(() => observedRevisions.push(state.revision))),
+            Effect.andThen(Effect.never),
+          ),
+        );
+      const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
+
+      yield* actor.call(ReentryEvent.Bump);
+
+      expect(observedRevisions).toEqual([0, 1]);
+      yield* actor.stop;
+    }),
+  );
+
   it.scopedLive("starts state Effect setup before state subscribers run", () =>
     Effect.gen(function* () {
       const records: Array<string> = [];
@@ -161,6 +239,7 @@ describe("actor Effect eager start", () => {
         expect(Cause.hasInterruptsOnly(exit.cause)).toBe(false);
         expect(Cause.pretty(exit.cause)).toContain("spawn boom");
       }
+      expect(yield* actor.snapshot).toEqual(LifecycleState.Listening);
     }),
   );
 

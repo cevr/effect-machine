@@ -408,19 +408,24 @@ export const processEventCore = <
   generation = 0,
 ) =>
   Effect.suspend(() => {
-    const processed = processEventCoreImmediate(
-      machine,
-      currentState,
-      event,
-      self,
-      stateScopeRef,
-      system,
-      actorId,
-      hooks,
-      generation,
-    );
-    if (isEffect(processed)) return processed;
-    return Effect.succeed(processed);
+    const processed = processEventCoreImmediate(machine, currentState, event, stateScopeRef, hooks);
+    return Effect.gen(function* () {
+      let result: ProcessEventResult<S, E>;
+      if (isEffect(processed)) result = yield* processed;
+      else result = processed;
+      if (!result.lifecycleRan) return result;
+      yield* enterState(
+        machine,
+        result.newState,
+        self,
+        stateScopeRef.current,
+        system,
+        actorId,
+        hooks,
+        generation,
+      );
+      return result;
+    });
   });
 
 const completeProcessedEvent = <
@@ -431,14 +436,9 @@ const completeProcessedEvent = <
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   machine: Machine<S, E, R, any, any, any, any>,
   currentState: S,
-  event: E,
   result: ExecutedTransition<S, E>,
-  self: MachineRef<E, S>,
   stateScopeRef: { current: Scope.Closeable },
-  system: ActorSystemService,
-  actorId: string,
   hooks?: ProcessEventHooks<S, E>,
-  generation = 0,
 ):
   | ProcessEventResult<S, E>
   | Effect.Effect<ProcessEventResult<S, E>, never, Exclude<R, Scope.Scope>> => {
@@ -497,25 +497,6 @@ const completeProcessedEvent = <
       );
     }
 
-    // Hook: about to run spawn effects
-    if (hooks?.onSpawnEffect !== undefined) {
-      yield* hooks.onSpawnEffect(newState);
-    }
-
-    // Run spawn effects for new state
-    const enterEvent = { _tag: INTERNAL_ENTER_EVENT } as E;
-    yield* runSpawnEffects(
-      machine,
-      newState,
-      enterEvent,
-      self,
-      stateScopeRef.current,
-      system,
-      actorId,
-      hooks?.onError,
-      hooks?.onSpawnDefect,
-      generation,
-    );
     return processed;
   });
 };
@@ -530,29 +511,14 @@ export const processEventCoreImmediate = <
   machine: Machine<S, E, R, any, any, any, any>,
   currentState: S,
   event: E,
-  self: MachineRef<E, S>,
   stateScopeRef: { current: Scope.Closeable },
-  system: ActorSystemService,
-  actorId: string,
   hooks?: ProcessEventHooks<S, E>,
-  generation = 0,
 ) => {
   const execution = executeTransitionImmediate(machine, currentState, event, hooks);
   const complete = (result: ExecutedTransition<S, E>) => {
     const immediateCandidates = machine._findImmediateTransitions(result.newState._tag);
     if (immediateCandidates.length === 0) {
-      return completeProcessedEvent(
-        machine,
-        currentState,
-        event,
-        result,
-        self,
-        stateScopeRef,
-        system,
-        actorId,
-        hooks,
-        generation,
-      );
+      return completeProcessedEvent(machine, currentState, result, stateScopeRef, hooks);
     }
 
     return Effect.gen(function* () {
@@ -591,7 +557,6 @@ export const processEventCoreImmediate = <
       const processed = completeProcessedEvent(
         machine,
         currentState,
-        event,
         {
           ...result,
           newState: stableState,
@@ -600,12 +565,8 @@ export const processEventCoreImmediate = <
           transition: steps.at(-1)?.transition,
           steps,
         },
-        self,
         stateScopeRef,
-        system,
-        actorId,
         hooks,
-        generation,
       );
       if (isEffect(processed)) return yield* processed;
       return processed;
@@ -696,6 +657,37 @@ export const runSpawnEffects = Effect.fn("effect-machine.runSpawnEffects")(funct
       return yield* Effect.failCause(exit.cause);
     }
   }
+});
+
+/** @internal */
+export const enterState = Effect.fn("effect-machine.enterState")(function* <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+>(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  machine: Machine<S, E, R, any, any, any, any>,
+  state: S,
+  self: MachineRef<E, S>,
+  stateScope: Scope.Closeable,
+  system: ActorSystemService,
+  actorId: string,
+  hooks?: ProcessEventHooks<S, E>,
+  generation = 0,
+) {
+  if (hooks?.onSpawnEffect !== undefined) yield* hooks.onSpawnEffect(state);
+  yield* runSpawnEffects(
+    machine,
+    state,
+    { _tag: INTERNAL_ENTER_EVENT } as E,
+    self,
+    stateScope,
+    system,
+    actorId,
+    hooks?.onError,
+    hooks?.onSpawnDefect,
+    generation,
+  );
 });
 
 /**

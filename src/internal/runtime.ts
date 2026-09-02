@@ -34,7 +34,7 @@ import type { Machine, MachineRef } from "../machine.js";
 import type { ActorRef, ActorSystemService, TransitionInfo } from "../actor.js";
 import { ActorSystem as ActorSystemTag } from "../actor.js";
 import type { ProcessEventHooks, ProcessEventResult } from "./transition.js";
-import { processEventCoreImmediate, runSpawnEffects, shouldPostpone } from "./transition.js";
+import { enterState, processEventCoreImmediate, shouldPostpone } from "./transition.js";
 import { makeEventAdvancement } from "./event-advancement.js";
 import { ActorStoppedError, NoReplyError } from "../errors.js";
 import { INTERNAL_INIT_EVENT, isEffect } from "./utils.js";
@@ -159,8 +159,6 @@ export interface RuntimeLifecycleHooks<S, E> {
   readonly onFinal?: (state: S) => Effect.Effect<void>;
   /** Before stop resource cleanup — actor emits @machine.stop, settles pending replies */
   readonly onShutdown?: () => Effect.Effect<void>;
-  /** Before initial spawn effects — actor emits @machine.effect inspection */
-  readonly onInitialSpawnEffects?: (state: S) => Effect.Effect<void>;
 }
 
 // ============================================================================
@@ -324,12 +322,8 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
       machine,
       initialState,
       initEvent,
-      self,
       stateScopeRef,
-      system,
-      actorId,
       { ...hooks, onSpawnDefect: initialSpawnDefectSignal },
-      generation,
     );
     let initialResult: ProcessEventResult<S, E>;
     if (isEffect(initialProcessing)) {
@@ -388,36 +382,29 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
     // Run initial spawn effects — catch defects, tag as initial-spawn, and propagate.
     // For unsupervised actors this fails createActor (correct: don't register dead actors).
     // For supervised actors (Step 3), the supervision loop will catch and restart.
-    if (!initialResult.lifecycleRan && lifecycle?.onInitialSpawnEffects !== undefined) {
-      yield* lifecycle.onInitialSpawnEffects(stableInitialState);
-    }
     // Note: onSpawnDefect for initial spawn fibers that defect asynchronously (after forking).
     // If they defect later, this signals through exitDeferred and interrupts the loop.
-    if (!initialResult.lifecycleRan) {
-      yield* runSpawnEffects(
-        machine,
-        stableInitialState,
-        initEvent,
-        self,
-        stateScopeRef.current,
-        system,
-        actorId,
-        hooks?.onError,
-        initialSpawnDefectSignal,
-        generation,
-      ).pipe(
-        Effect.catchCause((cause) =>
-          // Tag as initial-spawn defect, set exit, clean up, then propagate
-          Effect.gen(function* () {
-            yield* Ref.set(stoppedRef, true);
-            yield* Scope.close(stateScopeRef.current, Exit.void);
-            yield* Scope.close(actorScope, Exit.void);
-            yield* Deferred.succeed(exitDeferred, RuntimeExit.Defect(cause, "initial-spawn"));
-            return yield* Effect.failCause(cause);
-          }),
-        ),
-      );
-    }
+    yield* enterState(
+      machine,
+      stableInitialState,
+      self,
+      stateScopeRef.current,
+      system,
+      actorId,
+      { ...hooks, onSpawnDefect: initialSpawnDefectSignal },
+      generation,
+    ).pipe(
+      Effect.catchCause((cause) =>
+        // Tag as initial-spawn defect, set exit, clean up, then propagate
+        Effect.gen(function* () {
+          yield* Ref.set(stoppedRef, true);
+          yield* Scope.close(stateScopeRef.current, Exit.void);
+          yield* Scope.close(actorScope, Exit.void);
+          yield* Deferred.succeed(exitDeferred, RuntimeExit.Defect(cause, "initial-spawn"));
+          return yield* Effect.failCause(cause);
+        }),
+      ),
+    );
 
     // Check if initial state is final — if so, clean up and signal done
     if (machine._isFinal(stableInitialState._tag)) {
@@ -741,12 +728,8 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
         machine,
         currentState,
         event,
-        self,
         stateScopeRef,
-        system,
-        actorId,
         hooks,
-        generation,
       );
       let result: ProcessEventResult<S, E>;
       if (isEffect(processing)) {
@@ -765,6 +748,18 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
             toState: latest.newState,
             event: latest.event,
           });
+        }
+        if (result.lifecycleRan) {
+          yield* enterState(
+            machine,
+            result.newState,
+            self,
+            stateScopeRef.current,
+            system,
+            actorId,
+            hooks,
+            generation,
+          );
         }
       }
 
