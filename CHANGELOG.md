@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.24.6
+
+### Patch Changes
+
+- [#60](https://github.com/cevr/effect-machine/pull/60) [`9a3510f`](https://github.com/cevr/effect-machine/commit/9a3510f23683a884907b5f9b1b20cd161483f059) Thanks [@cevr](https://github.com/cevr)! - Allow nested actors to start before their parent spawn returns.
+
 ## 0.24.5
 
 ### Patch Changes
