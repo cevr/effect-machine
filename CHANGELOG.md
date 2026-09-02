@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.24.5
+
+### Patch Changes
+
+- [#58](https://github.com/cevr/effect-machine/pull/58) [`6c19e68`](https://github.com/cevr/effect-machine/commit/6c19e688d0766e91c7871f0ae03c67d1c505f024) Thanks [@cevr](https://github.com/cevr)! - Commit an entered state before its state Effect starts.
+
 ## 0.24.4
 
 ### Patch Changes
