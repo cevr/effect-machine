@@ -909,15 +909,6 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
           timestamp,
         }));
       });
-    const onInitialSpawnEffects: RuntimeLifecycleHooks<S, E>["onInitialSpawnEffects"] = (state) =>
-      emitWithTimestamp(inspectorValue, (timestamp) => ({
-        type: "@machine.effect",
-        actorId: id,
-        generation: runtimeGeneration,
-        effectType: "spawn",
-        state,
-        timestamp,
-      }));
     return {
       onEvent,
       onStateChange: (result, event) =>
@@ -964,7 +955,6 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
             }));
           }
         }),
-      onInitialSpawnEffects,
     };
   };
 
