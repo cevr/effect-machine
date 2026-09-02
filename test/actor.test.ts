@@ -97,6 +97,30 @@ describe("ActorSystem", () => {
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
 
+  it.scopedLive("registers a nested child before parent spawn returns", () =>
+    Effect.gen(function* () {
+      const ChildState = State({ Active: {} });
+      const ChildEvent = Event({ Stop: {} });
+      const childMachine = Machine.make({
+        state: ChildState,
+        event: ChildEvent,
+        initial: ChildState.Active,
+      });
+      const parentMachine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle,
+      }).spawn(TestState.Idle, ({ self }) =>
+        self.spawn("nested-child", childMachine).pipe(Effect.asVoid, Effect.orDie),
+      );
+      const system = yield* ActorSystemService;
+
+      yield* system.spawn("nested-parent", parentMachine);
+
+      expect((yield* system.get("nested-child"))._tag).toBe("Some");
+    }).pipe(Effect.provide(ActorSystemDefault)),
+  );
+
   it.scopedLive("stops actors properly", () =>
     Effect.gen(function* () {
       const machine = Machine.make({

@@ -1262,10 +1262,6 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     actorRef = actor as unknown as ActorRef<AnyState, unknown>;
     // Register before start — actor is in the map before lifecycle hooks fire
     yield* registerActor(id, actor);
-    // Auto-start: system.spawn returns a running actor
-    yield* actor.start.pipe(
-      Effect.catchCause((cause) => actor.stop.pipe(Effect.andThen(Effect.failCause(cause)))),
-    );
     return actor;
   });
 
@@ -1282,11 +1278,14 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
     options?: SystemSpawnOptions<S, E, Input>,
   ): Effect.Effect<ActorRef<S, E, Output>, DuplicateActorError, R> => {
     const id = actorSystemId(idOrKey);
-    return withSpawnGate(spawnRegular(id, machine, options)) as Effect.Effect<
-      ActorRef<S, E, Output>,
-      DuplicateActorError,
-      R
-    >;
+    return withSpawnGate(spawnRegular(id, machine, options)).pipe(
+      Effect.flatMap((actor) =>
+        actor.start.pipe(
+          Effect.catchCause((cause) => actor.stop.pipe(Effect.andThen(Effect.failCause(cause)))),
+          Effect.as(actor),
+        ),
+      ),
+    ) as Effect.Effect<ActorRef<S, E, Output>, DuplicateActorError, R>;
   };
 
   function get<S extends AnyState, E, Output>(
