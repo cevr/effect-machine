@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.25.2
+
+### Patch Changes
+
+- [#69](https://github.com/cevr/effect-machine/pull/69) [`c53b0a9`](https://github.com/cevr/effect-machine/commit/c53b0a9826290737ade27a4a0860b61838baf880) Thanks [@cevr](https://github.com/cevr)! - Validate the package against Effect 4.0.0-rc.112 and the current Effect toolchain.
+
 ## 0.25.1
 
 ### Patch Changes
