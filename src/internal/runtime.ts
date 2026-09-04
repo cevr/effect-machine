@@ -151,6 +151,8 @@ export interface RuntimeHandle<S, E> {
   readonly start: Effect.Effect<void>;
   /** Fail pending requests for this runtime generation. */
   readonly settlePendingRequests: Effect.Effect<void>;
+  /** Wait for all runtime generation resources to close. */
+  readonly awaitClosed: Effect.Effect<void>;
   /**
    * Exit deferred — set exactly once with the exit reason when the runtime stops.
    * Final state, explicit stop, or defect for this runtime generation.
@@ -255,6 +257,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
 
   // Exit deferred — set exactly once with the exit reason
   const exitDeferred = yield* Deferred.make<RuntimeExit<S>>();
+  const closedDeferred = yield* Deferred.make<void>();
 
   // Actor scope — owns background fibers for this generation
   const actorScope = yield* Scope.make();
@@ -316,6 +319,11 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
   const stateScopeRef: { current: Scope.Closeable } = {
     current: yield* Scope.make(),
   };
+  const closeGeneration = (exit: Exit.Exit<unknown, unknown>) =>
+    Scope.close(stateScopeRef.current, Exit.void).pipe(
+      Effect.ensuring(Scope.close(actorScope, exit)),
+      Effect.ensuring(Deferred.succeed(closedDeferred, undefined)),
+    );
 
   // Shared mutable refs used by both start() and stop()
   const initEvent = { _tag: INTERNAL_INIT_EVENT } as E;
@@ -362,8 +370,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
         Effect.catchCause((cause) =>
           Effect.gen(function* () {
             yield* Ref.set(stoppedRef, true);
-            yield* Scope.close(stateScopeRef.current, Exit.void);
-            yield* Scope.close(actorScope, Exit.void);
+            yield* closeGeneration(Exit.void);
             yield* Deferred.succeed(exitDeferred, RuntimeExit.Defect(cause, "transition"));
             return yield* Effect.failCause(cause);
           }),
@@ -433,8 +440,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
         // Tag as initial-spawn defect, set exit, clean up, then propagate
         Effect.gen(function* () {
           yield* Ref.set(stoppedRef, true);
-          yield* Scope.close(stateScopeRef.current, Exit.void);
-          yield* Scope.close(actorScope, Exit.void);
+          yield* closeGeneration(Exit.void);
           yield* Deferred.succeed(exitDeferred, RuntimeExit.Defect(cause, "initial-spawn"));
           return yield* Effect.failCause(cause);
         }),
@@ -445,8 +451,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
     if (machine._isFinal(stableInitialState._tag)) {
       if (lifecycle?.onFinal !== undefined) yield* lifecycle.onFinal(stableInitialState);
       yield* Ref.set(stoppedRef, true);
-      yield* Scope.close(stateScopeRef.current, Exit.void);
-      yield* Scope.close(actorScope, Exit.void);
+      yield* closeGeneration(Exit.void);
       yield* setExit(RuntimeExit.Final(stableInitialState));
       yield* Deferred.succeed(startDeferred, undefined);
       return;
@@ -516,16 +521,14 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
       ).pipe(Effect.forkIn(actorScope));
     }
 
-    // Generation owner: observes loop exit, then closes actorScope to clean up
-    // background fibers. The loop sets exitDeferred before exiting.
+    // Generation owner closes all scoped resources after the event loop exits.
     yield* Effect.forkDetach(
       Effect.gen(function* () {
         const loopExit = yield* Fiber.await(loopFiber);
-        // Close actorScope — interrupts background fibers and their defect watchers
         if (loopExit._tag === "Success") {
-          yield* Scope.close(actorScope, Exit.void);
+          yield* closeGeneration(Exit.void);
         } else {
-          yield* Scope.close(actorScope, loopExit);
+          yield* closeGeneration(loopExit);
         }
       }),
     );
@@ -534,8 +537,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
   }).pipe(
     Effect.catchCause((cause) =>
       Ref.set(stoppedRef, true).pipe(
-        Effect.andThen(Scope.close(stateScopeRef.current, Exit.void)),
-        Effect.andThen(Scope.close(actorScope, Exit.void)),
+        Effect.andThen(closeGeneration(Exit.void)),
         Effect.andThen(setExit(RuntimeExit.Defect(cause, "transition"))),
         Effect.andThen(Deferred.failCause(startDeferred, cause)),
         Effect.andThen(Effect.failCause(cause)),
@@ -553,8 +555,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
     if (loopFiber !== undefined) {
       yield* Fiber.interrupt(loopFiber);
     }
-    yield* Scope.close(stateScopeRef.current, Exit.void);
-    yield* Scope.close(actorScope, Exit.void);
+    yield* closeGeneration(Exit.void);
     yield* setExit(RuntimeExit.Stopped);
   }).pipe(Effect.asVoid);
 
@@ -573,6 +574,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
       eventQueue,
       pendingRequests,
       exitDeferred,
+      closedDeferred,
       sendSync,
     ),
     stop: stop.pipe(Effect.provide(services)),
@@ -592,6 +594,7 @@ const makeHandle = <S extends { readonly _tag: string }, E extends { readonly _t
   eventQueue: Queue.Queue<RuntimeQueuedEvent<S, E>>,
   pendingRequests: Set<(error: ActorStoppedError) => Effect.Effect<void>>,
   exitDeferred: Deferred.Deferred<RuntimeExit<S>>,
+  closedDeferred: Deferred.Deferred<void>,
   sendSync: (event: E) => void,
 ): RuntimeHandle<S, E> => {
   const track = <A, RequestError>(
@@ -656,6 +659,7 @@ const makeHandle = <S extends { readonly _tag: string }, E extends { readonly _t
     start: Effect.void,
     settlePendingRequests: settlePendingRequests(pendingRequests, actorId),
     exitDeferred,
+    awaitClosed: Deferred.await(closedDeferred),
   };
 };
 

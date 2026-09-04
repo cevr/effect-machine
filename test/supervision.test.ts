@@ -356,6 +356,140 @@ describe("supervision: background crash", () => {
 });
 
 // ============================================================================
+// Generation cleanup
+// ============================================================================
+
+describe("supervision: generation cleanup", () => {
+  it.scopedLive("releases generation resources before restart", () =>
+    Effect.gen(function* () {
+      for (const resourceKind of ["background", "spawn"] as const) {
+        const operations: string[] = [];
+        const secondGenerationStarted = yield* Deferred.make<void>();
+        const resource = ({ generation }: { readonly generation: number }) =>
+          Effect.gen(function* () {
+            yield* Effect.acquireRelease(
+              Effect.gen(function* () {
+                operations.push(`acquire:${generation}`);
+                if (generation === 1) {
+                  yield* Deferred.succeed(secondGenerationStarted, void 0);
+                }
+              }),
+              () =>
+                Effect.sleep(Duration.millis(50)).pipe(
+                  Effect.andThen(Effect.sync(() => operations.push(`release:${generation}`))),
+                ),
+            );
+            if (generation === 0) return yield* Effect.die("restart resource test");
+            return yield* Effect.never;
+          });
+        const backgroundMachine = Machine.make({
+          state: S,
+          event: E,
+          initial: S.Idle,
+        }).background(resource);
+        const spawnMachine = Machine.make({ state: S, event: E, initial: S.Idle }).spawn(
+          S.Idle,
+          resource,
+        );
+        let resourceMachine = backgroundMachine;
+        if (resourceKind === "spawn") {
+          resourceMachine = spawnMachine;
+        }
+        const actor = yield* Machine.spawn(resourceMachine, {
+          supervision: Supervision.restart({ maxRestarts: 1 }),
+        });
+
+        yield* actor.start;
+        yield* Deferred.await(secondGenerationStarted);
+
+        expect(operations.slice(0, 3)).toEqual(["acquire:0", "release:0", "acquire:1"]);
+        yield* actor.stop;
+      }
+    }),
+  );
+
+  it.scopedLive("releases active generation resources once on stop", () =>
+    Effect.gen(function* () {
+      let releases = 0;
+      const resourceMachine = Machine.make({ state: S, event: E, initial: S.Idle }).background(() =>
+        Effect.acquireRelease(Effect.void, () =>
+          Effect.sync(() => {
+            releases += 1;
+          }),
+        ),
+      );
+      const actor = yield* Machine.spawn(resourceMachine, {
+        supervision: Supervision.restart({ maxRestarts: 1 }),
+      });
+
+      yield* actor.start;
+      yield* actor.stop;
+
+      expect(releases).toBe(1);
+    }),
+  );
+
+  it.scopedLive("completes terminal exit after generation cleanup", () =>
+    Effect.gen(function* () {
+      let released = false;
+      const resourceMachine = Machine.make({ state: S, event: E, initial: S.Idle })
+        .on(S.Idle, E.Crash, () => Effect.die("terminal cleanup test"))
+        .background(() =>
+          Effect.acquireRelease(Effect.void, () =>
+            Effect.sleep(Duration.millis(50)).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  released = true;
+                }),
+              ),
+            ),
+          ),
+        );
+      const actor = yield* Machine.spawn(resourceMachine, {
+        supervision: Supervision.none,
+      });
+
+      yield* actor.start;
+      yield* actor.send(E.Crash);
+      yield* actor.awaitExit;
+
+      expect(released).toBe(true);
+    }),
+  );
+
+  it.scopedLive("restarts when an old generation finalizer defects", () =>
+    Effect.gen(function* () {
+      const secondGenerationStarted = yield* Deferred.make<void>();
+      const resourceMachine = Machine.make({ state: S, event: E, initial: S.Idle }).background(
+        ({ generation }) =>
+          Effect.gen(function* () {
+            const acquire = Effect.gen(function* () {
+              if (generation === 1) {
+                yield* Deferred.succeed(secondGenerationStarted, void 0);
+              }
+            });
+            const release = Effect.gen(function* () {
+              if (generation === 0) {
+                return yield* Effect.die("cleanup defect");
+              }
+            });
+            yield* Effect.acquireRelease(acquire, () => release);
+            if (generation === 0) return yield* Effect.die("generation defect");
+            return yield* Effect.never;
+          }),
+      );
+      const actor = yield* Machine.spawn(resourceMachine, {
+        supervision: Supervision.restart({ maxRestarts: 1 }),
+      });
+
+      yield* actor.start;
+      yield* Deferred.await(secondGenerationStarted);
+      yield* actor.stop;
+    }),
+  );
+});
+
+// ============================================================================
 // Pending requests fail on crash
 // ============================================================================
 

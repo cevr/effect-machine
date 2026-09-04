@@ -706,6 +706,7 @@ const runSupervisionLoop = <
       if (currentRuntime === undefined) return;
 
       const generationExit = yield* Deferred.await(currentRuntime.exitDeferred);
+      yield* currentRuntime.awaitClosed;
 
       if (generationExit._tag !== "Defect") {
         yield* Deferred.succeed(
