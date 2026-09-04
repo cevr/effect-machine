@@ -164,7 +164,7 @@ export interface InspectorService<S, E> {
  * Inspector service tag - optional service for machine introspection
  * Uses `any` types to allow variance flexibility when providing the service
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// oxlint-disable-next-line typescript/no-explicit-any -- the inspector service must accept every machine state and event
 export class Inspector extends Context.Service<Inspector, InspectorService<any, any>>()(
   "effect-machine/inspection/Inspector",
 ) {}
