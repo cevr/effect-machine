@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.25.0
+
+### Minor Changes
+
+- [#65](https://github.com/cevr/effect-machine/pull/65) [`57c91bd`](https://github.com/cevr/effect-machine/commit/57c91bddfff345ffdc10fde89ba66836c4790c23) Thanks [@cevr](https://github.com/cevr)! - Expose a narrow synchronous client to machine-owned Effects. Bind each background resource to its actor generation.
+
 ## 0.24.6
 
 ### Patch Changes
