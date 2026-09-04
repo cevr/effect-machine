@@ -188,6 +188,7 @@ export const EntityMachine = {
       );
       const stoppedRef = yield* Ref.make(false);
       const eventQueue = yield* Queue.unbounded<RuntimeQueuedEvent<S, E>>();
+      const listeners = new Set<(state: S) => void>();
       let hooks: ReturnType<typeof makeInspectionHooks<S, E>> | undefined = undefined;
       if (inspector !== undefined) {
         hooks = makeInspectionHooks(entityId, inspector);
@@ -199,7 +200,7 @@ export const EntityMachine = {
           actorId: entityId,
           hooks,
           childIdPrefix: `${entityId}/`,
-          cellResources: { stateRef, latestTransitionRef, stoppedRef, eventQueue },
+          cellResources: { stateRef, latestTransitionRef, stoppedRef, eventQueue, listeners },
         }),
       );
       yield* withActorInspection(runtime.start);

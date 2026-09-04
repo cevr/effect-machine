@@ -52,6 +52,10 @@ const machine = Machine.make({
 | `.background(handler)`                 | Machine-lifetime effect                 |
 | `.final(state)`                        | Mark final state                        |
 
+Use `self.client` in a host callback that must send or observe state synchronously. Use
+`self.state` and `self.latestTransition` in Effect workflows. A background resource receives the
+actor generation Scope. The runtime closes that Scope when the actor generation stops.
+
 ## State.with()
 
 Construct state from existing source:

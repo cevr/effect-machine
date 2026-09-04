@@ -56,7 +56,7 @@ import {
   type MachineInitialization as MachineInitializationType,
 } from "./internal/machine-initialization.js";
 import type { BackgroundEffect, SpawnEffect, Transition } from "./internal/machine-definition.js";
-import type { ActorRef, ActorSystemService, TransitionInfo } from "./actor.js";
+import type { ActorClient, ActorRef, ActorSystemService, TransitionInfo } from "./actor.js";
 import type { InspectorService } from "./inspection.js";
 
 // ============================================================================
@@ -74,6 +74,11 @@ export interface MachineRef<Event, State = never> {
     TransitionInfo<State, Event> | undefined
   >;
   readonly send: (event: Event) => Effect.Effect<void>;
+  /** Synchronous client for host callback boundaries. */
+  readonly client: Pick<
+    ActorClient<State & { readonly _tag: string }, Event>,
+    "send" | "getSnapshot" | "subscribe"
+  >;
   readonly spawn: <S2 extends { readonly _tag: string }, E2 extends { readonly _tag: string }, R2>(
     id: string,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1091,6 +1096,7 @@ export class Machine<
 
   /**
    * Machine-lifetime effect that is forked on actor spawn and runs until the actor stops.
+   * Each handler receives the generation Scope. It closes when the generation stops.
    *
    * @example
    * ```ts

@@ -43,6 +43,7 @@ import type { NoReplyError } from "./errors.js";
 import { DuplicateActorError, ActorStoppedError } from "./errors.js";
 import {
   createRuntime,
+  notifyStateListeners,
   type RuntimeLifecycleHooks,
   type RuntimeQueuedEvent,
   type RuntimeHandle,
@@ -407,19 +408,6 @@ export class ActorScope extends Context.Service<ActorScope, Scope.Scope>()(
 
 /** Listener set for sync subscriptions */
 type Listeners<S> = Set<(state: S) => void>;
-
-/**
- * Notify all listeners of state change.
- */
-const notifyListeners = <S>(listeners: Listeners<S>, state: S): void => {
-  for (const listener of listeners) {
-    try {
-      listener(state);
-    } catch {
-      // Ignore listener failures to avoid crashing the actor loop
-    }
-  }
-};
 
 const toActorExit = <S, O>(
   machine: { readonly _output: (state: S) => O },
@@ -788,7 +776,7 @@ const runSupervisionLoop = <
         yield* options.onRestart(nextGeneration, generationExit);
       }
 
-      notifyListeners(cell.listeners, restartState);
+      notifyStateListeners(cell.listeners, restartState);
     }
   });
 
@@ -913,7 +901,6 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       onEvent,
       onStateChange: (result, event) =>
         Effect.gen(function* () {
-          notifyListeners(listeners, result.newState);
           const durability = lifecycle?.durability;
           if (durability === undefined || !result.transitioned) return;
           const shouldPersist =
@@ -974,6 +961,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
               latestTransitionRef,
               stoppedRef,
               eventQueue: currentQueue,
+              listeners,
             },
             lifecycle: buildRuntimeLifecycle(runtimeGeneration),
             onChildSpawned: (childId, child) =>
