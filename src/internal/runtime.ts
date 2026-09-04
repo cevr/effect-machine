@@ -29,6 +29,7 @@ import {
   Scope,
   SubscriptionRef,
 } from "effect";
+import { dual } from "effect/Function";
 
 import type { Machine, MachineRef } from "../machine.js";
 import type { ActorRef, ActorSystemService, TransitionInfo } from "../actor.js";
@@ -81,7 +82,24 @@ export interface RuntimeCellResources<S, E> {
   readonly latestTransitionRef: SubscriptionRef.SubscriptionRef<TransitionInfo<S, E> | undefined>;
   readonly eventQueue: Queue.Queue<RuntimeQueuedEvent<S, E>>;
   readonly stoppedRef: Ref.Ref<boolean>;
+  readonly listeners: Set<(state: S) => void>;
 }
+
+/** Notify synchronous state listeners without letting a listener defect fail the runtime. */
+export const notifyStateListeners: {
+  <S>(state: S): (listeners: Set<(state: S) => void>) => void;
+  <S>(listeners: Set<(state: S) => void>, state: S): void;
+} = dual(2, <S>(listeners: Set<(state: S) => void>, state: S): void => {
+  for (const listener of listeners) {
+    // Host callbacks can throw. Each listener must stay isolated from the actor runtime.
+    // eslint-disable-next-line effect/noTryCatch
+    try {
+      listener(state);
+    } catch {
+      // Listener defects must not fail the runtime.
+    }
+  }
+});
 
 // ============================================================================
 // Runtime interface
@@ -224,8 +242,16 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
   const services = yield* Effect.context<R>();
   const fork = Effect.runForkWith(services);
 
-  const { stateRef, latestTransitionRef, stoppedRef, eventQueue } = config.cellResources;
+  const { stateRef, latestTransitionRef, stoppedRef, eventQueue, listeners } = config.cellResources;
   const pendingRequests = new Set<(error: ActorStoppedError) => Effect.Effect<void>>();
+
+  const loopFiberRef: { current: Fiber.Fiber<void> | undefined } = { current: undefined };
+  const sendSync = (event: E): void => {
+    if (Ref.getUnsafe(stoppedRef)) return;
+    Queue.offerUnsafe(eventQueue, { _tag: "send", event });
+    eventQueue.dispatcher.flush();
+    loopFiberRef.current?.currentDispatcher?.flush();
+  };
 
   // Exit deferred — set exactly once with the exit reason
   const exitDeferred = yield* Deferred.make<RuntimeExit<S>>();
@@ -265,6 +291,14 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
     state: stateRef,
     latestTransition: latestTransitionRef,
     send: selfSend,
+    client: {
+      send: sendSync,
+      getSnapshot: () => SubscriptionRef.getUnsafe(stateRef),
+      subscribe: (listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
     spawn,
     reply: (value: unknown) =>
       Effect.sync(() => {
@@ -285,9 +319,6 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
 
   // Shared mutable refs used by both start() and stop()
   const initEvent = { _tag: INTERNAL_INIT_EVENT } as E;
-  // Mutable holder for the loop fiber — needed by stop() and spawn defect signals
-  const loopFiberRef: { current: Fiber.Fiber<void> | undefined } = { current: undefined };
-
   /** Set the exit deferred exactly once. */
   const setExit = (exit: RuntimeExit<S>) =>
     Deferred.succeed(exitDeferred, exit).pipe(Effect.asVoid);
@@ -351,6 +382,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
           event: latest.event,
         });
       }
+      notifyStateListeners(listeners, initialResult.newState);
       if (lifecycle?.onStateChange !== undefined) {
         const stateChange = lifecycle.onStateChange(initialResult, initEvent);
         if (isEffect(stateChange)) yield* stateChange;
@@ -375,7 +407,10 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
           self,
           system,
         })
-        .pipe(Effect.forkIn(actorScope, { startImmediately: true }));
+        .pipe(
+          Effect.provideService(Scope.Scope, actorScope),
+          Effect.forkIn(actorScope, { startImmediately: true }),
+        );
       backgroundFibers.push(fiber);
     }
 
@@ -443,6 +478,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
       eventQueue,
       pendingRequests,
       stoppedRef,
+      listeners,
       self,
       stateScopeRef,
       actorId,
@@ -537,7 +573,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
       eventQueue,
       pendingRequests,
       exitDeferred,
-      () => loopFiberRef.current?.currentDispatcher?.flush(),
+      sendSync,
     ),
     stop: stop.pipe(Effect.provide(services)),
     start: start.pipe(Effect.provide(services)),
@@ -556,7 +592,7 @@ const makeHandle = <S extends { readonly _tag: string }, E extends { readonly _t
   eventQueue: Queue.Queue<RuntimeQueuedEvent<S, E>>,
   pendingRequests: Set<(error: ActorStoppedError) => Effect.Effect<void>>,
   exitDeferred: Deferred.Deferred<RuntimeExit<S>>,
-  flushLoop: () => void,
+  sendSync: (event: E) => void,
 ): RuntimeHandle<S, E> => {
   const track = <A, RequestError>(
     deferred: Deferred.Deferred<A, RequestError>,
@@ -612,13 +648,7 @@ const makeHandle = <S extends { readonly _tag: string }, E extends { readonly _t
       yield* Queue.offer(eventQueue, { _tag: "drain", done });
       yield* Deferred.await(done);
     }).pipe(Effect.asVoid),
-    sendSync: (event: E) => {
-      const stopped = Effect.runSync(Ref.get(stoppedRef));
-      if (stopped) return;
-      Effect.runSync(Queue.offer(eventQueue, { _tag: "send", event }));
-      eventQueue.dispatcher.flush();
-      flushLoop();
-    },
+    sendSync,
     getState: SubscriptionRef.get(stateRef),
     stateRef,
     latestTransitionRef,
@@ -655,6 +685,7 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
   eventQueue: Queue.Queue<RuntimeQueuedEvent<S, E>>,
   pendingRequests: Set<(error: ActorStoppedError) => Effect.Effect<void>>,
   stoppedRef: Ref.Ref<boolean>,
+  listeners: Set<(state: S) => void>,
   self: MachineRef<E, S>,
   stateScopeRef: { current: Scope.Closeable },
   actorId: string,
@@ -761,6 +792,7 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
             generation,
           );
         }
+        notifyStateListeners(listeners, result.newState);
       }
 
       // Lifecycle: onStateChange (actor notifies listeners and saves durability)

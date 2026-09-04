@@ -31,6 +31,64 @@ interface SelfSource {
 }
 
 describe("machine self observation", () => {
+  it.scopedLive("provides an inline host client to machine-owned effects", () =>
+    Effect.gen(function* () {
+      const observedStates: Array<TestState["_tag"]> = [];
+      let defectiveListenerCalls = 0;
+      const released = yield* Deferred.make<void>();
+      const machine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle,
+      })
+        .on(TestState.Idle, TestEvent.Start, ({ event }) =>
+          TestState.Active({ count: event.count }),
+        )
+        .on(TestState.Active, TestEvent.Increment, ({ state }) =>
+          TestState.Active({ count: state.count + 1 }),
+        )
+        .background(({ self }) =>
+          Effect.acquireRelease(
+            Effect.sync(() =>
+              self.client.subscribe((state) => {
+                const exactState: TestState = state;
+                observedStates.push(exactState._tag);
+                if (TestState.$is("Active")(exactState) && exactState.count === 1) {
+                  self.client.send(TestEvent.Increment);
+                }
+              }),
+            ),
+            (unsubscribe) =>
+              Effect.sync(unsubscribe).pipe(Effect.andThen(Deferred.succeed(released, undefined))),
+          ).pipe(Effect.andThen(Effect.never)),
+        )
+        .background(({ self }) =>
+          Effect.acquireRelease(
+            Effect.sync(() =>
+              self.client.subscribe(() => {
+                defectiveListenerCalls += 1;
+                // This host callback must throw to test defect isolation.
+                // eslint-disable-next-line effect/noThrowStatement, effect/noNewError
+                throw new Error("listener defect");
+              }),
+            ),
+            (unsubscribe) => Effect.sync(unsubscribe),
+          ).pipe(Effect.andThen(Effect.never)),
+        );
+
+      const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
+
+      actor.client.send(TestEvent.Start({ count: 1 }));
+
+      expect(actor.client.getSnapshot()).toEqual(TestState.Active({ count: 2 }));
+      expect(observedStates).toEqual(["Active", "Active"]);
+      expect(defectiveListenerCalls).toBe(2);
+      yield* actor.stop;
+      yield* Deferred.await(released);
+    }),
+  );
+
   it.scopedLive("shares typed actor refs for accepted transitions and stop cleanup", () =>
     Effect.gen(function* () {
       const sourceReady = yield* Deferred.make<SelfSource>();

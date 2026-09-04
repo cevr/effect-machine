@@ -96,8 +96,9 @@ Effect Machine does not add an action queue or a second context system.
 Effect requirements remain in `R`. A machine cannot start until the application provides every required service. Effectful transition handlers must have `never` in their error channel. Convert expected failures to states or events.
 
 Machine-lifetime backgrounds can read `self.state` and `self.latestTransition`. These are the
-actor-owned subscription refs. They stay stable across supervision generations. Treat them as
-read-only and use `SubscriptionRef.get` or `SubscriptionRef.changes` to observe them.
+actor-owned subscription refs. They stay stable across supervision generations. Use
+`SubscriptionRef.get` or `SubscriptionRef.changes` for Effect workflows. Use `self.client` for
+synchronous host callbacks that need `send`, `getSnapshot`, or `subscribe`.
 
 Read [the Effect model](./docs/effect-model.md) and [async work ownership](./docs/async-work.md).
 
