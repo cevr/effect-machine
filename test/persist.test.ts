@@ -43,7 +43,7 @@ describe("Machine.spawn with lifecycle", () => {
       const actor = yield* Machine.spawn(machine, {
         lifecycle: {
           recovery: {
-            resolve: () => Effect.succeed(Option.some(savedState)),
+            resolve: () => Effect.succeedSome(savedState),
           },
           durability: { save: () => Effect.void },
         },
@@ -62,7 +62,7 @@ describe("Machine.spawn with lifecycle", () => {
       const actor = yield* Machine.spawn(machine, {
         lifecycle: {
           recovery: {
-            resolve: () => Effect.succeed(Option.none()),
+            resolve: () => Effect.succeedNone,
           },
           durability: { save: () => Effect.void },
         },
@@ -81,7 +81,7 @@ describe("Machine.spawn with lifecycle", () => {
       const actor = yield* Machine.spawn(machine, {
         lifecycle: {
           recovery: {
-            resolve: () => Effect.succeed(Option.none()),
+            resolve: () => Effect.succeedNone,
           },
           durability: {
             save: (commit) => Ref.update(saves, (arr) => [...arr, { _tag: commit.nextState._tag }]),
@@ -109,7 +109,7 @@ describe("Machine.spawn with lifecycle", () => {
       const actor = yield* Machine.spawn(machine, {
         lifecycle: {
           recovery: {
-            resolve: () => Effect.succeed(Option.none()),
+            resolve: () => Effect.succeedNone,
           },
           durability: {
             save: (commit) => Ref.update(saves, (arr) => [...arr, commit.nextState._tag]),
@@ -146,7 +146,7 @@ describe("Machine.spawn with lifecycle", () => {
           recovery: {
             resolve: () => {
               resolveCalled = true;
-              return Effect.succeed(Option.some(PState.Active({ count: 1 })));
+              return Effect.succeedSome(PState.Active({ count: 1 }));
             },
           },
           durability: { save: () => Effect.void },
@@ -238,7 +238,7 @@ describe("Machine.spawn with recovery.resolve transformation", () => {
         lifecycle: {
           recovery: {
             // Cap count at 50 on restore
-            resolve: () => Effect.succeed(Option.some(PState.Active({ count: 50 }))),
+            resolve: () => Effect.succeedSome(PState.Active({ count: 50 })),
           },
           durability: { save: () => Effect.void },
         },
@@ -258,7 +258,7 @@ describe("Machine.spawn with recovery.resolve transformation", () => {
         lifecycle: {
           recovery: {
             // Reject persisted state — start fresh
-            resolve: () => Effect.succeed(Option.none()),
+            resolve: () => Effect.succeedNone,
           },
           durability: { save: () => Effect.void },
         },
@@ -294,7 +294,7 @@ describe("Machine.spawn with recovery.resolve transformation", () => {
           recovery: {
             resolve: (ctx) => {
               receivedInitial = ctx.machineInitial;
-              return Effect.succeed(Option.some(PState.Active({ count: 1 })));
+              return Effect.succeedSome(PState.Active({ count: 1 }));
             },
           },
           durability: { save: () => Effect.void },
@@ -316,7 +316,7 @@ describe("Machine.spawn with recovery.resolve transformation", () => {
           recovery: {
             resolve: () => {
               resolveCalled = true;
-              return Effect.succeed(Option.none());
+              return Effect.succeedNone;
             },
           },
           durability: { save: () => Effect.void },

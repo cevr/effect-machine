@@ -9,7 +9,7 @@
  * across deactivation/reactivation cycles.
  */
 import { Entity, ShardingConfig } from "effect/unstable/cluster";
-import { Clock, Effect, Layer, Option, Ref, Schema } from "effect";
+import { Clock, Effect, Layer, Ref, Schema } from "effect";
 import { describe, expect, it } from "effect-bun-test";
 
 import { Machine, State, Event, ActorSystemDefault } from "../../src/index.js";
@@ -370,7 +370,7 @@ describe("Entity Persistence", () => {
 
       const failingAdapter: PersistenceAdapterInterface = {
         saveSnapshot: () => Effect.void,
-        loadSnapshot: () => Effect.succeed(Option.none()),
+        loadSnapshot: () => Effect.succeedNone,
         appendEvents: () => {
           appendCallCount++;
           // Fail on 3rd append
