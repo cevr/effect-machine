@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.25.1
+
+### Patch Changes
+
+- [#67](https://github.com/cevr/effect-machine/pull/67) [`e183c26`](https://github.com/cevr/effect-machine/commit/e183c26bcd8f300b8959bc5cbf3008d5be3a288d) Thanks [@cevr](https://github.com/cevr)! - Wait for the old generation resources to close before a supervised actor restarts.
+
 ## 0.25.0
 
 ### Minor Changes
