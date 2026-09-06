@@ -1,5 +1,13 @@
 # effect-machine
 
+## 0.25.8
+
+### Patch Changes
+
+- [#81](https://github.com/cevr/effect-machine/pull/81) [`d4f3dea`](https://github.com/cevr/effect-machine/commit/d4f3dea1b5a856df71f77da16e46a6915ebed6a4) Thanks [@cevr](https://github.com/cevr)! - Allow an actor to stop itself from protected supervised recovery. Wait for the supervisor to finish cleanup and report its cleanup defects to every stop caller.
+
+  Apply the restart policy when a restarted generation fails during startup. Continue within the retry budget and complete the actor exit when that budget ends.
+
 ## 0.25.7
 
 ### Patch Changes
