@@ -279,6 +279,8 @@ const count = yield* actor.ask(Event.GetCount);  // number
 
 ## Gotchas
 
+- `actor.start` shares one startup result across concurrent and repeated calls, including failure or interruption. Stop the actor and spawn a new actor to retry initialization. It cannot restart a terminal actor.
+- ActorScope cleanup must match the registered actor identity before removing an ID. A later actor can reuse that ID.
 - `Machine.spawn` returns an **unstarted** actor — must call `yield* actor.start`. `system.spawn` auto-starts.
 - Never `throw` in Effect.gen — use `yield* Effect.fail()`
 - `yield* Effect.yieldNow` after `send()` to let effects run

@@ -142,6 +142,8 @@ export interface ActorRef<State extends { readonly _tag: string }, Event, Output
   /**
    * Start the actor — fork event loop, background effects, spawn effects.
    * Idempotent: first caller runs initialization, subsequent callers await completion.
+   * The first failure or interruption is retained. Stop that actor and spawn a new
+   * actor to retry initialization.
    * Events sent before start() are queued and processed when start() runs.
    *
    * Called automatically by `system.spawn`. For `Machine.spawn`, the caller
@@ -1076,6 +1078,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
 
   // Build actor start — runs recovery, emits @machine.spawn, arms supervisor, then delegates to runtime.start
   const startActor = Effect.fn("effect-machine.actor.start")(function* () {
+    if (yield* Ref.get(stoppedRef)) return;
     yield* SubscriptionRef.set(lifecycleRef, {
       _tag: "Starting",
       generation: generation.current,
@@ -1148,7 +1151,10 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       }
     }
   });
-  const start = startActor().pipe(Effect.provide(serviceContext), Effect.asVoid);
+  // oxlint-disable-next-line effect/noPerCallCacheConstruction -- Actor allocation owns one startup result for this actor.
+  const start = yield* Effect.cached(
+    startActor().pipe(Effect.provide(serviceContext), Effect.asVoid),
+  );
 
   return buildActorRefCore(cell, stop, start, serviceContext);
 });
@@ -1236,8 +1242,10 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
       yield* Scope.addFinalizer(
         maybeScope.value,
         Effect.gen(function* () {
-          // Guard: only emit if still registered (system.stop may have already removed it)
-          if (MutableHashMap.has(actorsMap, id)) {
+          // A later actor can reuse this ID before the original owner scope closes.
+          const registered = MutableHashMap.get(actorsMap, id);
+          if (Option.isSome(registered) && registered.value === actorRef) {
+            MutableHashMap.remove(actorsMap, id);
             // Scope cleanup — use Stopped as the exit reason.
             // The authoritative exit is on actor.awaitExit, not here.
             yield* emitSystemEvent({
@@ -1246,7 +1254,6 @@ const make = Effect.fn("effect-machine.actorSystem.make")(function* () {
               actor: actorRef,
               exit: { _tag: "Stopped" } as ActorExit<unknown>,
             });
-            MutableHashMap.remove(actorsMap, id);
           }
           yield* actor.stop;
         }),
