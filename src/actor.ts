@@ -136,7 +136,10 @@ export interface ActorRef<State extends { readonly _tag: string }, Event, Output
     TransitionInfo<State, Event> | undefined
   >;
 
-  /** Stop the actor gracefully. */
+  /**
+   * Stop startup and the active generation, then wait for cleanup.
+   * Caller interruption stops waiting without cancelling shutdown.
+   */
   readonly stop: Effect.Effect<void>;
 
   /**
@@ -678,6 +681,16 @@ const resolveActorSystem = Effect.fn("effect-machine.resolveActorSystem")(functi
   return { system, implicitSystemScope: scope as Scope.Closeable | undefined };
 });
 
+function activateGeneration<S extends AnyState, O>(
+  lifecycle: SubscriptionRef.SubscriptionRef<ActorLifecycle<S, O>>,
+  generation: number,
+): Effect.Effect<void> {
+  return SubscriptionRef.update(lifecycle, (current): ActorLifecycle<S, O> => {
+    if (current._tag !== "Starting" || current.generation !== generation) return current;
+    return { _tag: "Active", generation };
+  });
+}
+
 /**
  * Run the supervision loop for a supervised actor.
  * Observes exit deferred, applies restart policy, resets cell resources on restart.
@@ -767,10 +780,7 @@ const runSupervisionLoop = <
       yield* newRuntime.start;
       const restartExit = yield* Deferred.poll(newRuntime.exitDeferred);
       if (Option.isNone(restartExit)) {
-        yield* SubscriptionRef.set(cell.lifecycleRef, {
-          _tag: "Active",
-          generation: nextGeneration,
-        });
+        yield* activateGeneration(cell.lifecycleRef, nextGeneration);
       }
 
       if (options.onRestart !== undefined) {
@@ -1044,12 +1054,22 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   runtimeRef.current = runtime;
 
   const supervision = options.supervision;
+  const startupLock = yield* Semaphore.make(1);
+  let stopRequested = false;
+  let startupFiber: Fiber.Fiber<void> | undefined;
 
-  // Build actor stop — wraps current runtime.stop with implicit system teardown.
-  // For supervised actors: interrupt supervisor fiber first (cancels restart/backoff),
-  // then stop the current runtime, then set terminal exit.
-  const stopActor = Effect.fn("effect-machine.actor.stop")(function* () {
-    // Interrupt supervisor loop first — prevents restart during/after stop
+  // Shutdown owns startup cancellation, generation cleanup, and implicit system teardown.
+  const stopActor = Effect.fn("effect-machine.actor.stop")(function* (
+    starting: Fiber.Fiber<void> | undefined,
+  ) {
+    let cleanupCause: Cause.Cause<unknown> | undefined;
+    if (starting !== undefined) {
+      yield* Fiber.interrupt(starting);
+      const startupExit = yield* Fiber.await(starting);
+      if (Exit.isFailure(startupExit) && !Cause.hasInterruptsOnly(startupExit.cause)) {
+        cleanupCause = startupExit.cause;
+      }
+    }
     if (supervisorFiberRef.current !== undefined) {
       yield* Fiber.interrupt(supervisorFiberRef.current);
     }
@@ -1058,20 +1078,51 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     if (currentRuntime !== undefined) {
       const stopExit = yield* currentRuntime.stop.pipe(Effect.exit);
       const currentExit = yield* Deferred.poll(currentRuntime.exitDeferred);
-      if (Option.isSome(currentExit)) {
-        runtimeExit = yield* currentExit.value;
-      } else if (Exit.isFailure(stopExit)) {
-        runtimeExit = { _tag: "Defect", cause: stopExit.cause, phase: "cleanup" };
-      }
-      yield* completeTerminal(runtimeExit);
+      if (Option.isSome(currentExit)) runtimeExit = yield* currentExit.value;
       if (Exit.isFailure(stopExit)) {
-        return yield* Effect.failCause(stopExit.cause).pipe(Effect.orDie);
+        if (cleanupCause === undefined) cleanupCause = stopExit.cause;
+        else cleanupCause = Cause.combine(cleanupCause)(stopExit.cause);
+      } else if (cleanupCause !== undefined && runtimeExit._tag === "Defect") {
+        cleanupCause = Cause.combine(cleanupCause)(runtimeExit.cause);
       }
-    } else {
-      yield* completeTerminal(runtimeExit);
+    }
+    if (cleanupCause !== undefined) {
+      runtimeExit = { _tag: "Defect", cause: cleanupCause, phase: "cleanup" };
+    }
+    yield* completeTerminal(runtimeExit);
+    if (cleanupCause !== undefined) {
+      // @effect-diagnostics-next-line anyUnknownInErrorContext:off -- Rethrow combined cleanup causes at the actor boundary.
+      return yield* Effect.failCause(cleanupCause).pipe(Effect.orDie);
     }
   });
-  const stop = stopActor().pipe(Effect.provide(serviceContext), Effect.asVoid);
+  // oxlint-disable-next-line effect/noPerCallCacheConstruction -- Actor allocation owns one shutdown fiber shared by all stop callers.
+  const shutdown = yield* Effect.cached(
+    startupLock.withPermit(
+      Effect.gen(function* () {
+        stopRequested = true;
+        let pendingStartup: Fiber.Fiber<void> | undefined;
+        if (startupFiber?.pollUnsafe() === undefined) pendingStartup = startupFiber;
+        return yield* stopActor(pendingStartup).pipe(
+          Effect.provide(serviceContext),
+          Effect.forkDetach,
+        );
+      }),
+    ),
+  );
+  const stop = Effect.withFiber((caller) =>
+    shutdown.pipe(
+      // Cache publication must finish before a caller can cancel its wait.
+      Effect.uninterruptible,
+      Effect.flatMap((owner) => {
+        if (startupFiber?.id === caller.id) {
+          // Mark the fiber itself. A cause-level fallback must not swallow self-stop.
+          // Do not join self: recovery may be inside an uninterruptible region.
+          return Effect.sync(() => caller.interruptUnsafe(caller.id));
+        }
+        return Fiber.join(owner);
+      }),
+    ),
+  );
 
   // Track whether hydrate was provided — skip recovery when hydrated
   const isHydrated = options.hydrated === true;
@@ -1090,6 +1141,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
         generation: generation.current,
         machineInitial: options.machineInitial,
       });
+      if (stopRequested) return yield* Effect.interrupt;
       if (Option.isSome(resolved)) {
         // Update cell stateRef
         yield* SubscriptionRef.set(stateRef, resolved.value);
@@ -1108,6 +1160,8 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       initialState: currentState,
       timestamp,
     }));
+
+    if (stopRequested) return yield* Effect.interrupt;
 
     // Arm supervisor (moved from allocate → start)
     if (supervision !== undefined) {
@@ -1144,16 +1198,27 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       );
       const currentExit = yield* Deferred.poll(currentRuntime.exitDeferred);
       if (Option.isNone(currentExit)) {
-        yield* SubscriptionRef.set(lifecycleRef, {
-          _tag: "Active",
-          generation: generation.current,
-        });
+        yield* activateGeneration(lifecycleRef, generation.current);
       }
     }
   });
   // oxlint-disable-next-line effect/noPerCallCacheConstruction -- Actor allocation owns one startup result for this actor.
   const start = yield* Effect.cached(
-    startActor().pipe(Effect.provide(serviceContext), Effect.asVoid),
+    startupLock
+      .withPermit(
+        Effect.gen(function* () {
+          if (stopRequested) return undefined;
+          startupFiber = yield* startActor().pipe(Effect.forkChild({ startImmediately: true }));
+          return startupFiber;
+        }),
+      )
+      .pipe(
+        Effect.flatMap((starting) => {
+          if (starting === undefined) return Effect.void;
+          return Fiber.join(starting);
+        }),
+        Effect.provide(serviceContext),
+      ),
   );
 
   return buildActorRefCore(cell, stop, start, serviceContext);

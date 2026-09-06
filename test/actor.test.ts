@@ -5,6 +5,7 @@ import {
   Effect,
   Fiber,
   Layer,
+  Queue,
   Ref,
   Schema,
   Context,
@@ -568,33 +569,20 @@ describe("ActorRef", () => {
         const actor = yield* Machine.spawn(machine, { id: "test" });
         yield* actor.start;
 
-        const tags: string[] = [];
-
-        // Start collecting changes in background
+        const tags = yield* Queue.unbounded<string>();
         yield* Effect.forkChild(
           SubscriptionRef.changes(actor.state).pipe(
-            Stream.take(3),
-            Stream.tap((s) =>
-              Effect.sync(() => {
-                tags.push(s._tag);
-              }),
-            ),
-            Stream.runDrain,
+            Stream.take(4),
+            Stream.runForEach((state) => Queue.offer(tags, state._tag)),
           ),
         );
-
-        // Make transitions
+        expect(yield* Queue.take(tags)).toBe("Idle");
         yield* actor.send(TestEvent.Start({ value: 1 }));
-        yield* yieldFibers;
+        expect(yield* Queue.take(tags)).toBe("Loading");
         yield* actor.send(TestEvent.Complete);
-        yield* yieldFibers;
+        expect(yield* Queue.take(tags)).toBe("Active");
         yield* actor.send(TestEvent.Stop);
-        yield* yieldFibers;
-
-        // Should have captured the transitions
-        expect(tags).toContain("Loading");
-        expect(tags).toContain("Active");
-        expect(tags).toContain("Done");
+        expect(yield* Queue.take(tags)).toBe("Done");
       }).pipe(Effect.provide(ActorSystemDefault)),
     );
   });

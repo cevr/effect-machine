@@ -279,6 +279,10 @@ const count = yield* actor.ask(Event.GetCount);  // number
 
 ## Gotchas
 
+- `actor.stop` cancels pending startup and waits for recovery cleanup. Stop callers can cancel their own wait without cancelling shutdown. A stop from recovery marks that startup interrupted. Shutdown waits for its protected regions and finalizers to finish. Recovery cleanup defects reach every stop caller.
+- Protect both shutdown owner creation and its cache publication from interruption. Protecting only the cached body can cache cancellation when its protected region ends.
+- The runtime event loop must be ready before startup completes. Host client sends must still commit synchronous transitions before returning.
+- Publish Active only while the same generation is still Starting. A terminal lifecycle must never return to Active.
 - `actor.start` shares one startup result across concurrent and repeated calls, including failure or interruption. Stop the actor and spawn a new actor to retry initialization. It cannot restart a terminal actor.
 - ActorScope cleanup must match the registered actor identity before removing an ID. A later actor can reuse that ID.
 - `Machine.spawn` returns an **unstarted** actor — must call `yield* actor.start`. `system.spawn` auto-starts.

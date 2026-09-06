@@ -609,7 +609,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
       deferredReplyRef,
       lifecycle,
       fork,
-    ).pipe(Effect.provide(services), Effect.forkDetach);
+    ).pipe(Effect.provide(services), Effect.forkDetach({ startImmediately: true }));
     loopFiberRef.current = loopFiber;
 
     // Background defect observer: Fiber.await each background fiber.
