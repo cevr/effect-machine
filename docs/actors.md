@@ -62,6 +62,7 @@ This pattern replaces a root router that invokes one screen actor for each route
 - `send` queues an event and returns.
 - `call` waits for event processing and returns `ProcessEventResult`.
 - `ask` returns the schema-checked reply for an `Event.reply` event.
+- A transition can return `Machine.deferReply(nextState)` when state-owned work must produce the reply later. The work calls `self.reply(value)` once it has the value. The value is decoded with the event's reply schema before the pending `ask` is settled. A decode mismatch is a defect and also settles the caller with that defect. If state exit interrupts decoding, the pending caller is settled with the same interruption and the actor can continue. A second `self.reply` returns `false`.
 - `waitFor` waits for a state constructor or predicate.
 - `awaitFinal` returns the retained final state.
 - `awaitOutput` returns the final output.

@@ -1,8 +1,8 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Cause, Effect, Schema } from "effect";
+import { Cause, Deferred, Effect, Fiber, Option, Schema } from "effect";
 
 import { Machine, State, Event } from "../src/index.js";
-import { describe, expect, it } from "effect-bun-test";
+import { describe, expect, it, yieldFibers } from "effect-bun-test";
 
 const TestState = State({
   Idle: {},
@@ -173,6 +173,294 @@ describe("ActorRef.ask", () => {
       if (exit._tag === "Failure") {
         expect(Cause.hasDies(exit.cause)).toBe(true);
       }
+      const actorExit = yield* actor.awaitExit.pipe(Effect.timeout("1 second"), Effect.exit);
+      expect(actorExit._tag).toBe("Success");
+      if (actorExit._tag === "Success") {
+        expect(actorExit.value._tag).toBe("Defect");
+      }
+      yield* actor.stop;
     }),
+  );
+
+  it.scopedLive("deferred reply schema mismatch is a defect and settles the ask", () =>
+    Effect.gen(function* () {
+      const ReplyState = State({ Idle: {}, Replying: {} });
+      const ReplyEvent = Event({ Request: Event.reply({}, Schema.Finite) });
+      const machine = Machine.make({
+        state: ReplyState,
+        event: ReplyEvent,
+        initial: ReplyState.Idle,
+      })
+        .on(ReplyState.Idle, ReplyEvent.Request, () => Machine.deferReply(ReplyState.Replying))
+        .spawn(ReplyState.Replying, ({ self }) => self.reply("not-a-number"));
+      const actor = yield* Machine.spawn(machine);
+      yield* Effect.addFinalizer(() => actor.stop);
+      yield* actor.start;
+
+      const exit = yield* actor.ask(ReplyEvent.Request).pipe(Effect.exit);
+
+      expect(exit._tag).toBe("Failure");
+      if (exit._tag === "Failure") {
+        expect(Cause.hasDies(exit.cause)).toBe(true);
+      }
+      const actorExit = yield* actor.awaitExit.pipe(Effect.timeout("1 second"), Effect.exit);
+      expect(actorExit._tag).toBe("Success");
+      if (actorExit._tag === "Success") {
+        expect(actorExit.value._tag).toBe("Defect");
+      }
+      yield* actor.stop;
+    }).pipe(Effect.timeout("2 seconds")),
+  );
+
+  it.scopedLive("deferred replies return the decoded schema value", () =>
+    Effect.gen(function* () {
+      const ReplyState = State({ Idle: {}, Replying: {} });
+      const ReplyEvent = Event({ Request: Event.reply({}, Schema.FiniteFromString) });
+      const machine = Machine.make({
+        state: ReplyState,
+        event: ReplyEvent,
+        initial: ReplyState.Idle,
+      })
+        .on(ReplyState.Idle, ReplyEvent.Request, () => Machine.deferReply(ReplyState.Replying))
+        .spawn(ReplyState.Replying, ({ self }) => self.reply("42"));
+      const actor = yield* Machine.spawn(machine);
+      yield* Effect.addFinalizer(() => actor.stop);
+      yield* actor.start;
+
+      const result = yield* actor.ask(ReplyEvent.Request);
+
+      expect(result).toBe(42);
+      yield* actor.stop;
+    }).pipe(Effect.timeout("2 seconds")),
+  );
+
+  it.scopedLive("deferred replies accept an explicit undefined value", () =>
+    Effect.gen(function* () {
+      const ReplyState = State({ Idle: {}, Replying: {} });
+      const ReplyEvent = Event({ Request: Event.reply({}, Schema.Undefined) });
+      const machine = Machine.make({
+        state: ReplyState,
+        event: ReplyEvent,
+        initial: ReplyState.Idle,
+      })
+        .on(ReplyState.Idle, ReplyEvent.Request, () => Machine.deferReply(ReplyState.Replying))
+        .spawn(ReplyState.Replying, ({ self }) => self.reply(undefined));
+      const actor = yield* Machine.spawn(machine);
+      yield* Effect.addFinalizer(() => actor.stop);
+      yield* actor.start;
+
+      const result = yield* actor.ask(ReplyEvent.Request);
+
+      expect(result).toBeUndefined();
+      yield* actor.stop;
+    }).pipe(Effect.timeout("2 seconds")),
+  );
+
+  it.scopedLive("only the first deferred reply settles the pending ask", () =>
+    Effect.gen(function* () {
+      const ReplyState = State({ Idle: {}, Replying: {} });
+      const ReplyEvent = Event({ Request: Event.reply({}, Schema.String) });
+      const replyResults: Array<boolean> = [];
+      const machine = Machine.make({
+        state: ReplyState,
+        event: ReplyEvent,
+        initial: ReplyState.Idle,
+      })
+        .on(ReplyState.Idle, ReplyEvent.Request, () => Machine.deferReply(ReplyState.Replying))
+        .spawn(ReplyState.Replying, ({ self }) =>
+          self.reply("ready").pipe(
+            Effect.tap((settled) => Effect.sync(() => replyResults.push(settled))),
+            Effect.andThen(self.reply("late")),
+            Effect.tap((settled) => Effect.sync(() => replyResults.push(settled))),
+          ),
+        );
+      const actor = yield* Machine.spawn(machine);
+      yield* Effect.addFinalizer(() => actor.stop);
+      yield* actor.start;
+
+      const result = yield* actor.ask(ReplyEvent.Request);
+      yield* yieldFibers;
+
+      expect(result).toBe("ready");
+      expect(replyResults).toEqual([true, false]);
+      yield* actor.stop;
+    }).pipe(Effect.timeout("2 seconds")),
+  );
+
+  it.scopedLive("settles an ask when state exit interrupts deferred reply decoding", () =>
+    Effect.scoped(
+      Machine.scoped(
+        Effect.gen(function* () {
+          const ReplyState = State({ Idle: {}, Replying: {}, Other: {} });
+          const decodeStarted = yield* Deferred.make<void>();
+          const decodeGate = yield* Deferred.make<void>();
+          const decodeInterrupted = yield* Deferred.make<void>();
+          const AsyncReply = Schema.declareConstructor<string>()(
+            [],
+            () => () =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(decodeStarted, void 0);
+                yield* Deferred.await(decodeGate);
+                return "ready";
+              }).pipe(Effect.onInterrupt(() => Deferred.succeed(decodeInterrupted, void 0))),
+          );
+          const ReplyEvent = Event({
+            Request: Event.reply({}, AsyncReply),
+            Cancel: {},
+            Ping: {},
+          });
+          const machine = Machine.make({
+            state: ReplyState,
+            event: ReplyEvent,
+            initial: ReplyState.Idle,
+          })
+            .on(ReplyState.Idle, ReplyEvent.Request, () => Machine.deferReply(ReplyState.Replying))
+            .on(ReplyState.Replying, ReplyEvent.Cancel, () => ReplyState.Other)
+            .on(ReplyState.Other, ReplyEvent.Ping, () => ReplyState.Other)
+            .spawn(ReplyState.Replying, ({ self }) => self.reply("raw"));
+          const actor = yield* Machine.spawn(machine);
+          yield* actor.start;
+
+          const pending = yield* actor.ask(ReplyEvent.Request).pipe(Effect.forkChild);
+          yield* Deferred.await(decodeStarted);
+
+          const transition = yield* actor
+            .call(ReplyEvent.Cancel)
+            .pipe(Effect.timeout("1 second"), Effect.exit);
+          expect(transition._tag).toBe("Success");
+          if (transition._tag === "Success") {
+            expect(transition.value.newState).toEqual(ReplyState.Other);
+          }
+
+          const interrupted = yield* Deferred.await(decodeInterrupted).pipe(
+            Effect.timeout("1 second"),
+            Effect.exit,
+          );
+          expect(interrupted._tag).toBe("Success");
+
+          const alive = yield* actor
+            .call(ReplyEvent.Ping)
+            .pipe(Effect.timeout("1 second"), Effect.exit);
+          expect(alive._tag).toBe("Success");
+
+          const replyExit = yield* Fiber.await(pending).pipe(
+            Effect.timeout("1 second"),
+            Effect.exit,
+          );
+          expect(replyExit._tag).toBe("Success");
+          if (replyExit._tag === "Success") {
+            expect(replyExit.value._tag).toBe("Failure");
+            if (replyExit.value._tag === "Failure") {
+              expect(Cause.hasInterruptsOnly(replyExit.value.cause)).toBe(true);
+            }
+          }
+          yield* actor.stop;
+        }),
+      ),
+    ).pipe(Effect.timeout("2 seconds")),
+  );
+
+  it.scopedLive("keeps deferred replies matched across postponed asks", () =>
+    Effect.gen(function* () {
+      const AskState = State({
+        Waiting: {},
+        Loading: { id: Schema.String },
+        Ready: {},
+        Replying: { id: Schema.String },
+      });
+      const AskEvent = Event({
+        Request: Event.reply({ id: Schema.String }, Schema.String),
+        Loaded: {},
+      });
+      const loadingStarted = yield* Deferred.make<void>();
+      const releaseLoading = yield* Deferred.make<void>();
+      const machine = Machine.make({
+        state: AskState,
+        event: AskEvent,
+        initial: AskState.Waiting,
+      })
+        .on(AskState.Waiting, AskEvent.Request, ({ event }) =>
+          Machine.deferReply(AskState.Loading({ id: event.id })),
+        )
+        .on(AskState.Loading, AskEvent.Loaded, () => AskState.Ready)
+        .on(AskState.Ready, AskEvent.Request, ({ event }) =>
+          Machine.deferReply(AskState.Replying({ id: event.id })),
+        )
+        .spawn(AskState.Loading, ({ self, state }) =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(loadingStarted, void 0);
+            yield* Deferred.await(releaseLoading);
+            yield* self.reply(state.id);
+            yield* self.send(AskEvent.Loaded);
+          }),
+        )
+        .spawn(AskState.Replying, ({ self, state }) => self.reply(state.id))
+        .postpone(AskState.Loading, AskEvent.Request);
+      const actor = yield* Machine.spawn(machine);
+      yield* Effect.addFinalizer(() => actor.stop);
+      yield* actor.start;
+
+      const first = yield* actor.ask(AskEvent.Request({ id: "first" })).pipe(Effect.forkChild);
+      yield* Deferred.await(loadingStarted);
+      const second = yield* actor.ask(AskEvent.Request({ id: "second" })).pipe(Effect.forkChild);
+      yield* yieldFibers;
+
+      expect((yield* actor.snapshot)._tag).toBe("Loading");
+      yield* Deferred.succeed(releaseLoading, void 0);
+
+      const firstResult = yield* Fiber.join(first).pipe(Effect.timeout("1 second"), Effect.exit);
+      expect(firstResult._tag).toBe("Success");
+      if (firstResult._tag === "Success") {
+        expect(firstResult.value).toBe("first");
+      }
+      const secondResult = yield* Fiber.join(second).pipe(Effect.timeout("1 second"), Effect.exit);
+      expect(secondResult._tag).toBe("Success");
+      if (secondResult._tag === "Success") {
+        expect(secondResult.value).toBe("second");
+      }
+      yield* actor.stop;
+    }).pipe(Effect.timeout("2 seconds")),
+  );
+
+  it.scopedLive("stops a pending deferred ask with ActorStoppedError", () =>
+    Effect.gen(function* () {
+      const ReplyState = State({ Idle: {}, Replying: {} });
+      const ReplyEvent = Event({ Request: Event.reply({}, Schema.String) });
+      const replyStarted = yield* Deferred.make<void>();
+      const releaseReply = yield* Deferred.make<void>();
+      const machine = Machine.make({
+        state: ReplyState,
+        event: ReplyEvent,
+        initial: ReplyState.Idle,
+      })
+        .on(ReplyState.Idle, ReplyEvent.Request, () => Machine.deferReply(ReplyState.Replying))
+        .spawn(ReplyState.Replying, ({ self }) =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(replyStarted, void 0);
+            yield* Deferred.await(releaseReply);
+            yield* self.reply("late");
+          }),
+        );
+      const actor = yield* Machine.spawn(machine);
+      yield* Effect.addFinalizer(() => actor.stop);
+      yield* actor.start;
+
+      const pending = yield* actor.ask(ReplyEvent.Request).pipe(Effect.forkChild);
+      yield* Deferred.await(replyStarted);
+      yield* actor.stop;
+
+      const pendingExit = yield* Fiber.await(pending).pipe(Effect.timeout("1 second"), Effect.exit);
+      expect(pendingExit._tag).toBe("Success");
+      if (pendingExit._tag === "Success") {
+        expect(pendingExit.value._tag).toBe("Failure");
+        if (pendingExit.value._tag === "Failure") {
+          const failure = Cause.findErrorOption(pendingExit.value.cause);
+          expect(Option.isSome(failure)).toBe(true);
+          if (Option.isSome(failure)) {
+            expect(failure.value._tag).toBe("ActorStoppedError");
+          }
+        }
+      }
+    }).pipe(Effect.timeout("2 seconds")),
   );
 });
