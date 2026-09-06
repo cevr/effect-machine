@@ -3,12 +3,113 @@
 import { Cause, Deferred, Effect, Exit, Fiber, Option, Schema, SubscriptionRef } from "effect";
 import { describe, expect, it, yieldFibers } from "effect-bun-test";
 
-import { Event, Machine, State } from "../src/index.js";
+import { Event, Machine, State, Supervision } from "../src/index.js";
 
 const LifecycleState = State({ Active: {} });
 const LifecycleEvent = Event({ Ping: {} });
 
 describe("actor stop completion", () => {
+  it.scopedLive("waits for supervised self-stop cleanup and preserves its defects", () =>
+    Effect.gen(function* () {
+      const stop = yield* Deferred.make<Effect.Effect<void>>();
+      const cleaning = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      let starts = 0;
+      const machine = Machine.make({
+        state: LifecycleState,
+        event: LifecycleEvent,
+        initial: LifecycleState.Active,
+      }).spawn(LifecycleState.Active, () =>
+        Effect.suspend(() => {
+          starts++;
+          return Effect.die("restart for cleanup");
+        }),
+      );
+      const actor = yield* Machine.spawn(machine, {
+        supervision: Supervision.restart({ maxRestarts: 1 }),
+        lifecycle: {
+          recovery: {
+            resolve: ({ generation }) => {
+              if (generation === 0) return Effect.succeedNone;
+              return Deferred.await(stop).pipe(
+                Effect.flatMap((stopActor) => stopActor),
+                Effect.as(Option.none()),
+                Effect.catchCause(() => Effect.succeedNone),
+                Effect.ensuring(
+                  Deferred.succeed(cleaning, undefined).pipe(
+                    Effect.andThen(Deferred.await(release)),
+                    Effect.andThen(Effect.die("supervised recovery cleanup")),
+                  ),
+                ),
+              );
+            },
+          },
+        },
+      });
+      yield* Deferred.succeed(stop, actor.stop);
+      yield* actor.start;
+      yield* Deferred.await(cleaning);
+      const stopping = yield* actor.stop.pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* yieldFibers;
+      const earlyExit = stopping.pollUnsafe();
+      yield* Deferred.succeed(release, undefined);
+      const stopped = yield* Fiber.await(stopping);
+      const repeated = yield* actor.stop.pipe(Effect.exit);
+      expect(earlyExit).toBeUndefined();
+      for (const exit of [stopped, repeated]) {
+        expect(exit._tag).toBe("Failure");
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("supervised recovery cleanup");
+        }
+      }
+      expect(starts).toBe(1);
+      const terminal = yield* actor.awaitExit;
+      expect(terminal._tag).toBe("Defect");
+      if (terminal._tag === "Defect") expect(terminal.phase).toBe("cleanup");
+    }).pipe(Effect.timeout("2 seconds")),
+  );
+
+  it.scopedLive("can stop itself during protected supervised recovery", () =>
+    Effect.gen(function* () {
+      const stop = yield* Deferred.make<Effect.Effect<void>>();
+      const recovering = yield* Deferred.make<void>();
+      let starts = 0;
+      const machine = Machine.make({
+        state: LifecycleState,
+        event: LifecycleEvent,
+        initial: LifecycleState.Active,
+      }).spawn(LifecycleState.Active, () =>
+        Effect.suspend(() => {
+          starts++;
+          return Effect.die("restart for recovery");
+        }),
+      );
+      const actor = yield* Machine.spawn(machine, {
+        supervision: Supervision.restart({ maxRestarts: 1 }),
+        lifecycle: {
+          recovery: {
+            resolve: ({ generation }) => {
+              if (generation === 0) return Effect.succeedNone;
+              return Deferred.succeed(recovering, undefined).pipe(
+                Effect.andThen(Deferred.await(stop)),
+                Effect.flatMap((stopActor) => stopActor),
+                Effect.as(Option.none()),
+                Effect.uninterruptible,
+              );
+            },
+          },
+        },
+      });
+      yield* Deferred.succeed(stop, actor.stop);
+      yield* actor.start;
+      yield* Deferred.await(recovering);
+      const stopped = yield* actor.stop.pipe(Effect.timeout("1 second"), Effect.exit);
+      expect(stopped._tag).toBe("Success");
+      expect(starts).toBe(1);
+      expect((yield* actor.awaitExit)._tag).toBe("Defect");
+    }).pipe(Effect.timeout("2 seconds")),
+  );
+
   it.scopedLive("can stop after cancellation interrupts recovery self-stop", () =>
     Effect.gen(function* () {
       const stop = yield* Deferred.make<Effect.Effect<void>>();
