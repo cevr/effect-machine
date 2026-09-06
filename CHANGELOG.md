@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.25.3
+
+### Patch Changes
+
+- [#71](https://github.com/cevr/effect-machine/pull/71) [`24a421b`](https://github.com/cevr/effect-machine/commit/24a421b1dc63f9f3b032ef0986a0c0fff63e6300) Thanks [@cevr](https://github.com/cevr)! - Validate deferred `Machine.deferReply` values with the event reply schema before settling `ActorRef.ask`. If state exit interrupts reply decoding, settle the waiting caller with that interruption instead of leaving it pending.
+
 ## 0.25.2
 
 ### Patch Changes
