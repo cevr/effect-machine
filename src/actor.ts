@@ -777,7 +777,8 @@ const runSupervisionLoop = <
 
       const newRuntime = yield* options.spawnGeneration(cell.machine);
       cell.runtimeRef.current = newRuntime;
-      yield* newRuntime.start;
+      // The runtime records startup failure. The next iteration applies the restart policy.
+      yield* newRuntime.start.pipe(Effect.ignoreCause);
       const restartExit = yield* Deferred.poll(newRuntime.exitDeferred);
       if (Option.isNone(restartExit)) {
         yield* activateGeneration(cell.lifecycleRef, nextGeneration);
