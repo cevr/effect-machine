@@ -1,5 +1,5 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Deferred, Duration, Effect, Schema } from "effect";
+import { Cause, Deferred, Duration, Effect, Schema } from "effect";
 
 import {
   ActorSystemDefault,
@@ -34,6 +34,62 @@ const machine = Machine.make({ state: S, event: E, initial: S.Idle })
 // ============================================================================
 
 describe("supervision: restart on defect", () => {
+  it.scopedLive("exhausts the restart budget after repeated initial spawn defects", () =>
+    Effect.gen(function* () {
+      let attempts = 0;
+      const failingMachine = Machine.make({ state: S, event: E, initial: S.Idle }).spawn(
+        S.Idle,
+        () =>
+          Effect.suspend(() => {
+            attempts++;
+            return Effect.die("every initial spawn fails");
+          }),
+      );
+      const actor = yield* Machine.spawn(failingMachine, {
+        supervision: Supervision.restart({ maxRestarts: 2 }),
+      });
+      yield* actor.start;
+      const exit = yield* actor.awaitExit.pipe(Effect.timeout("1 second"));
+      expect(attempts).toBe(3);
+      expect(exit._tag).toBe("Defect");
+      if (exit._tag === "Defect") {
+        expect(exit.phase).toBe("initial-spawn");
+        expect(Cause.pretty(exit.cause)).toContain("every initial spawn fails");
+      }
+      expect(actor.client.getLifecycle()).toBe(exit);
+      yield* actor.stop;
+      yield* actor.stop;
+    }),
+  );
+
+  it.scopedLive("can recover after an initial spawn fails in a restarted generation", () =>
+    Effect.gen(function* () {
+      let attempts = 0;
+      const ready = yield* Deferred.make<void>();
+      const recoveringMachine = Machine.make({ state: S, event: E, initial: S.Idle })
+        .spawn(S.Idle, () =>
+          Effect.suspend(() => {
+            attempts++;
+            if (attempts < 3) return Effect.die("retry initial spawn");
+            return Deferred.succeed(ready, undefined);
+          }),
+        )
+        .on(S.Idle, E.Finish, () => S.Done)
+        .final(S.Done);
+      const actor = yield* Machine.spawn(recoveringMachine, {
+        supervision: Supervision.restart({ maxRestarts: 2 }),
+      });
+      yield* actor.start;
+      yield* Deferred.await(ready).pipe(Effect.timeout("1 second"));
+      yield* actor.call(E.Finish);
+      const exit = yield* actor.awaitExit;
+      expect(attempts).toBe(3);
+      expect(exit._tag).toBe("Final");
+      expect(actor.client.getLifecycle()).toBe(exit);
+      yield* actor.stop;
+    }),
+  );
+
   it.scopedLive("restarts after synchronous initial state Effect defect", () =>
     Effect.gen(function* () {
       const restarted = yield* Deferred.make<void>();

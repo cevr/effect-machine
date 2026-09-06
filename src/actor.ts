@@ -777,7 +777,8 @@ const runSupervisionLoop = <
 
       const newRuntime = yield* options.spawnGeneration(cell.machine);
       cell.runtimeRef.current = newRuntime;
-      yield* newRuntime.start;
+      // The runtime records startup failure. The next iteration applies the restart policy.
+      yield* newRuntime.start.pipe(Effect.ignoreCause);
       const restartExit = yield* Deferred.poll(newRuntime.exitDeferred);
       if (Option.isNone(restartExit)) {
         yield* activateGeneration(cell.lifecycleRef, nextGeneration);
@@ -1072,6 +1073,11 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     }
     if (supervisorFiberRef.current !== undefined) {
       yield* Fiber.interrupt(supervisorFiberRef.current);
+      const supervisorExit = yield* Fiber.await(supervisorFiberRef.current);
+      if (Exit.isFailure(supervisorExit) && !Cause.hasInterruptsOnly(supervisorExit.cause)) {
+        if (cleanupCause === undefined) cleanupCause = supervisorExit.cause;
+        else cleanupCause = Cause.combine(cleanupCause)(supervisorExit.cause);
+      }
     }
     const currentRuntime = runtimeRef.current;
     let runtimeExit: RuntimeExit<S> = { _tag: "Stopped" };
@@ -1114,7 +1120,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       // Cache publication must finish before a caller can cancel its wait.
       Effect.uninterruptible,
       Effect.flatMap((owner) => {
-        if (startupFiber?.id === caller.id) {
+        if (startupFiber?.id === caller.id || supervisorFiberRef.current?.id === caller.id) {
           // Mark the fiber itself. A cause-level fallback must not swallow self-stop.
           // Do not join self: recovery may be inside an uninterruptible region.
           return Effect.sync(() => caller.interruptUnsafe(caller.id));
