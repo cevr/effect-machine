@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.25.5
+
+### Patch Changes
+
+- [#75](https://github.com/cevr/effect-machine/pull/75) [`fec20d4`](https://github.com/cevr/effect-machine/commit/fec20d4be31b249c77cd60661a72b70b20b6f49b) Thanks [@cevr](https://github.com/cevr)! - Publish the terminal actor lifecycle before completing shutdown. Callers of stop and awaitExit now observe the same terminal result through lifecycle, without waiting for a detached observer task.
+
 ## 0.25.4
 
 ### Patch Changes
