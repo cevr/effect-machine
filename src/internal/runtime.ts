@@ -68,6 +68,11 @@ export type RuntimeQueuedEvent<S, E> =
       readonly done: Deferred.Deferred<void>;
     };
 
+interface DeferredReply {
+  readonly deferred: Deferred.Deferred<unknown, NoReplyError | ActorStoppedError>;
+  readonly schema: Schema.Decoder<unknown> | undefined;
+}
+
 // ============================================================================
 // Cell resources — stable across runtime generations
 // ============================================================================
@@ -264,9 +269,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
 
   // Pending deferred reply — stored when handler returns Machine.deferReply()
   // Settled by self.reply() from spawn handler
-  const deferredReplyRef: {
-    current: Deferred.Deferred<unknown, NoReplyError | ActorStoppedError> | undefined;
-  } = {
+  const deferredReplyRef: { current: DeferredReply | undefined } = {
     current: undefined,
   };
 
@@ -304,15 +307,22 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
     },
     spawn,
     reply: (value: unknown) =>
-      Effect.sync(() => {
-        const deferred = deferredReplyRef.current;
-        if (deferred !== undefined) {
+      Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const pending = deferredReplyRef.current;
+          if (pending === undefined) return false;
           deferredReplyRef.current = undefined;
-          fork(Deferred.succeed(deferred, value));
-          return true;
-        }
-        return false;
-      }),
+          if (pending.schema === undefined) {
+            return yield* Deferred.succeed(pending.deferred, value);
+          }
+          const decoded = yield* Effect.exit(
+            restore(Schema.decodeUnknownEffect(pending.schema)(value).pipe(Effect.orDie)),
+          );
+          const settled = yield* Deferred.done(pending.deferred, decoded);
+          if (Exit.isFailure(decoded)) return yield* Effect.failCause(decoded.cause);
+          return settled;
+        }),
+      ),
   };
 
   // State scope for spawn effects
@@ -697,9 +707,7 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
   system: ActorSystemService,
   exitDeferred: Deferred.Deferred<RuntimeExit<S>>,
   hooks?: ProcessEventHooks<S, E>,
-  deferredReplyRef?: {
-    current: Deferred.Deferred<unknown, NoReplyError | ActorStoppedError> | undefined;
-  },
+  deferredReplyRef?: { current: DeferredReply | undefined },
   lifecycle?: RuntimeLifecycleHooks<S, E>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   fork?: (effect: Effect.Effect<any>) => Fiber.Fiber<any>,
@@ -752,7 +760,10 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
       const event = queued.event;
 
       if (queued._tag === "ask" && deferredReplyRef !== undefined) {
-        deferredReplyRef.current = queued.reply;
+        deferredReplyRef.current = {
+          deferred: queued.reply,
+          schema: machine._replySchema(event._tag),
+        };
       }
 
       // Lifecycle: onEvent (actor emits @machine.event)
@@ -815,7 +826,7 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
           break;
         case "ask":
           if (result.hasReply) {
-            if (deferredReplyRef?.current === queued.reply) {
+            if (deferredReplyRef?.current?.deferred === queued.reply) {
               deferredReplyRef.current = undefined;
             }
             const replySchema = machine._replySchema(event._tag);
@@ -833,7 +844,7 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
               yield* Deferred.succeed(queued.reply, result.reply);
             }
           } else if (!result.deferReply) {
-            if (deferredReplyRef?.current === queued.reply) {
+            if (deferredReplyRef?.current?.deferred === queued.reply) {
               deferredReplyRef.current = undefined;
             }
             yield* Deferred.fail(
