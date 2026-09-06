@@ -695,6 +695,7 @@ const runSupervisionLoop = <
     ) => Effect.Effect<RuntimeHandle<S, E>>;
     lifecycle?: Lifecycle<S, E>;
     onRestart?: (generation: number, exit: ActorExit<unknown>) => Effect.Effect<void>;
+    onTerminal: (exit: RuntimeExit<S>) => Effect.Effect<void>;
   },
 ) =>
   Effect.gen(function* () {
@@ -709,10 +710,7 @@ const runSupervisionLoop = <
       yield* currentRuntime.awaitClosed;
 
       if (generationExit._tag !== "Defect") {
-        yield* Deferred.succeed(
-          cell.terminalExitDeferred,
-          toActorExit(cell.machine, generationExit),
-        );
+        yield* options.onTerminal(generationExit);
         return;
       }
 
@@ -720,14 +718,14 @@ const runSupervisionLoop = <
         options.supervision.shouldRestart !== undefined &&
         !options.supervision.shouldRestart(generationExit)
       ) {
-        yield* Deferred.succeed(cell.terminalExitDeferred, generationExit);
+        yield* options.onTerminal(generationExit);
         return;
       }
 
       const pull = step(generationExit);
       const scheduleExit = yield* pull.pipe(Effect.exit);
       if (scheduleExit._tag === "Failure") {
-        yield* Deferred.succeed(cell.terminalExitDeferred, generationExit);
+        yield* options.onTerminal(generationExit);
         return;
       }
 
@@ -848,6 +846,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   // Terminal exit deferred — set exactly once when the actor truly terminates.
   // This is what awaitExit/watch bind to, NOT the per-generation exitDeferred.
   const terminalExitDeferred = yield* Deferred.make<ActorExit<S, O>>();
+  const terminalShutdownStartedRef = yield* Ref.make(false);
 
   // Mutable ref for the current runtime — supervision loop updates this
   const runtimeRef: { current: RuntimeHandle<S, E> | undefined } = { current: undefined };
@@ -874,6 +873,57 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     system,
     generation,
   };
+
+  /**
+   * Complete actor shutdown once. Runtime generations own their scopes. The
+   * actor owner also waits for the implicit system scope, which owns children.
+   */
+  const completeTerminal = (runtimeExit: RuntimeExit<S>) =>
+    Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const alreadyClosing = yield* Ref.getAndSet(terminalShutdownStartedRef, true);
+        if (alreadyClosing) {
+          const terminal = yield* restore(Deferred.await(terminalExitDeferred));
+          if (terminal._tag === "Defect" && terminal.phase === "cleanup") {
+            // @effect-diagnostics-next-line anyUnknownInErrorContext:off -- rethrow the stored cleanup cause at the actor boundary.
+            return yield* Effect.failCause(terminal.cause).pipe(Effect.orDie);
+          }
+          return;
+        }
+
+        let systemClosed: Exit.Exit<void, never> = Exit.void;
+        if (implicitSystemScope !== undefined) {
+          systemClosed = yield* Scope.close(implicitSystemScope, Exit.void).pipe(Effect.exit);
+        }
+        const converted = yield* Effect.exit(Effect.sync(() => toActorExit(machine, runtimeExit)));
+        let terminal: ActorExit<S, O>;
+        if (Exit.isFailure(converted)) {
+          terminal = { _tag: "Defect", cause: converted.cause, phase: "cleanup" };
+        } else {
+          terminal = converted.value;
+        }
+        let terminalCause: Cause.Cause<unknown> | undefined;
+        if (Exit.isFailure(converted)) {
+          terminalCause = converted.cause;
+        }
+        if (Exit.isFailure(systemClosed)) {
+          let cause: Cause.Cause<unknown> = systemClosed.cause;
+          if (terminalCause !== undefined) {
+            cause = Cause.combine(cause)(terminalCause);
+          }
+          if (runtimeExit._tag === "Defect") {
+            cause = Cause.combine(cause)(runtimeExit.cause);
+          }
+          terminalCause = cause;
+          terminal = { _tag: "Defect", cause, phase: "cleanup" };
+        }
+        yield* Deferred.succeed(terminalExitDeferred, terminal);
+        if (terminalCause !== undefined) {
+          // @effect-diagnostics-next-line anyUnknownInErrorContext:off -- rethrow the stored cleanup cause at the actor boundary.
+          return yield* Effect.failCause(terminalCause).pipe(Effect.orDie);
+        }
+      }),
+    );
 
   /** Build lifecycle hooks for a generation */
   const buildRuntimeLifecycle = (runtimeGeneration: number): RuntimeLifecycleHooks<S, E> => {
@@ -1001,13 +1051,21 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       yield* Fiber.interrupt(supervisorFiberRef.current);
     }
     const currentRuntime = runtimeRef.current;
+    let runtimeExit: RuntimeExit<S> = { _tag: "Stopped" };
     if (currentRuntime !== undefined) {
-      yield* currentRuntime.stop;
-    }
-    // Set terminal exit (Deferred.succeed is idempotent — no-op if already set)
-    yield* Deferred.succeed(terminalExitDeferred, ActorExit.Stopped);
-    if (implicitSystemScope !== undefined) {
-      yield* Scope.close(implicitSystemScope, Exit.void);
+      const stopExit = yield* currentRuntime.stop.pipe(Effect.exit);
+      const currentExit = yield* Deferred.poll(currentRuntime.exitDeferred);
+      if (Option.isSome(currentExit)) {
+        runtimeExit = yield* currentExit.value;
+      } else if (Exit.isFailure(stopExit)) {
+        runtimeExit = { _tag: "Defect", cause: stopExit.cause, phase: "cleanup" };
+      }
+      yield* completeTerminal(runtimeExit);
+      if (Exit.isFailure(stopExit)) {
+        return yield* Effect.failCause(stopExit.cause).pipe(Effect.orDie);
+      }
+    } else {
+      yield* completeTerminal(runtimeExit);
     }
   });
   const stop = stopActor().pipe(Effect.provide(serviceContext), Effect.asVoid);
@@ -1055,6 +1113,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
           spawnGeneration,
           lifecycle,
           onRestart: options.onRestart,
+          onTerminal: completeTerminal,
         }),
       );
     } else {
@@ -1063,9 +1122,8 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       if (currentRuntime !== undefined) {
         yield* Effect.forkDetach(
           Deferred.await(currentRuntime.exitDeferred).pipe(
-            Effect.tap((exit) =>
-              Deferred.succeed(terminalExitDeferred, toActorExit(machine, exit)),
-            ),
+            Effect.flatMap((exit) => currentRuntime.awaitClosed.pipe(Effect.as(exit))),
+            Effect.flatMap(completeTerminal),
           ),
         );
       }

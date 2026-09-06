@@ -21,8 +21,9 @@ import { type Cause, type Duration, Schedule } from "effect";
  * - `spawn` — during state spawn effect execution
  * - `background` — in a background effect fiber
  * - `initial-spawn` — during initial state spawn effects (before event loop)
+ * - `cleanup` — during runtime or actor scope cleanup
  */
-export type DefectPhase = "transition" | "spawn" | "background" | "initial-spawn";
+export type DefectPhase = "transition" | "spawn" | "background" | "initial-spawn" | "cleanup";
 
 /**
  * Terminal exit reason for an actor generation.
