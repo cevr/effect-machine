@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.25.6
+
+### Patch Changes
+
+- [#77](https://github.com/cevr/effect-machine/pull/77) [`a92ff6a`](https://github.com/cevr/effect-machine/commit/a92ff6aa670f6007eda42f4ba9278ae4dc4bb600) Thanks [@cevr](https://github.com/cevr)! - Run actor startup once across concurrent and repeated calls. Preserve terminal lifecycle when start is called after stop. Keep replacement actors registered when an earlier owner scope closes.
+
 ## 0.25.5
 
 ### Patch Changes
