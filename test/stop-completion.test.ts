@@ -1,6 +1,6 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
 // @effect-diagnostics anyUnknownInErrorContext:off
-import { Cause, Deferred, Effect, Fiber, Option, Schema } from "effect";
+import { Cause, Deferred, Effect, Fiber, Option, Schema, SubscriptionRef } from "effect";
 import { describe, expect, it, yieldFibers } from "effect-bun-test";
 
 import { Event, Machine, State } from "../src/index.js";
@@ -9,6 +9,41 @@ const LifecycleState = State({ Active: {} });
 const LifecycleEvent = Event({ Ping: {} });
 
 describe("actor stop completion", () => {
+  it.scopedLive("stop returns with a terminal public lifecycle", () =>
+    Effect.gen(function* () {
+      const machine = Machine.make({
+        state: LifecycleState,
+        event: LifecycleEvent,
+        initial: LifecycleState.Active,
+      });
+      const actor = yield* Machine.scoped(Machine.spawn(machine));
+      yield* actor.start;
+      yield* actor.stop;
+      expect((yield* actor.awaitExit)._tag).toBe("Stopped");
+      expect((yield* SubscriptionRef.get(actor.lifecycle))._tag).toBe("Stopped");
+    }),
+  );
+
+  it.scopedLive("awaitExit returns with the same final or defect lifecycle", () =>
+    Effect.gen(function* () {
+      const States = State({ Active: {}, Done: {} });
+      const Events = Event({ Finish: {}, Fail: {} });
+      const machine = Machine.make({ state: States, event: Events, initial: States.Active })
+        .on(States.Active, Events.Finish, () => States.Done)
+        .on(States.Active, Events.Fail, () => Effect.die(new Error("failed")))
+        .final(States.Done);
+      for (const event of [Events.Finish, Events.Fail]) {
+        const actor = yield* Machine.scoped(Machine.spawn(machine));
+        yield* actor.start;
+        yield* actor.send(event);
+        const exit = yield* actor.awaitExit;
+        expect(yield* SubscriptionRef.get(actor.lifecycle)).toBe(exit);
+        yield* actor.stop.pipe(Effect.exit);
+        expect(yield* SubscriptionRef.get(actor.lifecycle)).toBe(exit);
+      }
+    }),
+  );
+
   it.scopedLive("concurrent stops await background cleanup", () =>
     Effect.gen(function* () {
       const releaseBackground = yield* Deferred.make<void>();

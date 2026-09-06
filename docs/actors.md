@@ -67,6 +67,7 @@ This pattern replaces a root router that invokes one screen actor for each route
 - `awaitFinal` returns the retained final state.
 - `awaitOutput` returns the final output.
 - `awaitExit` returns `Final`, `Stopped`, or `Defect`.
+- `stop` and `awaitExit` complete after the public `lifecycle` reports the same terminal result.
 - `stop`, `Machine.scoped`, and `awaitExit` share one shutdown completion. Each caller waits for runtime, child, and scope finalizers. An interrupted waiter does not cancel the shutdown owner. A cleanup failure returns a `Defect` with phase `cleanup` and remains visible to later stop callers.
 - `client` exposes send, stop, snapshot, matching, subscription, and Promise-based capability checks outside Effect.
 - `client.canSync` supports Boolean transition predicates only.
