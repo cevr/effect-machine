@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.25.7
+
+### Patch Changes
+
+- [#79](https://github.com/cevr/effect-machine/pull/79) [`4d431d1`](https://github.com/cevr/effect-machine/commit/4d431d15d150405983d7730159829ac93d6bf30f) Thanks [@cevr](https://github.com/cevr)! - Stop pending actor startup before closing its runtime. Wait for recovery cleanup even when a stop caller cancels its wait. Finish shutdown owner creation and cache publication before accepting caller cancellation. Preserve terminal lifecycle during initial startup and supervised activation. Keep synchronous host sends ready when startup completes. Preserve recovery cleanup errors and prevent recovery fallbacks from swallowing self-stop.
+
 ## 0.25.6
 
 ### Patch Changes
