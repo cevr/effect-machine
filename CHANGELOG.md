@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.25.4
+
+### Patch Changes
+
+- [#73](https://github.com/cevr/effect-machine/pull/73) [`0b9f0e3`](https://github.com/cevr/effect-machine/commit/0b9f0e366deb6f301c3beb03c3d6c544d458bd09) Thanks [@cevr](https://github.com/cevr)! - Coordinate actor shutdown through one shared completion. Concurrent and repeated stops now wait for runtime, child, and scope finalizers. Cleanup defects remain visible as `ActorExit.Defect` with phase `cleanup`.
+
 ## 0.25.3
 
 ### Patch Changes
