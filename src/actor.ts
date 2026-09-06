@@ -917,6 +917,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
           terminalCause = cause;
           terminal = { _tag: "Defect", cause, phase: "cleanup" };
         }
+        yield* SubscriptionRef.set(lifecycleRef, terminal);
         yield* Deferred.succeed(terminalExitDeferred, terminal);
         if (terminalCause !== undefined) {
           // @effect-diagnostics-next-line anyUnknownInErrorContext:off -- rethrow the stored cleanup cause at the actor boundary.
@@ -1148,13 +1149,6 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     }
   });
   const start = startActor().pipe(Effect.provide(serviceContext), Effect.asVoid);
-
-  yield* Effect.forkDetach(
-    Deferred.await(terminalExitDeferred).pipe(
-      Effect.flatMap((exit) => SubscriptionRef.set(lifecycleRef, exit)),
-      Effect.provide(serviceContext),
-    ),
-  );
 
   return buildActorRefCore(cell, stop, start, serviceContext);
 });
