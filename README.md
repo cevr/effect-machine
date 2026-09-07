@@ -92,6 +92,7 @@ Effect Machine does not add an action queue or a second context system.
 | Actor-owned stream or resource        | `.background`                                |
 | Autonomous machine sequence           | `Machine.run` with `Effect.flatMap`          |
 | Interactive multi-phase flow          | Parent machine with child actors             |
+| Lazy child requested by consumers     | `ActorHost` in a parent state scope          |
 
 Effect requirements remain in `R`. A machine cannot start until the application provides every required service. Effectful transition handlers must have `never` in their error channel. Convert expected failures to states or events.
 

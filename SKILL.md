@@ -365,3 +365,9 @@ Input machines require `input: (entityId) => Input`. Use `initializeState` only 
 | `examples/react`                     | React Suspense and selector example    |
 | `examples/solid`                     | Solid Suspense and selector example    |
 | `docs`                               | User and migration guides              |
+
+## Lazy actors owned by a parent state
+
+Create `ActorHost.make({ identity, spawn })` in a scoped service layer. Use `host.host(input)` in a state-scoped `.spawn` handler. Use `host.acquire(input)` from consumers. Identity uses `Object.is`. The first matching consumer supplies the spawn input. Concurrent consumers share startup. Consumer cancellation does not stop startup or the actor. The parent state scope owns the actor, and host service shutdown closes any active generation. Keep session validation in the application.
+
+ActorHost starts direct `Machine.spawn` results too. A registered `host` wait is interrupted on generation close; consumers receive `ActorHostClosedError` before actor cleanup. A consumer attached to an old generation must acquire again after reentry. Handle expected factory errors in the parent's spawn handler. Use `Effect.orDie` only for invariant failures, because it defects the parent. Both host errors are exported from the package root.

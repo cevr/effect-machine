@@ -57,6 +57,33 @@ The child uses the same actor system. The child stops when the parent exits the 
 
 This pattern replaces a root router that invokes one screen actor for each route. See [`actor-system.ts`](../examples/core/src/actor-system.ts).
 
+## Lazy actors owned by a parent state
+
+Use `ActorHost` when consumers request a child but the parent state must own its lifetime. Construct the host in a scoped service layer. Keep session validation and authorization in that service.
+
+```ts
+const menuHost =
+  yield *
+  ActorHost.make({
+    identity: (input: { sessionId: string }) => input.sessionId,
+    spawn: (input) => Machine.spawn(menuMachine, { input }),
+  });
+
+parent.spawn(State.Menu, ({ state }) =>
+  menuHost.host({ sessionId: state.sessionId }).pipe(Effect.asVoid, Effect.orDie),
+);
+
+const menu = yield * menuHost.acquire({ sessionId });
+```
+
+`host` registers one generation in the current state scope. The first matching `acquire` supplies the factory input. Identity values match with `Object.is`. Concurrent consumers share startup and its result. Consumer cancellation does not cancel startup or stop the actor. ActorHost starts the factory result, so both `Machine.spawn` and `system.spawn` work.
+
+The factory uses the services captured when the host was made. Its Scope and ActorScope belong to the hosting generation. State exit closes the actor. Closing the host service also closes the current generation and ends consumers waiting for a future generation.
+
+Consumers receive `ActorHostClosedError` before actor cleanup starts. An acquisition belongs to the generation it observed. Acquire again after reentry to get the new actor. The registered `host` wait is interrupted when its generation closes. Calls made after the host service closes fail with `ActorHostClosedError`. An overlapping host fails with `ActorHostOccupiedError`, including while the previous actor is still being cleaned up.
+
+Factory failures stay in the typed error channel and remain shared until the hosting scope closes. Handle expected factory failures in the parent's spawn handler with a state transition or event. The example uses `Effect.orDie` because it treats the remaining host errors as wiring failures. A defect stops the parent; it cannot reenter to retry. Both host error classes are exported from the package root.
+
 ## ActorRef selection
 
 - `send` queues an event and returns.

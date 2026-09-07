@@ -222,6 +222,20 @@ machine.spawn(State.Active, ({ self }) =>
 - `self.spawn` returns `Effect<ActorRef, DuplicateActorError, R>` — use `Effect.orDie` in handlers
 - Every `ActorRef` has `actor.system` for child access: `actor.system.get("worker-1")`
 
+## Lazy State-Owned Actors
+
+Use `ActorHost.make({ identity, spawn })` when consumers must request a child without owning its lifetime.
+
+- Construct the host in the service layer. `spawn` captures those services.
+- Run `host.host(input)` in the parent state's `.spawn` handler. It registers a generation and waits for a consumer.
+- Consumers call `host.acquire(input)`. Identity values match with `Object.is`. The first matching consumer supplies the factory input.
+- Concurrent consumers share startup and its result. Cancelling one consumer does not cancel startup. ActorHost starts actors from either `Machine.spawn` or `system.spawn` before it returns them.
+- The factory receives the host generation's Scope and ActorScope. State exit closes the child. Closing the host service also closes the current generation and fails pending consumers.
+- A second active host fails with `ActorHostOccupiedError`. A closed generation fails pending acquisition with `ActorHostClosedError`.
+- Keep session validity, authorization, and completion events in application services. ActorHost only owns actor creation and lifetime.
+- A failed factory stays failed until the hosting scope closes. Handle expected factory errors in the spawn handler with a transition or event. `Effect.orDie` is appropriate only for invariant failures; it defects the parent and cannot support a later reentry.
+- Once registered, `host` is interrupted when its generation closes. Consumers get `ActorHostClosedError` before actor cleanup starts. An acquisition belongs to the generation it observed; call `acquire` again after reentry. Pre-registration calls to a closed host service fail with `ActorHostClosedError`.
+
 ## ActorRef API
 
 ```ts
