@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.25.9
+
+### Patch Changes
+
+- [#83](https://github.com/cevr/effect-machine/pull/83) [`c0aea35`](https://github.com/cevr/effect-machine/commit/c0aea353459cbd01cd3ddc026b1f0203c34b1ac4) Thanks [@cevr](https://github.com/cevr)! - Release waitFor listeners when the caller cancels or the subscription recheck fails. This also applies to timed waits, awaitFinal, and sendAndWait.
+
 ## 0.25.8
 
 ### Patch Changes
