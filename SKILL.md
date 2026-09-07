@@ -370,4 +370,6 @@ Input machines require `input: (entityId) => Input`. Use `initializeState` only 
 
 Create `ActorHost.make({ identity, spawn })` in a scoped service layer. Use `host.host(input)` in a state-scoped `.spawn` handler. Use `host.acquire(input)` from consumers. Identity uses `Object.is`. The first matching consumer supplies the spawn input. Concurrent consumers share startup. Consumer cancellation does not stop startup or the actor. The parent state scope owns the actor, and host service shutdown closes any active generation. Keep session validation in the application.
 
+Parents can pass typed data with `host.host(input, hostInput)`. Type the second `spawn` argument to receive it. This data belongs to the host generation; consumers still call `acquire(input)`. Pass immutable values.
+
 ActorHost starts direct `Machine.spawn` results too. A registered `host` wait is interrupted on generation close; consumers receive `ActorHostClosedError` before actor cleanup. A consumer attached to an old generation must acquire again after reentry. Handle expected factory errors in the parent's spawn handler. Use `Effect.orDie` only for invariant failures, because it defects the parent. Both host errors are exported from the package root.

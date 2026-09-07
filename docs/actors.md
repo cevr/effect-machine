@@ -78,6 +78,28 @@ const menu = yield * menuHost.acquire({ sessionId });
 
 `host` registers one generation in the current state scope. The first matching `acquire` supplies the factory input. Identity values match with `Object.is`. Concurrent consumers share startup and its result. Consumer cancellation does not cancel startup or stop the actor. ActorHost starts the factory result, so both `Machine.spawn` and `system.spawn` work.
 
+When the parent owns startup data, give `spawn` a typed second argument. Pass that data to `host`; consumers still provide only the request input.
+
+```ts
+const screenHost =
+  yield *
+  ActorHost.make({
+    identity: (request: { sessionId: string }) => request.sessionId,
+    spawn: (request, screen: { destination: string }) =>
+      Machine.spawn(screenMachine, { input: { ...request, ...screen } }),
+  });
+
+parent.spawn(State.Screen, ({ state }) =>
+  screenHost
+    .host({ sessionId: state.sessionId }, { destination: state.destination })
+    .pipe(Effect.asVoid, Effect.orDie),
+);
+
+const screen = yield * screenHost.acquire({ sessionId });
+```
+
+The second argument belongs to the registered generation. A consumer cannot replace it. Reentry supplies new host data. Host data is passed by reference, so use immutable values. Existing one-argument factories need no host data.
+
 The factory uses the services captured when the host was made. Its Scope and ActorScope belong to the hosting generation. State exit closes the actor. Closing the host service also closes the current generation and ends consumers waiting for a future generation.
 
 Consumers receive `ActorHostClosedError` before actor cleanup starts. An acquisition belongs to the generation it observed. Acquire again after reentry to get the new actor. The registered `host` wait is interrupted when its generation closes. Calls made after the host service closes fail with `ActorHostClosedError`. An overlapping host fails with `ActorHostOccupiedError`, including while the previous actor is still being cleaned up.

@@ -14,6 +14,7 @@
  */
 import { Effect, Schema, Context } from "effect";
 import {
+  ActorHost,
   ActorSystemDefault,
   ActorSystemService,
   Machine,
@@ -329,3 +330,19 @@ const _test9b = PayloadReplyEvent.GetById(_test9bPayload);
 const _test9bId: string = _test9b.id;
 
 // This file should compile with all @ts-expect-error comments being valid
+
+const _hostInputTypes = Effect.gen(function* () {
+  const host = yield* ActorHost.make({
+    identity: (request: { session: string }) => request.session,
+    spawn: (_request, owner: { url: string }) =>
+      Machine.spawn(_test1, { hydrate: MyState.Loading(owner) }),
+  });
+  const _call1 = host.host({ session: "session" }, { url: "/menu" });
+  const _call2 = host.acquire({ session: "session" });
+  // @ts-expect-error - the factory requires host data
+  const _call3 = host.host({ session: "session" });
+  // @ts-expect-error - host data must match the factory's exact type
+  const _call4 = host.host({ session: "session" }, { url: 123 });
+  // @ts-expect-error - consumers cannot supply host data
+  const _call5 = host.acquire({ session: "session" }, { url: "/other" });
+});

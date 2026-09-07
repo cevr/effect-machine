@@ -86,6 +86,37 @@ describe("ActorHost", () => {
       }).pipe(Effect.provide(ActorSystemDefault)),
   );
 
+  it.scoped("keeps typed host data with its generation across consumers and reentry", () =>
+    Effect.gen(function* () {
+      const host = yield* ActorHost.make({
+        identity: (input: { session: object; request: string }) => input.session,
+        spawn: (input, owner: { destination: string }) =>
+          Machine.spawn(child, { input: { value: `${owner.destination}:${input.request}` } }),
+      });
+      const session = {};
+      const waiting = yield* host.acquire({ session, request: "early" }).pipe(Effect.forkScoped);
+      yield* yieldFibers;
+      const firstOwner = yield* ownerScope;
+      const firstHosted = yield* host
+        .host({ session, request: "registration" }, { destination: "rewards" })
+        .pipe(Scope.provide(firstOwner), Effect.forkScoped);
+      const first = yield* Fiber.join(waiting);
+      expect(yield* first.snapshot).toEqual(ChildState.Ready({ value: "rewards:early" }));
+      expect(yield* Fiber.join(firstHosted)).toBe(first);
+      expect(yield* host.acquire({ session, request: "later" })).toBe(first);
+      yield* Scope.close(firstOwner, Exit.void);
+      expect((yield* first.call(ChildEvent.Finish)).transitioned).toBe(false);
+      const nextOwner = yield* ownerScope;
+      const nextHosted = yield* host
+        .host({ session, request: "registration" }, { destination: "history" })
+        .pipe(Scope.provide(nextOwner), Effect.forkScoped);
+      const next = yield* host.acquire({ session, request: "next" });
+      expect(next).not.toBe(first);
+      expect(yield* Fiber.join(nextHosted)).toBe(next);
+      expect(yield* next.snapshot).toEqual(ChildState.Ready({ value: "history:next" }));
+    }),
+  );
+
   it.scoped("keeps actual recovery running when an acquiring consumer cancels", () =>
     Effect.gen(function* () {
       const system = yield* ActorSystemService;
