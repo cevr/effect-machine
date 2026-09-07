@@ -7,10 +7,18 @@ import { ActorHostClosedError, ActorHostOccupiedError } from "./errors.js";
 
 export { ActorHostClosedError, ActorHostOccupiedError } from "./errors.js";
 
-export interface ActorHost<Input, S extends { readonly _tag: string }, E, Output, Failure> {
+export interface ActorHost<
+  Input,
+  S extends { readonly _tag: string },
+  E,
+  Output,
+  Failure,
+  HostInput = void,
+> {
   /** Register in the current scope. Wait for acquisition; interrupt if this generation closes. */
   readonly host: (
     input: Input,
+    hostInput: HostInput,
   ) => Effect.Effect<
     ActorRef<S, E, Output>,
     Failure | ActorHostClosedError | ActorHostOccupiedError,
@@ -27,7 +35,9 @@ export interface ActorHost<Input, S extends { readonly _tag: string }, E, Output
  *
  * Call `host` from a machine's state-scoped spawn handler. Call `acquire` from
  * consumers. The first matching consumer supplies the spawn input. Identity
- * values match with Object.is. The factory captures the services at make time;
+ * values match with Object.is. Host data is a separate factory argument owned by
+ * the registered generation; consumers cannot replace it.
+ * The factory captures the services at make time;
  * its Scope and ActorScope always belong to the hosting generation. The actor
  * starts before publication, including factories that use Machine.spawn.
  */
@@ -38,9 +48,13 @@ export const make = Effect.fn("effect-machine.actorHost.make")(function* <
   Output,
   Failure,
   R,
+  HostInput = void,
 >(options: {
   readonly identity: (input: Input) => unknown;
-  readonly spawn: (input: Input) => Effect.Effect<ActorRef<S, E, Output>, Failure, R>;
+  readonly spawn: (
+    input: Input,
+    hostInput: HostInput,
+  ) => Effect.Effect<ActorRef<S, E, Output>, Failure, R>;
 }) {
   type Actor = ActorRef<S, E, Output>;
   interface Entry {
@@ -77,9 +91,9 @@ export const make = Effect.fn("effect-machine.actorHost.make")(function* <
       ),
     );
 
-  const host: ActorHost<Input, S, E, Output, Failure>["host"] = Effect.fn(
+  const host: ActorHost<Input, S, E, Output, Failure, HostInput>["host"] = Effect.fn(
     "effect-machine.actorHost.host",
-  )((input) =>
+  )((input, hostInput) =>
     Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
         if (yield* Deferred.isDone(closed)) return yield* failClosed;
@@ -127,7 +141,9 @@ export const make = Effect.fn("effect-machine.actorHost.make")(function* <
             entry.actor,
             Deferred.await(entry.requested).pipe(
               Effect.flatMap((requested) =>
-                Machine.scoped(options.spawn(requested).pipe(Effect.tap((actor) => actor.start))),
+                Machine.scoped(
+                  options.spawn(requested, hostInput).pipe(Effect.tap((actor) => actor.start)),
+                ),
               ),
               Scope.provide(scope),
               Effect.provideContext(services),
@@ -150,7 +166,7 @@ export const make = Effect.fn("effect-machine.actorHost.make")(function* <
       }),
     ),
   );
-  const acquire: ActorHost<Input, S, E, Output, Failure>["acquire"] = Effect.fn(
+  const acquire: ActorHost<Input, S, E, Output, Failure, HostInput>["acquire"] = Effect.fn(
     "effect-machine.actorHost.acquire",
   )((input) =>
     Effect.raceFirst(
@@ -169,5 +185,5 @@ export const make = Effect.fn("effect-machine.actorHost.make")(function* <
       Deferred.await(closed).pipe(Effect.andThen(failClosed)),
     ),
   );
-  return { host, acquire } satisfies ActorHost<Input, S, E, Output, Failure>;
+  return { host, acquire } satisfies ActorHost<Input, S, E, Output, Failure, HostInput>;
 });

@@ -229,6 +229,7 @@ Use `ActorHost.make({ identity, spawn })` when consumers must request a child wi
 - Construct the host in the service layer. `spawn` captures those services.
 - Run `host.host(input)` in the parent state's `.spawn` handler. It registers a generation and waits for a consumer.
 - Consumers call `host.acquire(input)`. Identity values match with `Object.is`. The first matching consumer supplies the factory input.
+- For parent-owned startup data, type the second `spawn(request, hostInput)` argument and call `host(input, hostInput)`. Consumers still call `acquire(input)`. Host data belongs to that generation; pass immutable values. One-argument factories need no host data.
 - Concurrent consumers share startup and its result. Cancelling one consumer does not cancel startup. ActorHost starts actors from either `Machine.spawn` or `system.spawn` before it returns them.
 - The factory receives the host generation's Scope and ActorScope. State exit closes the child. Closing the host service also closes the current generation and fails pending consumers.
 - A second active host fails with `ActorHostOccupiedError`. A closed generation fails pending acquisition with `ActorHostClosedError`.
