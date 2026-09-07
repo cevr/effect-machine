@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.26.0
+
+### Minor Changes
+
+- [#85](https://github.com/cevr/effect-machine/pull/85) [`a210b82`](https://github.com/cevr/effect-machine/commit/a210b8294b0d2418393029b247808e173701bdf8) Thanks [@cevr](https://github.com/cevr)! - Add ActorHost for lazy actors owned by a parent state scope. Consumers share startup without owning cancellation or shutdown. The factory captures service dependencies, uses the first matching request input, and releases the actor on state exit or host service shutdown.
+
 ## 0.25.9
 
 ### Patch Changes
