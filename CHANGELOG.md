@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.27.0
+
+### Minor Changes
+
+- [#87](https://github.com/cevr/effect-machine/pull/87) [`9fb5d36`](https://github.com/cevr/effect-machine/commit/9fb5d360cd507ff38f6aa4908c530f89a76b2a7b) Thanks [@cevr](https://github.com/cevr)! - Allow ActorHost factories to receive typed data from the hosting parent as a second argument. Call host(request, hostInput) to bind parent input to a generation while consumers continue to call acquire(request). Existing one-argument factories keep their current behavior.
+
 ## 0.26.0
 
 ### Minor Changes
