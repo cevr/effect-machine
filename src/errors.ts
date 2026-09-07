@@ -55,3 +55,15 @@ export class VersionConflictError extends Schema.TaggedError<VersionConflictErro
   "VersionConflictError",
   { expected: Schema.Finite, actual: Schema.Finite },
 ) {}
+
+/** The owning state or the host service closed before acquisition completed. */
+export class ActorHostClosedError extends Schema.TaggedError<ActorHostClosedError>()(
+  "ActorHostClosedError",
+  {},
+) {}
+
+/** A host can own only one state generation at a time. */
+export class ActorHostOccupiedError extends Schema.TaggedError<ActorHostOccupiedError>()(
+  "ActorHostOccupiedError",
+  {},
+) {}

@@ -1,8 +1,12 @@
 // Machine namespace (Effect-style)
 export * as Machine from "./machine.js";
 
+export * as ActorHost from "./actor-host.js";
+
 // Errors
 export {
+  ActorHostClosedError,
+  ActorHostOccupiedError,
   ActorStoppedError,
   AssertionError,
   DuplicateActorError,
