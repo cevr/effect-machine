@@ -279,6 +279,8 @@ const count = yield* actor.ask(Event.GetCount);  // number
 
 ## Gotchas
 
+- `waitFor` owns its listener with `Effect.acquireUseRelease`. Keep the post-subscription recheck inside that lifetime. Cancellation and predicate defects must remove the listener.
+
 - `actor.stop` cancels pending startup and waits for recovery cleanup. Stop callers can cancel their own wait without cancelling shutdown. A stop from recovery marks that startup interrupted. Shutdown waits for its protected regions and finalizers to finish. Recovery cleanup defects reach every stop caller.
 - Protect both shutdown owner creation and its cache publication from interruption. Protecting only the cached body can cache cancellation when its protected region ends.
 - Recovery self-stop must also identify the supervisor fiber. A protected supervisor must not join an owner that waits for that same supervisor. Preserve supervised recovery cleanup defects on stop.
