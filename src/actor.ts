@@ -555,18 +555,17 @@ const buildActorRefCore = <
       }
     };
     // @effect-diagnostics runEffectInsideEffect:on
-    listeners.add(listener);
-
-    // Re-check after subscribing to close the race window
-    const afterSubscribe = yield* SubscriptionRef.get(stateRef);
-    if (predicate(afterSubscribe)) {
-      listeners.delete(listener);
-      return afterSubscribe;
-    }
-
-    const result = yield* Deferred.await(done);
-    listeners.delete(listener);
-    return result;
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(() => listeners.add(listener)),
+      () =>
+        Effect.gen(function* () {
+          // Re-check after subscribing to close the race window.
+          const afterSubscribe = yield* SubscriptionRef.get(stateRef);
+          if (predicate(afterSubscribe)) return afterSubscribe;
+          return yield* Deferred.await(done);
+        }),
+      () => Effect.sync(() => listeners.delete(listener)),
+    );
   });
 
   const awaitFinal = waitFor((state) => machine._isFinal(state._tag)).pipe(
