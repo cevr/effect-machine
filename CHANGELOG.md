@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.28.0
+
+### Minor Changes
+
+- [`abafafc`](https://github.com/cevr/effect-machine/commit/abafafc617518742cbed0bf48a717347260a980c) Thanks [@cevr](https://github.com/cevr)! - Requires Effect 4.0.0. The peer range is now `>=4.0.0 <5`. The cluster and atom entries import the stable `effect/cluster`, `effect/rpc` and `effect/reactivity` paths that replaced `effect/unstable/*` in Effect 4.0.0.
+
 ## 0.27.0
 
 ### Minor Changes
