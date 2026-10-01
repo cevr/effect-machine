@@ -10,8 +10,8 @@
   },
   "dependencies": {
     "@effect-machine/examples-shared": "file:../shared",
-    "@effect/atom-react": "4.0.0-rc.112",
-    "effect": "4.0.0-rc.112",
+    "@effect/atom-react": "4.0.0",
+    "effect": "4.0.0",
     "motion": "13.1.1",
     "react": "19.2.8",
     "react-dom": "19.2.8"

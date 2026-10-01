@@ -10,7 +10,7 @@
     "gate": "bun run typecheck"
   },
   "dependencies": {
-    "effect": "4.0.0-rc.112"
+    "effect": "4.0.0"
   },
   "devDependencies": {
     "typescript": "7.0.2"

@@ -10,8 +10,8 @@
   },
   "dependencies": {
     "@effect-machine/examples-shared": "file:../shared",
-    "@effect/atom-solid": "4.0.0-rc.112",
-    "effect": "4.0.0-rc.112",
+    "@effect/atom-solid": "4.0.0",
+    "effect": "4.0.0",
     "solid-js": "1.9.15",
     "solid-transition-group": "0.3.0"
   },
