@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect";
-import * as Atom from "effect/unstable/reactivity/Atom";
+import * as Atom from "effect/reactivity/Atom";
 import type { ActorRef } from "effect-machine";
 import { Event, Machine, State } from "effect-machine";
 import * as ActorAtom from "effect-machine/atom";

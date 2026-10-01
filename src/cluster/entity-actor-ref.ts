@@ -10,7 +10,7 @@
  *
  * @module
  */
-import type { RpcClient } from "effect/unstable/rpc";
+import type { RpcClient } from "effect/rpc";
 import type { Schema } from "effect";
 import { Effect, Option, Stream } from "effect";
 

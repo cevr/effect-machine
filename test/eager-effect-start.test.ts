@@ -1,6 +1,6 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
 import { Cause, Effect, Schema, SubscriptionRef } from "effect";
-import * as AtomRegistry from "effect/unstable/reactivity/AtomRegistry";
+import * as AtomRegistry from "effect/reactivity/AtomRegistry";
 import { describe, expect, it } from "effect-bun-test";
 
 import * as ActorAtom from "../src/atom.js";

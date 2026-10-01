@@ -8,8 +8,8 @@ import { dual } from "effect/Function";
 import { Match } from "effect";
 import type * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
-import * as Atom from "effect/unstable/reactivity/Atom";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as Atom from "effect/reactivity/Atom";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 
 import type {
   ActorLifecycle,

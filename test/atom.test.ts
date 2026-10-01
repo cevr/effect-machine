@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
-import * as AtomRegistry from "effect/unstable/reactivity/AtomRegistry";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
+import * as AtomRegistry from "effect/reactivity/AtomRegistry";
 import { expect, it } from "effect-bun-test";
 
 import * as ActorAtom from "../src/atom.js";
