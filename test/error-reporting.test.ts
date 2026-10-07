@@ -1,6 +1,15 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
 // @effect-diagnostics anyUnknownInErrorContext:off
-import { Cause, Data, Effect, ErrorReporter, Layer, References, type Scope } from "effect";
+import {
+  Cause,
+  Data,
+  Effect,
+  ErrorReporter,
+  Layer,
+  References,
+  Schedule,
+  type Scope,
+} from "effect";
 import { Entity, ShardingConfig } from "effect/cluster";
 import { describe, expect, it } from "effect-bun-test";
 
@@ -269,7 +278,7 @@ describe("error reporting: generation closure", () => {
     }),
   );
 
-  it.scopedLive("does not report normal stops, final states, or interruption", () =>
+  it.scopedLive("does not report normal stops or final states", () =>
     Effect.gen(function* () {
       const recorder = makeRecorder();
       const machine = Machine.make({ state: S, event: E, initial: S.Idle })
@@ -291,6 +300,136 @@ describe("error reporting: generation closure", () => {
       expect(recorder.reports).toHaveLength(0);
     }),
   );
+
+  it.scopedLive("does not report a handler that interrupts itself", () =>
+    Effect.gen(function* () {
+      const recorder = makeRecorder();
+      const machine = Machine.make({ state: S, event: E, initial: S.Idle }).on(
+        S.Idle,
+        E.Crash,
+        () => Effect.interrupt,
+      );
+      const exit = yield* Effect.gen(function* () {
+        const actor = yield* Machine.spawn(machine, { id: "self-interrupt" });
+        yield* actor.start;
+        yield* actor.send(E.Crash);
+        return yield* actor.awaitExit.pipe(Effect.timeout("1 second"));
+      }).pipe(Effect.provide(recorder.layer));
+
+      // The generation still ends as a defect. Only its report is withheld.
+      expect(exit._tag).toBe("Defect");
+      if (exit._tag !== "Defect") return;
+      expect(exit.cause.reasons.map((reason) => reason._tag)).toEqual(["Interrupt"]);
+      expect(recorder.reports).toHaveLength(0);
+    }),
+  );
+
+  it.scopedLive("does not report a restart recovery that interrupts itself", () =>
+    Effect.gen(function* () {
+      const recorder = makeRecorder();
+      const failure = new LifecycleDefect({ message: "transition" });
+      const machine = Machine.make({ state: S, event: E, initial: S.Idle }).on(
+        S.Idle,
+        E.Crash,
+        () => Effect.die(failure),
+      );
+      yield* Effect.gen(function* () {
+        const actor = yield* Machine.spawn(machine, {
+          id: "interrupted-recovery",
+          supervision: Supervision.restart({ maxRestarts: 1 }),
+          lifecycle: {
+            recovery: {
+              resolve: ({ generation }) => {
+                if (generation === 0) return Effect.succeedNone;
+                return Effect.interrupt;
+              },
+            },
+          },
+        });
+        yield* actor.start;
+        yield* actor.send(E.Crash);
+        yield* eventually(() => recorder.reports.length >= 1);
+        // The restart step runs after the generation report. Give it time to report wrongly.
+        yield* Effect.sleep("50 millis");
+        yield* Effect.exit(actor.stop);
+      }).pipe(Effect.provide(recorder.layer));
+
+      expect(recorder.reports.map((report) => defectsOf(report.cause))).toEqual([[failure]]);
+    }),
+  );
+});
+
+// ============================================================================
+// Cold-start recovery
+// ============================================================================
+
+const coldStartCases = [
+  { label: "an unsupervised", supervisionOptions: {} },
+  {
+    label: "a supervised",
+    supervisionOptions: { supervision: Supervision.restart({ maxRestarts: 1 }) },
+  },
+];
+
+describe("error reporting: cold-start recovery", () => {
+  for (const { label, supervisionOptions } of coldStartCases) {
+    it.scopedLive(`reports a recovery defect that fails the start of ${label} actor`, () =>
+      Effect.gen(function* () {
+        const recorder = makeRecorder();
+        const failure = new LifecycleDefect({ message: "cold recovery" });
+        const machine = Machine.make({ state: S, event: E, initial: S.Idle });
+        const startExit = yield* Effect.gen(function* () {
+          const actor = yield* Machine.spawn(machine, {
+            id: "cold-start",
+            ...supervisionOptions,
+            lifecycle: { recovery: { resolve: () => Effect.die(failure) } },
+          });
+          return yield* Effect.exit(actor.start);
+        }).pipe(Effect.provide(recorder.layer));
+
+        expect(startExit._tag).toBe("Failure");
+        const report = yield* onlyReport(recorder.reports);
+        expect(defectsOf(report.cause)).toEqual([failure]);
+        expect(report.annotations).toMatchObject(annotationsFor("cold-start", 0, "recovery"));
+      }),
+    );
+
+    it.scopedLive(`reports a recovery defect that ends while stop cancels ${label} start`, () =>
+      Effect.gen(function* () {
+        const recorder = makeRecorder();
+        const failure = new LifecycleDefect({ message: "recovery during stop" });
+        const machine = Machine.make({ state: S, event: E, initial: S.Idle });
+        const exit = yield* Effect.gen(function* () {
+          const actor = yield* Machine.spawn(machine, {
+            id: "stopped-recovery",
+            ...supervisionOptions,
+            lifecycle: {
+              recovery: {
+                // Stop cannot cancel this step, so its defect settles while stop waits.
+                resolve: () =>
+                  Effect.sleep("30 millis").pipe(
+                    Effect.andThen(Effect.die(failure)),
+                    Effect.uninterruptible,
+                  ),
+              },
+            },
+          });
+          yield* Effect.forkChild(Effect.exit(actor.start));
+          yield* Effect.sleep("5 millis");
+          yield* Effect.exit(actor.stop);
+          return yield* actor.awaitExit.pipe(Effect.timeout("1 second"));
+        }).pipe(Effect.provide(recorder.layer));
+
+        expect(exit._tag).toBe("Defect");
+        if (exit._tag !== "Defect") return;
+        expect(exit.phase).toBe("cleanup");
+        expect(defectsOf(exit.cause)).toEqual([failure]);
+        const report = yield* onlyReport(recorder.reports);
+        expect(defectsOf(report.cause)).toEqual([failure]);
+        expect(report.annotations).toMatchObject(annotationsFor("stopped-recovery", 0, "recovery"));
+      }),
+    );
+  }
 });
 
 // ============================================================================
@@ -453,6 +592,108 @@ describe("error reporting: actor-owned failures", () => {
       expect(recorder.reports.at(1)?.annotations).toMatchObject(
         annotationsFor("recovery", 1, "restart"),
       );
+    }),
+  );
+
+  it.scopedLive("reports a restart recovery defect that ends while stop cancels the restart", () =>
+    Effect.gen(function* () {
+      const recorder = makeRecorder();
+      const transitionFailure = new LifecycleDefect({ message: "transition" });
+      const recoveryFailure = new LifecycleDefect({ message: "restart recovery during stop" });
+      const machine = Machine.make({ state: S, event: E, initial: S.Idle }).on(
+        S.Idle,
+        E.Crash,
+        () => Effect.die(transitionFailure),
+      );
+      yield* Effect.gen(function* () {
+        const actor = yield* Machine.spawn(machine, {
+          id: "stopped-restart",
+          supervision: Supervision.restart({ maxRestarts: 1 }),
+          lifecycle: {
+            recovery: {
+              // Stop cannot cancel this step, so its defect settles while stop waits.
+              resolve: ({ generation }) => {
+                if (generation === 0) return Effect.succeedNone;
+                return Effect.sleep("30 millis").pipe(
+                  Effect.andThen(Effect.die(recoveryFailure)),
+                  Effect.uninterruptible,
+                );
+              },
+            },
+          },
+        });
+        yield* actor.start;
+        yield* actor.send(E.Crash);
+        yield* eventually(() => recorder.reports.length >= 1);
+        yield* Effect.sleep("5 millis");
+        yield* Effect.exit(actor.stop);
+      }).pipe(Effect.provide(recorder.layer));
+
+      expect(recorder.reports.map((report) => defectsOf(report.cause))).toEqual([
+        [transitionFailure],
+        [recoveryFailure],
+      ]);
+      expect(recorder.reports.at(1)?.annotations).toMatchObject(
+        annotationsFor("stopped-restart", 1, "restart"),
+      );
+    }),
+  );
+
+  it.scopedLive("reports a restart schedule defect apart from schedule exhaustion", () =>
+    Effect.gen(function* () {
+      const recorder = makeRecorder();
+      const transitionFailure = new LifecycleDefect({ message: "transition" });
+      const scheduleFailure = new LifecycleDefect({ message: "schedule" });
+      const machine = Machine.make({ state: S, event: E, initial: S.Idle }).on(
+        S.Idle,
+        E.Crash,
+        () => Effect.die(transitionFailure),
+      );
+      const dyingSchedule = Schedule.fromStep(
+        Effect.succeed((_now: number, _input: unknown) => Effect.die(scheduleFailure)),
+      );
+      const exit = yield* Effect.gen(function* () {
+        const actor = yield* Machine.spawn(machine, {
+          id: "schedule",
+          supervision: { schedule: dyingSchedule },
+        });
+        yield* actor.start;
+        yield* actor.send(E.Crash);
+        return yield* actor.awaitExit.pipe(Effect.timeout("1 second"));
+      }).pipe(Effect.provide(recorder.layer));
+
+      expect(exit._tag).toBe("Defect");
+      expect(recorder.reports.map((report) => defectsOf(report.cause))).toEqual([
+        [transitionFailure],
+        [scheduleFailure],
+      ]);
+      expect(recorder.reports.at(1)?.annotations).toMatchObject(
+        annotationsFor("schedule", 0, "restart"),
+      );
+    }),
+  );
+
+  it.scopedLive("reports nothing more when the restart schedule is exhausted", () =>
+    Effect.gen(function* () {
+      const recorder = makeRecorder();
+      const failure = new LifecycleDefect({ message: "transition" });
+      const machine = Machine.make({ state: S, event: E, initial: S.Idle }).on(
+        S.Idle,
+        E.Crash,
+        () => Effect.die(failure),
+      );
+      const exit = yield* Effect.gen(function* () {
+        const actor = yield* Machine.spawn(machine, {
+          id: "exhausted",
+          supervision: Supervision.restart({ maxRestarts: 0 }),
+        });
+        yield* actor.start;
+        yield* actor.send(E.Crash);
+        return yield* actor.awaitExit.pipe(Effect.timeout("1 second"));
+      }).pipe(Effect.provide(recorder.layer));
+
+      expect(exit._tag).toBe("Defect");
+      expect(recorder.reports.map((report) => defectsOf(report.cause))).toEqual([[failure]]);
     }),
   );
 

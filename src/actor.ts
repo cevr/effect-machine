@@ -17,6 +17,7 @@ import {
   MutableHashMap,
   Option,
   PubSub,
+  Pull,
   Queue,
   Ref,
   Schedule,
@@ -712,6 +713,8 @@ const runSupervisionLoop = <
     ) => Effect.Effect<RuntimeHandle<S, E>>;
     lifecycle?: Lifecycle<S, E>;
     onRestart?: (generation: number, exit: ActorExit<unknown>) => Effect.Effect<void>;
+    /** The reporters captured at spawn. */
+    errorReporters: ReadonlySet<ErrorReporter.ErrorReporter>;
   },
 ): Effect.Effect<RuntimeExit<S> | undefined> =>
   Effect.gen(function* () {
@@ -736,7 +739,18 @@ const runSupervisionLoop = <
 
       const pull = step(generationExit);
       const scheduleExit = yield* pull.pipe(Effect.exit);
-      if (scheduleExit._tag === "Failure") return generationExit;
+      if (scheduleExit._tag === "Failure") {
+        // An exhausted schedule halts its pull. Any other failure is a defect in the schedule.
+        if (!Pull.isDoneCause(scheduleExit.cause)) {
+          yield* reportLifecycleFailure(scheduleExit.cause, {
+            reporters: options.errorReporters,
+            actorId: cell.id,
+            generation: cell.generation.current,
+            phase: "restart",
+          });
+        }
+        return generationExit;
+      }
 
       // Bump generation before restart — recovery.resolve sees the new generation
       const nextGeneration = cell.generation.current + 1;
@@ -1152,11 +1166,24 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     });
     // Run recovery if lifecycle.recovery exists AND not hydrated (hydrate takes precedence)
     if (lifecycle?.recovery !== undefined && !isHydrated) {
-      const resolved = yield* lifecycle.recovery.resolve({
-        actorId: id,
-        generation: generation.current,
-        machineInitial: options.machineInitial,
-      });
+      const resolved = yield* lifecycle.recovery
+        .resolve({
+          actorId: id,
+          generation: generation.current,
+          machineInitial: options.machineInitial,
+        })
+        .pipe(
+          // No generation has run yet, so no generation closure can report this failure.
+          // `onError` reports even when a stop is interrupting the start.
+          Effect.onError((cause) =>
+            reportLifecycleFailure(cause, {
+              reporters: errorReporters,
+              actorId: id,
+              generation: generation.current,
+              phase: "recovery",
+            }),
+          ),
+        );
       if (stopRequested) return yield* Effect.interrupt;
       if (Option.isSome(resolved)) {
         // Update cell stateRef
@@ -1187,9 +1214,11 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
           spawnGeneration,
           lifecycle,
           onRestart: options.onRestart,
+          errorReporters,
         }).pipe(
-          // A restart step can fail before a new generation exists to report it.
-          Effect.tapCause((cause) =>
+          // A restart step can fail before a new generation exists to report it. `onError`
+          // reports even when a stop is interrupting the supervisor.
+          Effect.onError((cause) =>
             reportLifecycleFailure(cause, {
               reporters: errorReporters,
               actorId: id,
