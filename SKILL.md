@@ -313,6 +313,7 @@ An exit animation can keep a screen mounted after a final transition. Keep requi
 8. **call vs send**: `send` = fire-and-forget, `call` = request-reply, `ask` = typed reply
 9. **Non-Effect code**: Use `actor.client`. React and Solid should use Actor Atoms.
 10. **ActorStoppedError**: Pending `call`/`ask` Deferreds settled on stop
+11. **Error reporters at spawn**: provide `ErrorReporter.layer` where the actor is spawned. Lifecycle owners report each generation defect, restart-step failure, and final output defect to those reporters. Pure interruption does not report.
 
 ## Cluster / Entity Machines
 

@@ -10,6 +10,7 @@ import {
   Deferred,
   Cause,
   Effect,
+  ErrorReporter,
   Exit,
   Fiber,
   Layer,
@@ -44,6 +45,7 @@ import { DuplicateActorError, ActorStoppedError } from "./errors.js";
 import {
   createRuntime,
   notifyStateListeners,
+  reportLifecycleFailure,
   type RuntimeLifecycleHooks,
   type RuntimeQueuedEvent,
   type RuntimeHandle,
@@ -693,6 +695,7 @@ function activateGeneration<S extends AnyState, O>(
 /**
  * Run the supervision loop for a supervised actor.
  * Observes exit deferred, applies restart policy, resets cell resources on restart.
+ * Returns the terminal generation exit. The actor owner completes it.
  * @internal
  */
 const runSupervisionLoop = <
@@ -709,9 +712,8 @@ const runSupervisionLoop = <
     ) => Effect.Effect<RuntimeHandle<S, E>>;
     lifecycle?: Lifecycle<S, E>;
     onRestart?: (generation: number, exit: ActorExit<unknown>) => Effect.Effect<void>;
-    onTerminal: (exit: RuntimeExit<S>) => Effect.Effect<void>;
   },
-) =>
+): Effect.Effect<RuntimeExit<S> | undefined> =>
   Effect.gen(function* () {
     const step = yield* Schedule.toStepWithSleep(options.supervision.schedule);
 
@@ -723,25 +725,18 @@ const runSupervisionLoop = <
       const generationExit = yield* Deferred.await(currentRuntime.exitDeferred);
       yield* currentRuntime.awaitClosed;
 
-      if (generationExit._tag !== "Defect") {
-        yield* options.onTerminal(generationExit);
-        return;
-      }
+      if (generationExit._tag !== "Defect") return generationExit;
 
       if (
         options.supervision.shouldRestart !== undefined &&
         !options.supervision.shouldRestart(generationExit)
       ) {
-        yield* options.onTerminal(generationExit);
-        return;
+        return generationExit;
       }
 
       const pull = step(generationExit);
       const scheduleExit = yield* pull.pipe(Effect.exit);
-      if (scheduleExit._tag === "Failure") {
-        yield* options.onTerminal(generationExit);
-        return;
-      }
+      if (scheduleExit._tag === "Failure") return generationExit;
 
       // Bump generation before restart — recovery.resolve sees the new generation
       const nextGeneration = cell.generation.current + 1;
@@ -817,6 +812,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
 ) {
   const lifecycle: Lifecycle<S, E> | undefined = options.lifecycle;
   const capturedContext = yield* Effect.context<R>();
+  const errorReporters = yield* ErrorReporter.CurrentErrorReporters;
 
   // Spawn is cold. The caller has already resolved machine input and hydration.
   // Recovery runs during start, not allocate.
@@ -832,7 +828,12 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   const localInspector = options.inspect ?? ambientInspector;
   const systemInspectors = systemInspectorsBySystem.get(system) ?? new Set<SystemInspector>();
   const inspectorValue = makeInspectionDispatcher(localInspector, systemInspectors);
-  const serviceContext = Context.add(capturedContext, ActorInspection, inspectorValue);
+  // Pin the spawn-time reporters. Restarted generations allocate in the supervisor
+  // fiber, which also carries the start caller's context.
+  const serviceContext = capturedContext.pipe(
+    Context.add(ActorInspection, inspectorValue),
+    Context.add(ErrorReporter.CurrentErrorReporters, errorReporters),
+  );
 
   // Actor-specific state
   const childrenMap = new Map<string, ActorRef<AnyState, unknown>>();
@@ -928,6 +929,16 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
           }
           terminalCause = cause;
           terminal = { _tag: "Defect", cause, phase: "cleanup" };
+        }
+        // Generations report their own failures, and children report theirs. Only the
+        // output conversion belongs to the actor owner.
+        if (Exit.isFailure(converted)) {
+          yield* reportLifecycleFailure(converted.cause, {
+            reporters: errorReporters,
+            actorId: id,
+            generation: generation.current,
+            phase: "cleanup",
+          });
         }
         yield* SubscriptionRef.set(lifecycleRef, terminal);
         yield* Deferred.succeed(terminalExitDeferred, terminal);
@@ -1176,8 +1187,21 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
           spawnGeneration,
           lifecycle,
           onRestart: options.onRestart,
-          onTerminal: completeTerminal,
-        }),
+        }).pipe(
+          // A restart step can fail before a new generation exists to report it.
+          Effect.tapCause((cause) =>
+            reportLifecycleFailure(cause, {
+              reporters: errorReporters,
+              actorId: id,
+              generation: generation.current,
+              phase: "restart",
+            }),
+          ),
+          Effect.flatMap((terminalExit) => {
+            if (terminalExit === undefined) return Effect.void;
+            return completeTerminal(terminalExit);
+          }),
+        ),
       );
     } else {
       // No supervision — wire terminal exit from the current generation
