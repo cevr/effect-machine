@@ -51,6 +51,26 @@ Machine.spawn(machine, {
 
 See [`supervision.ts`](../examples/core/src/supervision.ts).
 
+## Error reporting
+
+The actor lifecycle reports contained failures to Effect `ErrorReporter`s. Register the reporters in the context that spawns the actor:
+
+```ts
+Machine.spawn(machine).pipe(Effect.provide(ErrorReporter.layer([reporter])));
+```
+
+- Each generation reports its complete defect once, when it closes. The cause includes transition, spawn, task, background, and cleanup failures of that generation.
+- Each supervised restart reports its own generation. A restart step that fails before a new generation exists reports with phase `restart`.
+- A final output defect reports once when the actor completes.
+- Child actors report their own failures. They capture the reporters of the parent handler that spawned them.
+- Normal stops, final states, and pure interruption do not report.
+- The actor keeps the reporters that it captured at spawn. A later `start` or `stop` caller cannot add or replace them.
+- Each report annotates the reporting fiber with `effect_machine.actor.id`, `effect_machine.actor.generation`, and `effect_machine.defect.phase`. Reporters read them from `References.CurrentLogAnnotations`.
+- A failure that also reaches a caller can report again at the caller's boundary. Use `ErrorReporter.make`. It skips a cause or error object that it already reported.
+- A reporter that throws does not change the actor exit.
+
+Inspection `@machine.error` events stay diagnostics. They do not replace reporting.
+
 ## Local and cluster durability
 
 Local actors use lifecycle hooks. Entity machines use the cluster persistence adapter.

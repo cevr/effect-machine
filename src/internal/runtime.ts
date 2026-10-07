@@ -21,6 +21,7 @@ import {
   Cause,
   Deferred,
   Effect,
+  ErrorReporter,
   Exit,
   Fiber,
   Queue,
@@ -125,6 +126,37 @@ const RuntimeExit = {
     phase,
   }),
 };
+
+/** Spawn-time reporters and lifecycle owner context for one failure report. */
+interface LifecycleFailureReport {
+  readonly reporters: ReadonlySet<ErrorReporter.ErrorReporter>;
+  readonly actorId: string;
+  readonly generation: number;
+  /** `restart` marks a supervision step that failed before a new generation existed. */
+  readonly phase: DefectPhase | "restart";
+}
+
+/**
+ * Report a failure that an actor lifecycle owner settles. The reporters come
+ * from the spawn context, not from whichever fiber closes the actor.
+ * @internal
+ */
+export const reportLifecycleFailure: {
+  (report: LifecycleFailureReport): (cause: Cause.Cause<unknown>) => Effect.Effect<void>;
+  (cause: Cause.Cause<unknown>, report: LifecycleFailureReport): Effect.Effect<void>;
+} = dual(2, (cause: Cause.Cause<unknown>, report: LifecycleFailureReport): Effect.Effect<void> => {
+  if (report.reporters.size === 0 || Cause.hasInterruptsOnly(cause)) return Effect.void;
+  return ErrorReporter.report(cause).pipe(
+    Effect.annotateLogs({
+      "effect_machine.actor.id": report.actorId,
+      "effect_machine.actor.generation": report.generation,
+      "effect_machine.defect.phase": report.phase,
+    }),
+    Effect.provideService(ErrorReporter.CurrentErrorReporters, report.reporters),
+    // Reporters are host callbacks. A throwing reporter must not stop lifecycle settlement.
+    Effect.ignoreCause,
+  );
+});
 
 /** @internal */
 export interface RuntimeHandle<S, E> {
@@ -247,6 +279,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
 
   // Capture services at allocation so delayed start and stop retain them.
   const services = yield* Effect.context<R>();
+  const errorReporters = yield* ErrorReporter.CurrentErrorReporters;
   const fork = Effect.runForkWith(services);
 
   const { stateRef, latestTransitionRef, stoppedRef, eventQueue, listeners } = config.cellResources;
@@ -424,15 +457,24 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
         } else {
           closed = Exit.failCause(cleanupCause);
         }
+        let finalExit = selectedReason;
         if (Exit.isFailure(closed)) {
           let cause = closed.cause;
           if (selectedReason._tag === "Defect") {
             cause = Cause.combine(closed.cause)(selectedReason.cause);
           }
-          yield* setExit(RuntimeExit.Defect(cause, "cleanup"));
-        } else {
-          yield* setExit(selectedReason);
+          finalExit = RuntimeExit.Defect(cause, "cleanup");
         }
+        // Report the complete generation failure before any waiter can observe the exit.
+        if (finalExit._tag === "Defect") {
+          yield* reportLifecycleFailure(finalExit.cause, {
+            reporters: errorReporters,
+            actorId,
+            generation,
+            phase: finalExit.phase,
+          });
+        }
+        yield* setExit(finalExit);
         yield* Deferred.succeed(closedDeferred, closed);
         if (Exit.isFailure(closed)) {
           return yield* Effect.failCause(closed.cause).pipe(Effect.orDie);

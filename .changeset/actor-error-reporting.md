@@ -1,0 +1,5 @@
+---
+"effect-machine": minor
+---
+
+Report contained actor failures to the Effect `ErrorReporter`s that were registered where the actor was spawned. Each runtime generation reports its complete defect cause once when it closes, including transition, spawn, task, background, and cleanup failures. Supervised restarts report each generation. A restart step that fails before a new generation exists reports with phase `restart`, and a final output defect reports when the actor completes. Child actors report through the reporters of the handler that spawned them. Normal stops, final states, and pure interruption do not report. Each report annotates the reporting fiber with the actor ID, generation, and defect phase. The actor keeps its spawn-time reporters, so a later `start` or `stop` caller cannot replace them. A throwing reporter does not change the actor exit. Cluster entity runtimes report generation defects through the reporters in their allocation context. Without registered reporters, behavior does not change.
