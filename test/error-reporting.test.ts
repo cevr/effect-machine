@@ -1,7 +1,10 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
 // @effect-diagnostics anyUnknownInErrorContext:off
 import { Cause, Data, Effect, ErrorReporter, Layer, References, type Scope } from "effect";
+import { Entity, ShardingConfig } from "effect/cluster";
 import { describe, expect, it } from "effect-bun-test";
+
+import { EntityMachine, toEntity } from "../src/cluster/index.js";
 
 import {
   ActorSystemDefault,
@@ -476,5 +479,44 @@ describe("error reporting: actor-owned failures", () => {
 
       expect(exit._tag).toBe("Defect");
     }),
+  );
+});
+
+// ============================================================================
+// Cluster entities
+// ============================================================================
+
+describe("error reporting: cluster entities", () => {
+  it.scopedLive("reports an entity generation defect to the reporters of its allocation", () =>
+    Effect.gen(function* () {
+      const recorder = makeRecorder();
+      const failure = new LifecycleDefect({ message: "entity background" });
+      const machine = Machine.make({ state: S, event: E, initial: S.Idle }).background(() =>
+        Effect.yieldNow.pipe(Effect.andThen(Effect.die(failure))),
+      );
+      const entity = toEntity(machine, { type: "ReportingEntity" });
+      const makeClient = yield* Entity.makeTestClient(
+        entity,
+        EntityMachine.layer(entity, machine, {}).pipe(
+          Layer.provide(Layer.merge(ActorSystemDefault, recorder.layer)),
+        ),
+      );
+      yield* makeClient("entity-1");
+      yield* eventually(() => recorder.reports.length > 0);
+
+      const report = yield* onlyReport(recorder.reports);
+      expect(defectsOf(report.cause)).toEqual([failure]);
+      expect(report.annotations).toMatchObject(annotationsFor("entity-1", 0, "background"));
+    }).pipe(
+      Effect.provide(
+        ShardingConfig.layer({
+          shardsPerGroup: 300,
+          entityMailboxCapacity: 10,
+          entityTerminationTimeout: 0,
+          entityMessagePollInterval: 5000,
+          sendRetryInterval: 100,
+        }),
+      ),
+    ),
   );
 });
