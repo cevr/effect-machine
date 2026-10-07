@@ -132,8 +132,11 @@ interface LifecycleFailureReport {
   readonly reporters: ReadonlySet<ErrorReporter.ErrorReporter>;
   readonly actorId: string;
   readonly generation: number;
-  /** `restart` marks a supervision step that failed before a new generation existed. */
-  readonly phase: DefectPhase | "restart";
+  /**
+   * `restart` marks a supervision step that failed before a new generation existed.
+   * `recovery` marks a cold-start recovery that failed before the first generation ran.
+   */
+  readonly phase: DefectPhase | "restart" | "recovery";
 }
 
 /**
