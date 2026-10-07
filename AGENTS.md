@@ -208,7 +208,8 @@ const otherExit = yield * other.awaitExit; // ActorExit<OtherState>
 - Lifecycle owners report to the Effect `ErrorReporter`s captured at spawn: generation closure reports its combined defect, terminal completion reports a final output defect, and the supervisor reports a restart step that fails before a new generation exists.
 - `createActor` pins `CurrentErrorReporters` in the actor service context. Restarted generations allocate in the supervisor fiber, which also carries the start caller's context; do not let that caller replace the spawn-time reporters.
 - Report before publishing the exit, and isolate reporter defects. A throwing reporter must not block exit settlement.
-- Do not report a cause again where it is only re-raised: stop failures belong to the generation, and implicit-system close failures belong to the child actors. Overlap with caller boundaries relies on `ErrorReporter.make` identity dedup.
+- Inside the actor runtime, do not report a cause again where it is only re-raised: stop failures belong to the generation, and implicit-system close failures belong to the child actors. A parent handler that re-raises a child failure is a new parent defect, so the parent generation reports it too. That overlap, like the overlap with caller boundaries, relies on `ErrorReporter.make` identity dedup and is documented as such.
+- Wrap user callbacks that return an Effect (such as `lifecycle.recovery.resolve`) in `Effect.suspend` before attaching report hooks, so a synchronous throw becomes a reported defect.
 
 ## Child Actors
 

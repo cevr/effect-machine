@@ -20,6 +20,7 @@ import {
   Pull,
   Queue,
   Ref,
+  Result,
   Schedule,
   Scope,
   Semaphore,
@@ -740,9 +741,11 @@ const runSupervisionLoop = <
       const pull = step(generationExit);
       const scheduleExit = yield* pull.pipe(Effect.exit);
       if (scheduleExit._tag === "Failure") {
-        // An exhausted schedule halts its pull. Any other failure is a defect in the schedule.
-        if (!Pull.isDoneCause(scheduleExit.cause)) {
-          yield* reportLifecycleFailure(scheduleExit.cause, {
+        // An exhausted schedule halts its pull. A defect can settle with that halt, for example in a
+        // finalizer, so report whatever remains once the halt is removed.
+        const scheduleFailure = Pull.filterDone(scheduleExit.cause);
+        if (Result.isFailure(scheduleFailure)) {
+          yield* reportLifecycleFailure(scheduleFailure.failure, {
             reporters: options.errorReporters,
             actorId: cell.id,
             generation: cell.generation.current,
@@ -1166,24 +1169,26 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     });
     // Run recovery if lifecycle.recovery exists AND not hydrated (hydrate takes precedence)
     if (lifecycle?.recovery !== undefined && !isHydrated) {
-      const resolved = yield* lifecycle.recovery
-        .resolve({
+      const recovery = lifecycle.recovery;
+      // `suspend` turns a resolver that throws into a defect that `onError` can see.
+      const resolved = yield* Effect.suspend(() =>
+        recovery.resolve({
           actorId: id,
           generation: generation.current,
           machineInitial: options.machineInitial,
-        })
-        .pipe(
-          // No generation has run yet, so no generation closure can report this failure.
-          // `onError` reports even when a stop is interrupting the start.
-          Effect.onError((cause) =>
-            reportLifecycleFailure(cause, {
-              reporters: errorReporters,
-              actorId: id,
-              generation: generation.current,
-              phase: "recovery",
-            }),
-          ),
-        );
+        }),
+      ).pipe(
+        // No generation has run yet, so no generation closure can report this failure.
+        // `onError` reports even when a stop is interrupting the start.
+        Effect.onError((cause) =>
+          reportLifecycleFailure(cause, {
+            reporters: errorReporters,
+            actorId: id,
+            generation: generation.current,
+            phase: "recovery",
+          }),
+        ),
+      );
       if (stopRequested) return yield* Effect.interrupt;
       if (Option.isSome(resolved)) {
         // Update cell stateRef

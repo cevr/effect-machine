@@ -69,6 +69,8 @@ Machine.spawn(machine).pipe(Effect.provide(ErrorReporter.layer([reporter])));
 - Handler code inside the actor also runs with the spawn-time reporters. `Effect.withErrorReporting` in a handler reaches them. It does not reach reporters that were provided only around `start`.
 - Each report annotates the reporting fiber with `effect_machine.actor.id`, `effect_machine.actor.generation`, and `effect_machine.defect.phase`. Reporters read them from `References.CurrentLogAnnotations`.
 - A failure that also reaches a caller can report again at the caller's boundary, for example `Effect.withErrorReporting`, an RPC server or an HTTP handler. Use `ErrorReporter.make`. It skips a cause or an error object that it already reported. A primitive defect, such as `Effect.die("boom")`, is not an object, so it reports twice. A raw reporter that is not built with `ErrorReporter.make` also reports twice.
+- A parent handler that re-raises a child failure fails the parent too, so the parent reports that cause again as its own defect. Examples are a scoped child whose stop fails and a `self.spawn` whose start fails. `ErrorReporter.make` skips the second report when the defect is an object. A primitive defect or a raw reporter reports twice.
+- A cold-start recovery that throws instead of returning an Effect reports like a recovery that dies.
 - A reporter that throws does not change the actor exit. Effect calls the reporters of one set in order, so a throwing reporter can stop the reporters after it.
 - A cluster entity report names one allocation. Its generation is `0` after each reactivation.
 
