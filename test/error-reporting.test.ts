@@ -394,6 +394,38 @@ describe("error reporting: cold-start recovery", () => {
       }),
     );
 
+    it.scopedLive(
+      `reports a recovery that throws while it builds the start of ${label} actor`,
+      () =>
+        Effect.gen(function* () {
+          const recorder = makeRecorder();
+          const failure = new LifecycleDefect({ message: "synchronous recovery" });
+          const machine = Machine.make({ state: S, event: E, initial: S.Idle });
+          const startExit = yield* Effect.gen(function* () {
+            const actor = yield* Machine.spawn(machine, {
+              id: "throwing-recovery",
+              ...supervisionOptions,
+              lifecycle: {
+                recovery: {
+                  resolve: () => {
+                    // oxlint-disable-next-line effect/noThrowStatement -- a resolver that throws instead of returning an Effect is the defect under test.
+                    throw failure;
+                  },
+                },
+              },
+            });
+            return yield* Effect.exit(actor.start);
+          }).pipe(Effect.provide(recorder.layer));
+
+          expect(startExit._tag).toBe("Failure");
+          const report = yield* onlyReport(recorder.reports);
+          expect(defectsOf(report.cause)).toEqual([failure]);
+          expect(report.annotations).toMatchObject(
+            annotationsFor("throwing-recovery", 0, "recovery"),
+          );
+        }),
+    );
+
     it.scopedLive(`reports a recovery defect that ends while stop cancels ${label} start`, () =>
       Effect.gen(function* () {
         const recorder = makeRecorder();
@@ -669,6 +701,42 @@ describe("error reporting: actor-owned failures", () => {
       ]);
       expect(recorder.reports.at(1)?.annotations).toMatchObject(
         annotationsFor("schedule", 0, "restart"),
+      );
+    }),
+  );
+
+  it.scopedLive("reports a restart schedule defect that settles with exhaustion", () =>
+    Effect.gen(function* () {
+      const recorder = makeRecorder();
+      const transitionFailure = new LifecycleDefect({ message: "transition" });
+      const scheduleFailure = new LifecycleDefect({ message: "schedule finalizer" });
+      const machine = Machine.make({ state: S, event: E, initial: S.Idle }).on(
+        S.Idle,
+        E.Crash,
+        () => Effect.die(transitionFailure),
+      );
+      const exhaustingSchedule = Schedule.fromStep(
+        Effect.succeed((_now: number, _input: unknown) =>
+          Cause.done("exhausted").pipe(Effect.ensuring(Effect.die(scheduleFailure))),
+        ),
+      );
+      const exit = yield* Effect.gen(function* () {
+        const actor = yield* Machine.spawn(machine, {
+          id: "exhausted-schedule-defect",
+          supervision: { schedule: exhaustingSchedule },
+        });
+        yield* actor.start;
+        yield* actor.send(E.Crash);
+        return yield* actor.awaitExit.pipe(Effect.timeout("1 second"));
+      }).pipe(Effect.provide(recorder.layer));
+
+      expect(exit._tag).toBe("Defect");
+      expect(recorder.reports.map((report) => defectsOf(report.cause))).toEqual([
+        [transitionFailure],
+        [scheduleFailure],
+      ]);
+      expect(recorder.reports.at(1)?.annotations).toMatchObject(
+        annotationsFor("exhausted-schedule-defect", 0, "restart"),
       );
     }),
   );
