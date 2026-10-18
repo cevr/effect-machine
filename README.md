@@ -180,7 +180,7 @@ Use a parent machine when a UI must route between phases, keep shared values, or
 | `awaitOutput`               | Wait for typed output                              |
 | `awaitExit`                 | Wait for `Final`, `Stopped`, or `Defect`           |
 | `drain`                     | Process queued events and stop                     |
-| `subscribe`                 | Observe state with a host callback                 |
+| `subscribe`                 | Observe each later state write, in write order     |
 | `client`                    | Use the actor outside Effect                       |
 | `system`                    | Access named actors                                |
 | `children`                  | Read direct child actors                           |

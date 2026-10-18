@@ -97,3 +97,52 @@ await measure("actor-call", actorCallOperations, () =>
     ),
   ),
 );
+
+// Each listener counts the states it gets; the result is the last count the first one saw.
+const notifyOperations = 50_000;
+for (const listenerCount of [1, 8]) {
+  await measure(`actor-send-${listenerCount}-subscribers`, notifyOperations, () =>
+    Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const actor = yield* Machine.spawn(machine);
+          yield* actor.start;
+          let lastCount = 0;
+          const unsubscribes = Array.from({ length: listenerCount }, (_, listener) =>
+            actor.subscribe((state) => {
+              if (listener === 0) lastCount = state.count;
+            }),
+          );
+          for (let index = 0; index < notifyOperations; index++) {
+            yield* actor.send(CounterEvent.Increment);
+          }
+          yield* actor.call(CounterEvent.Barrier);
+          for (const unsubscribe of unsubscribes) unsubscribe();
+          yield* actor.stop;
+          return lastCount;
+        }),
+      ),
+    ),
+  );
+}
+
+const subscribeOperations = 10_000;
+await measure("subscribe-unsubscribe", subscribeOperations, () =>
+  Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const actor = yield* Machine.spawn(machine);
+        yield* actor.start;
+        let pairs = 0;
+        for (let index = 0; index < subscribeOperations; index++) {
+          actor.subscribe(() => {
+            pairs -= 1;
+          })();
+          pairs += 1;
+        }
+        yield* actor.stop;
+        return pairs;
+      }),
+    ),
+  ),
+);

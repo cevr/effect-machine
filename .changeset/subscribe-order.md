@@ -1,0 +1,5 @@
+---
+"effect-machine": minor
+---
+
+`actor.subscribe` (and `actor.client.subscribe`) listeners now get every state written after they subscribe, each once, in write order, like the waits. A listener reads the states from the state ref's own publication, and a notification only wakes it. Before this change a supervised restart could deliver its restart state after a newer state of the new generation, a send from a listener callback could deliver the newer state to later listeners before the older one and call a listener again inside its own callback, a state whose entry crashed before its notification was never delivered, and a stop could drop the last write. Behavior changes: a listener that subscribes between a write and its notification, or inside another listener's callback, no longer gets that state (it was current when it subscribed; read `getSnapshot` for it); a listener is not called again while its own callback runs, and gets the states its callback caused after it returns; the listeners get a write that a stop overtook before `awaitExit` completes.
