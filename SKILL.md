@@ -273,7 +273,15 @@ const actor = yield * Machine.spawn(machine);
 const result = yield * actor.call(Event.Start);
 expect(result.transitioned).toBe(true);
 expect(result.newState._tag).toBe("Loading");
+
+// Definition — frozen snapshot of every registration, for coverage tests
+const definition = Machine.definition(machine);
+const registered = definition.states.flatMap((state) =>
+  state.transitions.map((transition) => `${state.tag}/${transition.event}`),
+);
 ```
+
+`Machine.definition` reports registrations and names (`method`, `handlerName`, `guardName`, task names), not targets. Use `Machine.replay` to find a target.
 
 ## Effect Atom
 

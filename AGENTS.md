@@ -324,6 +324,7 @@ const count = yield* actor.ask(Event.GetCount);  // number
 - Pending `call`/`ask` Deferreds settled with `ActorStoppedError` on stop
 - `ask()` only accepts events with `Event.reply()` — non-reply events are a type error
 - Reply decode failures (schema mismatch) are defects
+- `Machine.definition` reads the builder's private indexes through `_definition` (`@internal`). It reports registrations and names, never targets or functions. Every builder registration path must write an index it reads: `task` and `timeout` go through `registerStateEffect` with their own `method` and name, not through public `spawn`. Return new frozen arrays; never freeze an index array, because the builder pushes into it later.
 
 ## Cluster / Entity Machines
 

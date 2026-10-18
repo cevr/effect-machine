@@ -225,6 +225,14 @@ yield * assertPath(machine, events, ["Idle", "Loading", "Done"]);
 yield * assertNeverReaches(machine, events, "Failed");
 ```
 
+Use `Machine.definition` to list every registration (transitions, Effects, postpone and final rules) by state, for example in a coverage test. It reports names, not targets:
+
+```ts
+const registered = Machine.definition(machine).states.flatMap((state) =>
+  state.transitions.map((transition) => `${state.tag}/${transition.event}`),
+);
+```
+
 Read [Testing](./docs/testing.md).
 
 ## XState migration

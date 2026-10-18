@@ -13,6 +13,36 @@ Use `createTestHarness` when each step needs an assertion. Use `assertPath`, `as
 
 Simulation and replay run pure or Effectful transition handlers. They do not run tasks, state-owned Effects, background Effects, or timeouts. Their `self` operations are inert.
 
+## Machine definition
+
+`Machine.definition(machine)` returns a frozen snapshot of every registration the machine holds. It reads the indexes the runtime selects from, so it cannot drift from runtime behavior.
+
+- `states`: one entry per state, in schema order, including states with no registration. Each entry has `transitions` (in the order the runtime tries them), `immediate`, `effects` (spawn, task and timeout, in start order), `postponed` and `final`.
+- `events`: the event tags, in schema order.
+- `anyState`: the `.onAny` / `.whenAny` transitions. The runtime tries them after the state's own transitions for the same event.
+- `background`: the machine-lifetime Effects.
+
+Each entry reports the builder method and names: `handlerName` and `guardName` come from the function `name`, a task reports `options.name`, and a timeout reports `$timeout:<StateTag>`. An anonymous function reports `undefined`. Name a handler with a function declaration or a named `const` when a test must identify it.
+
+The definition reports registrations, not targets. Handlers compute targets at run time. Use `Machine.replay` from a state to find the target of a transition.
+
+Use it for a coverage test: every registered state and event pair has a case, and every case names a registration.
+
+```ts
+// One case per state/event pair: the events to replay from that state.
+const cases = {
+  "Idle/Start": [MyEvent.Start],
+  "Loading/Done": [MyEvent.Done],
+};
+
+const registered = Machine.definition(machine).states.flatMap((state) =>
+  state.transitions.map((transition) => `${state.tag}/${transition.event}`),
+);
+expect([...new Set(registered)].sort()).toStrictEqual(Object.keys(cases).sort());
+```
+
+Call it again after more builder calls. A snapshot does not change.
+
 ## Runtime behavior
 
 Spawn a real actor when a test covers services, tasks, child actors, persistence, supervision, inspection, or cleanup.

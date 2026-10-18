@@ -378,9 +378,17 @@ yield * assertNeverReaches(machine, events, "Error");
 const harness = yield * createTestHarness(machine);
 yield * harness.send(E.Start);
 expect(harness.state._tag).toBe("Loading");
+
+// Definition — frozen snapshot of every registration, for coverage tests
+const definition = Machine.definition(machine);
+const registered = definition.states.flatMap((state) =>
+  state.transitions.map((transition) => `${state.tag}/${transition.event}`),
+);
 ```
 
 Both `simulate` and `createTestHarness` accept `Machine` directly.
+
+`Machine.definition` lists per state: `transitions` (in runtime candidate order), `immediate`, `effects` (spawn/task/timeout), `postponed` and `final`; per machine: `anyState` and `background`. It reports names, not targets: handlers compute targets at run time. Use `Machine.replay` to find a target.
 
 ## Effect Atom
 
