@@ -1,5 +1,11 @@
 # effect-machine
 
+## 0.30.0
+
+### Minor Changes
+
+- [`d176baa`](https://github.com/cevr/effect-machine/commit/d176baa94f1368ebd051d8f03b14429f55d256f6) Thanks [@cevr](https://github.com/cevr)! - Add `Machine.definition(machine)`, a read-only, typed snapshot of every registration a built machine holds. Each state, in schema order, lists its transitions in the order the runtime tries them, its immediate transitions, its state-owned Effects (`spawn`, `task` and `timeout`, in start order), its postponed events, and whether it is final. The machine also lists its event tags, its `onAny`/`whenAny` transitions (tried after a state's own transitions), and its background Effects. Each entry reports the builder method and names: handler and guard function names, the task's `name`, and `$timeout:<StateTag>` for a timeout. State and event tags are the schema's literal unions. The definition reads the same indexes the runtime selects from, so it cannot drift from runtime behavior. It reports names, not handlers or targets: handlers compute targets at run time, so use `Machine.replay` to find one. Each call returns a new deeply frozen value, and later builder calls appear only in the next call. Runtime behavior, inspection events and task names do not change.
+
 ## 0.29.0
 
 ### Minor Changes
