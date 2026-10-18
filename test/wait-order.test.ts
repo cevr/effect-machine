@@ -134,20 +134,20 @@ const ping = plain(
   2,
 );
 // r2 N3: Working is written, its entry crashes before the notification, and the restart
-// writes Idle over it.
+// writes Idle over it. The listener still gets Working first, from the state ref's publication.
 const restartCrash: Scenario = {
   name: "Working's entry crashes, the actor restarts",
   spawn: spawnRestarting((machine) => machine),
   sends: ["Work"],
   gate: { event: "Finish", afterNotify: "Idle" },
   writes: ["Working", "Idle", "Done"],
-  notifies: ["Idle", "Done"],
+  notifies: ["Working", "Idle", "Done"],
   startupWrites: 0,
   prefixWrites: 0,
   restarts: true,
 };
 // r2 N2: the restart writes Idle, the new generation writes and notifies Ready, then the restart
-// notifies Idle.
+// notifies Idle. The listener gets the writes in write order all the same.
 const restartStale: Scenario = {
   name: "Ready's Working entry crashes, the restart notifies late",
   spawn: spawnRestarting((machine) =>
@@ -158,7 +158,7 @@ const restartStale: Scenario = {
   sends: ["Work"],
   gate: { event: "Finish", afterNotify: "Idle" },
   writes: ["Ready", "Working", "Idle", "Ready", "Done"],
-  notifies: ["Ready", "Ready", "Idle", "Done"],
+  notifies: ["Ready", "Working", "Idle", "Ready", "Done"],
   startupWrites: 1,
   prefixWrites: 1,
   restarts: true,
@@ -303,7 +303,11 @@ type Entry =
   | { readonly kind: "call" }
   | { readonly kind: "start" }
   /** `actor.start` returned. */
-  | { readonly kind: "started" };
+  | { readonly kind: "started" }
+  /** The harness asked the actor to stop. */
+  | { readonly kind: "stop" }
+  /** The earlier wait of an `afterMatch` start matched. */
+  | { readonly kind: "matched" };
 
 /** Marks the fibers of the wait under test, so the log can tell its observation apart. */
 const UnderTest = Context.Reference<boolean>("effect-machine/test/wait-order/UnderTest", {
@@ -380,11 +384,7 @@ const record = (actor: OrderActor, scenario: Scenario): Recorder => {
       actor.client.send(eventOf[scenario.gate.event]);
     }
     recorder.onNotify(index, state._tag);
-    // A listener added during a notification runs last in that notification.
-    const unsubscribe = actor.subscribe(() => {
-      recorder.log.push({ kind: "notify", phase: "end", index, tag: state._tag });
-      unsubscribe();
-    });
+    recorder.log.push({ kind: "notify", phase: "end", index, tag: state._tag });
   });
   return recorder;
 };
@@ -628,7 +628,9 @@ const afterMatch = (tag: Tag): Start => ({
       const called = Deferred.makeUnsafe<void>();
       const earlier = context.actor.waitFor((state) => {
         signal(called);
-        return state._tag === tag;
+        const matched = state._tag === tag;
+        if (matched) context.recorder.log.push({ kind: "matched" });
+        return matched;
       });
       const waiting = yield* Effect.andThen(earlier, context.wait).pipe(
         Effect.catch((error) => Effect.succeed(Exit.fail(error))),
@@ -640,16 +642,12 @@ const afterMatch = (tag: Tag): Start => ({
       sendAll(context.actor, context.driverSends);
       return waiting;
     }),
+  // A listener added during a notification gets only later writes, so no listener can mark the
+  // end of a notification. The window: the wait starts after the match, before any later write.
   reached: (log) => {
     const start = startIndex(log);
-    const begins = log.flatMap((entry, position) => {
-      if (entry.kind === "notify" && entry.phase === "begin" && position < start) {
-        return [entry.index];
-      }
-      return [];
-    });
-    const index = begins.at(-1);
-    return index !== undefined && start < notifyAt(log, "end", index);
+    const matched = indexOf(log, (entry) => entry.kind === "matched");
+    return matched !== -1 && matched < start && writesIn(log.slice(matched, start)).length === 0;
   },
 });
 
@@ -681,6 +679,7 @@ const stopInGap = (i: number): Start => ({
         context.actor.client.send(eventOf[context.driverSends[i]!]);
       }
       yield* Deferred.await(written);
+      context.recorder.log.push({ kind: "stop" });
       yield* context.actor.stop.pipe(Effect.forkDetach);
       yield* Fiber.await(waiting).pipe(
         Effect.timeoutOption("1 second"),
@@ -692,11 +691,15 @@ const stopInGap = (i: number): Start => ({
   reached: (log) => {
     const start = startIndex(log);
     const writes = writesIn(log).length - 1;
+    // The stop delivers the last write to the listeners, so look before the stop only.
+    const stop = indexOf(log, (entry) => entry.kind === "stop");
+    const beforeStop = log.slice(0, stop);
     return (
       start !== -1 &&
+      stop !== -1 &&
       writesIn(log.slice(start)).length === 1 &&
-      notifyAt(log, "begin", writes) === -1 &&
-      (notifyAt(log, "begin", writes - 1) !== -1) === writes > 1
+      notifyAt(beforeStop, "begin", writes) === -1 &&
+      (notifyAt(beforeStop, "begin", writes - 1) !== -1) === writes > 1
     );
   },
 });
