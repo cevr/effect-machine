@@ -173,10 +173,10 @@ Use a parent machine when a UI must route between phases, keep shared values, or
 | `send(event)`               | Queue an event                                     |
 | `call(event)`               | Process an event and return transition information |
 | `ask(event)`                | Return a typed reply from an `Event.reply` event   |
-| `waitFor(state)`            | Wait for a state constructor or predicate          |
-| `sendAndWait(event, state)` | Send and wait for a state                          |
+| `waitFor(state)`            | Wait for a state, or fail once stopped             |
+| `sendAndWait(event, state)` | Send and wait for a state, or fail once stopped    |
 | `snapshot`                  | Read the current state as an Effect                |
-| `awaitFinal`                | Wait for the final state                           |
+| `awaitFinal`                | Wait for the final state, or fail once stopped     |
 | `awaitOutput`               | Wait for typed output                              |
 | `awaitExit`                 | Wait for `Final`, `Stopped`, or `Defect`           |
 | `drain`                     | Process queued events and stop                     |

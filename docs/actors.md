@@ -112,8 +112,12 @@ Factory failures stay in the typed error channel and remain shared until the hos
 - `call` waits for event processing and returns `ProcessEventResult`.
 - `ask` returns the schema-checked reply for an `Event.reply` event.
 - A transition can return `Machine.deferReply(nextState)` when state-owned work must produce the reply later. The work calls `self.reply(value)` once it has the value. The value is decoded with the event's reply schema before the pending `ask` is settled. A decode mismatch is a defect and also settles the caller with that defect. If state exit interrupts decoding, the pending caller is settled with the same interruption and the actor can continue. A second `self.reply` returns `false`.
-- `waitFor` waits for a state constructor or predicate.
+- `waitFor` waits for a state constructor or predicate. Its predicate sees the current snapshot and then every later state write, each once, in write order, and one call at a time. The wait returns the first match, and the predicate is not called after it matches. A predicate that keeps state (counts calls, remembers an earlier state) therefore gets the same answer as a replay of the written states. A predicate that sends an event does not see the resulting states inside its own call: it sees them in later calls.
 - `awaitFinal` returns the retained final state.
+- `sendAndWait` starts to observe, judges the snapshot from before the event, sends the event, then waits like `waitFor`, or like `awaitFinal` without a target. A brief state that the event causes is not missed. The event is sent even when the snapshot already matches. It is not sent when the predicate throws on the snapshot.
+- These waits end when a state matches or the actor terminates. When the actor terminates (final, stop, drain, or defect) and no state from the start of the wait matches, they fail with `ActorStoppedError`. A state counts as reached once it is written, even when its entry crashes later, and even when a stop comes before its notification. A predicate that throws fails the wait with that defect. Interrupting a wait removes its listener.
+- A supervised restart keeps this order: the waits see a state written by an entry that crashed, then the restart state, then the states of the new generation, in write order.
+- A state restored by recovery reaches waiters and `subscribe` listeners like any other state change.
 - `awaitOutput` returns the final output.
 - `awaitExit` returns `Final`, `Stopped`, or `Defect`.
 - `stop` and `awaitExit` complete after the public `lifecycle` reports the same terminal result.
