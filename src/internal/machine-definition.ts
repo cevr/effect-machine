@@ -16,6 +16,10 @@ export interface Transition<State, Event, R> {
 export interface SpawnEffect<State, Event, R> {
   readonly stateTag: string;
   readonly handler: StateEffectHandler<State, Event, R>;
+  /** The builder method that registered the effect. `task` and `timeout` wrap their handler. */
+  readonly method: "spawn" | "task" | "timeout";
+  /** Spawn handler name, task name, or `$timeout:<StateTag>`. */
+  readonly name: string | undefined;
 }
 
 export interface BackgroundEffect<State, Event, R> {

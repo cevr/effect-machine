@@ -42,6 +42,12 @@ export type {
   Lifecycle,
   SpawnOptions,
   ReplayOptions,
+  MachineDefinition,
+  StateDefinition,
+  TransitionDefinition,
+  ImmediateDefinition,
+  StateEffectDefinition,
+  BackgroundDefinition,
 } from "./machine.js";
 
 // Actor types and system

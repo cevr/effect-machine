@@ -205,8 +205,124 @@ export interface TimeoutConfig<State, Event> {
 }
 
 // ============================================================================
+// Definition (read-only view of the registrations)
+// ============================================================================
+
+/**
+ * One event transition registration. `method` names the builder method:
+ * `.from(state, scope => scope.on(...))` reports the same names as the top-level methods.
+ * Handlers compute targets at run time, so the definition has no target.
+ */
+export interface TransitionDefinition<EventTag extends string> {
+  readonly method: "on" | "when" | "reenter" | "reenterWhen" | "onAny" | "whenAny";
+  readonly event: EventTag;
+  readonly guarded: boolean;
+  readonly reenter: boolean;
+  /** The handler function's `name`; `undefined` for an anonymous handler. */
+  readonly handlerName: string | undefined;
+  /** The guard function's `name`; `undefined` when unguarded or anonymous. */
+  readonly guardName: string | undefined;
+}
+
+/** One eventless transition registration (`.immediate` / `.immediateWhen`). */
+export interface ImmediateDefinition {
+  readonly method: "immediate" | "immediateWhen";
+  readonly guarded: boolean;
+  readonly handlerName: string | undefined;
+  readonly guardName: string | undefined;
+}
+
+/**
+ * One state-owned Effect. `name` is the spawn handler's function name, the task's
+ * `options.name`, or `$timeout:<StateTag>` for a timeout.
+ */
+export interface StateEffectDefinition {
+  readonly method: "spawn" | "task" | "timeout";
+  readonly name: string | undefined;
+}
+
+/** One machine-lifetime Effect. No state owns it. */
+export interface BackgroundDefinition {
+  readonly method: "background";
+  readonly name: string | undefined;
+}
+
+/**
+ * The registrations of one state. `transitions` is in candidate order: grouped by event
+ * tag in first-registration order, registration order inside one tag.
+ */
+export interface StateDefinition<StateTag extends string, EventTag extends string> {
+  readonly tag: StateTag;
+  readonly transitions: ReadonlyArray<TransitionDefinition<EventTag>>;
+  readonly immediate: ReadonlyArray<ImmediateDefinition>;
+  readonly effects: ReadonlyArray<StateEffectDefinition>;
+  readonly postponed: ReadonlyArray<EventTag>;
+  readonly final: boolean;
+}
+
+/**
+ * A frozen snapshot of every registration a machine holds, from `Machine.definition`.
+ * `states` and `events` follow schema order. `anyState` holds the wildcard transitions,
+ * which the runtime tries after a state's own candidates for the same event.
+ */
+export interface MachineDefinition<StateTag extends string, EventTag extends string> {
+  readonly states: ReadonlyArray<StateDefinition<StateTag, EventTag>>;
+  readonly events: ReadonlyArray<EventTag>;
+  readonly anyState: ReadonlyArray<TransitionDefinition<EventTag>>;
+  readonly background: ReadonlyArray<BackgroundDefinition>;
+}
+
+// ============================================================================
 // Internal helpers
 // ============================================================================
+
+/** A function's `name`, or `undefined` when the function is absent or anonymous. */
+const functionName = (fn: { readonly name: string } | undefined): string | undefined => {
+  if (fn === undefined || fn.name === "") return undefined;
+  return fn.name;
+};
+
+const transitionMethod = <S, E>(
+  anyState: boolean,
+  transition: Transition<S, E, never>,
+): TransitionDefinition<string>["method"] => {
+  const guarded = transition.guard !== undefined;
+  if (anyState) {
+    if (guarded) return "whenAny";
+    return "onAny";
+  }
+  if (transition.reenter === true) {
+    if (guarded) return "reenterWhen";
+    return "reenter";
+  }
+  if (guarded) return "when";
+  return "on";
+};
+
+const describeTransition = <S, E>(
+  anyState: boolean,
+  transition: Transition<S, E, never>,
+): TransitionDefinition<string> =>
+  Object.freeze({
+    method: transitionMethod(anyState, transition),
+    event: transition.eventTag,
+    guarded: transition.guard !== undefined,
+    reenter: transition.reenter === true,
+    handlerName: functionName(transition.handler),
+    guardName: functionName(transition.guard),
+  });
+
+const describeImmediate = <S, E>(transition: Transition<S, E, never>): ImmediateDefinition => {
+  const guarded = transition.guard !== undefined;
+  let method: ImmediateDefinition["method"] = "immediate";
+  if (guarded) method = "immediateWhen";
+  return Object.freeze({
+    method,
+    guarded,
+    handlerName: functionName(transition.handler),
+    guardName: functionName(transition.guard),
+  });
+};
 
 /**
  * `Array.isArray` widens to `any[]` and does not narrow a
@@ -826,14 +942,22 @@ export class Machine<
   ): Machine<State, Event, R | R1, _SD, _ED, Input, Output>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   spawn(stateOrStates: any, handler: any): Machine<State, Event, R, _SD, _ED, Input, Output> {
+    return this.registerStateEffect(stateOrStates, handler, "spawn", functionName(handler));
+  }
+
+  /** The one registration path for `spawn`, `task` and `timeout`. */
+  private registerStateEffect(
+    stateOrStates:
+      | TaggedOrConstructor<BrandedState>
+      | ReadonlyArray<TaggedOrConstructor<BrandedState>>,
+    handler: SpawnEffect<State, Event, R>["handler"],
+    method: SpawnEffect<State, Event, R>["method"],
+    name: string | undefined,
+  ): Machine<State, Event, R, _SD, _ED, Input, Output> {
     const states = toReadonlyArray(stateOrStates);
     for (const s of states) {
       const stateTag = getTag(s);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const spawnEffect: SpawnEffect<State, Event, R> = {
-        stateTag,
-        handler: handler as unknown as SpawnEffect<State, Event, R>["handler"],
-      };
+      const spawnEffect: SpawnEffect<State, Event, R> = { stateTag, handler, method, name };
       const effects = this.#spawnIndex.get(stateTag) ?? [];
       effects.push(spawnEffect);
       this.#spawnIndex.set(stateTag, effects);
@@ -902,6 +1026,55 @@ export class Machine<
     return this.#replySchemas.get(eventTag);
   }
 
+  /**
+   * Snapshot of the indexes the runtime selects from. Every array and entry is a new
+   * frozen value: the builder still pushes into the internal arrays.
+   *
+   * @internal
+   */
+  _definition(): MachineDefinition<string, string> {
+    const describeTransitions = (stateTag: string): ReadonlyArray<TransitionDefinition<string>> => {
+      const transitionsByEvent = this.#transitionIndex.get(stateTag);
+      if (transitionsByEvent === undefined) return Object.freeze([]);
+      return Object.freeze(
+        Array.from(transitionsByEvent.values()).flatMap((transitions) =>
+          transitions.map((transition) => describeTransition(stateTag === "*", transition)),
+        ),
+      );
+    };
+    const states = Object.keys(this.stateSchema.variants).map(
+      (tag): StateDefinition<string, string> =>
+        Object.freeze({
+          tag,
+          transitions: describeTransitions(tag),
+          immediate: Object.freeze((this.#immediateIndex.get(tag) ?? []).map(describeImmediate)),
+          effects: Object.freeze(
+            (this.#spawnIndex.get(tag) ?? []).map((effect): StateEffectDefinition =>
+              Object.freeze({ method: effect.method, name: effect.name }),
+            ),
+          ),
+          postponed: Object.freeze([
+            ...new Set(
+              this.#postponeRules
+                .filter((rule) => rule.stateTag === tag)
+                .map((rule) => rule.eventTag),
+            ),
+          ]),
+          final: this.#finalStates.has(tag),
+        }),
+    );
+    return Object.freeze({
+      states: Object.freeze(states),
+      events: Object.freeze(Object.keys(this.eventSchema.variants)),
+      anyState: describeTransitions("*"),
+      background: Object.freeze(
+        this.#backgroundEffects.map((effect): BackgroundDefinition =>
+          Object.freeze({ method: "background", name: functionName(effect.handler) }),
+        ),
+      ),
+    });
+  }
+
   private registerTransition(transition: Transition<State, Event, never>): void {
     const events = this.#transitionIndex.get(transition.stateTag) ?? new Map();
     const transitions = events.get(transition.eventTag) ?? [];
@@ -966,6 +1139,15 @@ export class Machine<
     stateOrStates: any,
     run: any,
     options: any,
+  ): Machine<State, Event, R, _SD, _ED, Input, Output> {
+    return this.registerTask(stateOrStates, run, options, "task");
+  }
+
+  private registerTask(
+    stateOrStates: any,
+    run: any,
+    options: any,
+    method: "task" | "timeout",
   ): Machine<State, Event, R, _SD, _ED, Input, Output> {
     const handler = Effect.fn("effect-machine.task")(function* (
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1040,8 +1222,13 @@ export class Machine<
       return yield* Effect.failCause(cause).pipe(Effect.orDie);
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return this.spawn(stateOrStates, handler as any);
+    // The wrapper is anonymous, so the task name comes from `options.name`.
+    return this.registerStateEffect(
+      stateOrStates,
+      handler as SpawnEffect<State, Event, R>["handler"],
+      method,
+      options.name,
+    );
   }
   /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -1084,12 +1271,17 @@ export class Machine<
       return event;
     };
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (this as any).task(state, (ctx: any) => Effect.sleep(resolveDuration(ctx.state)), {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      onSuccess: (_: void, ctx: any) => resolveEvent(ctx.state),
-      name: `$timeout:${stateTag}`,
-    });
+    return this.registerTask(
+      state,
+      (ctx: StateHandlerContext<NS, VariantsUnion<_ED> & BrandedEvent>) =>
+        Effect.sleep(resolveDuration(ctx.state)),
+      {
+        onSuccess: (_: void, ctx: StateHandlerContext<NS, VariantsUnion<_ED> & BrandedEvent>) =>
+          resolveEvent(ctx.state),
+        name: `$timeout:${stateTag}`,
+      },
+      "timeout",
+    );
   }
 
   // ---- background ----
@@ -1569,6 +1761,37 @@ export const replay: {
     options: ReplayOptions<S, Input>,
   ): Effect.Effect<S, never, R>;
 } = replayImpl;
+
+/**
+ * Read-only snapshot of every registration a machine holds: per state, its transitions
+ * in candidate order, immediate transitions, state-owned Effects, postponed events and
+ * final flag; per machine, the any-state transitions and background Effects.
+ *
+ * It reads the indexes the runtime selects from, so it cannot drift from runtime
+ * behavior. It reports registration names, not targets: handlers compute targets at
+ * run time. Use `Machine.replay` to find the target of a transition.
+ *
+ * @example
+ * ```ts
+ * const definition = Machine.definition(machine);
+ * const pairs = definition.states.flatMap((state) =>
+ *   state.transitions.map((transition) => `${state.tag}/${transition.event}`),
+ * );
+ * ```
+ */
+export const definition = <
+  S extends { readonly _tag: string },
+  E extends { readonly _tag: string },
+  R,
+  SD extends Record<string, Schema.Struct.Fields>,
+  ED extends Record<string, Schema.Struct.Fields>,
+  Input,
+  Output,
+>(
+  machine: Machine<S, E, R, SD, ED, Input, Output>,
+): MachineDefinition<S["_tag"], E["_tag"]> =>
+  // The schema variants carry exactly the state and event tags.
+  machine._definition() as MachineDefinition<S["_tag"], E["_tag"]>;
 
 // Reply helpers
 export const reply = makeReply;
