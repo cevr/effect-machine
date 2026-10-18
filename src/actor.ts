@@ -179,23 +179,43 @@ export interface ActorRef<State extends { readonly _tag: string }, Event, Output
    */
   readonly transitions: Stream.Stream<TransitionInfo<State, Event>>;
 
-  /** Wait for a state matching predicate or variant (includes current snapshot). */
+  /**
+   * Wait for a state matching predicate or variant (includes current snapshot).
+   * The predicate sees the snapshot and then every later state write once, in write order,
+   * one call at a time, and is not called after it matches. A state counts as reached once
+   * it is written, even when its entry crashes later.
+   * Fails with `ActorStoppedError` when the actor terminates (final, stop, drain, or defect)
+   * and no state from the wait's start matched. A predicate that throws fails the wait with
+   * that defect.
+   */
   readonly waitFor: {
-    (predicate: (state: State) => boolean): Effect.Effect<State>;
-    (state: { readonly _tag: State["_tag"] }): Effect.Effect<State>;
+    (predicate: (state: State) => boolean): Effect.Effect<State, ActorStoppedError>;
+    (state: { readonly _tag: State["_tag"] }): Effect.Effect<State, ActorStoppedError>;
   };
 
-  /** Wait for a final state (includes current snapshot). */
-  readonly awaitFinal: Effect.Effect<State>;
+  /**
+   * Wait for a final state (includes current snapshot).
+   * Fails with `ActorStoppedError` when the actor stops or defects before a final state.
+   */
+  readonly awaitFinal: Effect.Effect<State, ActorStoppedError>;
 
   /** Wait for the domain output of a final state. */
   readonly awaitOutput: Effect.Effect<Output, ActorStoppedError>;
 
-  /** Send event and wait for predicate, state variant, or final state. */
+  /**
+   * Send event and wait for predicate, state variant, or final state.
+   * Starts to observe before it sends: the first state judged is the snapshot from before
+   * the event, and a brief state that the event causes is not missed. The event is sent
+   * after the snapshot is judged, even when the snapshot matches, and not when the
+   * predicate throws on it. Observation order and failure follow the same rule as `waitFor`.
+   */
   readonly sendAndWait: {
-    (event: Event, predicate: (state: State) => boolean): Effect.Effect<State>;
-    (event: Event, state: { readonly _tag: State["_tag"] }): Effect.Effect<State>;
-    (event: Event): Effect.Effect<State>;
+    (event: Event, predicate: (state: State) => boolean): Effect.Effect<State, ActorStoppedError>;
+    (
+      event: Event,
+      state: { readonly _tag: State["_tag"] },
+    ): Effect.Effect<State, ActorStoppedError>;
+    (event: Event): Effect.Effect<State, ActorStoppedError>;
   };
 
   /** Subscribe to state changes (sync callback). Returns unsubscribe function. */
@@ -532,49 +552,66 @@ const buildActorRefCore = <
   });
   const can = (event: E) => canEffect(event).pipe(Effect.provide(serviceContext));
 
+  const toPredicate = (
+    predicateOrState: ((state: S) => boolean) | { readonly _tag: S["_tag"] },
+  ): ((state: S) => boolean) => {
+    if (typeof predicateOrState === "function" && !("_tag" in predicateOrState)) {
+      return predicateOrState;
+    }
+    return (s: S) => s._tag === (predicateOrState as { readonly _tag: string })._tag;
+  };
+
+  /**
+   * Judge the actor's states from the subscription on, in write order, and succeed with the
+   * first match. `before` runs after the snapshot is judged.
+   *
+   * The states come from one source: the state ref's own publication. `SubscriptionRef.set`
+   * writes and publishes in one synchronous step, and the subscription starts with the
+   * current state (replay 1) in one synchronous step too, so the waiter gets the snapshot and
+   * then each later write once, in order. Only the waiter's fiber calls the predicate, one
+   * state at a time. The state listener and the terminal exit only wake the loop; a late,
+   * repeated or missing wake cannot change which states the predicate sees.
+   */
+  const waitUntil = (predicate: (state: S) => boolean, before: Effect.Effect<void>) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const states = yield* PubSub.subscribe(stateRef.pubsub);
+        const current = yield* PubSub.take(states);
+        const currentMatches = predicate(current);
+        yield* before;
+        if (currentMatches) return current;
+
+        let wake = Deferred.makeUnsafe<void>();
+        const ring = (): void => {
+          Deferred.doneUnsafe(wake, Exit.void);
+        };
+        listeners.add(ring);
+        yield* Effect.addFinalizer(() => Effect.sync(() => listeners.delete(ring)));
+        yield* Deferred.await(cell.terminalExitDeferred).pipe(
+          Effect.andThen(Effect.sync(ring)),
+          Effect.forkScoped,
+        );
+        while (true) {
+          wake = Deferred.makeUnsafe<void>();
+          // Nothing writes state after the terminal exit, so a drain after it sees every write.
+          const terminated = Deferred.isDoneUnsafe(cell.terminalExitDeferred);
+          for (const state of yield* PubSub.takeUpTo(states, Number.MAX_SAFE_INTEGER)) {
+            if (predicate(state)) return state;
+          }
+          if (terminated) return yield* ActorStoppedError.make({ actorId: id });
+          yield* Deferred.await(wake);
+        }
+      }),
+    );
+
   const waitFor = Effect.fn("effect-machine.actor.waitFor")(function* (
     predicateOrState: ((state: S) => boolean) | { readonly _tag: S["_tag"] },
   ) {
-    let predicate: (state: S) => boolean;
-    if (typeof predicateOrState === "function" && !("_tag" in predicateOrState)) {
-      predicate = predicateOrState;
-    } else {
-      predicate = (s: S) => s._tag === (predicateOrState as { readonly _tag: string })._tag;
-    }
-
-    // Check current state first — SubscriptionRef.get acquires/releases
-    // the semaphore quickly (read-only), no deadlock risk.
-    const current = yield* SubscriptionRef.get(stateRef);
-    if (predicate(current)) return current;
-
-    // Use sync listener + Deferred to avoid holding the SubscriptionRef
-    // semaphore for the duration of a stream (which causes deadlock when
-    // send triggers SubscriptionRef.set concurrently).
-    const done = yield* Deferred.make<S>();
-    // @effect-diagnostics runEffectInsideEffect:off
-    const listener = (state: S) => {
-      if (predicate(state)) {
-        // Sync callback context — not inside Effect.gen
-        Effect.runFork(Deferred.succeed(done, state));
-      }
-    };
-    // @effect-diagnostics runEffectInsideEffect:on
-    return yield* Effect.acquireUseRelease(
-      Effect.sync(() => listeners.add(listener)),
-      () =>
-        Effect.gen(function* () {
-          // Re-check after subscribing to close the race window.
-          const afterSubscribe = yield* SubscriptionRef.get(stateRef);
-          if (predicate(afterSubscribe)) return afterSubscribe;
-          return yield* Deferred.await(done);
-        }),
-      () => Effect.sync(() => listeners.delete(listener)),
-    );
+    return yield* waitUntil(toPredicate(predicateOrState), Effect.void);
   });
 
-  const awaitFinal = waitFor((state) => machine._isFinal(state._tag)).pipe(
-    Effect.withSpan("effect-machine.actor.awaitFinal"),
-  );
+  const isFinalState = (state: S): boolean => machine._isFinal(state._tag);
+  const awaitFinal = waitFor(isFinalState).pipe(Effect.withSpan("effect-machine.actor.awaitFinal"));
 
   const awaitOutput = Deferred.await(cell.terminalExitDeferred).pipe(
     Effect.flatMap((exit) => {
@@ -589,11 +626,8 @@ const buildActorRefCore = <
     event: E,
     predicateOrState?: ((state: S) => boolean) | { readonly _tag: S["_tag"] },
   ) {
-    yield* send(event);
-    if (predicateOrState !== undefined) {
-      return yield* waitFor(predicateOrState);
-    }
-    return yield* awaitFinal;
+    if (predicateOrState === undefined) return yield* waitUntil(isFinalState, send(event));
+    return yield* waitUntil(toPredicate(predicateOrState), send(event));
   });
 
   const transitions = Stream.fromPubSub(cell.transitions);
@@ -1193,6 +1227,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
       if (Option.isSome(resolved)) {
         // Update cell stateRef
         yield* SubscriptionRef.set(stateRef, resolved.value);
+        notifyStateListeners(listeners, resolved.value);
         // Recreate the runtime against the recovered cell state.
         const newRuntime = yield* spawnGeneration(machine);
         runtimeRef.current = newRuntime;

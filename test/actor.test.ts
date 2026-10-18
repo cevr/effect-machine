@@ -13,7 +13,7 @@ import {
   SubscriptionRef,
 } from "effect";
 
-import type { ActorRef } from "../src/index.js";
+import type { ActorRef, ActorStoppedError } from "../src/index.js";
 import { ActorSystemDefault, ActorSystemService, Machine, State, Event } from "../src/index.js";
 import { describe, expect, it, yieldFibers } from "effect-bun-test";
 
@@ -822,7 +822,7 @@ describe("ActorRef", () => {
 
         // The wait must own its subscription before the task can leave Running.
         interface LoopService {
-          readonly run: () => Effect.Effect<string>;
+          readonly run: () => Effect.Effect<string, ActorStoppedError>;
         }
         class LoopTag extends Context.Service<LoopTag, LoopService>()(
           "effect-machine/test/actor.test/LoopTag",
@@ -934,7 +934,7 @@ describe("ActorRef", () => {
         >;
 
         interface LoopService {
-          readonly run: (value: number) => Effect.Effect<void>;
+          readonly run: (value: number) => Effect.Effect<void, ActorStoppedError>;
         }
         class LoopTag extends Context.Service<LoopTag, LoopService>()(
           "effect-machine/test/actor.test/LoopTag",
