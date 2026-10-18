@@ -265,11 +265,28 @@ describe("Machine.definition", () => {
       staticMachine,
     );
 
+    const eventTags: ReadonlyArray<(typeof CheckoutEvent.Type)["_tag"]> = [
+      "Add",
+      "Pay",
+      "Paid",
+      "Declined",
+      "Cancel",
+      "Timeout",
+    ];
     expect(definitions.map((definition) => definition.states.length)).toStrictEqual([5, 5]);
     expect(definitions.map((definition) => definition.events)).toStrictEqual([
-      explicit.events,
-      explicit.events,
+      eventTags,
+      eventTags,
     ]);
+    expect(explicit.events).toStrictEqual(eventTags);
+
+    // The union result keeps the schema's literal tag unions, not `string` or `any`.
+    const stateTags: ReadonlyArray<"Browsing" | "Cart" | "Paying" | "Receipt" | "Cancelled"> =
+      definitions.flatMap((definition) => definition.states.map((state) => state.tag));
+    const firstEvent = definitions[0]?.events[0];
+    // @ts-expect-error - "Shipped" is not an event tag of the checkout schema
+    expect(firstEvent === "Shipped").toBe(false);
+    expect(stateTags).toHaveLength(10);
   });
 
   test("returns a frozen snapshot and leaves the builder open", () => {
