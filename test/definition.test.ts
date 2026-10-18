@@ -231,10 +231,16 @@ describe("Machine.definition", () => {
         "pay",
         "payWithoutCart",
       ]);
-      const fromCart = yield* Machine.replay(machine, [CheckoutEvent.Pay], {
+      // Every guard passes, so the first candidate wins.
+      const overLimit = yield* Machine.replay(machine, [CheckoutEvent.Pay], {
+        from: CheckoutState.Cart({ items: 11 }),
+      });
+      expect(overLimit._tag).toBe("Cancelled");
+      // The first guard fails, so the next candidate wins.
+      const withinLimit = yield* Machine.replay(machine, [CheckoutEvent.Pay], {
         from: CheckoutState.Cart({ items: 2 }),
       });
-      expect(fromCart._tag).toBe("Paying");
+      expect(withinLimit._tag).toBe("Paying");
 
       expect(candidates("Browsing").map((entry) => entry.method)).toStrictEqual(["whenAny"]);
       const fromBrowsing = yield* Machine.replay(machine, [CheckoutEvent.Pay]);
@@ -242,12 +248,39 @@ describe("Machine.definition", () => {
     }),
   );
 
+  test("accepts machines with different input types and explicit tag types", () => {
+    const staticMachine = Machine.make({
+      state: CheckoutState,
+      event: CheckoutEvent,
+      initial: CheckoutState.Browsing,
+    });
+    const inputMachine = Machine.make({
+      state: CheckoutState,
+      event: CheckoutEvent,
+      initial: (input: { readonly items: number }) => CheckoutState.Cart({ items: input.items }),
+    });
+
+    const definitions = [staticMachine, inputMachine].map((machine) => Machine.definition(machine));
+    const explicit = Machine.definition<typeof CheckoutState.Type, typeof CheckoutEvent.Type>(
+      staticMachine,
+    );
+
+    expect(definitions.map((definition) => definition.states.length)).toStrictEqual([5, 5]);
+    expect(definitions.map((definition) => definition.events)).toStrictEqual([
+      explicit.events,
+      explicit.events,
+    ]);
+  });
+
   test("returns a frozen snapshot and leaves the builder open", () => {
     const machine = Machine.make({
       state: CheckoutState,
       event: CheckoutEvent,
       initial: CheckoutState.Browsing,
-    }).on(CheckoutState.Browsing, CheckoutEvent.Add, () => CheckoutState.Cart({ items: 1 }));
+    })
+      .on(CheckoutState.Browsing, CheckoutEvent.Add, () => CheckoutState.Cart({ items: 1 }))
+      .spawn(CheckoutState.Browsing, () => Effect.void)
+      .postpone(CheckoutState.Browsing, CheckoutEvent.Pay);
     const before = Machine.definition(machine);
     const browsing = before.states[0];
 
@@ -257,12 +290,19 @@ describe("Machine.definition", () => {
     expect(Object.isFrozen(browsing?.transitions)).toBe(true);
     expect(Object.isFrozen(browsing?.transitions[0])).toBe(true);
 
-    // Same state and event: the builder pushes into the array the first call read.
-    machine.on(CheckoutState.Browsing, CheckoutEvent.Add, () => CheckoutState.Cancelled);
+    // Same state and event: the builder pushes into the arrays the first call read.
+    machine
+      .on(CheckoutState.Browsing, CheckoutEvent.Add, () => CheckoutState.Cancelled)
+      .spawn(CheckoutState.Browsing, () => Effect.void)
+      .postpone(CheckoutState.Browsing, CheckoutEvent.Paid);
     const after = Machine.definition(machine);
 
     expect(browsing?.transitions).toHaveLength(1);
+    expect(browsing?.effects).toHaveLength(1);
+    expect(browsing?.postponed).toStrictEqual(["Pay"]);
     expect(after.states[0]?.transitions).toHaveLength(2);
+    expect(after.states[0]?.effects).toHaveLength(2);
+    expect(after.states[0]?.postponed).toStrictEqual(["Pay", "Paid"]);
     expect(after).not.toBe(before);
   });
 });

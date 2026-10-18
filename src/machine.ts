@@ -276,6 +276,9 @@ export interface MachineDefinition<StateTag extends string, EventTag extends str
 // Internal helpers
 // ============================================================================
 
+/** The `#transitionIndex` key of `.onAny` / `.whenAny` transitions. */
+const ANY_STATE_TAG = "*";
+
 /** A function's `name`, or `undefined` when the function is absent or anonymous. */
 const functionName = (fn: { readonly name: string } | undefined): string | undefined => {
   if (fn === undefined || fn.name === "") return undefined;
@@ -762,7 +765,7 @@ export class Machine<
   ): Machine<State, Event, R | R1, _SD, _ED, Input, Output> {
     const eventTag = getTag(event);
     const transition: Transition<State, Event, never> = {
-      stateTag: "*",
+      stateTag: ANY_STATE_TAG,
       eventTag,
       handler: handler as unknown as Transition<State, Event, never>["handler"],
       reenter: false,
@@ -784,7 +787,7 @@ export class Machine<
   ): Machine<State, Event, R | RG | R1, _SD, _ED, Input, Output> {
     const eventTag = getTag(event);
     const transition: Transition<State, Event, never> = {
-      stateTag: "*",
+      stateTag: ANY_STATE_TAG,
       eventTag,
       handler: handler as unknown as Transition<State, Event, never>["handler"],
       reenter: false,
@@ -971,7 +974,7 @@ export class Machine<
     eventTag: string,
   ): ReadonlyArray<Transition<State, Event, never>> {
     const specific = this.#transitionIndex.get(stateTag)?.get(eventTag) ?? [];
-    const wildcard = this.#transitionIndex.get("*")?.get(eventTag) ?? [];
+    const wildcard = this.#transitionIndex.get(ANY_STATE_TAG)?.get(eventTag) ?? [];
     if (specific.length === 0) return wildcard;
     if (wildcard.length === 0) return specific;
     return [...specific, ...wildcard];
@@ -1038,7 +1041,9 @@ export class Machine<
       if (transitionsByEvent === undefined) return Object.freeze([]);
       return Object.freeze(
         Array.from(transitionsByEvent.values()).flatMap((transitions) =>
-          transitions.map((transition) => describeTransition(stateTag === "*", transition)),
+          transitions.map((transition) =>
+            describeTransition(stateTag === ANY_STATE_TAG, transition),
+          ),
         ),
       );
     };
@@ -1066,7 +1071,7 @@ export class Machine<
     return Object.freeze({
       states: Object.freeze(states),
       events: Object.freeze(Object.keys(this.eventSchema.variants)),
-      anyState: describeTransitions("*"),
+      anyState: describeTransitions(ANY_STATE_TAG),
       background: Object.freeze(
         this.#backgroundEffects.map((effect): BackgroundDefinition =>
           Object.freeze({ method: "background", name: functionName(effect.handler) }),
@@ -1142,7 +1147,9 @@ export class Machine<
   ): Machine<State, Event, R, _SD, _ED, Input, Output> {
     return this.registerTask(stateOrStates, run, options, "task");
   }
+  /* eslint-enable @typescript-eslint/no-explicit-any */
 
+  /* eslint-disable @typescript-eslint/no-explicit-any -- shared body of the untyped task and timeout implementations */
   private registerTask(
     stateOrStates: any,
     run: any,
@@ -1782,13 +1789,9 @@ export const replay: {
 export const definition = <
   S extends { readonly _tag: string },
   E extends { readonly _tag: string },
-  R,
-  SD extends Record<string, Schema.Struct.Fields>,
-  ED extends Record<string, Schema.Struct.Fields>,
-  Input,
-  Output,
 >(
-  machine: Machine<S, E, R, SD, ED, Input, Output>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- accept every machine; a union of machines with different Input has no common inferred Input
+  machine: Machine<S, E, any, any, any, any, any>,
 ): MachineDefinition<S["_tag"], E["_tag"]> =>
   // The schema variants carry exactly the state and event tags.
   machine._definition() as MachineDefinition<S["_tag"], E["_tag"]>;

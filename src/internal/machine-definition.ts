@@ -3,7 +3,12 @@
  *
  * @internal
  */
-import type { GuardPredicate, StateEffectHandler, TransitionHandler } from "../machine.js";
+import type {
+  GuardPredicate,
+  StateEffectDefinition,
+  StateEffectHandler,
+  TransitionHandler,
+} from "../machine.js";
 
 export interface Transition<State, Event, R> {
   readonly stateTag: string;
@@ -17,7 +22,7 @@ export interface SpawnEffect<State, Event, R> {
   readonly stateTag: string;
   readonly handler: StateEffectHandler<State, Event, R>;
   /** The builder method that registered the effect. `task` and `timeout` wrap their handler. */
-  readonly method: "spawn" | "task" | "timeout";
+  readonly method: StateEffectDefinition["method"];
   /** Spawn handler name, task name, or `$timeout:<StateTag>`. */
   readonly name: string | undefined;
 }
