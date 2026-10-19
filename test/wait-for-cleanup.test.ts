@@ -1,4 +1,4 @@
-import { Deferred, Effect, Exit, Fiber, Option, Queue, Scheduler } from "effect";
+import { Deferred, Effect, Exit, Fiber, Option, Queue, Scheduler, SubscriptionRef } from "effect";
 import { describe, expect, it } from "effect-bun-test";
 
 import type { ActorStoppedError } from "../src/index.js";
@@ -146,6 +146,13 @@ const sleepingForms: ReadonlyArray<
 ];
 
 describe("wait registration lifetime", () => {
+  it.live("the registration count fails for a state ref that no actor owns", () =>
+    Effect.gen(function* () {
+      const foreign = yield* SubscriptionRef.make<string>("foreign");
+      expect(() => trackRegistrations(foreign)()).toThrow("No actor owns this state ref");
+    }),
+  );
+
   it.live(
     "an interrupt at any point of a wait releases every registration (R1-M1, red on 1469452)",
     () =>

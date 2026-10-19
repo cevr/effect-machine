@@ -43,7 +43,7 @@ import {
   makeInspectionHooks,
 } from "./internal/inspection.js";
 import type { NoReplyError } from "./errors.js";
-import { DuplicateActorError, ActorStoppedError } from "./errors.js";
+import { AssertionError, DuplicateActorError, ActorStoppedError } from "./errors.js";
 import {
   createRuntime,
   notifyStateListeners,
@@ -441,11 +441,15 @@ type Listeners<S> = Set<(state: S) => void>;
 const registrationsByStateRef = new WeakMap<object, () => number>();
 
 /**
- * Test hook, outside the package entry points: the state listeners plus the terminal wake-ups
- * that the actor owning this state ref holds.
+ * Test hook: the state listeners plus the terminal wake-ups that the actor owning this state
+ * ref holds. Throws for a ref that no actor owns, so a wrong ref cannot read as zero.
+ *
+ * @internal
  */
 export const liveStateRegistrations = (stateRef: object): number =>
-  registrationsByStateRef.get(stateRef)?.() ?? 0;
+  Option.getOrThrowWith(Option.fromUndefinedOr(registrationsByStateRef.get(stateRef)), () =>
+    AssertionError.make({ message: "No actor owns this state ref" }),
+  )();
 
 const toActorExit = <S, O>(
   machine: { readonly _output: (state: S) => O },
