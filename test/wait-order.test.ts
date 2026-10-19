@@ -483,7 +483,9 @@ type Entry =
   /** The harness asked the actor to stop. */
   | { readonly kind: "stop" }
   /** The earlier wait of an `afterMatch` start matched. */
-  | { readonly kind: "matched" };
+  | { readonly kind: "matched" }
+  /** A listener that rings after the earlier wait's wake-up got the matched state. */
+  | { readonly kind: "tail" };
 
 /** Marks the fibers of the wait under test, so the log can tell its observation apart. */
 const UnderTest = Context.Reference<boolean>("effect-machine/test/wait-order/UnderTest", {
@@ -576,6 +578,7 @@ const record = (actor: OrderActor, scenario: Scenario): Recorder => {
 /** Index of the first entry matching `match`, or -1. */
 const indexOf = (log: ReadonlyArray<Entry>, match: (entry: Entry) => boolean): number =>
   log.findIndex(match);
+const isNotifyBegin = (entry: Entry): boolean => entry.kind === "notify" && entry.phase === "begin";
 /** The actor started a notification after write `k`. */
 const notifiedFrom =
   (k: number) =>
@@ -942,15 +945,28 @@ const afterMatch = (tag: Tag): Start => ({
       yield* Deferred.await(called);
       // Let the earlier wait settle on its snapshot before the writes.
       yield* Effect.yieldNow;
+      // This listener rings after the earlier wait's wake-up in the same notification, so its
+      // first receipt of `tag` marks the end of the notification that matched. It unsubscribes
+      // there, so the registration count after the waits does not see it.
+      const unsubscribeTail = context.actor.subscribe((state) => {
+        if (state._tag !== tag) return;
+        context.recorder.log.push({ kind: "tail" });
+        unsubscribeTail();
+      });
       sendAll(context.actor, context.driverSends);
       return waiting;
     }),
-  // A listener added during a notification gets only later writes, so no listener can mark the
-  // end of a notification. The window: the wait starts after the match, before any later write.
+  // The match comes from a notification, and the wait starts after the match and before the
+  // tail listener of that same notification runs. No notification starts between the match and
+  // the start; one that the wait itself causes (a predicate that sends) can come before the tail.
   reached: (log) => {
     const start = startIndex(log);
     const matched = indexOf(log, (entry) => entry.kind === "matched");
-    return matched !== -1 && matched < start && writesIn(log.slice(matched, start)).length === 0;
+    const tail = indexOf(log, (entry) => entry.kind === "tail");
+    if (matched === -1 || tail === -1) return false;
+    const fromNotification = log.slice(0, matched).some(isNotifyBegin);
+    const sameNotification = !log.slice(matched, start).some((entry) => entry.kind === "ring");
+    return fromNotification && sameNotification && matched < start && start < tail;
   },
 });
 
