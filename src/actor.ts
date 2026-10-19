@@ -438,6 +438,15 @@ export class ActorScope extends Context.Service<ActorScope, Scope.Scope>()(
 /** Listener set for sync subscriptions */
 type Listeners<S> = Set<(state: S) => void>;
 
+const registrationsByStateRef = new WeakMap<object, () => number>();
+
+/**
+ * Test hook, outside the package entry points: the state listeners plus the terminal wake-ups
+ * that the actor owning this state ref holds.
+ */
+export const liveStateRegistrations = (stateRef: object): number =>
+  registrationsByStateRef.get(stateRef)?.() ?? 0;
+
 const toActorExit = <S, O>(
   machine: { readonly _output: (state: S) => O },
   exit: RuntimeExit<S>,
@@ -466,6 +475,8 @@ interface ActorCell<
   readonly runtimeRef: { current: RuntimeHandle<S, E> | undefined };
   readonly terminalExitDeferred: Deferred.Deferred<ActorExit<S, O>>;
   readonly listeners: Listeners<S>;
+  /** One wake-up per sleeping wait, rung at the terminal exit. */
+  readonly exitWakers: Set<() => void>;
   readonly children: Map<string, ActorRef<AnyState, unknown>>;
   readonly transitions: PubSub.PubSub<TransitionInfo<S, E>>;
   readonly lifecycleRef: SubscriptionRef.SubscriptionRef<ActorLifecycle<S, O>>;
@@ -494,6 +505,7 @@ const buildActorRefCore = <
     stateRef,
     runtimeRef,
     listeners,
+    exitWakers,
     system,
     lifecycleRef,
     latestTransitionRef,
@@ -569,8 +581,13 @@ const buildActorRefCore = <
    * writes and publishes in one synchronous step, and the subscription starts with the
    * current state (replay 1) in one synchronous step too, so the waiter gets the snapshot and
    * then each later write once, in order. Only the waiter's fiber calls the predicate, one
-   * state at a time. The state listener and the terminal exit only wake the loop; a late,
-   * repeated or missing wake cannot change which states the predicate sees.
+   * state at a time. The wake-up only wakes the loop; a late, repeated or missing wake cannot
+   * change which states the predicate sees.
+   *
+   * A sleeping wait wakes when the actor notifies its state listeners of a write, or at the
+   * terminal exit. A write whose notification has not run yet is judged at that notification:
+   * a caller that blocks the actor between a write and its notification (for example, holds
+   * the `latestTransition` permit) also blocks the wait.
    */
   const waitUntil = (predicate: (state: S) => boolean, before: Effect.Effect<void>) =>
     Effect.scoped(
@@ -585,11 +602,17 @@ const buildActorRefCore = <
         const ring = (): void => {
           Deferred.doneUnsafe(wake, Exit.void);
         };
-        listeners.add(ring);
-        yield* Effect.addFinalizer(() => Effect.sync(() => listeners.delete(ring)));
-        yield* Deferred.await(cell.terminalExitDeferred).pipe(
-          Effect.andThen(Effect.sync(ring)),
-          Effect.forkScoped,
+        // One uninterruptible step adds the wake-ups and their release.
+        yield* Effect.acquireRelease(
+          Effect.sync(() => {
+            listeners.add(ring);
+            exitWakers.add(ring);
+          }),
+          () =>
+            Effect.sync(() => {
+              listeners.delete(ring);
+              exitWakers.delete(ring);
+            }),
         );
         while (true) {
           wake = Deferred.makeUnsafe<void>();
@@ -889,6 +912,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
   // Actor-specific state
   const childrenMap = new Map<string, ActorRef<AnyState, unknown>>();
   const listeners: Listeners<S> = new Set();
+  const exitWakers = new Set<() => void>();
   const transitionsPubSub = yield* PubSub.unbounded<TransitionInfo<S, E>>();
 
   // Generation counter. Recovery and inspection use the same value.
@@ -899,6 +923,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
 
   // Cell-owned resources: stable across generations (supervision)
   const stateRef = yield* SubscriptionRef.make<S>(initial);
+  registrationsByStateRef.set(stateRef, () => listeners.size + exitWakers.size);
   const lifecycleRef = yield* SubscriptionRef.make<ActorLifecycle<S, O>>({ _tag: "Created" });
   const latestTransitionRef = yield* SubscriptionRef.make<TransitionInfo<S, E> | undefined>(
     undefined,
@@ -930,6 +955,7 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
     runtimeRef,
     terminalExitDeferred,
     listeners,
+    exitWakers,
     children: childrenMap,
     transitions: transitionsPubSub,
     lifecycleRef,
@@ -993,6 +1019,8 @@ export const createActor = Effect.fn("effect-machine.actor.spawn")(function* <
         }
         yield* SubscriptionRef.set(lifecycleRef, terminal);
         yield* Deferred.succeed(terminalExitDeferred, terminal);
+        // Nothing writes state after this point, so each sleeping wait drains the rest and ends.
+        for (const wake of exitWakers) wake();
         if (terminalCause !== undefined) {
           // @effect-diagnostics-next-line anyUnknownInErrorContext:off -- rethrow the stored cleanup cause at the actor boundary.
           return yield* Effect.failCause(terminalCause).pipe(Effect.orDie);
