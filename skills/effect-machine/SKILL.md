@@ -267,9 +267,9 @@ Call `actor.stop` when you manage the actor lifetime. Use `Machine.scoped(effect
 | `snapshot`             | Current state                                                       |
 | `changes`              | `Stream<State>` (SubscriptionRef-backed)                            |
 | `transitions`          | `Stream<{ fromState, toState, event }>` (PubSub-backed edge stream) |
-| `waitFor(S.X)`         | Wait for state                                                      |
-| `sendAndWait(ev, S.X)` | Send + wait                                                         |
-| `awaitFinal`           | Wait for final state                                                |
+| `waitFor(S.X)`         | Wait for state, or fail with `ActorStoppedError` once stopped       |
+| `sendAndWait(ev, S.X)` | Send + wait, or fail with `ActorStoppedError` once stopped          |
+| `awaitFinal`           | Wait for final state, or fail with `ActorStoppedError` once stopped |
 | `awaitOutput`          | Wait for typed machine output                                       |
 | `awaitExit`            | Wait for terminal exit                                              |
 | `sync.*`               | Sync variants for non-Effect boundaries                             |
