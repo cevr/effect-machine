@@ -5,10 +5,21 @@ import { describe, expect, it } from "effect-bun-test";
 
 import type { ActorStoppedError } from "../src/index.js";
 import { ActorSystemDefault, Event, Machine, State, Supervision } from "../src/index.js";
+import { trackRegistrations } from "./wait-registrations.js";
 
 // Property: a wait observes every state written from the moment it subscribes, in write order,
 // each once, and succeeds with the first one that matches. `sendAndWait` subscribes before it
-// sends. A predicate call never starts inside another one.
+// sends. A predicate call never starts inside another one. A wait whose match is written ends
+// while the actor still runs, and a wait without a match does no work while no state is
+// written. A settled wait holds no listener, terminal wake-up or subscription.
+//
+// Domain: the wait starts at any point of the actor's life: before `start`, during the startup
+// and recovery writes, while it runs, between a write and its notification, inside a
+// notification, before a stop, and across a supervised restart. The run ends with a final
+// state, with a stop, or not at all: a live scenario is judged while the actor still runs, and
+// only then stopped. Directed cases in wait-for-stopped.test.ts own the other starts and ends:
+// a stop before `start`, a start between the recovery write and its notification, a drain, a
+// runtime defect and a cleanup defect.
 //
 // Oracle: the harness records every write of the actor's state ref, its own notifications, and
 // the moment the wait under test first observes the state (it reads the ref or subscribes to the
@@ -19,7 +30,8 @@ import { ActorSystemDefault, Event, Machine, State, Supervision } from "../src/i
 const OrderState = State({ Idle: {}, Ready: {}, Working: {}, Other: {}, Done: {} });
 type OrderState = typeof OrderState.Type;
 type Tag = OrderState["_tag"];
-const OrderEvent = Event({ Work: {}, Next: {}, Ping: {}, Finish: {} });
+// No state handles Stay: sending it writes nothing.
+const OrderEvent = Event({ Work: {}, Next: {}, Ping: {}, Finish: {}, Stay: {} });
 type OrderEvent = typeof OrderEvent.Type;
 type EventTag = OrderEvent["_tag"];
 const eventOf: { readonly [E in EventTag]: OrderEvent } = {
@@ -27,6 +39,7 @@ const eventOf: { readonly [E in EventTag]: OrderEvent } = {
   Next: OrderEvent.Next,
   Ping: OrderEvent.Ping,
   Finish: OrderEvent.Finish,
+  Stay: OrderEvent.Stay,
 };
 
 // Builder methods mutate the machine, so each scenario builds its own.
@@ -45,6 +58,18 @@ const makeMachine = () =>
 type OrderMachine = ReturnType<typeof makeMachine>;
 const spawnOrder = (machine: OrderMachine) => Machine.spawn(machine);
 type OrderActor = Effect.Success<ReturnType<typeof spawnOrder>>;
+
+/** `start` moves Idle to Ready, and Work leaves Ready. */
+const makeStartupMachine = () =>
+  makeMachine()
+    .immediate(OrderState.Idle, () => OrderState.Ready)
+    .on(OrderState.Ready, OrderEvent.Work, () => OrderState.Working);
+
+/** `start` recovers Working before the machine runs. */
+const spawnRecovering = (machine: OrderMachine) =>
+  Machine.spawn(machine, {
+    lifecycle: { recovery: { resolve: () => Effect.succeedSome(OrderState.Working) } },
+  });
 
 /** The first entry of Working dies; the actor restarts once. */
 const spawnRestarting = (build: (machine: OrderMachine) => OrderMachine) =>
@@ -72,102 +97,248 @@ interface Scenario {
   readonly notifies: ReadonlyArray<Tag>;
   /** How many of `writes` (and notifications) `actor.start` causes. */
   readonly startupWrites: number;
+  /** How many of the startup writes recover a state. The harness has no gap start for these. */
+  readonly recoveryWrites: number;
+  /**
+   * Writes that a notification always follows before a wait can start, so no gap start reaches
+   * them: the harness's gate writes Done inside the new generation's first notification, and the
+   * restart's late notification rings right after it.
+   */
+  readonly gaplessWrites?: ReadonlyArray<number>;
   /** How many of `writes` (and notifications) come before the last event's writes. */
   readonly prefixWrites: number;
   /** A supervised restart writes state outside the event loop's write-then-notify order. */
   readonly restarts: boolean;
+  /** The actor never terminates by itself: the harness judges the wait, then stops it. */
+  readonly live: boolean;
+  /** Each event writes once and no entry effect writes, so a stop can overtake one write. */
+  readonly stoppable: boolean;
 }
+
+type ScenarioOptions = Partial<
+  Pick<Scenario, "startupWrites" | "recoveryWrites" | "live" | "stoppable">
+>;
 
 const plain = (
   name: string,
-  machine: OrderMachine,
+  spawn: Effect.Effect<OrderActor>,
   sends: readonly [EventTag, ...Array<EventTag>],
   writes: ReadonlyArray<Tag>,
   prefixWrites: number,
+  options: ScenarioOptions = {},
 ): Scenario => ({
   name,
-  spawn: spawnOrder(machine),
+  spawn,
   sends,
   writes,
   notifies: writes,
   startupWrites: 0,
+  recoveryWrites: 0,
   prefixWrites,
   restarts: false,
+  live: false,
+  stoppable: true,
+  ...options,
 });
 
 const sentShort = plain(
   "test sends Work,Finish",
-  makeMachine(),
+  spawnOrder(makeMachine()),
   ["Work", "Finish"],
   ["Working", "Done"],
   1,
 );
 const sentLong = plain(
   "test sends Work,Next,Finish",
-  makeMachine(),
+  spawnOrder(makeMachine()),
   ["Work", "Next", "Finish"],
   ["Working", "Other", "Done"],
   2,
 );
-const finishOnly = plain("test sends Finish", makeMachine(), ["Finish"], ["Done"], 0);
+const finishOnly = plain("test sends Finish", spawnOrder(makeMachine()), ["Finish"], ["Done"], 0);
 const brief = plain(
   "Working sends Finish",
-  makeMachine().spawn(OrderState.Working, ({ self }) => self.send(OrderEvent.Finish)),
+  spawnOrder(makeMachine().spawn(OrderState.Working, ({ self }) => self.send(OrderEvent.Finish))),
   ["Work"],
   ["Working", "Done"],
   0,
+  { stoppable: false },
 );
 const chain = plain(
   "Working sends Next, Other sends Finish",
-  makeMachine()
-    .spawn(OrderState.Working, ({ self }) => self.send(OrderEvent.Next))
-    .spawn(OrderState.Other, ({ self }) => self.send(OrderEvent.Finish)),
+  spawnOrder(
+    makeMachine()
+      .spawn(OrderState.Working, ({ self }) => self.send(OrderEvent.Next))
+      .spawn(OrderState.Other, ({ self }) => self.send(OrderEvent.Finish)),
+  ),
   ["Work"],
   ["Working", "Other", "Done"],
   0,
+  { stoppable: false },
 );
 const ping = plain(
   "test sends Work,Ping,Finish (Ping rewrites the same object)",
-  makeMachine(),
+  spawnOrder(makeMachine()),
   ["Work", "Ping", "Finish"],
   ["Working", "Working", "Done"],
   2,
 );
+const startupShort = plain(
+  "start moves Idle to Ready, test sends Work,Finish",
+  spawnOrder(makeStartupMachine()),
+  ["Work", "Finish"],
+  ["Ready", "Working", "Done"],
+  2,
+  { startupWrites: 1 },
+);
+const recoverImmediate = plain(
+  "start recovers Working and moves it to Other, test sends Finish",
+  spawnRecovering(makeMachine().immediate(OrderState.Working, () => OrderState.Other)),
+  ["Finish"],
+  ["Working", "Other", "Done"],
+  2,
+  { startupWrites: 2, recoveryWrites: 1 },
+);
+
+// Live scenarios: no final state, so only a state notification can end a matching wait.
+const liveWork = plain(
+  "test sends Work, stays live",
+  spawnOrder(makeMachine()),
+  ["Work"],
+  ["Working"],
+  0,
+  { live: true },
+);
+const liveWorkNext = plain(
+  "test sends Work,Next, stays live",
+  spawnOrder(makeMachine()),
+  ["Work", "Next"],
+  ["Working", "Other"],
+  1,
+  { live: true },
+);
+const liveBrief = plain(
+  "Working sends Next, stays live",
+  spawnOrder(makeMachine().spawn(OrderState.Working, ({ self }) => self.send(OrderEvent.Next))),
+  ["Work"],
+  ["Working", "Other"],
+  0,
+  { live: true, stoppable: false },
+);
+const livePing = plain(
+  "test sends Work,Ping, stays live (Ping rewrites the same object)",
+  spawnOrder(makeMachine()),
+  ["Work", "Ping"],
+  ["Working", "Working"],
+  1,
+  { live: true },
+);
+const startupLive = plain(
+  "start moves Idle to Ready, test sends Work, stays live",
+  spawnOrder(makeStartupMachine()),
+  ["Work"],
+  ["Ready", "Working"],
+  1,
+  { startupWrites: 1, live: true },
+);
+const recoverLive = plain(
+  "start recovers Working, stays live",
+  spawnRecovering(makeMachine()),
+  ["Stay"],
+  ["Working"],
+  1,
+  { startupWrites: 1, recoveryWrites: 1, live: true, stoppable: false },
+);
+const recoverImmediateLive = plain(
+  "start recovers Working and moves it to Other, stays live",
+  spawnRecovering(makeMachine().immediate(OrderState.Working, () => OrderState.Other)),
+  ["Stay"],
+  ["Working", "Other"],
+  2,
+  { startupWrites: 2, recoveryWrites: 1, live: true, stoppable: false },
+);
+
+const restartCrashMachine = (machine: OrderMachine) => machine;
+const restartStaleMachine = (machine: OrderMachine) =>
+  machine
+    .immediate(OrderState.Idle, () => OrderState.Ready)
+    .on(OrderState.Ready, OrderEvent.Work, () => OrderState.Working);
 // r2 N3: Working is written, its entry crashes before the notification, and the restart
 // writes Idle over it. The listener still gets Working first, from the state ref's publication.
 const restartCrash: Scenario = {
   name: "Working's entry crashes, the actor restarts",
-  spawn: spawnRestarting((machine) => machine),
+  spawn: spawnRestarting(restartCrashMachine),
   sends: ["Work"],
   gate: { event: "Finish", afterNotify: "Idle" },
   writes: ["Working", "Idle", "Done"],
   notifies: ["Working", "Idle", "Done"],
   startupWrites: 0,
+  recoveryWrites: 0,
   prefixWrites: 0,
   restarts: true,
+  live: false,
+  stoppable: false,
 };
 // r2 N2: the restart writes Idle, the new generation writes and notifies Ready, then the restart
 // notifies Idle. The listener gets the writes in write order all the same.
 const restartStale: Scenario = {
   name: "Ready's Working entry crashes, the restart notifies late",
-  spawn: spawnRestarting((machine) =>
-    machine
-      .immediate(OrderState.Idle, () => OrderState.Ready)
-      .on(OrderState.Ready, OrderEvent.Work, () => OrderState.Working),
-  ),
+  spawn: spawnRestarting(restartStaleMachine),
   sends: ["Work"],
   gate: { event: "Finish", afterNotify: "Idle" },
   writes: ["Ready", "Working", "Idle", "Ready", "Done"],
   notifies: ["Ready", "Working", "Idle", "Ready", "Done"],
   startupWrites: 1,
+  recoveryWrites: 0,
+  gaplessWrites: [5],
   prefixWrites: 1,
   restarts: true,
+  live: false,
+  stoppable: false,
+};
+const restartCrashLive: Scenario = {
+  ...restartCrash,
+  name: "Working's entry crashes, the actor restarts and stays live",
+  spawn: spawnRestarting(restartCrashMachine),
+  gate: undefined,
+  writes: ["Working", "Idle"],
+  notifies: ["Working", "Idle"],
+  live: true,
+};
+const restartStaleLive: Scenario = {
+  ...restartStale,
+  name: "Ready's Working entry crashes, the restart notifies late and stays live",
+  spawn: spawnRestarting(restartStaleMachine),
+  gate: undefined,
+  writes: ["Ready", "Working", "Idle", "Ready"],
+  notifies: ["Ready", "Working", "Idle", "Ready"],
+  live: true,
 };
 
-const racingScenarios = [sentShort, sentLong, finishOnly, brief, chain, ping];
-const restartScenarios = [restartCrash, restartStale];
+const terminalScenarios = [
+  sentShort,
+  sentLong,
+  finishOnly,
+  brief,
+  chain,
+  ping,
+  startupShort,
+  recoverImmediate,
+];
+const liveScenarios = [
+  liveWork,
+  liveWorkNext,
+  liveBrief,
+  livePing,
+  startupLive,
+  recoverLive,
+  recoverImmediateLive,
+];
+const restartScenarios = [restartCrash, restartStale, restartCrashLive, restartStaleLive];
+const allScenarios = [...terminalScenarios, ...liveScenarios, ...restartScenarios];
 // A form that sends starts with no other writer: its own event comes last and alone.
-const sendingScenarios = [finishOnly, brief, chain, ...restartScenarios];
+const alone = (scenarios: ReadonlyArray<Scenario>) =>
+  scenarios.filter(({ sends }) => sends.length === 1);
 
 interface PredicateCase {
   readonly name: string;
@@ -300,6 +471,11 @@ type Entry =
       readonly index: number;
       readonly tag: Tag;
     }
+  /**
+   * The ring marker got write `index`: the actor started a notification after that write. The
+   * harness listener cannot show this, because its running drain also delivers later writes.
+   */
+  | { readonly kind: "ring"; readonly index: number }
   | { readonly kind: "call" }
   | { readonly kind: "start" }
   /** `actor.start` returned. */
@@ -321,7 +497,7 @@ interface Recorder {
   readonly notifications: () => number;
   /** Runs synchronously right after the wait's first observation of the state. */
   onStart: () => void;
-  /** Runs inside the write, before it is published: it must not touch the actor. */
+  /** Runs inside write `index`, before it is published: it must not touch the actor. */
   onWrite: (index: number) => void;
   /** Runs at the start of the harness's own notification `index`. */
   onNotify: (index: number, tag: Tag) => void;
@@ -373,6 +549,14 @@ const record = (actor: OrderActor, scenario: Scenario): Recorder => {
     observe();
     return window;
   };
+  // The ring marker subscribes first, so it runs first in each notification of the actor, and
+  // its callback writes nothing. So it gets write `n` only from a notification that started
+  // after write `n`. Every listener gets every write in write order: receipt `n` is write `n`.
+  let rings = 0;
+  actor.subscribe(() => {
+    rings += 1;
+    recorder.log.push({ kind: "ring", index: rings });
+  });
   let gateOpen = scenario.gate !== undefined;
   let notifications = 0;
   actor.subscribe((state) => {
@@ -392,6 +576,11 @@ const record = (actor: OrderActor, scenario: Scenario): Recorder => {
 /** Index of the first entry matching `match`, or -1. */
 const indexOf = (log: ReadonlyArray<Entry>, match: (entry: Entry) => boolean): number =>
   log.findIndex(match);
+/** The actor started a notification after write `k`. */
+const notifiedFrom =
+  (k: number) =>
+  (entry: Entry): boolean =>
+    entry.kind === "ring" && entry.index >= k;
 const writesIn = (entries: ReadonlyArray<Entry>): ReadonlyArray<Tag> =>
   entries.flatMap((entry) => {
     if (entry.kind === "write") return [entry.tag];
@@ -407,6 +596,14 @@ const notifyAt = (log: ReadonlyArray<Entry>, phase: "begin" | "end", index: numb
     log,
     (entry) => entry.kind === "notify" && entry.phase === phase && entry.index === index,
   );
+/** Index of write `k` (the state held at `record` is write 0), or -1. */
+const writeAt = (log: ReadonlyArray<Entry>, k: number): number => {
+  let writes = -1;
+  return indexOf(log, (entry) => {
+    if (entry.kind === "write") writes += 1;
+    return entry.kind === "write" && writes === k;
+  });
+};
 
 // ---------------------------------------------------------------------------
 // Start points
@@ -417,8 +614,14 @@ interface RunContext {
   readonly scenario: Scenario;
   readonly recorder: Recorder;
   readonly form: Form;
+  /** `actor.start`, then the log notes that it returned. A start point that owns it runs it. */
+  readonly startActor: Effect.Effect<void>;
   /** The wait under test, marked, logging its call first. */
   readonly wait: Effect.Effect<Exit.Exit<OrderState, ActorStoppedError>>;
+  /** Count the operations of a wait that runs outside the run's fiber tree. */
+  readonly counted: <A, E>(effect: Effect.Effect<A, E>) => Effect.Effect<A, E>;
+  /** Wait until neither the log nor the wait moves; false when they keep moving. */
+  readonly quiet: Effect.Effect<boolean>;
   /** Events the harness sends: all of them, or all but the form's own last one. */
   readonly driverSends: ReadonlyArray<EventTag>;
   /** Runs synchronously after the predicate's first call returns. */
@@ -428,6 +631,10 @@ interface RunContext {
 interface Start {
   readonly family: string;
   readonly value: number | string;
+  /** The start point stops the actor itself. */
+  readonly stops: boolean;
+  /** The drive runs `actor.start` itself; otherwise the run starts the actor before it. */
+  readonly ownsStart: boolean;
   readonly drive: (
     context: RunContext,
   ) => Effect.Effect<Fiber.Fiber<Exit.Exit<OrderState, ActorStoppedError>>>;
@@ -445,7 +652,7 @@ const sendAll = (actor: OrderActor, events: ReadonlyArray<EventTag>): void => {
 const signal = (deferred: Deferred.Deferred<void>): void => {
   Deferred.doneUnsafe(deferred, Exit.void);
 };
-// Synchronous steps inside listener callbacks, where no fiber can be suspended.
+// Synchronous steps inside the recorder's hooks, where no fiber can be suspended.
 const holdPermit = (permit: Semaphore.Semaphore): void => {
   Effect.runSync(permit.take(1));
 };
@@ -453,11 +660,19 @@ const startNow = <A, E>(effect: Effect.Effect<A, E>): Fiber.Fiber<A, E> => Effec
 
 const startIndex = (log: ReadonlyArray<Entry>): number =>
   indexOf(log, (entry) => entry.kind === "start");
+const startedIndex = (log: ReadonlyArray<Entry>): number =>
+  indexOf(log, (entry) => entry.kind === "started");
 /** The wait starts before every write after the actor started. */
 const startsFirst = (log: ReadonlyArray<Entry>): boolean => {
   const start = startIndex(log);
-  const started = indexOf(log, (entry) => entry.kind === "started");
+  const started = startedIndex(log);
   return start > started && writesIn(log.slice(started, start)).length === 0;
+};
+/** The wait starts before `start` returns and before the first write. */
+const startsBeforeStart = (log: ReadonlyArray<Entry>): boolean => {
+  const start = startIndex(log);
+  const started = startedIndex(log);
+  return start !== -1 && (started === -1 || start < started) && writeAt(log, 1) > start;
 };
 
 interface Schedule {
@@ -473,7 +688,10 @@ const budget = (operations: number): Schedule => ({
   apply: (wait) => Effect.provideService(wait, Scheduler.MaxOpsBeforeYield, operations),
 });
 
-/** The default scheduler, except that the wait yields once, `offset` operations in. */
+/**
+ * The default scheduler, except that the wait yields once, `offset` operations in. It still
+ * asks `base`, so the run's operation count sees the wait.
+ */
 const yieldAt = (offset: number): Schedule => ({
   family: "yield at",
   value: offset,
@@ -482,7 +700,8 @@ const yieldAt = (offset: number): Schedule => ({
       let operations = 0;
       const scheduler: Scheduler.Scheduler = {
         executionMode: base.executionMode,
-        shouldYield: () => {
+        shouldYield: (fiber) => {
+          base.shouldYield(fiber);
           operations += 1;
           return operations === offset + 1;
         },
@@ -498,6 +717,25 @@ const schedules: ReadonlyArray<Schedule> = [
 ];
 
 /**
+ * Provide a scheduler that counts each operation of the wait under test's fibers, then defers
+ * to the current one. It wraps the whole run, so it adds no operation inside the wait.
+ */
+const countingWaitOperations =
+  (count: () => void) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    Effect.flatMap(Effect.service(Scheduler.Scheduler), (base) => {
+      const scheduler: Scheduler.Scheduler = {
+        executionMode: base.executionMode,
+        shouldYield: (fiber) => {
+          if (fiber.getRef(UnderTest)) count();
+          return base.shouldYield(fiber);
+        },
+        makeDispatcher: () => base.makeDispatcher(),
+      };
+      return Effect.provideService(effect, Scheduler.Scheduler, scheduler);
+    });
+
+/**
  * r3's start points: the wait runs at once until the schedule makes it yield, and the writes
  * are sent right after that, with no handshake. A send runs the actor's loop in the sender's
  * call, so a wait that only starts later would see every write already done.
@@ -505,6 +743,8 @@ const schedules: ReadonlyArray<Schedule> = [
 const race = (schedule: Schedule): Start => ({
   family: schedule.family,
   value: schedule.value,
+  stops: false,
+  ownsStart: false,
   drive: (context) =>
     Effect.gen(function* () {
       const waiting = yield* context.wait.pipe(
@@ -516,6 +756,45 @@ const race = (schedule: Schedule): Start => ({
     }),
   reached: () => true,
 });
+
+/** The wait runs at once until the schedule makes it yield, and `start` runs right after. */
+const raceStart = (schedule: Schedule): Start => ({
+  family: `${schedule.family}, then start`,
+  value: schedule.value,
+  stops: false,
+  ownsStart: true,
+  drive: (context) =>
+    Effect.gen(function* () {
+      const waiting = yield* context.wait.pipe(
+        schedule.apply,
+        Effect.forkDetach({ startImmediately: true }),
+      );
+      yield* context.startActor;
+      sendAll(context.actor, context.driverSends);
+      return waiting;
+    }),
+  reached: () => true,
+});
+
+/** The wait observes the state and settles before `start`; `start` and the writes come after. */
+const beforeStart: Start = {
+  family: "before start",
+  value: 0,
+  stops: false,
+  ownsStart: true,
+  drive: (context) =>
+    Effect.gen(function* () {
+      const started = Deferred.makeUnsafe<void>();
+      context.recorder.onStart = () => signal(started);
+      const waiting = yield* Effect.forkDetach(context.wait);
+      yield* Deferred.await(started);
+      yield* context.quiet;
+      yield* context.startActor;
+      sendAll(context.actor, context.driverSends);
+      return waiting;
+    }),
+  reached: startsBeforeStart,
+};
 
 /**
  * Send at the next scheduling point, not inside the step that runs the hook. A wait's first
@@ -537,6 +816,8 @@ const raceFirst = (schedule: Schedule): Start => ({ ...race(schedule), reached: 
 const afterStart: Start = {
   family: "writes right after the start",
   value: 0,
+  stops: false,
+  ownsStart: false,
   drive: (context) =>
     Effect.gen(function* () {
       context.recorder.onStart = () => sendSoon(context.actor, context.driverSends);
@@ -549,6 +830,8 @@ const afterStart: Start = {
 const afterFirstCall: Start = {
   family: "writes right after the first call",
   value: 0,
+  stops: false,
+  ownsStart: false,
   drive: (context) =>
     Effect.gen(function* () {
       context.afterFirstCall = () => sendSoon(context.actor, context.driverSends);
@@ -558,57 +841,75 @@ const afterFirstCall: Start = {
 };
 
 /**
- * The wait starts after write `k` and before its notification. The loop writes the state, then
- * needs the `latestTransition` permit before it notifies, so the harness holds that permit.
+ * Hold the `latestTransition` permit from inside write `k`. Every writer except recovery sets
+ * `latestTransition` after it writes the state and before it notifies: a transition, a startup
+ * immediate transition and a supervised restart.
  */
-const gap = (k: number): Start => ({
+const holdAtWrite = (context: RunContext, k: number, written: Deferred.Deferred<void>): void => {
+  context.recorder.onWrite = (index) => {
+    if (index !== k) return;
+    holdPermit(context.actor.latestTransition.semaphore);
+    signal(written);
+  };
+};
+
+/** The wait starts after write `k` and before its notification. `start` writes `k` when `duringStart`. */
+const gap = (k: number, duringStart = false): Start => ({
   family: "between write and notification",
   value: k,
+  stops: false,
+  ownsStart: duringStart,
   drive: (context) =>
     Effect.gen(function* () {
       const permit = context.actor.latestTransition.semaphore;
       const written = Deferred.makeUnsafe<void>();
       const started = Deferred.makeUnsafe<void>();
-      if (k === 1) yield* permit.take(1);
-      context.recorder.onNotify = (index) => {
-        if (index === k - 1) holdPermit(permit);
-      };
-      context.recorder.onWrite = (index) => {
-        if (index === k) signal(written);
-      };
+      holdAtWrite(context, k, written);
       context.recorder.onStart = () => signal(started);
-      sendAll(context.actor, context.driverSends);
+      // `start` writes `k` and then waits for the held permit.
+      let starting: Fiber.Fiber<void> | undefined;
+      if (duringStart) starting = yield* Effect.forkDetach(context.startActor);
+      else sendAll(context.actor, context.driverSends);
       yield* Deferred.await(written);
       const waiting = yield* Effect.forkDetach(context.wait);
       yield* Deferred.await(started);
       yield* permit.release(1);
+      if (starting !== undefined) {
+        yield* Fiber.join(starting);
+        sendAll(context.actor, context.driverSends);
+      }
       return waiting;
     }),
   reached: (log) => {
     const start = startIndex(log);
-    const before = log.slice(0, start);
+    const written = writeAt(log, k);
+    const next = writeAt(log, k + 1);
     return (
       start !== -1 &&
-      writesIn(before).length === k + 1 &&
-      notifyAt(before, "begin", k) === -1 &&
-      (notifyAt(before, "begin", k - 1) !== -1) === k > 1
+      written !== -1 &&
+      written < start &&
+      (next === -1 || start < next) &&
+      !log.slice(written, start).some(notifiedFrom(k))
     );
   },
 });
 
-/** The wait starts from a `subscribe` callback, inside notification `j`. */
-const inNotification = (j: number): Start => ({
+/** The wait starts from a `subscribe` callback, inside notification `j`. `start` notifies `j` when `duringStart`. */
+const inNotification = (j: number, duringStart = false): Start => ({
   family: "inside a notification",
   value: j,
+  stops: false,
+  ownsStart: duringStart,
   drive: (context) =>
     Effect.gen(function* () {
       const reached = Deferred.makeUnsafe<void>();
       const fibers: Array<Fiber.Fiber<Exit.Exit<OrderState, ActorStoppedError>>> = [];
       context.recorder.onNotify = (index) => {
         if (index !== j) return;
-        fibers.push(startNow(context.wait));
+        fibers.push(startNow(context.counted(context.wait)));
         signal(reached);
       };
+      if (duringStart) yield* context.startActor;
       sendAll(context.actor, context.driverSends);
       yield* Deferred.await(reached);
       return fibers[0]!;
@@ -623,6 +924,8 @@ const inNotification = (j: number): Start => ({
 const afterMatch = (tag: Tag): Start => ({
   family: "after an earlier wait matched",
   value: tag,
+  stops: false,
+  ownsStart: false,
   drive: (context) =>
     Effect.gen(function* () {
       const called = Deferred.makeUnsafe<void>();
@@ -651,6 +954,23 @@ const afterMatch = (tag: Tag): Start => ({
   },
 });
 
+/** Stop the actor once `written` completes; release the permit once the wait settled. */
+const stopInHeldGap = (
+  context: RunContext,
+  waiting: Fiber.Fiber<Exit.Exit<OrderState, ActorStoppedError>>,
+  written: Deferred.Deferred<void>,
+) =>
+  Effect.gen(function* () {
+    yield* Deferred.await(written);
+    context.recorder.log.push({ kind: "stop" });
+    yield* context.actor.stop.pipe(Effect.forkDetach);
+    yield* Fiber.await(waiting).pipe(
+      Effect.timeoutOption("1 second"),
+      Effect.andThen(context.actor.latestTransition.semaphore.release(1)),
+      Effect.forkDetach,
+    );
+  });
+
 /**
  * The wait starts after events `[0, i)` settled. Then event `i` is written, and the actor stops
  * before it notifies that write (the harness holds the `latestTransition` permit).
@@ -658,6 +978,8 @@ const afterMatch = (tag: Tag): Start => ({
 const stopInGap = (i: number): Start => ({
   family: "stop before the notification of event",
   value: i,
+  stops: true,
+  ownsStart: false,
   drive: (context) =>
     Effect.gen(function* () {
       for (const event of context.driverSends.slice(0, i)) {
@@ -678,14 +1000,7 @@ const stopInGap = (i: number): Start => ({
       if (!context.form.sendsItself) {
         context.actor.client.send(eventOf[context.driverSends[i]!]);
       }
-      yield* Deferred.await(written);
-      context.recorder.log.push({ kind: "stop" });
-      yield* context.actor.stop.pipe(Effect.forkDetach);
-      yield* Fiber.await(waiting).pipe(
-        Effect.timeoutOption("1 second"),
-        Effect.andThen(permit.release(1)),
-        Effect.forkDetach,
-      );
+      yield* stopInHeldGap(context, waiting, written);
       return waiting;
     }),
   reached: (log) => {
@@ -704,6 +1019,44 @@ const stopInGap = (i: number): Start => ({
   },
 });
 
+/**
+ * The wait starts before the events. Write `k` lands (a supervised restart's write included),
+ * and the actor stops before anything notifies it (the harness holds the permit from inside the
+ * write).
+ */
+const stopAtWrite = (k: number): Start => ({
+  family: "stop before the notification of write",
+  value: k,
+  stops: true,
+  ownsStart: false,
+  drive: (context) =>
+    Effect.gen(function* () {
+      const written = Deferred.makeUnsafe<void>();
+      const started = Deferred.makeUnsafe<void>();
+      holdAtWrite(context, k, written);
+      context.recorder.onStart = () => signal(started);
+      const waiting = yield* Effect.forkDetach(context.wait);
+      yield* Deferred.await(started);
+      yield* Effect.yieldNow;
+      sendAll(context.actor, context.driverSends);
+      yield* stopInHeldGap(context, waiting, written);
+      return waiting;
+    }),
+  reached: (log) => {
+    const start = startIndex(log);
+    const written = writeAt(log, k);
+    // The stop delivers the last write to the listeners, so look before the stop only.
+    const stop = indexOf(log, (entry) => entry.kind === "stop");
+    return (
+      start !== -1 &&
+      stop !== -1 &&
+      written > start &&
+      writeAt(log, k + 1) === -1 &&
+      !log.slice(written, stop).some(notifiedFrom(k))
+    );
+  },
+});
+
 /** Every start point for one form and scenario, besides the racing schedules. */
 const positionsFor = (form: Form, scenario: Scenario): ReadonlyArray<Start> => {
   const starts: Array<Start> = [];
@@ -711,24 +1064,35 @@ const positionsFor = (form: Form, scenario: Scenario): ReadonlyArray<Start> => {
   // A form that sends can start only before its own event's writes.
   let reachable = scenario.writes.length;
   if (form.sendsItself) reachable = scenario.prefixWrites;
+  // A form that sends before `start` queues its event before the harness's events.
+  if (driverCount === 0 || !form.sendsItself) starts.push(beforeStart);
   if (!form.sendsItself) starts.push(afterStart);
   if (!form.sendsItself && form.takesPredicate) starts.push(afterFirstCall);
-  for (let j = scenario.startupWrites + 1; j <= reachable; j += 1) {
-    if (!scenario.restarts) starts.push(gap(j));
-    if (j <= scenario.notifies.length) starts.push(inNotification(j));
+  for (let j = 1; j <= reachable; j += 1) {
+    // The `latestTransition` permit that holds a gap open does not hold the recovery path. A
+    // scheduler can still run a wait between the recovery write and its notification; the
+    // directed case in wait-for-stopped.test.ts starts one there.
+    const duringStart = j <= scenario.startupWrites;
+    const gapless = scenario.gaplessWrites?.includes(j) === true;
+    if (j > scenario.recoveryWrites && !gapless) starts.push(gap(j, duringStart));
+    if (j <= scenario.notifies.length) starts.push(inNotification(j, duringStart));
   }
-  // A tag that appears once in the run, and not in the state before the writes.
+  // A tag that one event writes once in the run, and not the state before the writes.
   const once = scenario.writes
-    .slice(0, reachable)
+    .slice(scenario.startupWrites, reachable)
     .filter(
       (tag) => [OrderState.Idle._tag, ...scenario.writes].filter((t) => t === tag).length === 1,
     );
   for (const tag of once) starts.push(afterMatch(tag));
-  // Entry effects that send would write past the held permit's write.
-  const stoppable = !scenario.restarts && scenario !== brief && scenario !== chain;
-  if (stoppable && form.sendsItself) starts.push(stopInGap(driverCount));
-  if (stoppable && !form.sendsItself) {
+  if (scenario.stoppable && form.sendsItself) starts.push(stopInGap(driverCount));
+  if (scenario.stoppable && !form.sendsItself) {
     for (let i = 0; i < driverCount; i += 1) starts.push(stopInGap(i));
+  }
+  // Restart writes: a stop before the notification of each write after `start`.
+  if (scenario.restarts && scenario.live) {
+    for (let k = scenario.startupWrites + 1; k <= scenario.writes.length; k += 1) {
+      starts.push(stopAtWrite(k));
+    }
   }
   return starts;
 };
@@ -750,6 +1114,10 @@ interface Run {
   readonly reentered: boolean;
   readonly outcome: string;
   readonly actorFinished: boolean;
+  /** A live run, judged while the actor still ran: the wait's outcome then, or pending or busy. */
+  readonly live?: { readonly outcome: string; readonly actorExited: boolean };
+  /** Registrations above the count before the wait: once it settled while the actor ran, and at the end. */
+  readonly held: { readonly settledLive: number; readonly end: number };
 }
 
 const describeExit = (exit: Exit.Exit<OrderState, ActorStoppedError>): string =>
@@ -765,13 +1133,59 @@ const describeExit = (exit: Exit.Exit<OrderState, ActorStoppedError>): string =>
       }),
   });
 
-// The time limits only make a hang visible as a test failure; the waits under test have none.
-const run = ({ form, scenario, predicate, start }: Case) =>
+const hostTurns = new Scheduler.MixedScheduler().makeDispatcher();
+
+/**
+ * One turn of the host's macrotask queue, where every fiber's dispatcher runs its batches. A
+ * standalone dispatcher, so the turn does not wait behind the harness fiber's own batch.
+ */
+const hostTurn = Effect.callback<void>((resume) => {
+  hostTurns.scheduleTask(() => resume(Effect.void), 0);
+});
+
+/**
+ * Wait until neither the log nor the wait's fibers move for 40 host turns in a row. False when
+ * they keep moving.
+ */
+const quiesce = (moves: () => string) =>
   Effect.gen(function* () {
+    let still = 0;
+    let last = moves();
+    for (let turn = 0; turn < 5000; turn += 1) {
+      yield* hostTurn;
+      const now = moves();
+      if (now !== last) {
+        still = 0;
+        last = now;
+      } else {
+        still += 1;
+        if (still === 40) return true;
+      }
+    }
+    return false;
+  });
+
+// The time limits only make a hang visible as a test failure; the waits under test have none.
+const run = ({ form, scenario, predicate, start }: Case) => {
+  let operations = 0;
+  const counted = countingWaitOperations(() => {
+    operations += 1;
+  });
+  return Effect.gen(function* () {
     const actor = yield* scenario.spawn;
+    const registrations = trackRegistrations(actor.state);
     const recorder = record(actor, scenario);
-    yield* actor.start;
-    recorder.log.push({ kind: "started" });
+    let actorExited = false;
+    yield* actor.awaitExit.pipe(
+      Effect.andThen(
+        Effect.sync(() => {
+          actorExited = true;
+        }),
+      ),
+      Effect.forkDetach({ startImmediately: true }),
+    );
+    // After the harness's own exit watcher registered, so only the waits under test count.
+    const baseline = registrations();
     const calls: Array<Tag> = [];
     let depth = 0;
     let reentered = false;
@@ -782,8 +1196,16 @@ const run = ({ form, scenario, predicate, start }: Case) =>
       scenario,
       recorder,
       form,
+      startActor: Effect.andThen(
+        actor.start,
+        Effect.sync(() => {
+          recorder.log.push({ kind: "started" });
+        }),
+      ),
       driverSends: driverSendsOf(form, scenario),
       afterFirstCall: () => undefined,
+      counted,
+      quiet: quiesce(() => `${recorder.log.length}/${operations}`),
       wait: Effect.suspend(() => {
         recorder.log.push({ kind: "call" });
         return form.wait(actor, lastEvent, (state) => {
@@ -799,6 +1221,7 @@ const run = ({ form, scenario, predicate, start }: Case) =>
     };
     // The guard runs the drive in its own fiber, so the drive forks detached fibers that
     // outlive it; the run interrupts them when they do not settle.
+    if (!start.ownsStart) yield* context.startActor;
     const driven = yield* start.drive(context).pipe(Effect.timeoutOption("1 second"));
     if (Option.isNone(driven)) {
       yield* actor.stop;
@@ -808,15 +1231,32 @@ const run = ({ form, scenario, predicate, start }: Case) =>
         reentered,
         outcome: "the harness did not reach the start point",
         actorFinished: true,
+        held: { settledLive: 0, end: 0 },
       };
       return stuck;
     }
     const waiting = driven.value;
+    let live: Run["live"];
+    let settledLive = 0;
+    if (scenario.live && !start.stops) {
+      const quiet = yield* context.quiet;
+      const settled = waiting.pollUnsafe();
+      let outcome = "busy";
+      if (settled !== undefined) {
+        settledLive = registrations() - baseline;
+        outcome = Exit.match(settled, {
+          onSuccess: describeExit,
+          onFailure: () => "the wait's fiber was interrupted",
+        });
+      } else if (quiet) outcome = "pending";
+      live = { outcome, actorExited };
+      yield* actor.stop;
+    }
     const finished = yield* actor.awaitExit.pipe(Effect.timeoutOption("2 seconds"));
     if (Option.isNone(finished)) yield* actor.stop;
-    const settled = yield* Fiber.await(waiting).pipe(Effect.timeoutOption("100 millis"));
-    if (Option.isNone(settled)) yield* Fiber.interrupt(waiting);
-    const outcome = Option.match(settled, {
+    const exit = yield* Fiber.await(waiting).pipe(Effect.timeoutOption("100 millis"));
+    if (Option.isNone(exit)) yield* Fiber.interrupt(waiting);
+    const outcome = Option.match(exit, {
       onNone: () => "hang",
       onSome: Exit.match({
         onSuccess: describeExit,
@@ -829,8 +1269,11 @@ const run = ({ form, scenario, predicate, start }: Case) =>
       reentered,
       outcome,
       actorFinished: Option.isSome(finished),
+      live,
+      held: { settledLive, end: registrations() - baseline },
     } satisfies Run;
-  });
+  }).pipe(counted);
+};
 
 /** The in-order first match over `states`, by replaying a fresh, silent predicate. */
 const replay = (states: ReadonlyArray<Tag>, testCase: Case) => {
@@ -855,6 +1298,19 @@ interface Violation {
   readonly detail: string;
 }
 
+/** While a live actor runs, a wait ends at its match, and a wait without one sleeps. */
+const judgeLive = (live: NonNullable<Run["live"]>, expected: string): ReadonlyArray<string> => {
+  const kinds: Array<string> = [];
+  if (live.actorExited) kinds.push("the live actor terminated by itself");
+  if (live.outcome === "busy") kinds.push("the wait kept running while no state was written");
+  else if (expected === "ActorStoppedError" && live.outcome !== "pending") {
+    kinds.push("the wait ended without a match while the actor ran");
+  } else if (expected !== "ActorStoppedError" && live.outcome !== expected) {
+    kinds.push("the wait did not end at its match while the actor ran");
+  }
+  return kinds;
+};
+
 /** Judge one run against its log. */
 const judgeRun = (testCase: Case, result: Run): Violation | undefined => {
   const kinds: Array<string> = [];
@@ -865,14 +1321,24 @@ const judgeRun = (testCase: Case, result: Run): Violation | undefined => {
     const held = writesIn(result.log.slice(0, start)).at(-1)!;
     expected = replay([held, ...writesIn(result.log.slice(start))], testCase);
     if (testCase.form.sendsItself) {
+      // Only `start` writes besides the form before it observes: a write past the startup
+      // writes that lands between the call and the observation comes from its own send.
       const call = indexOf(result.log, (entry) => entry.kind === "call");
-      if (writesIn(result.log.slice(call, start)).length > 0) kinds.push("observed after its send");
+      const startup = writeAt(result.log, testCase.scenario.startupWrites);
+      const early = result.log
+        .slice(call, start)
+        .filter((entry, offset) => entry.kind === "write" && call + offset > startup);
+      if (early.length > 0) kinds.push("observed after its send");
     }
     if (testCase.form.takesPredicate && result.calls.join(">") !== expected.calls.join(">")) {
       kinds.push("calls differ from the write log");
     }
     if (result.outcome !== expected.outcome) kinds.push("wrong outcome");
+    if (result.live !== undefined) kinds.push(...judgeLive(result.live, expected.outcome));
   }
+  if (result.held.settledLive > 0)
+    kinds.push("a settled wait kept a registration while the actor ran");
+  if (result.held.end > 0) kinds.push("a finished wait kept a registration");
   if (result.reentered) kinds.push("a predicate call started inside another");
   if (!result.actorFinished) kinds.push("the actor did not finish");
   if (!testCase.start.reached(result.log)) kinds.push("the start point was not reached");
@@ -880,7 +1346,7 @@ const judgeRun = (testCase: Case, result: Run): Violation | undefined => {
   // ones, so only runs where the form's event is the only one keep the declared writes.
   const fullRun =
     !testCase.predicate.sends &&
-    testCase.start.family !== stopInGap(0).family &&
+    !testCase.start.stops &&
     (!testCase.form.sendsItself || testCase.scenario.sends.length === 1);
   if (fullRun && writesIn(result.log).slice(1).join(">") !== testCase.scenario.writes.join(">")) {
     kinds.push("the writes differ from the scenario");
@@ -894,7 +1360,7 @@ const judgeRun = (testCase: Case, result: Run): Violation | undefined => {
     kind,
     group: `${kind}: ${testCase.form.name} | ${testCase.scenario.name} | ${testCase.predicate.name} | ${testCase.start.family}`,
     start: testCase.start,
-    detail: `expected calls=${expected.calls.join(">")} outcome=${expected.outcome}; got calls=${result.calls.join(">")} outcome=${result.outcome}; writes=${writesIn(result.log).join(">")}`,
+    detail: `expected calls=${expected.calls.join(">")} outcome=${expected.outcome}; got calls=${result.calls.join(">")} outcome=${result.outcome} live=${result.live?.outcome ?? "-"}; writes=${writesIn(result.log).join(">")}`,
   };
 };
 
@@ -909,8 +1375,8 @@ const predicatesFor = (form: Form): ReadonlyArray<PredicateCase> =>
   predicateCases.filter((predicate) => form.takesPredicate || predicate === never);
 
 const racingCases = (form: Form): ReadonlyArray<Case> => {
-  let scenarios = [...racingScenarios, ...restartScenarios];
-  if (form.sendsItself) scenarios = sendingScenarios;
+  let scenarios = allScenarios;
+  if (form.sendsItself) scenarios = alone(allScenarios);
   return scenarios.flatMap((scenario) =>
     predicatesFor(form).flatMap((predicate) =>
       schedules.map((schedule) => ({ form, scenario, predicate, start: race(schedule) })),
@@ -918,8 +1384,19 @@ const racingCases = (form: Form): ReadonlyArray<Case> => {
   );
 };
 
+/** The start races `actor.start`, in every scenario whose start writes. */
+const startRacingCases = (form: Form): ReadonlyArray<Case> => {
+  let scenarios = allScenarios.filter(({ startupWrites }) => startupWrites > 0);
+  if (form.sendsItself) scenarios = alone(scenarios);
+  return scenarios.flatMap((scenario) =>
+    predicatesFor(form).flatMap((predicate) =>
+      schedules.map((schedule) => ({ form, scenario, predicate, start: raceStart(schedule) })),
+    ),
+  );
+};
+
 const positionCases = (form: Form): ReadonlyArray<Case> =>
-  [...racingScenarios, ...restartScenarios].flatMap((scenario) =>
+  allScenarios.flatMap((scenario) =>
     predicatesFor(form).flatMap((predicate) =>
       positionsFor(form, scenario).map((start) => ({ form, scenario, predicate, start })),
     ),
@@ -944,7 +1421,7 @@ const describePositions = (starts: ReadonlyArray<Start>): string => {
     .join("; ");
 };
 
-/** Check every case. With racing writes and a predicate, also prove some runs start first. */
+/** Check every case. Racing cases must also prove that some runs start before the writes. */
 const checkProperty = (cases: ReadonlyArray<Case>) =>
   Effect.gen(function* () {
     const verdicts = yield* Effect.forEach(cases, runCase);
@@ -974,6 +1451,10 @@ const checkProperty = (cases: ReadonlyArray<Case>) =>
     if (racing) {
       // A racing wait that never starts first would never meet the brief states.
       expect(verdicts.some(({ result }) => startsFirst(result.log))).toBe(true);
+    }
+    if (cases.some(({ start }) => start.family.endsWith(", then start"))) {
+      // A wait that never starts before `start` would never meet the startup writes.
+      expect(verdicts.some(({ result }) => startsBeforeStart(result.log))).toBe(true);
     }
   });
 
@@ -1084,6 +1565,31 @@ const namedCases: ReadonlyArray<readonly [string, Case]> = [
       start: afterFirstCall,
     },
   ],
+  [
+    "a wait from before start judges the startup write (R1 PRE-1, red on 0c24e11)",
+    { form: waitForForm, scenario: startupLive, predicate: nthCall(2), start: beforeStart },
+  ],
+  [
+    "a wait started in the recovery notification judges each state once (R1 PRE-3, red on 0c24e11)",
+    {
+      form: waitForForm,
+      scenario: recoverImmediate,
+      predicate: never,
+      start: inNotification(1, true),
+    },
+  ],
+  [
+    "a wait from before start ends at a recovered match while the actor runs (R1-M3, red on mut-no-recovery-notify)",
+    { form: waitForForm, scenario: recoverLive, predicate: is("Working"), start: beforeStart },
+  ],
+  [
+    "a wait ends at a later match while the actor runs (R1-M3, red on mut-no-ring)",
+    { form: waitForForm, scenario: liveWork, predicate: is("Working"), start: afterStart },
+  ],
+  [
+    "a wait without a match does no work while no state is written (R1-M3, red on mut-once-wake)",
+    { form: waitForForm, scenario: liveWork, predicate: never, start: afterStart },
+  ],
 ];
 
 describe("a wait observes every state written from its start, in order", () => {
@@ -1101,6 +1607,11 @@ describe("a wait observes every state written from its start, in order", () => {
     it.live(
       `${form.name}, with the writes racing its start`,
       () => checkProperty(racingCases(form)),
+      300_000,
+    );
+    it.live(
+      `${form.name}, with its start racing actor.start`,
+      () => checkProperty(startRacingCases(form)),
       300_000,
     );
     it.live(

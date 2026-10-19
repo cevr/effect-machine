@@ -173,9 +173,9 @@ Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))
 | `actor.send(event)`              | Fire-and-forget (queue event)               |
 | `actor.call(event)`              | Request-reply, returns `ProcessEventResult` |
 | `actor.ask(event)`               | Typed reply (event must have `Event.reply`) |
-| `actor.waitFor(State.X)`         | Wait for state (constructor or fn)          |
-| `actor.sendAndWait(ev, State.X)` | Send + wait for state                       |
-| `actor.awaitFinal`               | Wait for final state                        |
+| `actor.waitFor(State.X)`         | Wait for state/fn, or `ActorStoppedError`   |
+| `actor.sendAndWait(ev, State.X)` | Send + wait, or `ActorStoppedError`         |
+| `actor.awaitFinal`               | Wait for final, or `ActorStoppedError`      |
 | `actor.awaitOutput`              | Wait for typed final output                 |
 | `actor.awaitExit`                | Completes when this actor stops             |
 | `actor.drain`                    | Process remaining queue, then stop          |
