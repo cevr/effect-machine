@@ -45,23 +45,43 @@ const makeMachine = () =>
 type OrderMachine = ReturnType<typeof makeMachine>;
 const spawnOrder = (machine: OrderMachine) => Machine.spawn(machine);
 type OrderActor = Effect.Success<ReturnType<typeof spawnOrder>>;
+/** Adds the observers that live inside the machine (`self.client`) to a fresh machine. */
+type Extend = (machine: OrderMachine) => OrderMachine;
+
+/** A fresh `build(makeMachine())` per run, since the observers extend the machine. */
+const spawnPlain =
+  (build: Extend) =>
+  (extend: Extend): Effect.Effect<OrderActor> =>
+    Effect.suspend(() => spawnOrder(extend(build(makeMachine()))));
 
 /** The first entry of Working dies; the actor restarts once. */
-const spawnRestarting = (build: (machine: OrderMachine) => OrderMachine) =>
-  Effect.suspend(() => {
-    let entries = 0;
-    const machine = build(makeMachine()).spawn(OrderState.Working, () => {
-      entries += 1;
-      if (entries === 1) return Effect.die("first entry crashes");
-      return Effect.void;
+const spawnRestarting =
+  (build: Extend) =>
+  (extend: Extend): Effect.Effect<OrderActor> =>
+    Effect.suspend(() => {
+      let entries = 0;
+      const machine = extend(build(makeMachine())).spawn(OrderState.Working, () => {
+        entries += 1;
+        if (entries === 1) return Effect.die("first entry crashes");
+        return Effect.void;
+      });
+      return Machine.spawn(machine, { supervision: Supervision.restart({ maxRestarts: 1 }) });
     });
-    return Machine.spawn(machine, { supervision: Supervision.restart({ maxRestarts: 1 }) });
-  });
+
+/** `start` recovers Working before the machine runs. */
+const spawnRecovering =
+  (build: Extend) =>
+  (extend: Extend): Effect.Effect<OrderActor> =>
+    Effect.suspend(() =>
+      Machine.spawn(extend(build(makeMachine())), {
+        lifecycle: { recovery: { resolve: () => Effect.succeedSome(OrderState.Working) } },
+      }),
+    );
 
 interface Scenario {
   readonly name: string;
-  /** A fresh actor, not started. */
-  readonly spawn: Effect.Effect<OrderActor>;
+  /** A fresh actor, not started, from a machine that `extend` changed. */
+  readonly spawn: (extend: Extend) => Effect.Effect<OrderActor>;
   /** Events the harness sends once, after the observers under test subscribe. */
   readonly sends: readonly [EventTag, ...Array<EventTag>];
   /** An event the harness listener sends at its first receipt of a state. */
@@ -78,57 +98,70 @@ interface Scenario {
 
 const plain = (
   name: string,
-  machine: OrderMachine,
+  build: Extend,
   sends: readonly [EventTag, ...Array<EventTag>],
   writes: ReadonlyArray<Tag>,
   stoppable: boolean,
 ): Scenario => ({
   name,
-  spawn: spawnOrder(machine),
+  spawn: spawnPlain(build),
   sends,
   writes,
   startupWrites: 0,
   restarts: false,
   stoppable,
 });
+const asIs: Extend = (machine) => machine;
 
 const sentShort = plain(
   "test sends Work,Finish",
-  makeMachine(),
+  asIs,
   ["Work", "Finish"],
   ["Working", "Done"],
   true,
 );
 const sentLong = plain(
   "test sends Work,Next,Finish",
-  makeMachine(),
+  asIs,
   ["Work", "Next", "Finish"],
   ["Working", "Other", "Done"],
   true,
 );
 const brief = plain(
   "Working sends Finish",
-  makeMachine().spawn(OrderState.Working, ({ self }) => self.send(OrderEvent.Finish)),
+  (machine) => machine.spawn(OrderState.Working, ({ self }) => self.send(OrderEvent.Finish)),
   ["Work"],
   ["Working", "Done"],
   false,
 );
 const chain = plain(
   "Working sends Next, Other sends Finish",
-  makeMachine()
-    .spawn(OrderState.Working, ({ self }) => self.send(OrderEvent.Next))
-    .spawn(OrderState.Other, ({ self }) => self.send(OrderEvent.Finish)),
+  (machine) =>
+    machine
+      .spawn(OrderState.Working, ({ self }) => self.send(OrderEvent.Next))
+      .spawn(OrderState.Other, ({ self }) => self.send(OrderEvent.Finish)),
   ["Work"],
   ["Working", "Other", "Done"],
   false,
 );
 const ping = plain(
   "test sends Work,Ping,Finish (Ping rewrites the same object)",
-  makeMachine(),
+  asIs,
   ["Work", "Ping", "Finish"],
   ["Working", "Working", "Done"],
   true,
 );
+// m2: `start` writes the recovered state; only the recovery's own notification delivers it
+// before `start` returns.
+const recovered: Scenario = {
+  name: "start recovers Working, test sends Finish",
+  spawn: spawnRecovering(asIs),
+  sends: ["Finish"],
+  writes: ["Working", "Done"],
+  startupWrites: 1,
+  restarts: false,
+  stoppable: true,
+};
 // N3: Working is written, its entry crashes before the notification, and the restart writes
 // Idle over it.
 const restartCrash: Scenario = {
@@ -158,7 +191,7 @@ const restartStale: Scenario = {
   stoppable: false,
 };
 
-const scenarios = [sentShort, sentLong, brief, chain, ping, restartCrash, restartStale];
+const scenarios = [sentShort, sentLong, brief, chain, ping, recovered, restartCrash, restartStale];
 
 // ---------------------------------------------------------------------------
 // The write log
@@ -219,26 +252,29 @@ const subscribedAt = (log: ReadonlyArray<Entry>, observer: string): number =>
 const listen = (
   recorder: Recorder,
   name: string,
-  act: (received: number) => void = () => undefined,
+  act: (received: number, state: OrderState) => void = () => undefined,
   throws = false,
-): void => {
+  subscribe: (listener: (state: OrderState) => void) => () => void = recorder.actor.subscribe,
+): (() => void) => {
   let received = 0;
   let depth = 0;
   recorder.log.push({ kind: "subscribe", observer: name });
-  const unsubscribe = recorder.actor.subscribe((state) => {
+  const unsubscribe = subscribe((state) => {
     received += 1;
     recorder.log.push({ kind: "receive", observer: name, tag: state._tag, nested: depth > 0 });
     depth += 1;
-    act(received);
+    act(received, state);
     depth -= 1;
     // This host callback must throw to test listener isolation.
     // eslint-disable-next-line effect/noThrowStatement, effect/noNewError
     if (throws) throw new Error("listener defect");
   });
-  recorder.unsubscribers.set(name, () => {
+  const logged = (): void => {
     recorder.log.push({ kind: "unsubscribe", observer: name });
     unsubscribe();
-  });
+  };
+  recorder.unsubscribers.set(name, logged);
+  return logged;
 };
 
 /**
@@ -353,7 +389,11 @@ interface Observers {
   readonly subscribe: (recorder: Recorder) => void;
   /** The `changes` consumer, when there is one: the run waits for it, then interrupts it. */
   readonly consumer: { current: Fiber.Fiber<void> | undefined };
+  /** Adds the observers that the machine itself registers. The recorder exists before `start`. */
+  readonly extend: (machine: OrderMachine, recorder: () => Recorder) => OrderMachine;
 }
+
+const noExtension: Observers["extend"] = (machine) => machine;
 
 /** Listener A, then listener B, each with its own behavior. */
 const listeners = (first: Behavior, second: Behavior): Observers => ({
@@ -364,6 +404,77 @@ const listeners = (first: Behavior, second: Behavior): Observers => ({
     listen(recorder, "B", (received) => second.act(recorder, received), second.throws);
   },
   consumer: { current: undefined },
+  extend: noExtension,
+});
+
+/** What a `self.client` listener does with each state it gets. */
+interface SelfBehavior {
+  readonly name: string;
+  readonly sends: boolean;
+  readonly throws: boolean;
+  readonly act: (send: (event: OrderEvent) => void, state: OrderState) => void;
+}
+
+const selfQuiet: SelfBehavior = {
+  name: "quiet",
+  sends: false,
+  throws: false,
+  act: () => undefined,
+};
+const selfSendsOn = (on: Tag, event: EventTag): SelfBehavior => ({
+  name: `sends ${event} on ${on}`,
+  sends: true,
+  throws: false,
+  act: (send, state) => {
+    if (state._tag === on) send(eventOf[event]);
+  },
+});
+const selfThrowing: SelfBehavior = {
+  name: "throws",
+  sends: false,
+  throws: true,
+  act: () => undefined,
+};
+const selfBehaviors: ReadonlyArray<SelfBehavior> = [
+  selfQuiet,
+  selfSendsOn("Working", "Next"),
+  selfSendsOn("Idle", "Finish"),
+  selfThrowing,
+];
+
+/**
+ * A listener that the machine registers with `self.client.subscribe` in a `.background`, once
+ * per generation: `S0` in the first, `S1` after a restart. With lifetime "generation" the
+ * background's scope unsubscribes it when the generation ends; with "kept" it never
+ * unsubscribes, so it outlives its generation.
+ */
+const selfListener = (lifetime: "generation" | "kept", behavior: SelfBehavior): Observers => ({
+  name: `self.client ${lifetime}, ${behavior.name}`,
+  sends: behavior.sends,
+  subscribe: () => undefined,
+  consumer: { current: undefined },
+  extend: (machine, recorder) => {
+    let generation = 0;
+    return machine.background(({ self }) => {
+      const name = `S${generation}`;
+      generation += 1;
+      const subscribe = Effect.sync(() =>
+        listen(
+          recorder(),
+          name,
+          (_received, state) => behavior.act(self.client.send, state),
+          behavior.throws,
+          self.client.subscribe,
+        ),
+      );
+      if (lifetime === "kept") return Effect.andThen(subscribe, Effect.never);
+      // The background fiber is interrupted when its generation ends, which closes this scope.
+      return Effect.acquireRelease(subscribe, (unsubscribe) => Effect.sync(unsubscribe)).pipe(
+        Effect.andThen(Effect.never),
+        Effect.scoped,
+      );
+    });
+  },
 });
 
 /** A consumer of `actor.changes`. Its subscription point comes from the publication. */
@@ -387,6 +498,7 @@ const changes = (): Observers => {
       );
     },
     consumer,
+    extend: noExtension,
   };
 };
 
@@ -580,6 +692,28 @@ const stopInGap = (i: number): Start => ({
   listenersOnly: true,
 });
 
+/**
+ * The observers subscribe before the writes, events `[0, i)` settle (each one notified), and
+ * the actor stops with nothing left to notify.
+ */
+const stopAfter = (i: number): Start => ({
+  family: "stop after the notification of event",
+  value: i,
+  drive: (recorder, scenario, observers) =>
+    Effect.gen(function* () {
+      observers.subscribe(recorder);
+      for (const event of scenario.sends.slice(0, i)) {
+        yield* recorder.actor.call(eventOf[event]);
+      }
+      yield* recorder.actor.stop;
+    }),
+  // `call` returns after its event settled, so the drive itself places the stop.
+  reached: () => true,
+  listenersOnly: false,
+});
+/** Start points after which the writes are fewer than the scenario's. */
+const stoppingFamilies = new Set([stopInGap(0).family, stopAfter(0).family]);
+
 const startsFor = (scenario: Scenario): ReadonlyArray<Start> => {
   const starts: Array<Start> = [before];
   for (let turns = 0; turns <= 12; turns += 1) starts.push(race(turns));
@@ -596,7 +730,10 @@ const startsFor = (scenario: Scenario): ReadonlyArray<Start> => {
   );
   for (const tag of once) starts.push(afterMatch(tag));
   if (scenario.stoppable) {
-    for (let i = 0; i < scenario.sends.length; i += 1) starts.push(stopInGap(i));
+    for (let i = 0; i < scenario.sends.length; i += 1) {
+      starts.push(stopInGap(i));
+      starts.push(stopAfter(i));
+    }
   }
   return starts;
 };
@@ -621,8 +758,12 @@ interface Run {
 const run = ({ scenario, observers: makeObservers, start }: Case) =>
   Effect.gen(function* () {
     const observers = makeObservers();
-    const actor = yield* scenario.spawn;
+    const holder: { recorder?: Recorder } = {};
+    const actor = yield* scenario.spawn((machine) =>
+      observers.extend(machine, () => holder.recorder!),
+    );
     const recorder = record(actor, scenario);
+    holder.recorder = recorder;
     yield* actor.start;
     recorder.log.push({ kind: "started" });
     const driven = yield* start
@@ -708,13 +849,25 @@ const judgeRun = (testCase: Case, result: Run): Violation | undefined => {
     ) {
       kinds.push(`${observer}'s callback started inside its own callback`);
     }
+    // `start` notifies its own writes (startup and recovery) before it returns, so a listener
+    // subscribed by then has them all. The `changes` stream delivers on its own fiber.
+    const started = indexOf(result.log, (entry) => entry.kind === "started");
+    const atStart = result.log.slice(0, started);
+    if (
+      observer !== "changes" &&
+      started !== -1 &&
+      subscribedAt(atStart, observer) !== -1 &&
+      receiptsOf(atStart, observer).length < expectedFor(atStart, observer).length
+    ) {
+      kinds.push(`${observer} had not received a write when start returned`);
+    }
     details.push(`${observer}: expected ${expected.join(">")}, got ${got.join(">")}`);
   }
   if (result.outcome !== "finished") kinds.push(result.outcome);
   if (!testCase.start.reached(result.log)) kinds.push("the start point was not reached");
   if (
     !result.sends &&
-    testCase.start.family !== stopInGap(0).family &&
+    !stoppingFamilies.has(testCase.start.family) &&
     writesIn(result.log).slice(1).join(">") !== testCase.scenario.writes.join(">")
   ) {
     kinds.push("the writes differ from the scenario");
@@ -743,6 +896,23 @@ const listenerCases = (first: Behavior): ReadonlyArray<Case> =>
         observers: () => listeners(first, second),
         start,
       })),
+    ),
+  );
+
+// A `self.client` listener subscribes when its generation starts, not at the start point, so
+// only the start points that place no subscription of their own vary its run.
+const selfStartFamilies = new Set([
+  before.family,
+  race(0).family,
+  stopInGap(0).family,
+  stopAfter(0).family,
+]);
+const selfCases = (lifetime: "generation" | "kept"): ReadonlyArray<Case> =>
+  scenarios.flatMap((scenario) =>
+    selfBehaviors.flatMap((behavior) =>
+      startsFor(scenario)
+        .filter(({ family }) => selfStartFamilies.has(family))
+        .map((start) => ({ scenario, observers: () => selfListener(lifetime, behavior), start })),
     ),
   );
 
@@ -833,6 +1003,30 @@ const namedCases: ReadonlyArray<readonly [string, Case]> = [
     "a write whose notification a stop overtakes is delivered (red on 1469452)",
     { scenario: sentShort, observers: quietPair, start: stopInGap(0) },
   ],
+  [
+    "M1: a self.client listener kept past its generation gets the final state once (red on 1e2966a)",
+    { scenario: sentShort, observers: () => selfListener("kept", selfQuiet), start: before },
+  ],
+  [
+    "M1: a self.client listener kept past its generation gets a stopped actor's last state once (red on 1e2966a)",
+    { scenario: sentShort, observers: () => selfListener("kept", selfQuiet), start: stopAfter(1) },
+  ],
+  [
+    "M1: a self.client listener kept across a restart gets the crashed write and the final state once (red on 1e2966a)",
+    { scenario: restartCrash, observers: () => selfListener("kept", selfQuiet), start: before },
+  ],
+  [
+    "M1: a restarted generation's self.client listener gets no state older than its subscription (red on 1e2966a)",
+    {
+      scenario: restartStale,
+      observers: () => selfListener("generation", selfQuiet),
+      start: before,
+    },
+  ],
+  [
+    "m2: a listener subscribed before start has the recovered state when start returns (red on mutant H)",
+    { scenario: recovered, observers: quietPair, start: before },
+  ],
 ];
 
 describe("a state observer receives the writes since it subscribed, in order, once", () => {
@@ -849,5 +1043,11 @@ describe("a state observer receives the writes since it subscribed, in order, on
   for (const first of firstBehaviors) {
     it.live(`subscribe: A ${first.name}`, () => checkProperty(listenerCases(first)), 300_000);
   }
+  it.live(
+    "self.client, released with its generation",
+    () => checkProperty(selfCases("generation")),
+    300_000,
+  );
+  it.live("self.client, kept past its generation", () => checkProperty(selfCases("kept")), 300_000);
   it.live("changes", () => checkProperty(changesCases), 300_000);
 });

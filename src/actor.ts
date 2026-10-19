@@ -48,6 +48,7 @@ import {
   createRuntime,
   notifyStateListeners,
   reportLifecycleFailure,
+  subscribeToState,
   type RuntimeLifecycleHooks,
   type RuntimeQueuedEvent,
   type RuntimeHandle,
@@ -77,6 +78,12 @@ export interface ActorClient<State extends { readonly _tag: string }, Event, Out
   readonly can: (event: Event) => Promise<boolean>;
   readonly getLifecycle: () => ActorLifecycle<State, Output>;
   readonly getLatestTransition: () => TransitionInfo<State, Event> | undefined;
+  /**
+   * Call `listener` with each state written after this call, in write order, once per write.
+   * The current state is not delivered. Each call is its own registration: the same function
+   * subscribed twice gets each write twice. Returns the unsubscribe function of this
+   * registration.
+   */
   readonly subscribe: (listener: (state: State) => void) => () => void;
 }
 
@@ -218,7 +225,12 @@ export interface ActorRef<State extends { readonly _tag: string }, Event, Output
     (event: Event): Effect.Effect<State, ActorStoppedError>;
   };
 
-  /** Subscribe to state changes (sync callback). Returns unsubscribe function. */
+  /**
+   * Call `fn` (sync) with each state written after this call, in write order, once per write.
+   * The current state is not delivered. Each call is its own registration: the same function
+   * subscribed twice gets each write twice. Returns the unsubscribe function of this
+   * registration.
+   */
   readonly subscribe: (fn: (state: State) => void) => () => void;
 
   /** JavaScript client for callbacks and applications outside Effect. */
@@ -661,51 +673,8 @@ const buildActorRefCore = <
   });
 
   const transitions = Stream.fromPubSub(cell.transitions);
-  /**
-   * Call `listener` with each state written after this call, in write order, once each.
-   *
-   * Like the waits, the states come from the state ref's own publication: the listener owns a
-   * subscription to it, and a notification only rings the listener's doorbell, which drains
-   * that subscription. A drain never starts inside a running one (a send from the callback can
-   * notify again), so the running drain delivers the newer state after the callback returns. A
-   * late or repeated notification therefore cannot reorder or repeat states.
-   */
-  const subscribe = (listener: (state: S) => void): (() => void) => {
-    const scope = Scope.makeUnsafe();
-    const states = Effect.runSync(Scope.provide(scope)(PubSub.subscribe(stateRef.pubsub)));
-    // The subscription starts with the current state (replay 1); the listener gets later writes.
-    Effect.runSync(PubSub.takeUpTo(states, 1));
-    let active = true;
-    let draining = false;
-    // An unsubscribed listener's subscription is closed, and a take from it would interrupt.
-    const takePending = (): Array<S> => {
-      if (!active) return [];
-      return Effect.runSync(PubSub.takeUpTo(states, Number.MAX_SAFE_INTEGER));
-    };
-    const drain = (): void => {
-      if (draining) return;
-      draining = true;
-      for (let pending = takePending(); pending.length > 0; pending = takePending()) {
-        for (const state of pending) {
-          if (!active) break;
-          // Host callbacks can throw. Each listener must stay isolated from the actor.
-          try {
-            listener(state);
-          } catch {
-            // Listener defects must not fail the runtime.
-          }
-        }
-      }
-      draining = false;
-    };
-    listeners.add(drain);
-    return () => {
-      if (!active) return;
-      active = false;
-      listeners.delete(drain);
-      Effect.runSync(Scope.close(scope, Exit.void));
-    };
-  };
+  const subscribe = (listener: (state: S) => void): (() => void) =>
+    subscribeToState(stateRef, listeners, listener);
   const sendClient = (event: E): void => {
     runtimeRef.current?.sendSync(event);
   };

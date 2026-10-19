@@ -24,6 +24,7 @@ import {
   ErrorReporter,
   Exit,
   Fiber,
+  PubSub,
   Queue,
   Ref,
   Schema,
@@ -88,24 +89,95 @@ export interface RuntimeCellResources<S, E> {
   readonly latestTransitionRef: SubscriptionRef.SubscriptionRef<TransitionInfo<S, E> | undefined>;
   readonly eventQueue: Queue.Queue<RuntimeQueuedEvent<S, E>>;
   readonly stoppedRef: Ref.Ref<boolean>;
+  /**
+   * Doorbells that the runtime rings after it writes state. Each one wakes a reader of the
+   * state ref's publication and ignores the state argument. Add a state listener only through
+   * `subscribeToState`, never directly.
+   */
   readonly listeners: Set<(state: S) => void>;
 }
 
-/** Notify synchronous state listeners without letting a listener defect fail the runtime. */
+/** Call a host callback without letting its defect fail the runtime. */
+const callIsolated = <S>(callback: (state: S) => void, state: S): void => {
+  // Host callbacks can throw. Each callback must stay isolated from the actor runtime.
+  // eslint-disable-next-line effect/noTryCatch
+  try {
+    callback(state);
+  } catch {
+    // Listener defects must not fail the runtime.
+  }
+};
+
+/** Ring every doorbell in `listeners` after a write of `state`. */
 export const notifyStateListeners: {
   <S>(state: S): (listeners: Set<(state: S) => void>) => void;
   <S>(listeners: Set<(state: S) => void>, state: S): void;
 } = dual(2, <S>(listeners: Set<(state: S) => void>, state: S): void => {
-  for (const listener of listeners) {
-    // Host callbacks can throw. Each listener must stay isolated from the actor runtime.
-    // eslint-disable-next-line effect/noTryCatch
-    try {
-      listener(state);
-    } catch {
-      // Listener defects must not fail the runtime.
-    }
-  }
+  for (const listener of listeners) callIsolated(listener, state);
 });
+
+/**
+ * Call `listener` with each state written to `stateRef` after this call, in write order, once
+ * per write and per registration. Every state observer that takes a callback (`ActorRef`,
+ * `ActorClient` and `self.client`) subscribes through this function.
+ *
+ * Like the waits, the states come from the state ref's own publication: the listener owns a
+ * subscription to it, and `listeners` holds only a doorbell that drains that subscription. A
+ * drain never starts inside a running one (a send from the callback can notify again), so the
+ * running drain delivers the newer state after the callback returns. A late or repeated ring
+ * therefore cannot reorder or repeat states. The same function subscribed twice is two
+ * registrations: it gets each write twice, and each unsubscribe ends one of them.
+ *
+ * @internal
+ */
+export const subscribeToState: {
+  <S>(
+    listeners: Set<(state: S) => void>,
+    listener: (state: S) => void,
+  ): (stateRef: SubscriptionRef.SubscriptionRef<S>) => () => void;
+  <S>(
+    stateRef: SubscriptionRef.SubscriptionRef<S>,
+    listeners: Set<(state: S) => void>,
+    listener: (state: S) => void,
+  ): () => void;
+} = dual(
+  3,
+  <S>(
+    stateRef: SubscriptionRef.SubscriptionRef<S>,
+    listeners: Set<(state: S) => void>,
+    listener: (state: S) => void,
+  ): (() => void) => {
+    const scope = Scope.makeUnsafe();
+    const states = Effect.runSync(Scope.provide(scope)(PubSub.subscribe(stateRef.pubsub)));
+    // The subscription starts with the current state (replay 1); the listener gets later writes.
+    Effect.runSync(PubSub.takeUpTo(states, 1));
+    let active = true;
+    let draining = false;
+    // An unsubscribed listener's subscription is closed, and a take from it would interrupt.
+    const takePending = (): Array<S> => {
+      if (!active) return [];
+      return Effect.runSync(PubSub.takeUpTo(states, Number.MAX_SAFE_INTEGER));
+    };
+    const drain = (): void => {
+      if (draining) return;
+      draining = true;
+      for (let pending = takePending(); pending.length > 0; pending = takePending()) {
+        for (const state of pending) {
+          if (!active) break;
+          callIsolated(listener, state);
+        }
+      }
+      draining = false;
+    };
+    listeners.add(drain);
+    return () => {
+      if (!active) return;
+      active = false;
+      listeners.delete(drain);
+      Effect.runSync(Scope.close(scope, Exit.void));
+    };
+  },
+);
 
 // ============================================================================
 // Runtime interface
@@ -338,10 +410,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
     client: {
       send: sendSync,
       getSnapshot: () => SubscriptionRef.getUnsafe(stateRef),
-      subscribe: (listener) => {
-        listeners.add(listener);
-        return () => listeners.delete(listener);
-      },
+      subscribe: (listener) => subscribeToState(stateRef, listeners, listener),
     },
     spawn,
     reply: (value: unknown) =>
