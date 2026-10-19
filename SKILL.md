@@ -168,29 +168,29 @@ Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))
 
 ## ActorRef API
 
-| Method                           | Description                                                                       |
-| -------------------------------- | --------------------------------------------------------------------------------- |
-| `actor.send(event)`              | Fire-and-forget (queue event)                                                     |
-| `actor.call(event)`              | Request-reply, returns `ProcessEventResult`                                       |
-| `actor.ask(event)`               | Typed reply (event must have `Event.reply`)                                       |
-| `actor.waitFor(State.X)`         | Wait for state (constructor or fn), or fail with `ActorStoppedError` once stopped |
-| `actor.sendAndWait(ev, State.X)` | Send + wait for state, or fail with `ActorStoppedError` once stopped              |
-| `actor.awaitFinal`               | Wait for final state, or fail with `ActorStoppedError` once stopped               |
-| `actor.awaitOutput`              | Wait for typed final output                                                       |
-| `actor.awaitExit`                | Completes when this actor stops                                                   |
-| `actor.drain`                    | Process remaining queue, then stop                                                |
-| `actor.snapshot`                 | Get current state                                                                 |
-| `actor.client.send(event)`       | Fire-and-forget outside Effect                                                    |
-| `actor.client.stop()`            | Start a stop outside Effect                                                       |
-| `actor.client.getSnapshot()`     | Get state outside Effect                                                          |
-| `actor.client.matches(tag)`      | Check a state tag outside Effect                                                  |
-| `actor.client.canSync(event)`    | Check Boolean predicates outside Effect                                           |
-| `actor.client.can(event)`        | Promise check for all predicates                                                  |
-| `actor.lifecycle`                | Observable actor lifecycle                                                        |
-| `actor.latestTransition`         | Retained latest accepted edge                                                     |
-| `actor.subscribe(fn)`            | Sync callback, returns unsubscribe                                                |
-| `actor.system`                   | Access the actor's `ActorSystem`                                                  |
-| `actor.children`                 | Child actors (`ReadonlyMap`)                                                      |
+| Method                           | Description                                 |
+| -------------------------------- | ------------------------------------------- |
+| `actor.send(event)`              | Fire-and-forget (queue event)               |
+| `actor.call(event)`              | Request-reply, returns `ProcessEventResult` |
+| `actor.ask(event)`               | Typed reply (event must have `Event.reply`) |
+| `actor.waitFor(State.X)`         | Wait for state/fn, or `ActorStoppedError`   |
+| `actor.sendAndWait(ev, State.X)` | Send + wait, or `ActorStoppedError`         |
+| `actor.awaitFinal`               | Wait for final, or `ActorStoppedError`      |
+| `actor.awaitOutput`              | Wait for typed final output                 |
+| `actor.awaitExit`                | Completes when this actor stops             |
+| `actor.drain`                    | Process remaining queue, then stop          |
+| `actor.snapshot`                 | Get current state                           |
+| `actor.client.send(event)`       | Fire-and-forget outside Effect              |
+| `actor.client.stop()`            | Start a stop outside Effect                 |
+| `actor.client.getSnapshot()`     | Get state outside Effect                    |
+| `actor.client.matches(tag)`      | Check a state tag outside Effect            |
+| `actor.client.canSync(event)`    | Check Boolean predicates outside Effect     |
+| `actor.client.can(event)`        | Promise check for all predicates            |
+| `actor.lifecycle`                | Observable actor lifecycle                  |
+| `actor.latestTransition`         | Retained latest accepted edge               |
+| `actor.subscribe(fn)`            | Sync callback, returns unsubscribe          |
+| `actor.system`                   | Access the actor's `ActorSystem`            |
+| `actor.children`                 | Child actors (`ReadonlyMap`)                |
 
 ## ask / reply
 
