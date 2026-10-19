@@ -1,5 +1,16 @@
 // @effect-diagnostics strictEffectProvide:off - tests are entry points
-import { Deferred, Effect, Exit, Fiber, Option, Queue, Stream, SubscriptionRef } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Option,
+  Queue,
+  Scheduler,
+  Stream,
+  SubscriptionRef,
+} from "effect";
 import { describe, expect, it } from "effect-bun-test";
 
 import { ActorStoppedError, ActorSystemDefault, Event, Machine, State } from "../src/index.js";
@@ -238,5 +249,170 @@ describe("waits end when the actor stops", () => {
         const matched = yield* spawnStarted;
         expect(yield* matched.sendAndWait(WaitEvent.Finish)).toEqual(WaitState.Done);
       }).pipe(Effect.provide(ActorSystemDefault)),
+  );
+});
+
+// No state these waits judge matches before the end under test. `Next` has no transition
+// from `Idle`, so the send of `sendAndWait` changes nothing.
+const sleepingForms = [
+  ["waitFor", (actor: WaitRef) => actor.waitFor(WaitState.Other)],
+  ["awaitFinal", (actor: WaitRef) => actor.awaitFinal],
+  ["sendAndWait", (actor: WaitRef) => actor.sendAndWait(WaitEvent.Next, WaitState.Other)],
+] as const;
+
+/** Fork each form. `startImmediately` runs it to its sleep before the fork returns. */
+const forkSleepingWaits = (actor: WaitRef) =>
+  Effect.gen(function* () {
+    const waits: Array<readonly [string, Fiber.Fiber<WaitState, ActorStoppedError>]> = [];
+    for (const [name, wait] of sleepingForms) {
+      const fiber = yield* wait(actor).pipe(Effect.forkScoped({ startImmediately: true }));
+      expect([name, fiber.pollUnsafe()]).toEqual([name, undefined]);
+      waits.push([name, fiber]);
+    }
+    return waits;
+  });
+
+const describeEnd = (exit: Exit.Exit<WaitState, ActorStoppedError>): string =>
+  Exit.match(exit, {
+    onSuccess: (state) => `success ${state._tag}`,
+    onFailure: (cause) =>
+      Option.match(Cause.findErrorOption(cause), {
+        onNone: () => "defect or interrupt",
+        onSome: (error) => `${error._tag} ${error.actorId}`,
+      }),
+  });
+
+const expectEveryWaitStopped = (
+  waits: ReadonlyArray<readonly [string, Fiber.Fiber<WaitState, ActorStoppedError>]>,
+  actorId: string,
+) =>
+  Effect.gen(function* () {
+    // The time limit only makes a hang visible as a test failure.
+    const ends = yield* Effect.forEach(
+      waits,
+      ([name, fiber]) =>
+        Fiber.await(fiber).pipe(
+          Effect.timeoutOption("2 seconds"),
+          Effect.map((exit) => [
+            name,
+            Option.match(exit, { onNone: () => "no end within 2 s", onSome: describeEnd }),
+          ]),
+        ),
+      { concurrency: waits.length },
+    );
+    expect(ends).toEqual(waits.map(([name]) => [name, `ActorStoppedError ${actorId}`]));
+  });
+
+describe("waits end at every terminal exit and from every start point", () => {
+  it.scopedLive("fails every sleeping wait when the actor drains", () =>
+    Effect.gen(function* () {
+      const actor = yield* spawnStarted;
+      const waits = yield* forkSleepingWaits(actor);
+      yield* actor.drain;
+      yield* expectEveryWaitStopped(waits, actor.id);
+      expect((yield* actor.awaitExit)._tag).toBe("Stopped");
+    }).pipe(Effect.provide(ActorSystemDefault)),
+  );
+
+  // Only a cleanup defect makes the terminal step rethrow after it completes the exit, so this
+  // case guards that the wake-ups ring before the rethrow.
+  it.scopedLive("fails every sleeping wait when the actor ends on a cleanup defect", () =>
+    Effect.gen(function* () {
+      // No ActorSystem in context: the actor owns an implicit system and closes it at the stop.
+      const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
+      const childStarted = yield* Deferred.make<void>();
+      const child = yield* actor.system.spawn(
+        "cleanup-defect-child",
+        Machine.make({ state: WaitState, event: WaitEvent, initial: WaitState.Idle }).background(
+          () =>
+            Effect.addFinalizer(() => Effect.die("child cleanup failed")).pipe(
+              Effect.andThen(Deferred.succeed(childStarted, undefined)),
+              Effect.andThen(Effect.never),
+            ),
+        ),
+      );
+      yield* child.start;
+      yield* Deferred.await(childStarted);
+      const waits = yield* forkSleepingWaits(actor);
+      expect(Exit.hasDies(yield* actor.stop.pipe(Effect.exit))).toBe(true);
+      yield* expectEveryWaitStopped(waits, actor.id);
+      const terminal = yield* actor.awaitExit;
+      expect(terminal._tag === "Defect" && terminal.phase).toBe("cleanup");
+    }),
+  );
+
+  it.scopedLive("fails sleeping and late waits on an actor stopped before it starts", () =>
+    Effect.gen(function* () {
+      const actor = yield* Machine.spawn(machine);
+      const waits = yield* forkSleepingWaits(actor);
+      yield* actor.stop;
+      yield* expectEveryWaitStopped(waits, actor.id);
+      for (const [name, wait] of sleepingForms) {
+        expect([name, Exit.findErrorOption(yield* settled(wait(actor)))]).toEqual([
+          name,
+          Option.some(ActorStoppedError.make({ actorId: actor.id })),
+        ]);
+      }
+    }).pipe(Effect.provide(ActorSystemDefault)),
+  );
+
+  it.scopedLive("judges the recovered state first from a start before its notification", () =>
+    Effect.gen(function* () {
+      const actor = yield* Machine.spawn(machine, {
+        lifecycle: { recovery: { resolve: () => Effect.succeedSome(WaitState.Working) } },
+      });
+      yield* Effect.addFinalizer(() => actor.stop);
+      let notified = 0;
+      actor.subscribe(() => {
+        notified += 1;
+      });
+      const observed: Array<WaitState["_tag"]> = [];
+      const gapWait = Deferred.makeUnsafe<{
+        readonly fiber: Fiber.Fiber<WaitState, ActorStoppedError>;
+        readonly observed: ReadonlyArray<WaitState["_tag"]>;
+        readonly notified: number;
+      }>();
+      // The run loop asks the scheduler before each operation. The first ask that sees the
+      // recovered state with no notification yet is between the recovery write and its
+      // notification; the wait starts there and runs to its sleep before the loop goes on.
+      const base = yield* Effect.service(Scheduler.Scheduler);
+      const runFork = Effect.runForkWith(yield* Effect.context<never>());
+      const scheduler: Scheduler.Scheduler = {
+        executionMode: base.executionMode,
+        shouldYield: (fiber) => {
+          if (
+            !Deferred.isDoneUnsafe(gapWait) &&
+            notified === 0 &&
+            actor.sync.snapshot()._tag === "Working"
+          ) {
+            const waiting = runFork(
+              actor.waitFor((state) => {
+                observed.push(state._tag);
+                return state._tag === "Other";
+              }),
+            );
+            Deferred.doneUnsafe(
+              gapWait,
+              Exit.succeed({ fiber: waiting, observed: [...observed], notified }),
+            );
+          }
+          return base.shouldYield(fiber);
+        },
+        makeDispatcher: () => base.makeDispatcher(),
+      };
+      yield* Effect.provideService(actor.start, Scheduler.Scheduler, scheduler);
+      const inGap = yield* Deferred.await(gapWait).pipe(Effect.timeout("2 seconds"));
+      // The window was reached: the wait slept before the recovery notification ran.
+      expect(inGap.notified).toBe(0);
+      expect(inGap.fiber.pollUnsafe()).toBeUndefined();
+      expect(inGap.observed).toEqual(["Working"]);
+      expect(notified).toBeGreaterThan(0);
+      yield* actor.send(WaitEvent.Next);
+      expect(yield* Fiber.await(inGap.fiber).pipe(Effect.timeoutOption("2 seconds"))).toEqual(
+        Option.some(Exit.succeed(WaitState.Other)),
+      );
+      expect(observed).toEqual(["Working", "Other"]);
+    }).pipe(Effect.provide(ActorSystemDefault)),
   );
 });

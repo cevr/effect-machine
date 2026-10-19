@@ -17,7 +17,9 @@ import { trackRegistrations } from "./wait-registrations.js";
 // and recovery writes, while it runs, between a write and its notification, inside a
 // notification, before a stop, and across a supervised restart. The run ends with a final
 // state, with a stop, or not at all: a live scenario is judged while the actor still runs, and
-// only then stopped.
+// only then stopped. Directed cases in wait-for-stopped.test.ts own the other starts and ends:
+// a stop before `start`, a start between the recovery write and its notification, a drain, a
+// runtime defect and a cleanup defect.
 //
 // Oracle: the harness records every write of the actor's state ref, its own notifications, and
 // the moment the wait under test first observes the state (it reads the ref or subscribes to the
@@ -95,7 +97,7 @@ interface Scenario {
   readonly notifies: ReadonlyArray<Tag>;
   /** How many of `writes` (and notifications) `actor.start` causes. */
   readonly startupWrites: number;
-  /** How many of the startup writes recover a state. Nothing runs between such a write and its notification. */
+  /** How many of the startup writes recover a state. The harness has no gap start for these. */
   readonly recoveryWrites: number;
   /** How many of `writes` (and notifications) come before the last event's writes. */
   readonly prefixWrites: number;
@@ -1037,7 +1039,9 @@ const positionsFor = (form: Form, scenario: Scenario): ReadonlyArray<Start> => {
   if (!form.sendsItself) starts.push(afterStart);
   if (!form.sendsItself && form.takesPredicate) starts.push(afterFirstCall);
   for (let j = 1; j <= reachable; j += 1) {
-    // A recovery write notifies in the same synchronous step: no wait can start in between.
+    // The `latestTransition` permit that holds a gap open does not hold the recovery path. A
+    // scheduler can still run a wait between the recovery write and its notification; the
+    // directed case in wait-for-stopped.test.ts starts one there.
     const duringStart = j <= scenario.startupWrites;
     if (j > scenario.recoveryWrites) starts.push(gap(j, duringStart));
     if (j <= scenario.notifies.length) starts.push(inNotification(j, duringStart));
