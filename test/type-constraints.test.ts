@@ -12,9 +12,10 @@
  *
  * All "bad" tests use @ts-expect-error on the handler return expression.
  */
-import { Effect, Schema, Context } from "effect";
+import { Effect, Schema, Context, type Scope } from "effect";
 import {
   ActorHost,
+  type ActorHostClosedError,
   ActorSystemDefault,
   ActorSystemService,
   Machine,
@@ -345,4 +346,16 @@ const _hostInputTypes = Effect.gen(function* () {
   const _call4 = host.host({ session: "session" }, { url: 123 });
   // @ts-expect-error - consumers cannot supply host data
   const _call5 = host.acquire({ session: "session" }, { url: "/other" });
+});
+
+// ActorHost.host has no error channel: consumers own factory failures, host misuse is a defect.
+const _hostErrorChannel = Effect.gen(function* () {
+  const host = yield* ActorHost.make({
+    identity: (request: string) => request,
+    spawn: (_request: string) =>
+      Effect.fail("factory failed" as const).pipe(Effect.andThen(Machine.spawn(_test1))),
+  });
+  const _hosted: Effect.Effect<unknown, never, Scope.Scope> = host.host("session");
+  const _acquired: Effect.Effect<unknown, "factory failed" | ActorHostClosedError> =
+    host.acquire("session");
 });

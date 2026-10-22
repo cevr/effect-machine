@@ -70,7 +70,7 @@ const menuHost =
   });
 
 parent.spawn(State.Menu, ({ state }) =>
-  menuHost.host({ sessionId: state.sessionId }).pipe(Effect.asVoid, Effect.orDie),
+  menuHost.host({ sessionId: state.sessionId }).pipe(Effect.asVoid),
 );
 
 const menu = yield * menuHost.acquire({ sessionId });
@@ -92,7 +92,7 @@ const screenHost =
 parent.spawn(State.Screen, ({ state }) =>
   screenHost
     .host({ sessionId: state.sessionId }, { destination: state.destination })
-    .pipe(Effect.asVoid, Effect.orDie),
+    .pipe(Effect.asVoid),
 );
 
 const screen = yield * screenHost.acquire({ sessionId });
@@ -102,9 +102,15 @@ The second argument belongs to the registered generation. A consumer cannot repl
 
 The factory uses the services captured when the host was made. Its Scope and ActorScope belong to the hosting generation. State exit closes the actor. Closing the host service also closes the current generation and ends consumers waiting for a future generation.
 
-Consumers receive `ActorHostClosedError` before actor cleanup starts. An acquisition belongs to the generation it observed. Acquire again after reentry to get the new actor. The registered `host` wait is interrupted when its generation closes. Calls made after the host service closes fail with `ActorHostClosedError`. An overlapping host fails with `ActorHostOccupiedError`, including while the previous actor is still being cleaned up.
+Consumers receive `ActorHostClosedError` before actor cleanup starts. An acquisition belongs to the generation it observed. Acquire again after reentry to get the new actor. The registered `host` wait is interrupted when its generation closes. `acquire` calls made after the host service closes fail with `ActorHostClosedError`.
 
-Factory failures stay in the typed error channel and remain shared until the hosting scope closes. Handle expected factory failures in the parent's spawn handler with a state transition or event. The example uses `Effect.orDie` because it treats the remaining host errors as wiring failures. A defect stops the parent; it cannot reenter to retry. Both host error classes are exported from the package root.
+`host` has no error channel: its type is `Effect<ActorRef, never, Scope>`, so the spawn handler needs no error policy.
+
+- A factory failure goes to consumers through `acquire`, and stays shared until the hosting scope closes. The `host` wait then parks until its generation closes, and is interrupted there. The parent state stays where it is. Only a cause made of typed failures parks. A factory cause with a defect or an interruption ends `host` with that cause, its typed failures made defects. If that cause holds a defect, or a typed failure and an interruption, the parent ends with a `Defect` lifecycle. A cause made only of interruptions ends the spawn, and the parent stays in its state. Handle an expected factory failure where it is acquired, for example with an event to the parent.
+- A `host` call after the host service closed dies with `ActorHostClosedError`.
+- An overlapping `host` dies with `ActorHostOccupiedError`, including while the previous actor is still being cleaned up.
+
+Both defects mean the hosting code is wrong, so they stop the parent. Both host error classes are exported from the package root.
 
 ## ActorRef selection
 

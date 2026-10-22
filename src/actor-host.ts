@@ -1,4 +1,4 @@
-import { Deferred, Effect, Exit, Option, Scope, Stream, SubscriptionRef } from "effect";
+import { Cause, Deferred, Effect, Exit, Option, Scope, Stream, SubscriptionRef } from "effect";
 
 import type { ActorRef } from "./actor.js";
 import * as Machine from "./machine.js";
@@ -15,15 +15,18 @@ export interface ActorHost<
   Failure,
   HostInput = void,
 > {
-  /** Register in the current scope. Wait for acquisition; interrupt if this generation closes. */
+  /**
+   * Register in the current scope. Wait for acquisition; interrupt if this generation closes.
+   *
+   * A factory cause made only of typed failures reaches consumers through `acquire`, and the
+   * host then waits until its generation closes. A cause with a defect or an interruption ends
+   * `host` with that cause, its typed failures made defects. A closed host service or an
+   * occupied slot is a defect.
+   */
   readonly host: (
     input: Input,
     hostInput: HostInput,
-  ) => Effect.Effect<
-    ActorRef<S, E, Output>,
-    Failure | ActorHostClosedError | ActorHostOccupiedError,
-    Scope.Scope
-  >;
+  ) => Effect.Effect<ActorRef<S, E, Output>, never, Scope.Scope>;
   /** Wait for a matching generation. Caller cancellation does not cancel actor startup. */
   readonly acquire: (
     input: Input,
@@ -96,7 +99,7 @@ export const make = Effect.fn("effect-machine.actorHost.make")(function* <
   )((input, hostInput) =>
     Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
-        if (yield* Deferred.isDone(closed)) return yield* failClosed;
+        if (yield* Deferred.isDone(closed)) return yield* Effect.die(ActorHostClosedError.make({}));
         const generation = yield* Scope.fork(yield* Scope.Scope);
         const entry: Entry = {
           identity: options.identity(input),
@@ -131,10 +134,12 @@ export const make = Effect.fn("effect-machine.actorHost.make")(function* <
           return [true, Option.some(entry)];
         });
         if (!registered) {
-          const ended = (yield* Deferred.isDone(closed)) || (yield* Deferred.isDone(entry.closed));
+          const serviceClosed = yield* Deferred.isDone(closed);
+          const ownGenerationClosed = yield* Deferred.isDone(entry.closed);
           yield* Scope.close(generation, Exit.void);
-          if (ended) return yield* failClosed;
-          return yield* ActorHostOccupiedError.make({});
+          if (serviceClosed) return yield* Effect.die(ActorHostClosedError.make({}));
+          if (ownGenerationClosed) return yield* Effect.interrupt;
+          return yield* Effect.die(ActorHostOccupiedError.make({}));
         }
         yield* Effect.forkIn(
           Deferred.complete(
@@ -151,16 +156,25 @@ export const make = Effect.fn("effect-machine.actorHost.make")(function* <
           ),
           scope,
         );
+        // Consumers receive a typed factory failure through `acquire`, so the host parks until
+        // its own generation closes. A closure of this generation interrupts at once. A cause
+        // with a defect or an interruption propagates with its typed failures made defects.
         return yield* restore(
           awaitActor(entry).pipe(
-            Effect.catchTag("ActorHostClosedError", (error) =>
-              Deferred.isDone(entry.closed).pipe(
-                Effect.flatMap((ownGenerationClosed) => {
-                  if (ownGenerationClosed) return Effect.interrupt;
-                  return Effect.fail(error);
-                }),
-              ),
-            ),
+            Effect.catchCause((cause) => {
+              if (Cause.hasDies(cause) || Cause.hasInterrupts(cause)) {
+                const reasons = cause.reasons.map((reason): Cause.Die | Cause.Interrupt => {
+                  if (Cause.isFailReason(reason)) {
+                    return Cause.makeDieReason(reason.error).annotate(
+                      Cause.reasonAnnotations(reason),
+                    );
+                  }
+                  return reason;
+                });
+                return Effect.failCause(Cause.fromReasons<never>(reasons));
+              }
+              return Deferred.await(entry.closed).pipe(Effect.andThen(Effect.interrupt));
+            }),
           ),
         );
       }),

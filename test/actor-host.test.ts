@@ -7,6 +7,7 @@ import {
   Exit,
   Fiber,
   Option,
+  Result,
   Schema,
   Scope,
   SubscriptionRef,
@@ -15,6 +16,8 @@ import { describe, expect, it, yieldFibers } from "effect-bun-test";
 
 import {
   ActorHost,
+  ActorHostClosedError,
+  ActorHostOccupiedError,
   ActorSystemDefault,
   ActorSystemService,
   Event,
@@ -36,7 +39,16 @@ class Label extends Context.Service<Label, { readonly value: string }>()(
   "effect-machine/test/actor-host.test/Label",
 ) {}
 
+class FactoryMarker extends Context.Service<FactoryMarker, string>()(
+  "effect-machine/test/actor-host.test/FactoryMarker",
+) {}
+
 const ownerScope = Effect.acquireRelease(Scope.make(), (scope) => Scope.close(scope, Exit.void));
+
+const defectOf = <A, E>(exit: Exit.Exit<A, E>): unknown => {
+  if (Exit.isSuccess(exit)) return undefined;
+  return Result.getOrUndefined(Cause.findDefect(exit.cause));
+};
 
 describe("ActorHost", () => {
   it.scoped(
@@ -205,8 +217,8 @@ describe("ActorHost", () => {
         .pipe(Scope.provide(owner), Effect.exit, Effect.forkScoped);
       yield* yieldFibers;
       const otherOwner = yield* ownerScope;
-      const duplicate = yield* host.host("second").pipe(Scope.provide(otherOwner), Effect.flip);
-      expect(duplicate._tag).toBe("ActorHostOccupiedError");
+      const duplicate = yield* host.host("second").pipe(Scope.provide(otherOwner), Effect.exit);
+      expect(defectOf(duplicate)).toBeInstanceOf(ActorHostOccupiedError);
       const unmatched = yield* host.acquire("other").pipe(Effect.flip, Effect.forkScoped);
       yield* Scope.close(serviceScope, Exit.void);
       expect((yield* Fiber.join(unmatched))._tag).toBe("ActorHostClosedError");
@@ -214,9 +226,9 @@ describe("ActorHost", () => {
       expect(Exit.isFailure(hostExit)).toBe(true);
       if (Exit.isFailure(hostExit)) expect(Cause.hasInterruptsOnly(hostExit.cause)).toBe(true);
       expect((yield* host.acquire("first").pipe(Effect.flip))._tag).toBe("ActorHostClosedError");
-      expect((yield* host.host("first").pipe(Scope.provide(otherOwner), Effect.flip))._tag).toBe(
-        "ActorHostClosedError",
-      );
+      expect(
+        defectOf(yield* host.host("first").pipe(Scope.provide(otherOwner), Effect.exit)),
+      ).toBeInstanceOf(ActorHostClosedError);
     }).pipe(Effect.provide(ActorSystemDefault)),
   );
 
@@ -237,7 +249,7 @@ describe("ActorHost", () => {
         .on(ParentState.Inactive, ParentEvent.Enter, () => ParentState.Active)
         .on(ParentState.Active, ParentEvent.Leave, () => ParentState.Inactive)
         .reenter(ParentState.Active, ParentEvent.Restart, () => ParentState.Active)
-        .spawn(ParentState.Active, () => host.host("session").pipe(Effect.orDie, Effect.asVoid));
+        .spawn(ParentState.Active, () => host.host("session").pipe(Effect.asVoid));
       const parent = yield* Machine.scoped(system.spawn("parent", parentMachine));
       yield* parent.call(ParentEvent.Enter);
       yield* parent.call(ParentEvent.Leave);
@@ -276,12 +288,17 @@ describe("ActorHost", () => {
         const owner = yield* ownerScope;
         const hosted = yield* host
           .host("session")
-          .pipe(Scope.provide(owner), Effect.flip, Effect.forkScoped);
+          .pipe(Scope.provide(owner), Effect.exit, Effect.forkScoped);
         const failure = yield* host.acquire("session").pipe(Effect.flip);
         expect(failure._tag).toBe("DuplicateActorError");
-        expect(yield* Fiber.join(hosted)).toBe(failure);
+        yield* yieldFibers;
+        // The consumer owns the failure; the host waits for its generation to close.
+        expect(hosted.pollUnsafe()).toBeUndefined();
         expect(yield* host.acquire("session").pipe(Effect.flip)).toBe(failure);
         yield* Scope.close(owner, Exit.void);
+        const hostExit = yield* Fiber.join(hosted);
+        expect(Exit.isFailure(hostExit)).toBe(true);
+        if (Exit.isFailure(hostExit)) expect(Cause.hasInterruptsOnly(hostExit.cause)).toBe(true);
         yield* existing.stop;
         const nextOwner = yield* ownerScope;
         const nextHosted = yield* host
@@ -338,7 +355,7 @@ describe("ActorHost", () => {
       })
         .on(ParentState.Inactive, ParentEvent.Enter, () => ParentState.Active)
         .on(ParentState.Active, ParentEvent.Leave, () => ParentState.Inactive)
-        .spawn(ParentState.Active, () => host.host("session").pipe(Effect.orDie, Effect.asVoid));
+        .spawn(ParentState.Active, () => host.host("session").pipe(Effect.asVoid));
       const parent = yield* Machine.scoped(system.spawn("native-parent", parentMachine));
       yield* parent.call(ParentEvent.Enter);
       const pending = yield* host.acquire("session").pipe(Effect.flip, Effect.forkScoped);
@@ -378,9 +395,9 @@ describe("ActorHost", () => {
       yield* Deferred.await(stopping);
       expect((yield* host.acquire("session").pipe(Effect.flip))._tag).toBe("ActorHostClosedError");
       const nextOwner = yield* ownerScope;
-      expect((yield* host.host("session").pipe(Scope.provide(nextOwner), Effect.flip))._tag).toBe(
-        "ActorHostOccupiedError",
-      );
+      expect(
+        defectOf(yield* host.host("session").pipe(Scope.provide(nextOwner), Effect.exit)),
+      ).toBeInstanceOf(ActorHostOccupiedError);
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(closing);
       yield* host.host("session").pipe(Scope.provide(nextOwner), Effect.forkScoped);
@@ -403,10 +420,150 @@ describe("ActorHost", () => {
       const owner = yield* ownerScope;
       const hosted = yield* outer
         .host("session")
-        .pipe(Scope.provide(owner), Effect.flip, Effect.forkScoped);
+        .pipe(Scope.provide(owner), Effect.exit, Effect.forkScoped);
       const error = yield* outer.acquire("session").pipe(Effect.flip);
       expect(error._tag).toBe("ActorHostClosedError");
-      expect(yield* Fiber.join(hosted)).toBe(error);
+      yield* yieldFibers;
+      expect(hosted.pollUnsafe()).toBeUndefined();
+      yield* Scope.close(owner, Exit.void);
+      const hostExit = yield* Fiber.join(hosted);
+      if (Exit.isFailure(hostExit)) expect(Cause.hasInterruptsOnly(hostExit.cause)).toBe(true);
+      else expect.unreachable("host must not succeed after a spawn failure");
     }),
   );
+
+  it.scoped("ends a parked host when the host service closes", () =>
+    Effect.gen(function* () {
+      const serviceScope = yield* ownerScope;
+      const host = yield* ActorHost.make({
+        identity: (input: string) => input,
+        spawn: (_input: string) => Effect.fail("factory failed" as const),
+      }).pipe(Scope.provide(serviceScope));
+      const owner = yield* ownerScope;
+      const hosted = yield* host
+        .host("session")
+        .pipe(Scope.provide(owner), Effect.exit, Effect.forkScoped);
+      expect(yield* host.acquire("session").pipe(Effect.flip)).toBe("factory failed");
+      yield* yieldFibers;
+      expect(hosted.pollUnsafe()).toBeUndefined();
+      yield* Scope.close(serviceScope, Exit.void);
+      const hostExit = yield* Fiber.join(hosted);
+      if (Exit.isFailure(hostExit)) expect(Cause.hasInterruptsOnly(hostExit.cause)).toBe(true);
+      else expect.unreachable("host must not succeed after a spawn failure");
+    }),
+  );
+
+  it.scoped("propagates a factory cause that holds a typed failure and a defect", () =>
+    Effect.gen(function* () {
+      const host = yield* ActorHost.make({
+        identity: (input: string) => input,
+        spawn: (_input: string) =>
+          Effect.fail("factory failed" as const).pipe(
+            Effect.ensuring(Effect.die("cleanup defect")),
+          ),
+      });
+      const owner = yield* ownerScope;
+      const hosted = yield* host
+        .host("session")
+        .pipe(Scope.provide(owner), Effect.exit, Effect.forkScoped);
+      const acquired = yield* host.acquire("session").pipe(Effect.exit);
+      expect(Exit.isFailure(acquired)).toBe(true);
+      yield* yieldFibers;
+      const polled = hosted.pollUnsafe();
+      if (polled === undefined) return expect.unreachable("host must not park on a defect");
+      const hostExit = yield* polled;
+      if (Exit.isSuccess(hostExit)) return expect.unreachable("host must not succeed");
+      expect(Cause.hasFails(hostExit.cause)).toBe(false);
+      const defects = hostExit.cause.reasons
+        .filter(Cause.isDieReason)
+        .map((reason) => reason.defect);
+      expect(defects).toContain("cleanup defect");
+      expect(defects).toContain("factory failed");
+    }),
+  );
+
+  it.scoped("keeps the annotations of a typed failure that it propagates as a defect", () =>
+    Effect.gen(function* () {
+      const failure = Cause.makeFailReason("factory failed" as const).annotate(
+        Context.make(FactoryMarker, "factory"),
+      );
+      const host = yield* ActorHost.make({
+        identity: (input: string) => input,
+        spawn: (_input: string) =>
+          Effect.failCause(Cause.fromReasons([failure, Cause.makeDieReason("cleanup defect")])),
+      });
+      const owner = yield* ownerScope;
+      const hosted = yield* host
+        .host("session")
+        .pipe(Scope.provide(owner), Effect.exit, Effect.forkScoped);
+      yield* host.acquire("session").pipe(Effect.exit);
+      const hostExit = yield* Fiber.join(hosted);
+      if (Exit.isSuccess(hostExit)) return expect.unreachable("host must not succeed");
+      const converted = hostExit.cause.reasons
+        .filter(Cause.isDieReason)
+        .find((reason) => reason.defect === "factory failed");
+      if (converted === undefined) return expect.unreachable("the typed failure must be a defect");
+      expect(Context.getOrUndefined(Cause.reasonAnnotations(converted), FactoryMarker)).toBe(
+        "factory",
+      );
+    }),
+  );
+
+  const factoryCauses = [
+    {
+      cause: "a typed failure and a defect",
+      spawn: () =>
+        Effect.fail("factory failed" as const).pipe(Effect.ensuring(Effect.die("cleanup"))),
+      lifecycle: "Defect",
+      hostInterrupts: false,
+    },
+    {
+      cause: "a typed failure and an interruption",
+      spawn: () => Effect.fail("factory failed" as const).pipe(Effect.ensuring(Effect.interrupt)),
+      lifecycle: "Defect",
+      hostInterrupts: false,
+    },
+    {
+      cause: "only an interruption",
+      spawn: () => Effect.interrupt,
+      lifecycle: "Active",
+      hostInterrupts: true,
+    },
+  ] as const;
+  for (const { cause, spawn, lifecycle, hostInterrupts } of factoryCauses) {
+    it.scoped(`leaves the parent ${lifecycle} when the factory cause holds ${cause}`, () =>
+      Effect.gen(function* () {
+        const system = yield* ActorSystemService;
+        const makeHost = ActorHost.make({
+          identity: (input: string) => input,
+          spawn: (_input: string) => spawn(),
+        });
+        const host = yield* makeHost;
+        const ParentState = State({ Inactive: {}, Active: {} });
+        const ParentEvent = Event({ Enter: {} });
+        const parentMachine = Machine.make({
+          state: ParentState,
+          event: ParentEvent,
+          initial: ParentState.Inactive,
+        })
+          .on(ParentState.Inactive, ParentEvent.Enter, () => ParentState.Active)
+          .spawn(ParentState.Active, () => host.host("session").pipe(Effect.asVoid));
+        const parent = yield* Machine.scoped(system.spawn("defect-parent", parentMachine));
+        yield* parent.call(ParentEvent.Enter);
+        yield* host.acquire("session").pipe(Effect.exit);
+        yield* yieldFibers;
+        expect((yield* SubscriptionRef.get(parent.lifecycle))._tag).toBe(lifecycle);
+        if (!hostInterrupts) return;
+        // The parent hides how `host` ended, so observe a direct `host` call on a second host.
+        const direct = yield* makeHost;
+        const hosted = yield* direct.host("session").pipe(Effect.forkScoped);
+        yield* direct.acquire("session").pipe(Effect.exit);
+        yield* yieldFibers;
+        const hostExit = hosted.pollUnsafe();
+        if (hostExit === undefined) return expect.unreachable("host must end");
+        if (Exit.isSuccess(hostExit)) return expect.unreachable("host must not succeed");
+        expect(Cause.hasInterruptsOnly(hostExit.cause)).toBe(true);
+      }).pipe(Effect.provide(ActorSystemDefault)),
+    );
+  }
 });

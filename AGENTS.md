@@ -240,10 +240,10 @@ Use `ActorHost.make({ identity, spawn })` when consumers must request a child wi
 - For parent-owned startup data, type the second `spawn(request, hostInput)` argument and call `host(input, hostInput)`. Consumers still call `acquire(input)`. Host data belongs to that generation; pass immutable values. One-argument factories need no host data.
 - Concurrent consumers share startup and its result. Cancelling one consumer does not cancel startup. ActorHost starts actors from either `Machine.spawn` or `system.spawn` before it returns them.
 - The factory receives the host generation's Scope and ActorScope. State exit closes the child. Closing the host service also closes the current generation and fails pending consumers.
-- A second active host fails with `ActorHostOccupiedError`. A closed generation fails pending acquisition with `ActorHostClosedError`.
+- `host` returns `Effect<ActorRef, never, Scope>`. A second active host dies with `ActorHostOccupiedError`; a `host` call on a closed host service dies with `ActorHostClosedError`. A closed generation fails pending acquisition with `ActorHostClosedError`.
 - Keep session validity, authorization, and completion events in application services. ActorHost only owns actor creation and lifetime.
-- A failed factory stays failed until the hosting scope closes. Handle expected factory errors in the spawn handler with a transition or event. `Effect.orDie` is appropriate only for invariant failures; it defects the parent and cannot support a later reentry.
-- Once registered, `host` is interrupted when its generation closes. Consumers get `ActorHostClosedError` before actor cleanup starts. An acquisition belongs to the generation it observed; call `acquire` again after reentry. Pre-registration calls to a closed host service fail with `ActorHostClosedError`.
+- A failed factory stays failed until the hosting scope closes. Consumers get the failure from `acquire`; the `host` wait parks until its own generation closes, then is interrupted. Only a cause made of typed failures parks: a cause with a defect or an interruption propagates, its `Fail` reasons turned into `Die` reasons. Do not use `Effect.orDie` for that: it is `catch(die)`, which keeps the first typed failure and drops the defect. Do not give `host` a typed error back: the host site has no correct way to handle any of them.
+- Once registered, `host` is interrupted when its generation closes. Consumers get `ActorHostClosedError` before actor cleanup starts. An acquisition belongs to the generation it observed; call `acquire` again after reentry. Pre-registration `acquire` calls to a closed host service fail with `ActorHostClosedError`.
 
 ## ActorRef API
 
