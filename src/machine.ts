@@ -153,6 +153,35 @@ export interface TaskOptions<State, Event, A, E1, ES, EF> {
   readonly name?: string;
 }
 
+/**
+ * Task options where the named handlers are required. The `task` overloads
+ * pick a handler set by plain assignability, never by a conditional type over
+ * the run's value or error, so a type parameter counts through its constraint.
+ */
+type TaskOptionsWith<
+  State,
+  Event,
+  A,
+  E1,
+  ES,
+  EF,
+  K extends "onSuccess" | "onFailure",
+> = TaskOptions<State, Event, A, E1, ES, EF> &
+  Required<Pick<TaskOptions<State, Event, A, E1, ES, EF>, K>>;
+
+/**
+ * The run of an overload that needs no `onSuccess`. The second member checks
+ * the run's value against the event union directly, so a handler parameter
+ * typed `any` cannot infer `A` as `any` and skip that check. `A` has no
+ * bound: a run that reads its context fixes `A` from an optional handler's
+ * parameter, and a wider parameter type would fail the bound.
+ */
+type EventRun<A, E1, R1, Event> = Effect.Effect<A, E1, R1> & Effect.Effect<Event, E1, R1>;
+
+/** The state union named by a list of state tags or constructors. */
+type StatesOf<NS extends ReadonlyArray<unknown>> =
+  NS[number] extends TaggedOrConstructor<infer S> ? S : never;
+
 // ============================================================================
 // Recovery / Durability
 // ============================================================================
@@ -1112,12 +1141,100 @@ export class Machine<
    * State-scoped task that runs on entry and sends success/failure events.
    * Interrupts do not emit failure events.
    *
-   * Supports multi-state and shorthand overloads:
-   * - `.task(State.X, run, { onSuccess, onFailure })` — explicit mapping
-   * - `.task(State.X, run, { onFailure })` — shorthand when run returns Event directly
-   * - `.task([State.X, State.Y], run, opts)` — multi-state
+   * The options must give `onSuccess` unless `run` succeeds with an event of
+   * this machine, and must give `onFailure` unless `run` cannot fail:
+   * - `.task(State.X, run, { onSuccess, onFailure })` — any run
+   * - `.task(State.X, run, { onFailure })` — run succeeds with an event
+   * - `.task(State.X, run, { onSuccess })` — run cannot fail
+   * - `.task(State.X, run, {})` — run succeeds with an event and cannot fail
+   * - `.task([State.X, State.Y], run, opts)` — multi-state, same rule
+   *
+   * The overload order is load-bearing: the overloads that require a handler
+   * come first, so `A` and `E1` infer the same way for every call, and the
+   * one-state group comes last, so a missing handler reports against the run.
    */
-  /** Single state — onSuccess optional (defaults to identity when task returns Event) */
+  task<
+    NS extends ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>,
+    A,
+    E1,
+    R1,
+    ES extends VariantsUnion<_ED> & BrandedEvent,
+    EF extends VariantsUnion<_ED> & BrandedEvent,
+  >(
+    states: NS,
+    run: (
+      ctx: StateHandlerContext<StatesOf<NS>, VariantsUnion<_ED> & BrandedEvent>,
+    ) => Effect.Effect<A, E1, Scope.Scope | R1>,
+    options: TaskOptionsWith<
+      StatesOf<NS>,
+      VariantsUnion<_ED> & BrandedEvent,
+      A,
+      E1,
+      ES,
+      EF,
+      "onSuccess" | "onFailure"
+    >,
+  ): Machine<State, Event, R | R1, _SD, _ED, Input, Output>;
+  /** Several states; the run cannot fail: `onSuccess` is required. */
+  task<
+    NS extends ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>,
+    A,
+    R1,
+    ES extends VariantsUnion<_ED> & BrandedEvent,
+    EF extends VariantsUnion<_ED> & BrandedEvent,
+  >(
+    states: NS,
+    run: (
+      ctx: StateHandlerContext<StatesOf<NS>, VariantsUnion<_ED> & BrandedEvent>,
+    ) => Effect.Effect<A, never, Scope.Scope | R1>,
+    options: TaskOptionsWith<
+      StatesOf<NS>,
+      VariantsUnion<_ED> & BrandedEvent,
+      A,
+      never,
+      ES,
+      EF,
+      "onSuccess"
+    >,
+  ): Machine<State, Event, R | R1, _SD, _ED, Input, Output>;
+  /** Several states; the run succeeds with an event and can fail: `onFailure` is required. */
+  task<
+    NS extends ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>,
+    A,
+    E1,
+    R1,
+    ES extends VariantsUnion<_ED> & BrandedEvent,
+    EF extends VariantsUnion<_ED> & BrandedEvent,
+  >(
+    states: NS,
+    run: (
+      ctx: StateHandlerContext<StatesOf<NS>, VariantsUnion<_ED> & BrandedEvent>,
+    ) => EventRun<A, E1, Scope.Scope | R1, VariantsUnion<_ED> & BrandedEvent>,
+    options: TaskOptionsWith<
+      StatesOf<NS>,
+      VariantsUnion<_ED> & BrandedEvent,
+      A,
+      E1,
+      ES,
+      EF,
+      "onFailure"
+    >,
+  ): Machine<State, Event, R | R1, _SD, _ED, Input, Output>;
+  /** Several states; the run succeeds with an event and cannot fail: no handler is required. */
+  task<
+    NS extends ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>,
+    A,
+    R1,
+    ES extends VariantsUnion<_ED> & BrandedEvent,
+    EF extends VariantsUnion<_ED> & BrandedEvent,
+  >(
+    states: NS,
+    run: (
+      ctx: StateHandlerContext<StatesOf<NS>, VariantsUnion<_ED> & BrandedEvent>,
+    ) => EventRun<A, never, Scope.Scope | R1, VariantsUnion<_ED> & BrandedEvent>,
+    options: TaskOptions<StatesOf<NS>, VariantsUnion<_ED> & BrandedEvent, A, never, ES, EF>,
+  ): Machine<State, Event, R | R1, _SD, _ED, Input, Output>;
+  /** One state; the run can fail and succeeds with any value: both handlers are required. */
   task<
     NS extends VariantsUnion<_SD> & BrandedState,
     A,
@@ -1130,32 +1247,58 @@ export class Machine<
     run: (
       ctx: StateHandlerContext<NS, VariantsUnion<_ED> & BrandedEvent>,
     ) => Effect.Effect<A, E1, Scope.Scope | R1>,
-    options: TaskOptions<NS, VariantsUnion<_ED> & BrandedEvent, A, E1, ES, EF>,
+    options: TaskOptionsWith<
+      NS,
+      VariantsUnion<_ED> & BrandedEvent,
+      A,
+      E1,
+      ES,
+      EF,
+      "onSuccess" | "onFailure"
+    >,
   ): Machine<State, Event, R | R1, _SD, _ED, Input, Output>;
-  /** Multiple states, explicit onSuccess */
+  /** One state; the run cannot fail: `onSuccess` is required. */
   task<
-    NS extends ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>,
+    NS extends VariantsUnion<_SD> & BrandedState,
+    A,
+    R1,
+    ES extends VariantsUnion<_ED> & BrandedEvent,
+    EF extends VariantsUnion<_ED> & BrandedEvent,
+  >(
+    state: TaggedOrConstructor<NS>,
+    run: (
+      ctx: StateHandlerContext<NS, VariantsUnion<_ED> & BrandedEvent>,
+    ) => Effect.Effect<A, never, Scope.Scope | R1>,
+    options: TaskOptionsWith<NS, VariantsUnion<_ED> & BrandedEvent, A, never, ES, EF, "onSuccess">,
+  ): Machine<State, Event, R | R1, _SD, _ED, Input, Output>;
+  /** One state; the run succeeds with an event and can fail: `onFailure` is required. */
+  task<
+    NS extends VariantsUnion<_SD> & BrandedState,
     A,
     E1,
     R1,
     ES extends VariantsUnion<_ED> & BrandedEvent,
     EF extends VariantsUnion<_ED> & BrandedEvent,
   >(
-    states: NS,
+    state: TaggedOrConstructor<NS>,
     run: (
-      ctx: StateHandlerContext<
-        NS[number] extends TaggedOrConstructor<infer S> ? S : never,
-        VariantsUnion<_ED> & BrandedEvent
-      >,
-    ) => Effect.Effect<A, E1, Scope.Scope | R1>,
-    options: TaskOptions<
-      NS[number] extends TaggedOrConstructor<infer S> ? S : never,
-      VariantsUnion<_ED> & BrandedEvent,
-      A,
-      E1,
-      ES,
-      EF
-    >,
+      ctx: StateHandlerContext<NS, VariantsUnion<_ED> & BrandedEvent>,
+    ) => EventRun<A, E1, Scope.Scope | R1, VariantsUnion<_ED> & BrandedEvent>,
+    options: TaskOptionsWith<NS, VariantsUnion<_ED> & BrandedEvent, A, E1, ES, EF, "onFailure">,
+  ): Machine<State, Event, R | R1, _SD, _ED, Input, Output>;
+  /** One state; the run succeeds with an event and cannot fail: no handler is required. */
+  task<
+    NS extends VariantsUnion<_SD> & BrandedState,
+    A,
+    R1,
+    ES extends VariantsUnion<_ED> & BrandedEvent,
+    EF extends VariantsUnion<_ED> & BrandedEvent,
+  >(
+    state: TaggedOrConstructor<NS>,
+    run: (
+      ctx: StateHandlerContext<NS, VariantsUnion<_ED> & BrandedEvent>,
+    ) => EventRun<A, never, Scope.Scope | R1, VariantsUnion<_ED> & BrandedEvent>,
+    options: TaskOptions<NS, VariantsUnion<_ED> & BrandedEvent, A, never, ES, EF>,
   ): Machine<State, Event, R | R1, _SD, _ED, Input, Output>;
   /* eslint-disable @typescript-eslint/no-explicit-any -- overload implementation */
   task(

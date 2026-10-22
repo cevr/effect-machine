@@ -40,6 +40,7 @@
     "fmt:check": "oxfmt --check",
     "test": "bun test --tsconfig-override=tsconfig.json",
     "test:watch": "bun test --watch",
+    "test:property": "bun test --tsconfig-override=tsconfig.json ./test/task-handler.property.ts",
     "example:react": "bun run --cwd examples/react dev",
     "example:solid": "bun run --cwd examples/solid dev",
     "examples:gate": "bun run --cwd examples/shared gate && bun run --cwd examples/core gate && bun run --cwd examples/react gate && bun run --cwd examples/solid gate",

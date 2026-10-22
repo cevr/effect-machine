@@ -118,6 +118,8 @@ All handler and predicate requirements flow into the machine type. `Machine.spaw
 
 Use the Effect context as the only runtime requirement channel. Use `.task()` for work that sends a completion event. Use `.spawn()` for state-owned work. Use `.background()` for actor-owned work. Use an Effectful transition only when its result must select the next state before the mailbox can continue.
 
+`.task()` options must give `onSuccess` unless `run` succeeds with a machine event, and `onFailure` unless `run` cannot fail (error type `never`). A type parameter counts through its constraint. A missing handler is a TS2769 error. `'LoadError' is not assignable to type 'never'` means that `run` can fail: give `onFailure`; if `onFailure` is there, give `onSuccess` for a non-event value. `'number' is not assignable to type '<event union>'` means that a value that must be an event is not one: give `onSuccess` for a non-event value of `run`. If the handlers that `run` needs are there, or the text names other types, check each given handler: it must accept the type that `run` gives it (the value or the error) and return an event of the machine. An optional or `fn | undefined` handler is not there. A TS7006 on a handler parameter has the same cause. On a list of states the error names the states argument instead. To drop a handler, map the value to an event in `run`, or use `Effect.orDie`.
+
 ## Input, Output, and Composition
 
 ```ts

@@ -63,9 +63,15 @@ Async work that emits an event on completion:
   onFailure: (error) => Event.Failed({ error: String(error) }),
 })
 
-// Multi-state
-.task([State.Loading, State.Retrying], ({ state }) => fetchData(state.url), { onSuccess: ... })
+// Multi-state, same rule
+.task([State.Loading, State.Retrying], ({ state }) => fetchData(state.url), { onSuccess: ..., onFailure: ... })
 ```
+
+- The options must give `onSuccess` unless the run succeeds with a machine event, and `onFailure` unless the run's error type is `never`. TypeScript enforces this (issue #95). A type parameter counts through its constraint; an `any` error needs `onFailure`; an optional or `fn | undefined` handler does not count as given; an options value or a handler typed `any` counts as given.
+- The rule lives in eight `task` overloads in `src/machine.ts`, keyed on the declared handler set with plain types. Do not replace them with a conditional type over the run's value or error: it defers on type parameters and rejects valid generic helpers. Keep the order: the overloads that require a handler come first in each group (else a lambda handler's parameter gets the wrong contextual type), and the one-state group comes last (TS2769 prints only the last overload's error).
+- In the overloads that need no `onSuccess`, `run` returns `Effect<A, …> & Effect<event union, …>` and `A` has no bound. The second member checks the value directly: a handler parameter typed `any` would otherwise infer `A` as `any` and pass an `A extends <event union>` bound. A bound on `A` also breaks a context-reading run whose optional `onSuccess` takes a wider type than the value.
+- `bun run test:property` (`test/task-handler.property.ts`) checks the rule over a generated domain of about 165 000 calls. It crosses the call form, the run form, the options container, each handler's slot and parameter type, and the value and error types. `TASK_PROPERTY_FULL=1` runs the full product (about 673 000 calls); `TASK_PROPERTY_REPORT=<file>` writes every mismatch. The file is not a `*.test.ts` file, so `bun test`, the gate and CI do not run it: it takes minutes. Run it on any change to the `task` overloads or `TaskOptions`. `test/task-handler-cases.test.ts` runs the fixed cases (every earlier counterexample) in the default test run; the cells and the tsc runner are in `test/task-handler/`.
+- TS2769 prints the last overload's error, which checks the run's error type first. `'LoadError' is not assignable to type 'never'`: give `onFailure`; if it is there, give `onSuccess` for a non-event value. `'number' is not assignable to type '<event union>'` (a value from `run` or from a handler): give `onSuccess` for a non-event value of `run`. If the needed handlers are there, or the text names other types, check each given handler: it must accept the type that `run` gives it (the value or the error) and return an event. On a list of states, the text names the states argument instead.
 
 ## State.with()
 

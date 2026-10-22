@@ -130,6 +130,23 @@ machine.task(S.Loading, ({ state }) => fetchData(state.url), {
 
 `onFailure` receives only the typed Effect error. A defect stops the actor or starts supervision.
 
+The options must give `onSuccess` unless `run` succeeds with a machine event, and `onFailure` unless `run` cannot fail (error type `never`):
+
+```ts
+// The run succeeds with an event and cannot fail: no handler.
+machine.task(S.Loading, () => Effect.succeed(E.Error), {});
+// The run succeeds with an event and can fail: onFailure.
+machine.task(
+  S.Loading,
+  ({ state }) => fetchData(state.url).pipe(Effect.map((data) => E.Done({ data }))),
+  { onFailure: () => E.Error },
+);
+// readCache cannot fail and succeeds with data: onSuccess.
+machine.task(S.Loading, () => readCache, { onSuccess: (data) => E.Done({ data }) });
+```
+
+A type parameter counts through its constraint: `<Ev extends typeof E.Error>` needs no `onSuccess`. An `any` error needs `onFailure`. An optional or `fn | undefined` handler does not count as given. A missing handler is a TS2769 error that prints the last (one-state) overload. `'LoadError' is not assignable to type 'never'` means that `run` can fail: give `onFailure`; if `onFailure` is there, give `onSuccess` for a non-event value. `'number' is not assignable to type '<event union>'` means that a value that must be an event is not one: give `onSuccess` for a non-event value of `run`. If the handlers that `run` needs are there, or the text names other types, check each given handler: it must accept the type that `run` gives it (the value or the error) and return an event of the machine. A TS7006 on a handler parameter has the same cause. On a list of states the error names the states argument instead. To drop a handler, map the value to an event in `run`, or use `Effect.orDie`.
+
 ### background — machine-lifetime (not state-scoped)
 
 ```ts

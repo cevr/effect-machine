@@ -147,6 +147,8 @@ The actor captures the Effect context during allocation. It keeps those services
 
 `onFailure` receives the typed Effect error. A defect does not enter `onFailure`. It stops the actor or starts supervision.
 
+The options must give `onSuccess` unless `run` succeeds with an event of the machine. They must give `onFailure` unless `run` cannot fail. TypeScript rejects a call that misses a needed handler. To drop a handler, map the value to an event in `run`, or make the failure a defect with `Effect.orDie`. Read [Async work](./docs/async-work.md#task) for the compiler messages.
+
 ## Input, output, and composition
 
 ```ts

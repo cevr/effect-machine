@@ -107,6 +107,39 @@ const _testTaskFailureError = Machine.make({
   },
 });
 
+// Test 6b (#95): a task must give onFailure when the run can fail
+Machine.make({ state: MyState, event: MyEvent, initial: MyState.Idle }).task(
+  MyState.Loading,
+  // @ts-expect-error - MyError is not assignable to never: onFailure is required
+  () => Effect.fail(MyError.make({})),
+  {},
+);
+
+// Test 6c (#95): a task must give onSuccess when the run succeeds with a non-event
+Machine.make({ state: MyState, event: MyEvent, initial: MyState.Idle }).task(
+  MyState.Loading,
+  // @ts-expect-error - number is not assignable to the event union: onSuccess is required
+  () => Effect.succeed(42),
+  {},
+);
+
+// Test 6d (#95): a type parameter counts through its constraint
+const _testTaskEventParameter = <Ev extends typeof MyEvent.Complete>(run: Effect.Effect<Ev>) =>
+  Machine.make({ state: MyState, event: MyEvent, initial: MyState.Idle }).task(
+    MyState.Loading,
+    () => run,
+    {},
+  );
+
+const _testTaskNeverErrorParameter = <Err extends never>(
+  run: Effect.Effect<typeof MyEvent.Complete, Err>,
+) =>
+  Machine.make({ state: MyState, event: MyEvent, initial: MyState.Idle }).task(
+    MyState.Loading,
+    () => run,
+    {},
+  );
+
 // ============================================================================
 // Reply Schema Type Constraints
 // ============================================================================
