@@ -327,6 +327,7 @@ const count = yield* actor.ask(Event.GetCount);  // number
 - `ask()` only accepts events with `Event.reply()` — non-reply events are a type error
 - Reply decode failures (schema mismatch) are defects
 - `Machine.definition` reads the builder's private indexes through `_definition` (`@internal`). It reports registrations and names, never targets or functions. Every builder registration path must write an index it reads: `task` and `timeout` go through `registerStateEffect` with their own `method` and name, not through public `spawn`. A spawn name is `options.name`, else the handler's function name; an `Effect.fn` handler has none. Return new frozen arrays; never freeze an index array, because the builder pushes into it later.
+- `ActorAtom` shares its Atoms per actor through the `@internal` `ActorRef.atoms` slot, not a module `WeakMap`: a `WeakMap` value type cannot depend on its key's type parameters, so it needs a cast. The ref owns the slot, so the Atoms never outlive the actor. Public Atoms read private source Atoms, so an `Atom.withLabel` copy adds no subscription. A ref built outside `buildActorRefCore` has no slot and gets fresh Atoms.
 
 ## Cluster / Entity Machines
 

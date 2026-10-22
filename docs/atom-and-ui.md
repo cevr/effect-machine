@@ -35,6 +35,8 @@ const totalAtom = ActorAtom.select(
 
 `ActorAtom.lifecycle(actor)` exposes actor startup and exit. `ActorAtom.latestTransition(actor)` exposes the last accepted edge. Both retain their terminal value.
 
+For an actor that effect-machine spawns, `make`, `lifecycle` and `latestTransition` return the same Atom for every call with one actor. A hand-built `ActorRef`, such as a test double, gets a new Atom on each call. They read three shared source Atoms: state, lifecycle and latest transition. Each source holds one actor subscription for each registry that mounts it. Call `make`, `lifecycle` and `latestTransition` during render without a memo. `can` Atoms and `Atom.withLabel` copies read the same sources and add no subscription. The actor ref holds the shared Atoms, so the cache adds no global root. A mounted Atom keeps its actor until it unmounts. `select` and `can` build a new Atom on each call; memoize them when a hook needs a stable Atom.
+
 ## Transition capability
 
 Create one reactive capability Atom for an event:

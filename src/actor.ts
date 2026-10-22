@@ -29,6 +29,7 @@ import {
   SubscriptionRef,
 } from "effect";
 
+import type { ActorAtoms } from "./atom.js";
 import type { Machine, Lifecycle } from "./machine.js";
 import { ActorExit, type Supervision } from "./supervision.js";
 import type { ReplyTypeBrand, ExtractReply } from "./internal/brands.js";
@@ -235,6 +236,14 @@ export interface ActorRef<State extends { readonly _tag: string }, Event, Output
 
   /** JavaScript client for callbacks and applications outside Effect. */
   readonly client: ActorClient<State, Event, Output>;
+
+  /**
+   * The Atom nodes `effect-machine/atom` shares across every caller for this actor.
+   * The ref owns them, so they do not outlive it.
+   *
+   * @internal
+   */
+  readonly atoms?: { current: ActorAtoms<State, Event, Output> | undefined };
 
   /**
    * Wait for this actor's terminal exit. Resolves with the exit reason.
@@ -722,6 +731,7 @@ const buildActorRefCore = <
     sendAndWait,
     subscribe,
     client,
+    atoms: { current: undefined },
     awaitExit: Deferred.await(cell.terminalExitDeferred),
     drain: Effect.suspend(() => runtimeRef.current?.drain ?? Effect.void),
     sync: {

@@ -1,8 +1,10 @@
 import { Effect, Schema } from "effect";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
+import * as Atom from "effect/reactivity/Atom";
 import * as AtomRegistry from "effect/reactivity/AtomRegistry";
 import { expect, it } from "effect-bun-test";
 
+import { liveStateRegistrations } from "../src/actor.js";
 import * as ActorAtom from "../src/atom.js";
 import { actorSystemKey, ActorSystemDefault, ActorSystemService, Machine } from "../src/index.js";
 import { Event, State } from "../src/schema.js";
@@ -168,6 +170,42 @@ it.scopedLive("can reevaluates guarded transitions when actor state changes", ()
     expect(yield* AtomRegistry.getResult(registry, canIncrementAtom)).toBe(false);
 
     registry.dispose();
+    yield* actor.stop;
+  }),
+);
+
+it.scopedLive("atoms for one actor share one state source", () =>
+  Effect.gen(function* () {
+    const actor = yield* Machine.spawn(counterMachine);
+    yield* actor.start;
+    const registry = AtomRegistry.make();
+    const baseline = liveStateRegistrations(actor.state);
+
+    const unmounts = [
+      registry.mount(ActorAtom.make(actor)),
+      registry.mount(ActorAtom.make(actor)),
+      registry.mount(Atom.withLabel(ActorAtom.make(actor), "labelled")),
+      registry.mount(ActorAtom.select(ActorAtom.make(actor), (state) => state.count)),
+      registry.mount(ActorAtom.can(actor, CounterEvent.Increment)),
+      registry.mount(ActorAtom.can(actor, CounterEvent.Increment)),
+    ];
+    expect(liveStateRegistrations(actor.state) - baseline).toBe(1);
+
+    const counts: Array<number> = [];
+    const unsubscribe = registry.subscribe(ActorAtom.make(actor), (state) =>
+      counts.push(state.count),
+    );
+    registry.set(ActorAtom.make(actor), CounterEvent.Increment);
+    expect(counts).toEqual([1]);
+
+    expect(ActorAtom.make(actor)).toBe(ActorAtom.make(actor));
+    expect(ActorAtom.lifecycle(actor)).toBe(ActorAtom.lifecycle(actor));
+    expect(ActorAtom.latestTransition(actor)).toBe(ActorAtom.latestTransition(actor));
+
+    unsubscribe();
+    for (const unmount of unmounts) unmount();
+    registry.dispose();
+    expect(liveStateRegistrations(actor.state)).toBe(baseline);
     yield* actor.stop;
   }),
 );

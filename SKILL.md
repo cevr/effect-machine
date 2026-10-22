@@ -299,6 +299,8 @@ const canStartAtom = ActorAtom.can(actor, Event.Start);
 
 The Atom value is actor state. Atom writes send actor events. A selected Atom stays writable.
 
+For an actor that effect-machine spawns, `make`, `lifecycle` and `latestTransition` return the same Atom for each call with one actor, and they read shared source Atoms: each source holds one actor subscription for each registry that mounts it (`can` and `Atom.withLabel` copies add none). Call `make`, `lifecycle` and `latestTransition` in render without a memo. `select` and `can` return a new Atom per call.
+
 For a Suspense-owned actor, create it through an effect-backed Atom:
 
 ```ts

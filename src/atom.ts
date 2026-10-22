@@ -36,13 +36,47 @@ export type ActorAcquireAtom<State extends { readonly _tag: string }, Event, Out
   AsyncResult.AsyncResult<ActorRef<State, Event, Output>, Cause.NoSuchElementError>
 >;
 
-const stateAtom = <State extends { readonly _tag: string }, Event, Output>(
+/**
+ * The Atom nodes one actor shares across every caller. Each source node holds one actor
+ * subscription; the public atoms read the sources, so an `Atom.withLabel` copy adds none.
+ *
+ * @internal
+ */
+export interface ActorAtoms<State extends { readonly _tag: string }, Event, Output> {
+  readonly state: Atom.Atom<State>;
+  readonly make: ActorAtom<State, Event>;
+  readonly lifecycle: Atom.Atom<ActorLifecycle<State, Output>>;
+  readonly latestTransition: Atom.Atom<TransitionInfo<State, Event> | undefined>;
+}
+
+const buildActorAtoms = <State extends { readonly _tag: string }, Event, Output>(
   actor: ActorRef<State, Event, Output>,
-): Atom.Atom<State> =>
-  Atom.readable((get) => {
-    get.addFinalizer(actor.subscribe((state) => get.setSelf(state)));
+): ActorAtoms<State, Event, Output> => {
+  const state = Atom.readable((get) => {
+    get.addFinalizer(actor.subscribe((next) => get.setSelf(next)));
     return actor.client.getSnapshot();
   });
+  const lifecycle = Atom.subscriptionRef(actor.lifecycle);
+  const latestTransition = Atom.subscriptionRef(actor.latestTransition);
+  return {
+    state,
+    make: Atom.writable(
+      (get) => get(state),
+      (_ctx, event) => actor.client.send(event),
+    ),
+    lifecycle: Atom.readable((get) => get(lifecycle)),
+    latestTransition: Atom.readable((get) => get(latestTransition)),
+  };
+};
+
+const actorAtoms = <State extends { readonly _tag: string }, Event, Output>(
+  actor: ActorRef<State, Event, Output>,
+): ActorAtoms<State, Event, Output> => {
+  const slot = actor.atoms;
+  // An ActorRef built outside this package has no slot.
+  if (slot === undefined) return buildActorAtoms(actor);
+  return (slot.current ??= buildActorAtoms(actor));
+};
 
 /** Observe the current ActorRef for one ActorSystem key. */
 export const fromSystem: {
@@ -105,17 +139,12 @@ export const acquire: {
  *
  * The actor stays the single state owner. The Atom follows recovery,
  * supervision restarts, and normal transitions through the actor's
- * SubscriptionRef.
+ * SubscriptionRef. For an actor that effect-machine spawns, every call for
+ * one actor returns the same Atom.
  */
 export const make = <State extends { readonly _tag: string }, Event, Output>(
   actor: ActorRef<State, Event, Output>,
-): ActorAtom<State, Event> => {
-  const state = stateAtom(actor);
-  return Atom.writable(
-    (get) => get(state),
-    (_ctx, event) => actor.client.send(event),
-  );
-};
+): ActorAtom<State, Event> => actorAtoms(actor).make;
 
 /**
  * Select part of an actor state.
@@ -142,16 +171,23 @@ export const select: {
   ): ActorAtom<Selection, Event> => Atom.withEquality(Atom.map(self, selector), equals),
 );
 
-/** Observe actor lifecycle without coupling it to domain state. */
+/**
+ * Observe actor lifecycle without coupling it to domain state.
+ * For an actor that effect-machine spawns, every call for one actor returns
+ * the same Atom.
+ */
 export const lifecycle = <State extends { readonly _tag: string }, Event, Output>(
   actor: ActorRef<State, Event, Output>,
-): Atom.Atom<ActorLifecycle<State, Output>> => Atom.subscriptionRef(actor.lifecycle);
+): Atom.Atom<ActorLifecycle<State, Output>> => actorAtoms(actor).lifecycle;
 
-/** Observe the latest accepted edge. The value remains after actor exit. */
+/**
+ * Observe the latest accepted edge. The value remains after actor exit.
+ * For an actor that effect-machine spawns, every call for one actor returns
+ * the same Atom.
+ */
 export const latestTransition = <State extends { readonly _tag: string }, Event, Output>(
   actor: ActorRef<State, Event, Output>,
-): Atom.Atom<TransitionInfo<State, Event> | undefined> =>
-  Atom.subscriptionRef(actor.latestTransition);
+): Atom.Atom<TransitionInfo<State, Event> | undefined> => actorAtoms(actor).latestTransition;
 
 /** A reactive result for whether an actor can accept one event. */
 export type CanAtom = Atom.Atom<AsyncResult.AsyncResult<boolean>>;
@@ -178,7 +214,7 @@ export const can: {
     actor: ActorRef<State, Event, Output>,
     event: Event,
   ): CanAtom => {
-    const state = stateAtom(actor);
+    const { state } = actorAtoms(actor);
     return Atom.make((get) => {
       get(state);
       return actor.can(event);

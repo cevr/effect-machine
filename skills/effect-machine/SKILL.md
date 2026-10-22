@@ -402,7 +402,7 @@ const transitionAtom = ActorAtom.latestTransition(actor);
 const canStartAtom = ActorAtom.can(actor, E.Start);
 ```
 
-The actor owns state. Atom writes send events. Selected Atoms publish only when their selected value changes. Capability Atoms publish only when the Boolean answer changes. React uses `useAtomSuspense`. Solid uses `useAtomResource` inside Suspense. Keep exit-animation data in the next or final machine state.
+The actor owns state. Atom writes send events. For an actor that effect-machine spawns, `make`, `lifecycle` and `latestTransition` return the same Atom for each call with one actor; they read shared source Atoms, and each source holds one actor subscription for each registry that mounts it, so render code needs no memo for `make`, `lifecycle` and `latestTransition`. `select` and `can` return a new Atom per call. Selected Atoms publish only when their selected value changes. Capability Atoms publish only when the Boolean answer changes. React uses `useAtomSuspense`. Solid uses `useAtomResource` inside Suspense. Keep exit-animation data in the next or final machine state.
 
 ## Inspection
 
