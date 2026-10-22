@@ -141,6 +141,12 @@ export type GuardPredicate<State, Event, R = never> = (
 // Options types
 // ============================================================================
 
+/** Options for a state-scoped `.spawn` effect. */
+export interface SpawnEffectOptions {
+  /** The name `Machine.definition` reports. Defaults to the handler's function name. */
+  readonly name?: string;
+}
+
 export interface TaskOptions<State, Event, A, E1, ES, EF> {
   readonly onSuccess?: (value: A, ctx: StateHandlerContext<State, Event>) => ES;
   readonly onFailure?: (error: E1, ctx: StateHandlerContext<State, Event>) => EF;
@@ -233,8 +239,8 @@ export interface ImmediateDefinition {
 }
 
 /**
- * One state-owned Effect. `name` is the spawn handler's function name, the task's
- * `options.name`, or `$timeout:<StateTag>` for a timeout.
+ * One state-owned Effect. `name` is the spawn's or task's `options.name`; for a spawn
+ * without it, the handler's function name; `$timeout:<StateTag>` for a timeout.
  */
 export interface StateEffectDefinition {
   readonly method: "spawn" | "task" | "timeout";
@@ -928,11 +934,15 @@ export class Machine<
    *   }),
    * );
    * ```
+   *
+   * `options.name` sets the name `Machine.definition` reports. Use it for an `Effect.fn`
+   * handler or an inline arrow, which have no function name.
    */
   /** Single state */
   spawn<NS extends VariantsUnion<_SD> & BrandedState, R1>(
     state: TaggedOrConstructor<NS>,
     handler: StateEffectHandler<NS, VariantsUnion<_ED> & BrandedEvent, Scope.Scope | R1>,
+    options?: SpawnEffectOptions,
   ): Machine<State, Event, R | R1, _SD, _ED, Input, Output>;
   /** Multiple states */
   spawn<NS extends ReadonlyArray<TaggedOrConstructor<VariantsUnion<_SD> & BrandedState>>, R1>(
@@ -942,10 +952,18 @@ export class Machine<
       VariantsUnion<_ED> & BrandedEvent,
       Scope.Scope | R1
     >,
+    options?: SpawnEffectOptions,
   ): Machine<State, Event, R | R1, _SD, _ED, Input, Output>;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  spawn(stateOrStates: any, handler: any): Machine<State, Event, R, _SD, _ED, Input, Output> {
-    return this.registerStateEffect(stateOrStates, handler, "spawn", functionName(handler));
+  spawn(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    stateOrStates: any,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    handler: any,
+    options?: SpawnEffectOptions,
+  ): Machine<State, Event, R, _SD, _ED, Input, Output> {
+    // An `Effect.fn` handler or an inline arrow has no function name.
+    const name = options?.name ?? functionName(handler);
+    return this.registerStateEffect(stateOrStates, handler, "spawn", name);
   }
 
   /** The one registration path for `spawn`, `task` and `timeout`. */

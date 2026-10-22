@@ -46,7 +46,7 @@ const machine = Machine.make({
 | `.reenterWhen(state, event, p, h)`     | Conditional forced lifecycle            |
 | `.immediate(state, handler)`           | Eventless transition until stable       |
 | `.immediateWhen(state, p, handler)`    | Conditional eventless transition        |
-| `.spawn(state, handler)`               | State-scoped effect (auto-cancelled)    |
+| `.spawn(state, handler, { name? })`    | State-scoped effect (auto-cancelled)    |
 | `.timeout(state, { duration, event })` | State timeout (gen_statem)              |
 | `.postpone(state, event/events)`       | Postpone event in state (gen_statem)    |
 | `.background(handler)`                 | Machine-lifetime effect                 |
@@ -281,7 +281,7 @@ const registered = definition.states.flatMap((state) =>
 );
 ```
 
-`Machine.definition` reports registrations and names (`method`, `handlerName`, `guardName`, task names), not targets. Use `Machine.replay` to find a target.
+`Machine.definition` reports registrations and names (`method`, `handlerName`, `guardName`, task names, spawn names), not targets. A spawn reports `options.name`, else the handler's function name. An `Effect.fn` handler has no function name: pass `{ name }` as the third `.spawn` argument. Use `Machine.replay` to find a target.
 
 ## Effect Atom
 

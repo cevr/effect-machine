@@ -388,7 +388,7 @@ const registered = definition.states.flatMap((state) =>
 
 Both `simulate` and `createTestHarness` accept `Machine` directly.
 
-`Machine.definition` lists per state: `transitions` (in runtime candidate order), `immediate`, `effects` (spawn/task/timeout), `postponed` and `final`; per machine: `anyState` and `background`. It reports names, not targets: handlers compute targets at run time. Use `Machine.replay` to find a target.
+`Machine.definition` lists per state: `transitions` (in runtime candidate order), `immediate`, `effects` (spawn/task/timeout), `postponed` and `final`; per machine: `anyState` and `background`. It reports names, not targets: handlers compute targets at run time. Use `Machine.replay` to find a target. A spawn reports `options.name`, else the handler's function name. An `Effect.fn` handler has no function name: write `.spawn(S.X, Effect.fn("App.watchX")(watchX), { name: "watchX" })`.
 
 ## Effect Atom
 

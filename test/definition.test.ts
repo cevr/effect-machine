@@ -191,6 +191,45 @@ describe("Machine.definition", () => {
     expect(definition.background).toStrictEqual([{ method: "background", name: "heartbeat" }]);
   });
 
+  test("reports the spawn name option for handlers without a function name", () => {
+    const machine = Machine.make({
+      state: CheckoutState,
+      event: CheckoutEvent,
+      initial: CheckoutState.Browsing,
+    })
+      .spawn(
+        CheckoutState.Paying,
+        Effect.fn("Checkout.watchTerminal")(function* () {
+          yield* Effect.void;
+        }),
+        { name: "watchTerminal" },
+      )
+      .spawn(
+        CheckoutState.Paying,
+        Effect.fn("Checkout.watchPrinter")(function* () {
+          yield* Effect.void;
+        }),
+        { name: "watchPrinter" },
+      )
+      .spawn([CheckoutState.Cart, CheckoutState.Paying], () => Effect.void, { name: "heartbeat" })
+      .spawn(CheckoutState.Cart, function watchCart() {
+        return Effect.void;
+      });
+
+    const effectsOf = (tag: string) =>
+      Machine.definition(machine).states.find((state) => state.tag === tag)?.effects;
+
+    expect(effectsOf("Paying")).toStrictEqual([
+      { method: "spawn", name: "watchTerminal" },
+      { method: "spawn", name: "watchPrinter" },
+      { method: "spawn", name: "heartbeat" },
+    ]);
+    expect(effectsOf("Cart")).toStrictEqual([
+      { method: "spawn", name: "heartbeat" },
+      { method: "spawn", name: "watchCart" },
+    ]);
+  });
+
   it.live("lists candidates in the order the runtime tries them", () =>
     Effect.gen(function* () {
       const machine = Machine.make({

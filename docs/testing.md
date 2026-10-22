@@ -22,7 +22,15 @@ Simulation and replay run pure or Effectful transition handlers. They do not run
 - `anyState`: the `.onAny` / `.whenAny` transitions. The runtime tries them after the state's own transitions for the same event.
 - `background`: the machine-lifetime Effects.
 
-Each entry reports the builder method and names: `handlerName` and `guardName` come from the function `name`, a task reports `options.name`, and a timeout reports `$timeout:<StateTag>`. An anonymous function reports `undefined`. An `Effect.fn` result is also anonymous: its span name is not a function name. When a test must identify a handler, use a function declaration, or a plain function or arrow assigned to a `const`.
+Each entry reports the builder method and names: `handlerName` and `guardName` come from the function `name`, a task reports `options.name`, a spawn reports `options.name` or else the handler's function `name`, and a timeout reports `$timeout:<StateTag>`. An anonymous function reports `undefined`. An `Effect.fn` result is also anonymous: its span name is not a function name. Give an `Effect.fn` spawn handler a name with the third argument:
+
+```ts
+machine.spawn(State.Paying, Effect.fn("Checkout.watchTerminal")(watchTerminal), {
+  name: "watchTerminal",
+});
+```
+
+When a test must identify a transition handler, use a function declaration, or a plain function or arrow assigned to a `const`.
 
 The definition reports registrations, not targets. Handlers compute targets at run time. Use `Machine.replay` from a state to find the target of a transition.
 

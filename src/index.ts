@@ -31,6 +31,7 @@ export type {
   HandlerContext,
   GuardPredicate,
   StateHandlerContext,
+  SpawnEffectOptions,
   TaskOptions,
   TimeoutConfig,
   ReplyResult,
