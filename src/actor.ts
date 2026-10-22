@@ -172,7 +172,10 @@ export interface ActorRef<State extends { readonly _tag: string }, Event, Output
   /** Check if current state matches tag. */
   readonly matches: (tag: State["_tag"]) => Effect.Effect<boolean>;
 
-  /** Check if an event has an enabled transition. Supports Boolean and Effect predicates. */
+  /**
+   * Check if an event has an enabled transition. Supports Boolean and Effect predicates.
+   * Answers `false` without running a predicate once the actor is final, stopped or defected.
+   */
   readonly can: (event: Event) => Effect.Effect<boolean>;
 
   /** Stream of state changes. */
@@ -475,6 +478,10 @@ export const liveStateRegistrations = (stateRef: object): number =>
     AssertionError.make({ message: "No actor owns this state ref" }),
   )();
 
+/** A final, stopped or defected actor drops every later event. */
+const hasExited = <S, O>(lifecycle: ActorLifecycle<S, O>): boolean =>
+  lifecycle._tag !== "Created" && lifecycle._tag !== "Starting" && lifecycle._tag !== "Active";
+
 const toActorExit = <S, O>(
   machine: { readonly _output: (state: S) => O },
   exit: RuntimeExit<S>,
@@ -587,6 +594,7 @@ const buildActorRefCore = <
   });
 
   const canEffect = Effect.fn("effect-machine.actor.can")(function* (event: E) {
+    if (hasExited(yield* SubscriptionRef.get(lifecycleRef))) return false;
     const state = yield* SubscriptionRef.get(stateRef);
     return (yield* resolveTransitionEffect(machine, state, event)) !== undefined;
   });
@@ -692,10 +700,10 @@ const buildActorRefCore = <
   };
   const getSnapshot = (): S => Effect.runSync(SubscriptionRef.get(stateRef));
   const matchesClient = (tag: S["_tag"]): boolean => getSnapshot()._tag === tag;
-  const canSync = (event: E): boolean =>
-    resolveTransition(machine, getSnapshot(), event) !== undefined;
   const getLifecycle = (): ActorLifecycle<S, O> =>
     Effect.runSync(SubscriptionRef.get(lifecycleRef));
+  const canSync = (event: E): boolean =>
+    !hasExited(getLifecycle()) && resolveTransition(machine, getSnapshot(), event) !== undefined;
   const getLatestTransition = (): TransitionInfo<S, E> | undefined =>
     Effect.runSync(SubscriptionRef.get(latestTransitionRef));
   const client: ActorClient<S, E, O> = {

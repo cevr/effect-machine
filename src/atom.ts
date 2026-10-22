@@ -195,8 +195,9 @@ export type CanAtom = Atom.Atom<AsyncResult.AsyncResult<boolean>>;
 /**
  * Observe whether an event has an enabled transition.
  *
- * The Atom reevaluates after each actor state change. It supports pure and
- * Effect predicates. Effect predicates use the context captured by the actor.
+ * The Atom reevaluates after each actor state or lifecycle change. It supports
+ * pure and Effect predicates. Effect predicates use the context captured by the
+ * actor. It answers `false` once the actor is final, stopped or defected.
  */
 export const can: {
   <Event>(
@@ -214,9 +215,10 @@ export const can: {
     actor: ActorRef<State, Event, Output>,
     event: Event,
   ): CanAtom => {
-    const { state } = actorAtoms(actor);
+    const atoms = actorAtoms(actor);
     return Atom.make((get) => {
-      get(state);
+      get(atoms.state);
+      get(atoms.lifecycle);
       return actor.can(event);
     }).pipe(
       Atom.withEquality<AsyncResult.AsyncResult<boolean>>(

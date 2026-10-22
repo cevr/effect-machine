@@ -192,6 +192,8 @@ Effect.runPromise(Effect.scoped(program.pipe(Effect.provide(ActorSystemDefault))
 | `actor.system`                   | Access the actor's `ActorSystem`            |
 | `actor.children`                 | Child actors (`ReadonlyMap`)                |
 
+Every `can` form, `ActorAtom.can` included, answers `false` once the actor is final, stopped or defected, and runs no predicate then.
+
 ## ask / reply
 
 Events declare reply schemas via `Event.reply()`. Handlers use `Machine.reply()`:

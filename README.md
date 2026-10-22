@@ -121,7 +121,7 @@ machine
   .immediate(State.Accepted, ({ state }) => State.Ready.with(state));
 ```
 
-The predicate can return a Boolean or `Effect<boolean, never, R>`. Its requirements flow into the machine type. `actor.can(event)` evaluates the same predicate with the actor's captured context. `ActorAtom.can(actor, event)` exposes the result to React and Solid. The inspector uses the predicate function name.
+The predicate can return a Boolean or `Effect<boolean, never, R>`. Its requirements flow into the machine type. `actor.can(event)` evaluates the same predicate with the actor's captured context. `ActorAtom.can(actor, event)` exposes the result to React and Solid. After the actor is final, stopped or defected, every `can` form answers `false` and runs no predicate. The inspector uses the predicate function name.
 
 Immediate transitions run until the state is stable. Subscribers see only the stable state. The runtime stops an accidental eventless loop after 100 edges.
 

@@ -133,6 +133,82 @@ describe("transition guards", () => {
     );
   });
 
+  it.scopedLive("answers false without running a guard after the actor stops", () =>
+    Effect.gen(function* () {
+      let guardRuns = 0;
+      const machine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle({ value: 50 }),
+      }).when(
+        TestState.Idle,
+        TestEvent.Check,
+        () => {
+          guardRuns += 1;
+          return true;
+        },
+        () => TestState.High,
+      );
+      const actor = yield* Machine.spawn(machine);
+      const event = TestEvent.Check({ minimum: 0 });
+
+      expect(actor.client.canSync(event)).toBe(true);
+      yield* actor.start;
+      expect(yield* actor.can(event)).toBe(true);
+      yield* actor.stop;
+      const runsBeforeStop = guardRuns;
+
+      expect(actor.client.getLifecycle()._tag).toBe("Stopped");
+      expect(yield* actor.can(event)).toBe(false);
+      expect(actor.client.canSync(event)).toBe(false);
+      expect(yield* Effect.promise(() => actor.client.can(event))).toBe(false);
+      expect(actor.sync.can(event)).toBe(false);
+      expect(guardRuns).toBe(runsBeforeStop);
+    }),
+  );
+
+  it.scopedLive("answers false after the actor reaches a final state", () =>
+    Effect.gen(function* () {
+      const machine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle({ value: 50 }),
+      })
+        .on(TestState.Idle, TestEvent.Check, () => TestState.Low)
+        .on(TestState.Low, TestEvent.Check, () => TestState.High)
+        .final(TestState.Low);
+      const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
+      yield* actor.send(TestEvent.Check({ minimum: 0 }));
+      yield* actor.awaitExit;
+
+      expect(actor.client.getLifecycle()._tag).toBe("Final");
+      expect(yield* actor.can(TestEvent.Check({ minimum: 0 }))).toBe(false);
+      expect(actor.client.canSync(TestEvent.Check({ minimum: 0 }))).toBe(false);
+    }),
+  );
+
+  it.scopedLive("answers false after the actor defects", () =>
+    Effect.gen(function* () {
+      const machine = Machine.make({
+        state: TestState,
+        event: TestEvent,
+        initial: TestState.Idle({ value: 50 }),
+      }).on(TestState.Idle, TestEvent.Check, () => Effect.die("boom"));
+      const actor = yield* Machine.spawn(machine);
+      yield* actor.start;
+      const event = TestEvent.Check({ minimum: 0 });
+      expect(actor.client.canSync(event)).toBe(true);
+      yield* actor.send(event);
+      expect((yield* actor.awaitExit)._tag).toBe("Defect");
+
+      expect(actor.client.getLifecycle()._tag).toBe("Defect");
+      expect(yield* actor.can(event)).toBe(false);
+      expect(actor.client.canSync(event)).toBe(false);
+      expect(actor.sync.can(event)).toBe(false);
+    }),
+  );
+
   it.scopedLive("uses captured Effect services in can and transition guards", () =>
     Effect.gen(function* () {
       const machine = Machine.make({

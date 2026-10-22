@@ -174,6 +174,24 @@ it.scopedLive("can reevaluates guarded transitions when actor state changes", ()
   }),
 );
 
+it.scopedLive("can answers false after the actor stops", () =>
+  Effect.gen(function* () {
+    const actor = yield* Machine.spawn(counterMachine);
+    yield* actor.start;
+    const registry = AtomRegistry.make();
+    const canIncrementAtom = ActorAtom.can(actor, CounterEvent.Increment);
+    const unmount = registry.mount(canIncrementAtom);
+
+    expect(yield* AtomRegistry.getResult(registry, canIncrementAtom)).toBe(true);
+    yield* actor.stop;
+    yield* Effect.yieldNow;
+    expect(yield* AtomRegistry.getResult(registry, canIncrementAtom)).toBe(false);
+
+    unmount();
+    registry.dispose();
+  }),
+);
+
 it.scopedLive("atoms for one actor share one state source", () =>
   Effect.gen(function* () {
     const actor = yield* Machine.spawn(counterMachine);

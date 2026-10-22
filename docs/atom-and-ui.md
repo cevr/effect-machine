@@ -45,7 +45,7 @@ Create one reactive capability Atom for an event:
 const canCheckoutAtom = ActorAtom.can(actor, Event.Checkout);
 ```
 
-The Atom evaluates the same `.when()` predicates as the actor. It supports Boolean and Effect predicates. It reevaluates after actor state changes. Effect predicates use the context captured by the actor. React can read it with `useAtomSuspense`. Solid can read it with `useAtomResource`.
+The Atom evaluates the same `.when()` predicates as the actor. It supports Boolean and Effect predicates. It reevaluates after actor state and lifecycle changes, and answers `false` once the actor is final, stopped or defected. Effect predicates use the context captured by the actor. React can read it with `useAtomSuspense`. Solid can read it with `useAtomResource`.
 
 The Atom gives the UI a preview. The actor evaluates the predicate again when it processes the event. Use `actor.call(event)` when the caller must inspect the authoritative `transitioned` result.
 

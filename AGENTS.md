@@ -267,6 +267,7 @@ actor.client.getSnapshot();
 actor.client.matches(tag);
 actor.client.canSync(event); // Boolean predicates only
 await actor.client.can(event); // all predicates
+// Every can form answers false, with no predicate run, once the lifecycle is Final, Stopped or Defect.
 ```
 
 ## ask / reply

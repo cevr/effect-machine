@@ -132,4 +132,5 @@ Both defects mean the hosting code is wrong, so they stop the parent. Both host 
 - `stop`, `Machine.scoped`, and `awaitExit` share one shutdown completion. Each caller waits for runtime, child, and scope finalizers. An interrupted waiter does not cancel the shutdown owner. A cleanup failure returns a `Defect` with phase `cleanup` and remains visible to later stop callers.
 - `client` exposes send, stop, snapshot, matching, subscription, and Promise-based capability checks outside Effect.
 - `client.canSync` supports Boolean transition predicates only.
+- `can`, `client.can`, `client.canSync` and `ActorAtom.can` answer `false` once the lifecycle is `Final`, `Stopped` or `Defect`, because the actor drops every later event. They do not run a predicate then. An actor that is `Created` but not started still answers from its state: it queues events until `start`.
 - React and Solid should use Actor Atoms for state and capability subscriptions.

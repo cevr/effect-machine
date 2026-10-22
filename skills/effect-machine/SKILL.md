@@ -89,7 +89,7 @@ machine
   .immediate(S.Accepted, ({ state }) => S.Ready.with(state));
 ```
 
-The `.when()` predicate can return a Boolean or `Effect<boolean, never, R>`. Predicate requirements flow into the machine type. Use `actor.can(event)` inside Effect. Use `actor.client.can(event)` outside Effect. Use `actor.client.canSync(event)` only when the candidate predicates are synchronous.
+The `.when()` predicate can return a Boolean or `Effect<boolean, never, R>`. Predicate requirements flow into the machine type. Use `actor.can(event)` inside Effect. Use `actor.client.can(event)` outside Effect. Use `actor.client.canSync(event)` only when the candidate predicates are synchronous. Every `can` form answers `false` once the actor is final, stopped or defected, and runs no predicate then.
 
 Immediate transitions settle before subscribers see state.
 
