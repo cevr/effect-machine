@@ -49,7 +49,15 @@ import type { DefectPhase } from "../supervision.js";
 
 /** @internal */
 export type RuntimeQueuedEvent<S, E> =
-  | { readonly _tag: "send"; readonly event: E }
+  | {
+      readonly _tag: "send";
+      readonly event: E;
+      /**
+       * The state scope of the entry that sent this event (a task result or a fired
+       * timeout). The loop drops the event if that entry has ended at dequeue.
+       */
+      readonly owner?: Scope.Scope;
+    }
   | {
       readonly _tag: "sendWait";
       readonly event: E;
@@ -390,6 +398,15 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
       yield* Queue.offer(eventQueue, { _tag: "send", event });
     }
   });
+  const sendOwned = Effect.fn("effect-machine.runtime.self.sendOwned")(function* (
+    owner: Scope.Scope,
+    event: E,
+  ) {
+    const stopped = yield* Ref.get(stoppedRef);
+    if (!stopped) {
+      yield* Queue.offer(eventQueue, { _tag: "send", event, owner });
+    }
+  });
   const childPrefix = config.childIdPrefix ?? "";
   const defaultSpawn: MachineRef<E, S>["spawn"] = (childId, childMachine) =>
     system
@@ -413,6 +430,7 @@ export const createRuntime = Effect.fn("effect-machine.runtime.create")(function
       subscribe: (listener) => subscribeToState(stateRef, listeners, listener),
     },
     spawn,
+    _sendOwned: sendOwned,
     reply: (value: unknown) =>
       Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
@@ -1009,9 +1027,31 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
     };
   });
 
+  /** An owned event whose state entry has ended. Only `send` entries carry an owner. */
+  const isStale = (queued: EventQueued): boolean =>
+    queued._tag === "send" && queued.owner !== undefined && queued.owner !== stateScopeRef.current;
+
   const processQueued = (currentState: S, queued: EventQueued) =>
     Effect.gen(function* () {
       const event = queued.event;
+
+      // A task result or a fired timeout of an ended state entry: drop it before any
+      // hook sees it. The entry's fiber was interrupted after it queued the event.
+      if (isStale(queued)) {
+        const dropped: ProcessEventResult<S, E> = {
+          newState: currentState,
+          previousState: currentState,
+          transitioned: false,
+          lifecycleRan: false,
+          isFinal: false,
+          hasReply: false,
+          deferReply: false,
+          reply: undefined,
+          postponed: false,
+          transitions: [],
+        };
+        return { shouldStop: false, stateChanged: false, result: dropped };
+      }
 
       if (queued._tag === "ask" && deferredReplyRef !== undefined) {
         deferredReplyRef.current = {
@@ -1135,8 +1175,9 @@ const runtimeEventLoop = Effect.fn("effect-machine.runtime.eventLoop")(function*
     makeEventAdvancement({
       initial: initialState,
       isFinal: (state: S) => machine._isFinal(state._tag),
+      // A stale owned event is never postponed: process drops it.
       shouldPostpone: (state: S, queued: EventQueued) =>
-        shouldPostpone(machine, state._tag, queued.event._tag),
+        !isStale(queued) && shouldPostpone(machine, state._tag, queued.event._tag),
       postpone: postponeQueued,
       process: (state: S, queued: EventQueued, _draining: boolean) =>
         processQueued(state, queued).pipe(

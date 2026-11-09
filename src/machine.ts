@@ -90,6 +90,14 @@ export interface MachineRef<Event, State = never> {
    * Returns true if a pending reply was settled, false if none was pending.
    */
   readonly reply: <Reply>(value: Reply) => Effect.Effect<boolean>;
+  /**
+   * Send an event that belongs to one state entry. `owner` is the state scope of that
+   * entry. The runtime drops the event at dequeue when its entry has ended, so a task
+   * result or a fired timeout never reaches a later entry of the same state.
+   *
+   * @internal
+   */
+  readonly _sendOwned?: (owner: Scope.Scope, event: Event) => Effect.Effect<void>;
 }
 
 const isStateResolver = <State, Value>(
@@ -1321,6 +1329,15 @@ export class Machine<
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       ctx: StateHandlerContext<any, any>,
     ) {
+      // The state scope that the runtime forks this handler into names its entry.
+      // Read it before `run`, which can provide a scope of its own.
+      const owner = yield* Effect.scope;
+      const sendOwned = ctx.self._sendOwned;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const send = (event: any) => {
+        if (sendOwned === undefined) return ctx.self.send(event);
+        return sendOwned(owner, event);
+      };
       yield* emitTaskInspection({
         actorId: ctx.actorId,
         generation: ctx.generation,
@@ -1344,7 +1361,7 @@ export class Machine<
         if (options.onSuccess !== undefined) {
           successEvent = options.onSuccess(exit.value, ctx);
         }
-        yield* ctx.self.send(successEvent);
+        yield* send(successEvent);
         yield* Effect.yieldNow;
         return;
       }
@@ -1382,7 +1399,7 @@ export class Machine<
         error: Cause.pretty(cause),
       });
       if (options.onFailure !== undefined) {
-        yield* ctx.self.send(options.onFailure(error, ctx));
+        yield* send(options.onFailure(error, ctx));
         yield* Effect.yieldNow;
         return;
       }

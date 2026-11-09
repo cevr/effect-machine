@@ -321,6 +321,7 @@ const count = yield* actor.ask(Event.GetCount);  // number
 - Publish Active only while the same generation is still Starting. A terminal lifecycle must never return to Active.
 - `actor.start` shares one startup result across concurrent and repeated calls, including failure or interruption. Stop the actor and spawn a new actor to retry initialization. It cannot restart a terminal actor.
 - ActorScope cleanup must match the registered actor identity before removing an ID. A later actor can reuse that ID.
+- Task and timeout events are owned by their state entry. The task wrapper in `src/machine.ts` reads its state scope with `Effect.scope` before `run` and sends through the `@internal` `MachineRef._sendOwned`, which tags the queued `send` with that scope. The loop in `src/internal/runtime.ts` drops an owned event whose scope is no longer `stateScopeRef.current`, before any hook and before postpone. The state scope is the entry identity: keep one new scope per lifecycle run. `test/stale-signal.test.ts` and `test/stale-signal.property.test.ts` guard this.
 - `Machine.spawn` returns an **unstarted** actor — must call `yield* actor.start`. `system.spawn` auto-starts.
 - Never `throw` in Effect.gen — use `yield* Effect.fail()`
 - `yield* Effect.yieldNow` after `send()` to let effects run
