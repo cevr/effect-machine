@@ -23,6 +23,8 @@ machine.task(State.Loading, ({ state }) => load(state.id), {
 
 A task sends `onFailure` only for a typed Effect error. A defect stops the actor or starts supervision. A state exit interrupts the task. An interruption does not emit a failure event.
 
+The success or failure event of a task belongs to the state entry that started the task. The same holds for the event of a `.timeout`. If that entry ends before the actor takes the event from its mailbox, the actor drops the event. An entry ends on a change of state tag or on `.reenter`; a same-tag `.on` transition keeps the entry. So a result that completes while a transition leaves the state never reaches a later entry of the same state, and the handler needs no lease or "is current" check. A `self.send` call in a `.spawn` handler is not owned: its events stay in the mailbox after the entry ends. To read a child's output, await the child in a task and map it with `onSuccess`.
+
 The types require each handler that the run needs:
 
 | `run` succeeds with     | `run` can fail | The options must give       |
